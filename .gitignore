@@ -1,0 +1,26 @@
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────
+out/
+dist/
+
+# ── TypeScript incremental build cache ────────────────────────
+*.tsbuildinfo
+
+# ── Electron / OS artefacts ───────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Vite / editor ─────────────────────────────────────────────
+.vite/
+*.local
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Environment secrets ───────────────────────────────────────
+.env
+.env.*
+!.env.example

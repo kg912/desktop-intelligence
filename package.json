@@ -1,0 +1,111 @@
+{
+  "name": "qwen-studio",
+  "version": "1.0.0",
+  "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
+  "main": "out/main/index.js",
+  "author": "Karan Grover",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "axios": "^1.7.2",
+    "better-sqlite3": "^12.8.0",
+    "clsx": "^2.1.1",
+    "duck-duck-scrape": "^2.2.7",
+    "fix-path": "^3.0.0",
+    "framer-motion": "^11.3.8",
+    "highlight.js": "^11.11.1",
+    "hnswlib-node": "^3.0.0",
+    "katex": "^0.16.38",
+    "lucide-react": "^0.395.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "tailwind-merge": "^3.5.0",
+    "tiktoken": "^1.0.22",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@tailwindcss/typography": "^0.5.15",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/katex": "^0.16.8",
+    "@types/node": "^20.14.8",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^31.0.2",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.5",
+    "typescript": "^5.5.2",
+    "vite": "^5.3.3"
+  },
+  "build": {
+    "appId": "com.local.qwenstudio",
+    "productName": "Qwen Studio",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/hnswlib-node/**",
+      "**/node_modules/tiktoken/**",
+      "**/node_modules/onnxruntime-node/**",
+      "**/node_modules/sharp/**"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 140,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}
