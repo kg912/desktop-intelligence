@@ -24,16 +24,29 @@ async function ensureReady(): Promise<void> {
   if (_pipeline) return
   if (!_initPromise) {
     _initPromise = (async () => {
+      const t0 = Date.now()
+      console.log('[Embedding] 🔄 Loading all-MiniLM-L6-v2 via @xenova/transformers …')
+
       // Dynamic import keeps the heavy ONNX runtime out of the startup path
       const { pipeline, env } = await import('@xenova/transformers')
 
-      // Cache models in app userData so they survive updates
-      env.cacheDir = path.join(app.getPath('userData'), 'models')
+      // Cache models in app userData so they survive updates and asar re-packs
+      const cacheDir = path.join(app.getPath('userData'), 'models')
+      env.cacheDir   = cacheDir
+      console.log(`[Embedding] 📂 Model cache dir: ${cacheDir}`)
 
-      _pipeline = await pipeline(
-        'feature-extraction',
-        'Xenova/all-MiniLM-L6-v2'
-      ) as PipelineFn
+      try {
+        _pipeline = await pipeline(
+          'feature-extraction',
+          'Xenova/all-MiniLM-L6-v2'
+        ) as PipelineFn
+        console.log(`[Embedding] ✅ Pipeline ready in ${Date.now() - t0} ms`)
+      } catch (err) {
+        // Reset so the next call retries
+        _initPromise = null
+        console.error(`[Embedding] ❌ pipeline() FAILED after ${Date.now() - t0} ms:`, err)
+        throw err
+      }
     })()
   }
   await _initPromise

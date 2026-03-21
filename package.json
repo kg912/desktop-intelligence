@@ -74,6 +74,8 @@
       "**/node_modules/hnswlib-node/**",
       "**/node_modules/tiktoken/**",
       "**/node_modules/onnxruntime-node/**",
+      "**/node_modules/onnxruntime-web/**",
+      "**/node_modules/@xenova/transformers/**",
       "**/node_modules/sharp/**"
     ],
     "mac": {

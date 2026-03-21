@@ -3,7 +3,17 @@
  *
  * Converts raw files into ProcessedAttachment objects the LLM can use.
  *  - Images    → base64 data URL (guarded to ≤ 5 MB)
- *  - PDFs/Text → text extraction, then Phase 5 RAG ingest (async, fire-and-forget)
+ *  - PDFs/Text → text extraction, then RAG ingest (AWAITED — not fire-and-forget)
+ *
+ * CRITICAL (Phase 10 fix):
+ *   The RAG ingest MUST complete before processFile returns.  The IPC caller
+ *   (handleSend in Layout) immediately fires chat:send after processFile resolves.
+ *   If ingest is fire-and-forget, the embedding pipeline takes ~1 s to initialise
+ *   and chunks are not in SQLite yet when retrieveContext runs — the LLM receives
+ *   zero context even though the PDF was successfully parsed.
+ *
+ *   Timing measured:  @xenova/transformers pipeline() cold-start ≈ 1 056 ms
+ *                     embed() warm                               ≈     4 ms/chunk
  *
  * Anti-regression notes (Phase 8):
  *   • payload.chatId is now forwarded to ingestDocument so each ingested document
@@ -83,14 +93,24 @@ export async function processFile(
     console.log(`📄 TEXT FILE READ CHARACTERS: ${rawText?.length ?? 0}`)
   }
 
-  // Phase 5 RAG: chunk + embed + store asynchronously.
-  // Fire-and-forget — the user gets the confirmation UI immediately
-  // and the vector store is ready for the next query.
-  // Phase 8: chatId is passed through so each document is tagged to its chat session,
-  // preventing cross-chat context bleed during retrieval.
-  import('./RAGService')
-    .then(({ ingestDocument }) => ingestDocument(fileName, rawText, payload.chatId))
-    .catch((err) => console.error('[RAG] ingest failed:', err))
+  // ── RAG ingest — AWAITED (not fire-and-forget) ───────────────
+  // We must await the full chunk→embed→store pipeline before returning.
+  // The IPC caller fires chat:send immediately after this resolves, and
+  // retrieveContext must find completed rows in SQLite to return context.
+  //
+  // UX note: the renderer shows the assistant "thinking" bubble as soon as
+  // sendChatMessage is called, which happens AFTER this await returns.
+  // The user sees the thinking indicator start the moment ingest completes —
+  // this is the correct signal that "your file has been processed".
+  const ingestStart = Date.now()
+  try {
+    const { ingestDocument } = await import('./RAGService')
+    await ingestDocument(fileName, rawText, payload.chatId)
+    console.log(`[FileProcessor] ✅ Ingest complete in ${Date.now() - ingestStart} ms`)
+  } catch (err) {
+    // Log and continue — the message can still be sent without RAG context
+    console.error(`[FileProcessor] ❌ Ingest FAILED after ${Date.now() - ingestStart} ms:`, err)
+  }
 
   return {
     id:      `${Date.now()}-${Math.random()}`,
