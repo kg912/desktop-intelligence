@@ -34,7 +34,7 @@ const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
  * tokens that LM Studio / MLX may emit at stream end.  Including them
  * prevents the server from sending tokens past the natural end-of-turn marker.
  */
-const STOP_SEQUENCES = [
+export const STOP_SEQUENCES = [
   '<|im_end|>',
   '<|endoftext|>',
   'Final Answer: Your final answer here',
@@ -59,6 +59,49 @@ type ContentPart =
 // Good enough for the telemetry display; we don't need exact counts here.
 const estimateTokens = (text: string): number => Math.ceil(text.length / 3.6)
 
+// ── Exported helpers (also used by unit tests) ───────────────────
+
+/**
+ * Prepends the Qwen3 soft-prompt prefix (/no_think or /think) to the last
+ * user message so the MLX inference backend reliably enables or suppresses
+ * the model's reasoning chain.
+ *
+ * Rules:
+ *  • Only the LAST user message is modified — earlier turns are left intact.
+ *  • For multimodal messages (ContentPart[]), the prefix is prepended to the
+ *    first text part so image_url parts are not disturbed.
+ *  • When there are no user messages the input is returned unchanged.
+ *
+ * Exported for unit testing — the logic is pure (no side effects, no I/O).
+ */
+export function applyThinkingPrefix(
+  messages: Array<{ role: string; content: string | ContentPart[] }>,
+  thinkingMode: import('../../shared/types').ThinkingMode | undefined
+): Array<{ role: string; content: string | ContentPart[] }> {
+  const isFast      = thinkingMode !== 'thinking'
+  const prefix      = isFast ? '/no_think\n' : '/think\n'
+  const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user')
+
+  if (lastUserIdx === -1) return messages
+
+  const result = [...messages]
+  const msg    = result[lastUserIdx]
+
+  if (typeof msg.content === 'string') {
+    result[lastUserIdx] = { ...msg, content: prefix + msg.content }
+  } else if (Array.isArray(msg.content)) {
+    const parts   = [...msg.content] as ContentPart[]
+    const textIdx = parts.findIndex((p) => p.type === 'text')
+    if (textIdx !== -1) {
+      const tp   = parts[textIdx] as { type: 'text'; text: string }
+      parts[textIdx] = { type: 'text', text: prefix + tp.text }
+      result[lastUserIdx] = { ...msg, content: parts }
+    }
+  }
+
+  return result
+}
+
 export class ChatService {
   private controller: AbortController | null = null
 
@@ -76,39 +119,7 @@ export class ChatService {
     this.controller = new AbortController()
     const { signal } = this.controller
 
-    const builtMessages = this.buildMessages(payload)
-
-    // ── Soft-prompt thinking control ────────────────────────────
-    // The `thinking` API field is not universally honoured by all LM Studio /
-    // MLX builds.  Qwen3 reliably respects the /no_think and /think prefixes
-    // on the last user message (soft-prompt approach).
-    //
-    // Fast mode  → prepend "/no_think\n" to suppress reasoning chain entirely.
-    // Thinking   → prepend "/think\n"    to ensure reasoning is active.
-    //
-    // This is applied to the last user message only, after buildMessages(), so
-    // that vision content parts (image_url) are handled correctly — the prefix
-    // is added to the text part rather than replacing the whole content.
-    const isFast       = payload.thinkingMode !== 'thinking'
-    const modePrefix   = isFast ? '/no_think\n' : '/think\n'
-    const lastUserIdx  = builtMessages.map((m) => m.role).lastIndexOf('user')
-
-    if (lastUserIdx !== -1) {
-      const msg = builtMessages[lastUserIdx]
-      if (typeof msg.content === 'string') {
-        builtMessages[lastUserIdx] = { ...msg, content: modePrefix + msg.content }
-      } else if (Array.isArray(msg.content)) {
-        // Multimodal: find the text part and prepend there
-        const parts = [...msg.content] as ContentPart[]
-        const textIdx = parts.findIndex((p) => p.type === 'text')
-        if (textIdx !== -1) {
-          const tp = parts[textIdx] as { type: 'text'; text: string }
-          parts[textIdx] = { type: 'text', text: modePrefix + tp.text }
-          builtMessages[lastUserIdx] = { ...msg, content: parts }
-        }
-      }
-    }
-
+    const builtMessages = applyThinkingPrefix(this.buildMessages(payload), payload.thinkingMode)
     console.log('🚀 FINAL LM STUDIO PAYLOAD:', JSON.stringify(builtMessages, null, 2))
 
     // Section 5: thinking mode payload.
