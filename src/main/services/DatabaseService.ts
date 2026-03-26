@@ -69,7 +69,7 @@ export function getDB(): Database.Database {
     );
   `)
 
-  // ── Phase 8 migrations (try/catch guards duplicate-column errors) ──
+  // ── Migrations (try/catch guards duplicate-column errors) ────────
   try {
     _db.exec(`ALTER TABLE documents ADD COLUMN chat_id TEXT`)
   } catch { /* column already exists */ }
@@ -77,6 +77,11 @@ export function getDB(): Database.Database {
   // Phase 9: attachment metadata on chat messages
   try {
     _db.exec(`ALTER TABLE chat_messages ADD COLUMN attachments_json TEXT`)
+  } catch { /* column already exists */ }
+
+  // Phase 11: full document text stored directly in SQLite (replaces hnswlib/vector approach)
+  try {
+    _db.exec(`ALTER TABLE documents ADD COLUMN content TEXT NOT NULL DEFAULT ''`)
   } catch { /* column already exists */ }
 
   return _db

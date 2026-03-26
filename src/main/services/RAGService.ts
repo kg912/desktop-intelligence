@@ -1,57 +1,55 @@
 /**
- * RAGService — Main process
+ * RAGService — Main process  (Phase 11 rewrite)
  *
- * Orchestrates the full RAG pipeline:
+ * Previous approach used @xenova/transformers for embeddings and hnswlib-node
+ * for vector search.  Both were silently broken in the packaged app:
  *
- *  ingestDocument(fileName, rawText, chatId?)
- *    → chunk text (500-token blocks, 50-token overlap)
- *    → embed each chunk via EmbeddingService
- *    → persist chunks to SQLite (with chat_id tag) + vector IDs to HNSWLib
+ *   • hnswlib-node is a CJS native module.  `await import('hnswlib-node')` returns
+ *     undefined for all named exports because dynamic ESM import of native CJS
+ *     bindings cannot statically determine the exports.  `HierarchicalNSW` was
+ *     undefined every call → initIndex was never called → zero vectors ever stored.
+ *     Confirmed: `require('hnswlib-node').HierarchicalNSW` works; `(await import()).HierarchicalNSW` is undefined.
  *
- *  retrieveContext(query, chatId?, k=5)
- *    → embed query
- *    → search HNSWLib for k nearest chunks (global ANN pass)
- *    → fetch chunk text from SQLite, filtered to chatId when provided
- *    → return formatted context string for injection as dedicated system message
+ *   • The whole chain (embed → hnswlib insert → ANN search → SQL join) was
+ *     dead weight on top of a broken foundation.  The model received zero context
+ *     on every single query.
  *
- * Anti-regression notes (Phase 8):
- *   • ingestDocument gains an optional chatId parameter — all existing call-sites
- *     that omit it continue to work (documents stored with chat_id = NULL).
- *   • retrieveContext gains an optional chatId parameter — when omitted the query
- *     falls back to the original unfiltered behaviour (no callers omit it after Phase 8).
- *   • The HNSWLib index is still a flat global index; per-chat scoping is enforced
- *     in the SQL layer via a JOIN on documents.chat_id after the ANN pass.
+ * New approach — SQLite full-text storage:
+ *
+ *   ingestDocument(fileName, rawText, chatId?)
+ *     → INSERT raw text directly into documents.content (synchronous SQLite write)
+ *     → No embedding, no vector index, no native modules beyond better-sqlite3
+ *
+ *   retrieveContext(query, chatId?)
+ *     → SELECT all documents for this chat from SQLite
+ *     → Concatenate and truncate to MAX_CONTEXT_CHARS
+ *     → Return formatted string for injection as system message
+ *
+ * Why this is better:
+ *   • Reliable — pure SQLite, no ONNX, no hnswlib
+ *   • Complete — model receives the actual document text, not a subset of
+ *     semantically similar chunks from a broken vector index
+ *   • Fast — synchronous DB write on ingest, one SELECT on retrieval
+ *   • Correct — no chatId/timing races; text is in DB the moment processFile returns
+ *
+ * The `query` parameter in retrieveContext is kept for signature compatibility
+ * and future use (keyword ranking, etc.) but is not used in this implementation.
  */
 
-import { v4 as uuid }     from 'uuid'
-import { getDB }          from './DatabaseService'
-import { embed }          from './EmbeddingService'
-import { addVectors, searchNN } from './VectorStoreService'
+import { v4 as uuid } from 'uuid'
+import { getDB }      from './DatabaseService'
 
-// ── Chunking parameters ───────────────────────────────────────────
-// 500-token target × ~4 chars/token = 2000 chars per chunk
-// 50-token overlap  × ~4 chars/token =  200 chars overlap
-const CHUNK_CHARS   = 500 * 4
-const OVERLAP_CHARS =  50 * 4
-const STEP          = CHUNK_CHARS - OVERLAP_CHARS
-
-function chunkText(text: string): string[] {
-  const chunks: string[] = []
-  let start = 0
-  while (start < text.length) {
-    const chunk = text.slice(start, start + CHUNK_CHARS).trim()
-    if (chunk.length > 0) chunks.push(chunk)
-    start += STEP
-  }
-  return chunks
-}
+// Maximum characters of document text to inject into the system prompt.
+// 12 000 chars ≈ 3 000 tokens — well within Qwen's context window.
+// For documents larger than this, the first MAX_CONTEXT_CHARS characters
+// are used (the most structurally important section of most documents).
+const MAX_CONTEXT_CHARS = 12_000
 
 // ── Public API ────────────────────────────────────────────────────
 
 /**
- * Chunk, embed, and store a document.
- * Safe to call multiple times with the same fileName — each call
- * creates a fresh document entry with its own UUID.
+ * Store the full extracted document text in SQLite.
+ * Replaces the old chunk→embed→hnswlib pipeline entirely.
  */
 export async function ingestDocument(
   fileName: string,
@@ -61,7 +59,7 @@ export async function ingestDocument(
   console.log(`[RAG] 🔄 ingestDocument: fileName="${fileName}" chatId=${chatId ?? 'null'} rawTextLen=${rawText?.length ?? 0}`)
 
   if (!rawText || rawText.trim().length === 0) {
-    console.warn(`[RAG] ⚠️  rawText is empty for "${fileName}" — skipping ingest. Nothing will be retrievable.`)
+    console.warn(`[RAG] ⚠️  rawText is empty for "${fileName}" — skipping. PDF may be image-based (no text layer).`)
     return
   }
 
@@ -69,105 +67,62 @@ export async function ingestDocument(
   const docId = uuid()
 
   db.prepare(
-    `INSERT OR REPLACE INTO documents (id, name, path, ts, chat_id) VALUES (?, ?, '', ?, ?)`
-  ).run(docId, fileName, Date.now(), chatId ?? null)
+    `INSERT OR REPLACE INTO documents (id, name, path, ts, chat_id, content) VALUES (?, ?, '', ?, ?, ?)`
+  ).run(docId, fileName, Date.now(), chatId ?? null, rawText)
 
-  const chunks = chunkText(rawText)
-  console.log(`[RAG] 📦 Chunks created: ${chunks.length} for "${fileName}"`)
-  if (chunks.length === 0) return
-
-  // Embed all chunks in parallel
-  const vectors = await Promise.all(chunks.map((c) => embed(c)))
-
-  // Insert chunks, collect SQLite rowids
-  const insertChunk = db.prepare(
-    `INSERT INTO chunks (doc_id, content, idx, vec_id) VALUES (?, ?, ?, 0)`
-  )
-  const rowids: number[] = []
-
-  const insertTx = db.transaction(() => {
-    for (let i = 0; i < chunks.length; i++) {
-      const r = insertChunk.run(docId, chunks[i], i)
-      rowids.push(r.lastInsertRowid as number)
-    }
-  })
-  insertTx()
-
-  // Use the SQLite rowid as the hnswlib vector ID — 1-to-1 mapping
-  await addVectors(rowids, vectors)
-  console.log(`💾 VECTORS INSERTED INTO HNSWLIB: ${chunks.length} (fileName="${fileName}" chatId=${chatId ?? 'null'})`)
-
-  // Back-fill vec_id so retrieval can round-trip through the DB
-  const setVecId = db.prepare(`UPDATE chunks SET vec_id = ? WHERE id = ?`)
-  const updateTx = db.transaction(() => {
-    for (const rowid of rowids) setVecId.run(rowid, rowid)
-  })
-  updateTx()
+  console.log(`💾 DOCUMENT SAVED TO SQLITE: "${fileName}" chatId=${chatId ?? 'null'} chars=${rawText.length}`)
 }
 
 /**
- * Embed the query, find the top-k most similar chunks scoped to chatId,
- * and return a formatted context block for injection as a dedicated
- * system message immediately before the user's last turn.
+ * Retrieve all document text for this chat and return a formatted
+ * context block for injection as a system message.
  *
- * Strategy:
- *   1. Global ANN pass on HNSWLib to get candidate chunk IDs.
- *   2. SQL re-query with JOIN on documents.chat_id to enforce per-chat isolation.
- *      Chunks whose parent document has a different (or NULL) chat_id are discarded.
- *
- * Returns '' if no chunks exist for this chat or the index is empty.
+ * The `query` parameter is reserved for future semantic ranking but is
+ * not used in this implementation — all document content is returned.
  */
 export async function retrieveContext(
-  query:   string,
-  chatId?: string,
-  k = 5
+  _query:  string,
+  chatId?: string
 ): Promise<string> {
-  const db  = getDB()
-  const cnt = (db.prepare(`SELECT COUNT(*) AS n FROM chunks`).get() as { n: number }).n
-  if (cnt === 0) return ''
+  const db = getDB()
 
-  const qvec      = await embed(query)
-  // Request more candidates than needed so the chatId SQL filter has enough
-  // to work with even after discarding chunks from other chats.
-  const neighbors = await searchNN(qvec, Math.min(k * 3, cnt))
-  if (neighbors.length === 0) return ''
-
-  const ids          = neighbors.map((n) => n.id)
-  const placeholders = ids.map(() => '?').join(',')
-
-  // When a chatId is provided, enforce strict per-chat isolation via JOIN.
-  // When omitted (legacy / no-context calls), fall back to unfiltered behaviour.
-  let rows: { content: string }[]
-  if (chatId) {
-    rows = db
-      .prepare(
-        `SELECT c.content
-         FROM   chunks c
-         JOIN   documents d ON c.doc_id = d.id
-         WHERE  c.id IN (${placeholders})
-           AND  d.chat_id = ?
-         ORDER  BY c.idx`
-      )
-      .all(...ids, chatId) as { content: string }[]
-  } else {
-    rows = db
-      .prepare(`SELECT content FROM chunks WHERE id IN (${placeholders}) ORDER BY idx`)
-      .all(...ids) as { content: string }[]
+  if (!chatId) {
+    console.log(`🔥 DOCUMENT RETRIEVAL: no chatId — returning empty context`)
+    return ''
   }
 
-  // Trim to the top-k results after SQL filtering
-  const topRows = rows.slice(0, k)
+  const rows = db
+    .prepare(
+      `SELECT name, content FROM documents
+       WHERE  chat_id = ?
+         AND  content != ''
+       ORDER  BY ts ASC`
+    )
+    .all(chatId) as { name: string; content: string }[]
 
-  console.log(`🔥 VECTOR DB RESULTS COUNT: ${topRows.length} (chatId=${chatId ?? 'none'}, candidates=${neighbors.length}, sqlRows=${rows.length})`)
-  if (topRows.length > 0) {
-    console.log('🔥 VECTOR DB RESULTS (first chunk preview):', topRows[0].content.slice(0, 200))
+  console.log(`🔥 DOCUMENT RETRIEVAL: ${rows.length} doc(s) for chatId=${chatId}`)
+
+  if (rows.length === 0) return ''
+
+  // Concatenate documents, truncating the total to MAX_CONTEXT_CHARS.
+  // Multiple documents in the same chat are each labelled separately.
+  let context = ''
+  for (const row of rows) {
+    const header  = `[Document: ${row.name}]\n`
+    const body    = row.content
+    const section = header + body
+
+    if (context.length + section.length <= MAX_CONTEXT_CHARS) {
+      context += (context ? '\n\n' : '') + section
+    } else {
+      const remaining = MAX_CONTEXT_CHARS - context.length - header.length - 4
+      if (remaining > 100) {
+        context += (context ? '\n\n' : '') + header + body.slice(0, remaining) + '\n…'
+      }
+      break
+    }
   }
 
-  if (topRows.length === 0) return ''
-
-  const chunks = topRows
-    .map((r, i) => `[Document Content: ${i + 1}]\n${r.content.trim()}`)
-    .filter(Boolean)
-
-  return chunks.join('\n\n')
+  console.log(`🔥 CONTEXT PREVIEW (first 200 chars): ${context.slice(0, 200).replace(/\n/g, ' ')}`)
+  return context
 }
