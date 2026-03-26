@@ -77,6 +77,38 @@ export class ChatService {
     const { signal } = this.controller
 
     const builtMessages = this.buildMessages(payload)
+
+    // ── Soft-prompt thinking control ────────────────────────────
+    // The `thinking` API field is not universally honoured by all LM Studio /
+    // MLX builds.  Qwen3 reliably respects the /no_think and /think prefixes
+    // on the last user message (soft-prompt approach).
+    //
+    // Fast mode  → prepend "/no_think\n" to suppress reasoning chain entirely.
+    // Thinking   → prepend "/think\n"    to ensure reasoning is active.
+    //
+    // This is applied to the last user message only, after buildMessages(), so
+    // that vision content parts (image_url) are handled correctly — the prefix
+    // is added to the text part rather than replacing the whole content.
+    const isFast       = payload.thinkingMode !== 'thinking'
+    const modePrefix   = isFast ? '/no_think\n' : '/think\n'
+    const lastUserIdx  = builtMessages.map((m) => m.role).lastIndexOf('user')
+
+    if (lastUserIdx !== -1) {
+      const msg = builtMessages[lastUserIdx]
+      if (typeof msg.content === 'string') {
+        builtMessages[lastUserIdx] = { ...msg, content: modePrefix + msg.content }
+      } else if (Array.isArray(msg.content)) {
+        // Multimodal: find the text part and prepend there
+        const parts = [...msg.content] as ContentPart[]
+        const textIdx = parts.findIndex((p) => p.type === 'text')
+        if (textIdx !== -1) {
+          const tp = parts[textIdx] as { type: 'text'; text: string }
+          parts[textIdx] = { type: 'text', text: modePrefix + tp.text }
+          builtMessages[lastUserIdx] = { ...msg, content: parts }
+        }
+      }
+    }
+
     console.log('🚀 FINAL LM STUDIO PAYLOAD:', JSON.stringify(builtMessages, null, 2))
 
     // Section 5: thinking mode payload.

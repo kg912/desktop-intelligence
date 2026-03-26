@@ -112,11 +112,22 @@ export async function processFile(
     console.error(`[FileProcessor] ❌ Ingest FAILED after ${Date.now() - ingestStart} ms:`, err)
   }
 
+  // Inject the raw text directly into the system prompt so the model can
+  // read the file without depending on RAG retrieval timing or chatId
+  // propagation.  The first 12 000 chars cover most lecture notes / papers;
+  // additional content is always available via the RAG retrieval path.
+  const MAX_INJECT_CHARS = 12_000
+  const injectContent = rawText && rawText.trim().length > 0
+    ? `[Document: ${fileName}]\n${rawText.slice(0, MAX_INJECT_CHARS)}${rawText.length > MAX_INJECT_CHARS ? '\n…' : ''}`
+    : null
+
+  console.log(`[FileProcessor] 📤 inject chars=${injectContent?.length ?? 0} for "${fileName}"`)
+
   return {
     id:      `${Date.now()}-${Math.random()}`,
     name:    fileName,
     kind:    'document',
     dataUrl: null,
-    inject:  `[System: The user has attached a document named ${fileName}. It has been parsed and stored in the vector database.]`,
+    inject:  injectContent,
   }
 }
