@@ -14,6 +14,15 @@ const MODELS_ENDPOINT    = `${LM_STUDIO_BASE_URL}/models`
 const POLL_INTERVAL_OFFLINE_MS  = 3_000   // 3s — quick reconnect detection
 const POLL_INTERVAL_READY_MS    = 15_000  // 15s — heartbeat when stable
 
+// How many consecutive failures are required before showing the offline overlay.
+// A value of 2 means a single blip (e.g. LM Studio busy during PDF streaming)
+// will not interrupt the user with a full-screen error.
+const FAILURES_BEFORE_OFFLINE = 2
+
+// Health-check timeout — generous enough that a busy-but-running LM Studio
+// instance (e.g. mid-generation) still has time to respond.
+const HEALTH_CHECK_TIMEOUT_MS = 8_000
+
 export class ModelConnectionManager extends EventEmitter {
   private state: ConnectionState = {
     status:        'loading',
@@ -25,6 +34,14 @@ export class ModelConnectionManager extends EventEmitter {
 
   private pollTimer: ReturnType<typeof setTimeout> | null = null
   private isPolling = false
+
+  /**
+   * Counts consecutive poll failures while already in 'ready' state.
+   * Reset to 0 on any success.  We only transition to 'offline' once this
+   * reaches FAILURES_BEFORE_OFFLINE, preventing single-blip false positives
+   * (e.g. LM Studio briefly unresponsive while the GPU is pegged generating).
+   */
+  private consecutiveFailures = 0
 
   constructor() {
     super()
@@ -60,6 +77,9 @@ export class ModelConnectionManager extends EventEmitter {
       clearTimeout(this.pollTimer)
       this.pollTimer = null
     }
+    // Reset failure streak — the user explicitly asked to recheck,
+    // so treat this as the first attempt from a clean slate.
+    this.consecutiveFailures = 0
     this.transitionTo('connecting')
     await this.poll()
     return this.getState()
@@ -72,14 +92,20 @@ export class ModelConnectionManager extends EventEmitter {
   private async poll(): Promise<void> {
     try {
       const response = await axios.get<LMStudioModelsResponse>(MODELS_ENDPOINT, {
-        timeout: 5_000,
+        timeout: HEALTH_CHECK_TIMEOUT_MS,
         headers: { Accept: 'application/json' }
       })
+
+      // Any successful response resets the failure streak
+      this.consecutiveFailures = 0
 
       const models = response.data?.data ?? []
 
       if (models.length === 0) {
-        // LM Studio is up but no model is loaded
+        // LM Studio is up but no model is loaded — this is a genuine offline
+        // condition (user action required), so we show it immediately regardless
+        // of the failure counter.
+        this.consecutiveFailures = 0
         this.transitionTo('offline', null, 'LM Studio is running but no model is loaded. Load a model in LM Studio to continue.')
       } else {
         // Pick the first available model (they're already selected in LM Studio)
@@ -98,7 +124,18 @@ export class ModelConnectionManager extends EventEmitter {
         message = `LM Studio responded with error ${error.response.status}.`
       }
 
-      this.transitionTo('offline', null, message)
+      this.consecutiveFailures++
+      console.log(
+        `[ModelConnection] Poll failed (${this.consecutiveFailures}/${FAILURES_BEFORE_OFFLINE}): ${message}`
+      )
+
+      // Only show the offline overlay after N consecutive failures.
+      // A single timeout while LM Studio is busy generating (e.g. PDF analysis)
+      // is a false positive — silently absorb it and wait for the next poll.
+      if (this.consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
+        this.transitionTo('offline', null, message)
+      }
+      // else: stay in current state (likely 'ready') until the threshold is hit
     } finally {
       this.scheduleNextPoll()
     }

@@ -5,6 +5,7 @@ import { lmsDaemonManager } from '../managers/LMSDaemonManager'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 import { detectSearchIntent, performWebSearch } from '../services/WebSearchService'
+import { BASE_SYSTEM_PROMPT } from '../services/SystemPromptService'
 import {
   getAllChats,
   createChat,
@@ -88,7 +89,10 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const modelId     = payload.model ?? DEFAULT_MODEL_ID
     const lastUserMsg = [...payload.messages].reverse().find((m) => m.role === 'user')
 
-    const systemParts: string[] = []
+    // BASE_SYSTEM_PROMPT is always first — it tells the model about the app's
+    // native rendering capabilities (Mermaid diagrams, KaTeX) so it stops
+    // generating ASCII art and text-based diagrams.
+    const systemParts: string[] = [BASE_SYSTEM_PROMPT]
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
 
     // ── 1. Routing guard: check if this chat has local documents ──

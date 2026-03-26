@@ -171,3 +171,66 @@
   animation: blink 0.9s ease infinite;
   border-radius: 1px;
 }
+
+/* ----------------------------------------------------------------
+   Mermaid diagram overrides
+   Mermaid injects its own SVG fill/stroke values; these rules ensure
+   the rendered diagrams match the app's dark colour palette and never
+   show a white background.
+   ---------------------------------------------------------------- */
+.diagram-block svg {
+  /* Scale diagram to container width while keeping aspect ratio.
+     makeResponsiveSvg() strips the explicit px dimensions from the SVG
+     root so these CSS rules take effect — without that stripping, the
+     SVG's width/height attributes would override these properties. */
+  max-width: 100%;
+  height: auto;
+  display: block;
+  /* Transparent so the card background (#141414) shows through */
+  background: transparent !important;
+}
+
+/* Mermaid wraps its SVG in a <div id="dmermaid-…"> — force transparent */
+.diagram-block > div {
+  background: transparent !important;
+  width: 100%;
+}
+
+/* Default node labels (foreignObject > div) */
+.diagram-block .label {
+  color: #f5f5f5;
+}
+.diagram-block .nodeLabel {
+  color: #f5f5f5;
+}
+/* Edge labels */
+.diagram-block .edgeLabel {
+  background: #141414;
+  color: #a3a3a3;
+}
+/* Sequence diagram actors */
+.diagram-block .actor {
+  fill: #1a1a1a;
+  stroke: #3a3a3a;
+}
+.diagram-block text.actor {
+  fill: #f5f5f5;
+}
+/* Notes */
+.diagram-block .note {
+  fill: #1f1f1f;
+  stroke: #3a3a3a;
+}
+/* Activation boxes */
+.diagram-block .activation0,
+.diagram-block .activation1,
+.diagram-block .activation2 {
+  fill: #3d0000;
+  stroke: #8b0000;
+}
+/* Git graph commits */
+.diagram-block .commit-id,
+.diagram-block .commit-msg,
+.diagram-block .branch-label {
+  fill: #f5f5f5;
+}

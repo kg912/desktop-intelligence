@@ -4,7 +4,11 @@ import { resolve } from 'path'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/main/**/__tests__/**/*.test.ts'],
+    include: [
+      'src/main/**/__tests__/**/*.test.ts',
+      // Renderer pure-function utilities (no React/DOM dependencies)
+      'src/renderer/src/lib/__tests__/**/*.test.ts',
+    ],
     globals: true,
     // Each test file gets its own isolated module registry — critical because
     // RAGService tests inject a fake DB singleton via vi.mock, and that must

@@ -71,23 +71,81 @@ interface ChatAreaProps {
 }
 
 export function ChatArea({ messages, isStreaming = false, onSuggest }: ChatAreaProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const bottomRef          = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll on every content change.
+  // true  = user has scrolled up, auto-scroll is paused
+  // false = we are at (or near) the bottom, auto-scroll is active
+  // Stored in a ref so toggling it never causes a re-render.
+  const userScrolledUp = useRef(false)
+
+  // Guards against handleScroll falsely re-enabling auto-scroll when an
+  // onScroll event is fired by our own scrollIntoView call rather than by
+  // actual user interaction.  Set to true just before each programmatic
+  // scroll; cleared by the first onScroll handler invocation that follows.
+  const isProgrammaticScroll = useRef(false)
+
+  // ── Re-enable scroll whenever the USER sends a new message ──────
+  // (their message is always the last one added with role 'user')
+  useEffect(() => {
+    const last = messages[messages.length - 1]
+    if (last?.role === 'user') {
+      userScrolledUp.current = false
+    }
+  }, [messages.length])
+
+  // ── Auto-scroll on every content change — unless paused ─────────
   // During active streaming use 'instant' so rapid chunk updates don't
   // stutter — the browser cancels-and-restarts a 'smooth' scroll on
   // every invocation, making it look frozen until the stream ends.
   useEffect(() => {
+    if (userScrolledUp.current) return
+    isProgrammaticScroll.current = true        // mark: next onScroll is ours
     bottomRef.current?.scrollIntoView({
       behavior: isStreaming ? 'instant' : 'smooth',
       block:    'end',
     })
   }, [messages.length, messages[messages.length - 1]?.content, isStreaming])
 
+  // ── Pause auto-scroll when user scrolls UP ───────────────────────
+  // onWheel fires for real trackpad / mouse-wheel gestures only; it does
+  // NOT fire for programmatic scrollIntoView calls, which is exactly what
+  // we want — this handler is the primary "pause" trigger.
+  function handleWheel(e: React.WheelEvent) {
+    if (e.deltaY < 0) {          // negative deltaY = scroll toward top
+      userScrolledUp.current = true
+    }
+  }
+
+  // ── Re-enable auto-scroll when user scrolls back to the bottom ──
+  // We skip any onScroll event that was caused by our own scrollIntoView
+  // so that programmatic scrolls never accidentally clear userScrolledUp.
+  // Only genuine user-driven scrolls are evaluated here.
+  function handleScroll() {
+    // Absorb the one onScroll that every scrollIntoView fires and return.
+    if (isProgrammaticScroll.current) {
+      isProgrammaticScroll.current = false
+      return
+    }
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    // 150 px of slack: re-enable once the user is clearly back near the
+    // live output, without requiring pixel-perfect positioning.
+    if (distanceFromBottom <= 150) {
+      userScrolledUp.current = false
+    }
+  }
+
   const hasMessages = messages.length > 0
 
   return (
-    <div className="flex-1 overflow-y-auto relative no-drag">
+    <div
+      ref={scrollContainerRef}
+      onWheel={handleWheel}
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto relative no-drag"
+    >
       <AnimatePresence mode="wait">
         {!hasMessages ? (
           <motion.div
