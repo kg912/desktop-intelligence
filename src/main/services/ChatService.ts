@@ -22,6 +22,34 @@ const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
 // payload (ChatSendPayload.model) and passed as the modelId argument to send().
 // The DEFAULT_MODEL_ID fallback lives in shared/types.ts.
 
+/**
+ * Stop sequences (Section 5.4 of CLAUDE.md — ALWAYS send these).
+ *
+ * These guard against the Qwen runaway loop:
+ *   After 5-8 messages the model emits "Final Answer: Your final answer here"
+ *   infinitely.  Root cause: thinking block not properly closed → model emits
+ *   the post-thinking response skeleton on repeat.
+ *
+ * "<|im_end|>" and "<|endoftext|>" are the official Qwen chat-template EOS
+ * tokens that LM Studio / MLX may emit at stream end.  Including them
+ * prevents the server from sending tokens past the natural end-of-turn marker.
+ */
+const STOP_SEQUENCES = [
+  '<|im_end|>',
+  '<|endoftext|>',
+  'Final Answer: Your final answer here',
+  'Your final answer here',
+]
+
+/**
+ * Repetition detector state.
+ * Tracks the last N trimmed non-empty lines seen in the stream.
+ * If the same line appears REPETITION_THRESHOLD times consecutively,
+ * the stream is aborted and an error is sent to the renderer.
+ */
+const REPETITION_WINDOW    = 3   // consecutive identical lines to trigger abort
+const REPETITION_MAX_LEN   = 200 // only track lines up to this length (ignore long prose)
+
 // Vision content parts (OpenAI-compatible multimodal format)
 type ContentPart =
   | { type: 'text';      text:       string }
@@ -59,12 +87,23 @@ export class ChatService {
       stream:      true,
       temperature: 0.7,
       max_tokens:  4096,
+      // Section 5.4: always send stop sequences to prevent Qwen runaway loop.
+      // These fire at the server level before any tokens are streamed back,
+      // so they catch runaway patterns earlier than the client-side detector.
+      stop:        STOP_SEQUENCES,
     })
 
     const startTime = Date.now()
     let firstTokenAt: number | null = null
     let totalTokens  = 0
     let buffer       = ''
+
+    // ── Repetition detector state ────────────────────────────────
+    // Accumulates the in-progress output line being built from deltas.
+    // When a newline is seen we commit the line and check for repeats.
+    let lineBuffer       = ''
+    let lastLine         = ''
+    let consecutiveCount = 0
 
     const send = (channel: string, data: unknown): void => {
       if (!wc.isDestroyed()) wc.send(channel, data)
@@ -89,7 +128,9 @@ export class ChatService {
       const decoder = new TextDecoder()
 
       // ── SSE parse loop ──────────────────────────────────────────
+      let loopAborted = false
       while (true) {
+        if (loopAborted) break
         const { done, value } = await reader.read()
         if (done) break
 
@@ -117,6 +158,39 @@ export class ChatService {
 
           totalTokens += estimateTokens(delta)
           send(IPC_CHANNELS.CHAT_STREAM_CHUNK, delta)
+
+          // ── Client-side repetition detector ───────────────────
+          // Accumulate deltas into lines; on each newline boundary,
+          // check if the model is stuck repeating the same output.
+          // This is a safety net — the server-side stop sequences fire
+          // first, but if LM Studio doesn't honour them this catches it.
+          lineBuffer += delta
+          const newlineIdx = lineBuffer.indexOf('\n')
+          if (newlineIdx !== -1) {
+            const completedLine = lineBuffer.slice(0, newlineIdx).trim()
+            lineBuffer = lineBuffer.slice(newlineIdx + 1)
+
+            if (
+              completedLine.length > 0 &&
+              completedLine.length <= REPETITION_MAX_LEN
+            ) {
+              if (completedLine === lastLine) {
+                consecutiveCount++
+                if (consecutiveCount >= REPETITION_WINDOW) {
+                  console.warn(
+                    `[ChatService] 🔁 Repetition detected — "${completedLine}" ` +
+                    `repeated ${consecutiveCount} times. Aborting stream.`
+                  )
+                  this.abort()
+                  loopAborted = true
+                  break
+                }
+              } else {
+                lastLine         = completedLine
+                consecutiveCount = 1
+              }
+            }
+          }
         }
       }
     } catch (err) {
