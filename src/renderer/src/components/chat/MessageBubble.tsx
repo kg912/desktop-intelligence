@@ -21,7 +21,12 @@ export interface MessageAttachment {
 // ── Message shape used by useChat ────────────────────────────────
 export interface Message {
   id:          string
-  role:        'user' | 'assistant'
+  /**
+   * 'user' | 'assistant' — normal chat turns.
+   * 'divider' — not a real message; renders a mode-switch label bar.
+   *             Filtered out before building the LM Studio wire payload.
+   */
+  role:        'user' | 'assistant' | 'divider'
   content:     string
   stats:       GenerationStats | null
   isThinking:  boolean   // true before first token
@@ -165,12 +170,29 @@ function AssistantBubble({
   )
 }
 
+// ── Mode divider ─────────────────────────────────────────────────
+function ModeDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1 select-none">
+      <div className="flex-1 h-px bg-surface-border/60" />
+      <span className="text-[10px] text-content-muted tracking-wide font-medium whitespace-nowrap">
+        {label}
+      </span>
+      <div className="flex-1 h-px bg-surface-border/60" />
+    </div>
+  )
+}
+
 // ── Public component ─────────────────────────────────────────────
 interface MessageBubbleProps {
   message: Message
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
+  if (message.role === 'divider') {
+    return <ModeDivider label={message.content} />
+  }
+
   return (
     <motion.div
       variants={bubbleVariants}

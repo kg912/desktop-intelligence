@@ -79,6 +79,14 @@ export class ChatService {
     const builtMessages = this.buildMessages(payload)
     console.log('🚀 FINAL LM STUDIO PAYLOAD:', JSON.stringify(builtMessages, null, 2))
 
+    // Section 5: thinking mode payload.
+    // 'thinking' → reasoning chain with 8k budget; 'fast' → disabled.
+    // LM Studio/MLX passes unknown fields through to the model backend,
+    // so this is safe to send even if the build doesn't honour it.
+    const thinkingField = payload.thinkingMode === 'thinking'
+      ? { thinking: { type: 'enabled', budget_tokens: 8000 } }
+      : { thinking: { type: 'disabled' } }
+
     const body = JSON.stringify({
       // modelId is supplied by the frontend via ChatSendPayload.model,
       // with DEFAULT_MODEL_ID as the fallback applied in handlers.ts.
@@ -91,6 +99,7 @@ export class ChatService {
       // These fire at the server level before any tokens are streamed back,
       // so they catch runaway patterns earlier than the client-side detector.
       stop:        STOP_SEQUENCES,
+      ...thinkingField,
     })
 
     const startTime = Date.now()

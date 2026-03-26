@@ -105,14 +105,18 @@ export interface WebSearchStatus {
   query?: string
 }
 
+export type ThinkingMode = 'thinking' | 'fast'
+
 export interface ChatSendPayload {
-  messages:      WireMessage[]
-  systemPrompt?: string
-  attachments?:  ProcessedAttachment[]
+  messages:       WireMessage[]
+  systemPrompt?:  string
+  attachments?:   ProcessedAttachment[]
   /** Active chat session — used to scope RAG retrieval to this chat only */
-  chatId?:       string
+  chatId?:        string
   /** LM Studio model identifier chosen by the frontend; falls back to DEFAULT_MODEL_ID */
-  model?:        string
+  model?:         string
+  /** Controls whether the model reasons before answering (Section 5 of CLAUDE.md) */
+  thinkingMode?:  ThinkingMode
 }
 
 export interface GenerationStats {

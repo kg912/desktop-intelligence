@@ -61,9 +61,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   const [isStreaming, setIsStreaming]  = useState(false)
   const [isSearching, setIsSearching] = useState(false)
 
-  // Read selected model from global store so the IPC payload always carries
-  // the model the user has chosen (or the default on first load).
-  const { selectedModel } = useModelStore()
+  // Read selected model and thinking mode from global store.
+  const { selectedModel, thinkingMode } = useModelStore()
 
   // Ref so event-listener callbacks always see the latest assistant id
   const assistantIdRef = useRef<string | null>(null)
@@ -75,6 +74,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   // Accumulates streamed assistant content for DB persistence at stream-end.
   // A ref avoids stale-closure issues inside the event-handler useEffect.
   const streamingContentRef = useRef<string>('')
+
+  // Tracks the thinking mode used for the previous turn so a divider can be
+  // inserted into the message list when the user switches modes mid-conversation.
+  const prevThinkingModeRef = useRef<'thinking' | 'fast'>('fast')
 
   // Keep ref in sync with whatever chatId Layout passes down.
   useEffect(() => {
@@ -229,7 +232,28 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     assistantIdRef.current      = assistantMsg.id
     streamingContentRef.current = ''
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg])
+    // Insert a mode-switch divider when the user changes thinking mode
+    // mid-conversation. Only shown when there are existing messages.
+    const modeChanged = prevThinkingModeRef.current !== thinkingMode
+    prevThinkingModeRef.current = thinkingMode
+
+    setMessages((prev) => {
+      const dividers: Message[] = (modeChanged && prev.length > 0)
+        ? [{
+            id:          uuid(),
+            role:        'divider',
+            content:     thinkingMode === 'thinking'
+              ? '— Switched to Thinking Mode —'
+              : '— Switched to Fast Mode —',
+            stats:       null,
+            isThinking:  false,
+            isStreaming:  false,
+            isSearching:  false,
+            error:       null,
+          }]
+        : []
+      return [...prev, ...dividers, userMsg, assistantMsg]
+    })
     setIsStreaming(true)
 
     // ── Ensure a chat row exists in SQLite before we stream ───────
@@ -273,11 +297,14 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         .catch((err) => console.warn('[DB] save user msg failed:', err))
     }
 
-    // Build wire messages from current history + new user message
-    const wire: WireMessage[] = [...messages, userMsg].map((m) => ({
-      role:    m.role,
-      content: m.content,
-    }))
+    // Build wire messages from current history + new user message.
+    // Divider messages are display-only — filter them before sending to LM Studio.
+    const wire: WireMessage[] = [...messages, userMsg]
+      .filter((m) => m.role !== 'divider')
+      .map((m) => ({
+        role:    m.role as 'user' | 'assistant',
+        content: m.content,
+      }))
 
     try {
       await window.api.sendChatMessage({
@@ -290,6 +317,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         // Frontend dictates the model — the main process reads this from the
         // payload and injects it into the LM Studio request dynamically.
         model:       selectedModel,
+        // Section 5: pass thinking mode so ChatService sets the LM Studio
+        // `thinking` field accordingly.
+        thinkingMode,
       })
     } catch (err) {
       patchAssistant({
@@ -303,7 +333,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       assistantIdRef.current      = null
       streamingContentRef.current = ''
     }
-  }, [isStreaming, messages, patchAssistant, onChatCreated, selectedModel])
+  }, [isStreaming, messages, patchAssistant, onChatCreated, selectedModel, thinkingMode])
 
   // ── Abort ─────────────────────────────────────────────────────
   const abort = useCallback(() => {

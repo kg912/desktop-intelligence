@@ -7,10 +7,12 @@ import { ChatArea } from './ChatArea'
 import { InputBar } from './InputBar'
 import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
+import { useModelStore } from '../../store/ModelStore'
 import type { Chat, ProcessedAttachment, StoredMessage } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
+  const { setThinkingMode } = useModelStore()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // ── Chat history list (sidebar) ───────────────────────────────
@@ -207,6 +209,13 @@ export function Layout() {
     }
 
     const effectiveChatId = preChatId ?? activeChatId ?? undefined
+
+    // Auto-switch to Thinking mode when the message includes files.
+    // PDFs and images benefit significantly from the model's reasoning chain.
+    // Section 5.3 of CLAUDE.md specifies this behaviour.
+    if (list.length > 0) {
+      setThinkingMode('thinking')
+    }
 
     let processed: ProcessedAttachment[] = []
     if (list.length > 0) {

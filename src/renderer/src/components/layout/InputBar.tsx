@@ -8,8 +8,9 @@ import {
   type DragEvent
 } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle } from 'lucide-react'
+import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { useModelStore } from '../../store/ModelStore'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
 
@@ -81,6 +82,7 @@ export function InputBar({
   attachments:    externalAttachments,
   onAttachments,
 }: InputBarProps) {
+  const { thinkingMode, setThinkingMode } = useModelStore()
   const [text, setText] = useState('')
   const [localAttachments, setLocalAttachments] = useState<Attachment[]>([])
   const [isDraggingOver, setIsDraggingOver] = useState(false)
@@ -367,11 +369,30 @@ export function InputBar({
           </motion.button>
         </div>
 
-        {/* Helper text */}
-        <div className="px-4 pb-2.5 flex items-center justify-between">
-          <p className="text-[10px] text-content-muted">
-            Drop images, PDFs, or code files
-          </p>
+        {/* Helper row: thinking mode toggle (left) + keyboard hints (right) */}
+        <div className="px-3 pb-2.5 flex items-center justify-between">
+          {/* Thinking / Fast mode toggle */}
+          <button
+            onClick={() => setThinkingMode(thinkingMode === 'thinking' ? 'fast' : 'thinking')}
+            title={thinkingMode === 'thinking'
+              ? 'Thinking mode — click to switch to Fast'
+              : 'Fast mode — click to switch to Thinking'}
+            className={cn(
+              'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+              'text-[10px] font-medium transition-all duration-150',
+              'focus:outline-none',
+              thinkingMode === 'thinking'
+                ? 'bg-accent-950/70 text-accent-400 border border-accent-800/50'
+                : 'text-content-muted hover:text-content-secondary'
+            )}
+          >
+            {thinkingMode === 'thinking'
+              ? <Brain className="w-3 h-3" />
+              : <Zap  className="w-3 h-3" />
+            }
+            <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
+          </button>
+
           <p className="text-[10px] text-content-muted">
             <kbd className="font-mono">⏎</kbd> send &nbsp;·&nbsp;
             <kbd className="font-mono">⇧⏎</kbd> newline

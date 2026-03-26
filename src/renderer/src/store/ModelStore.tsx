@@ -18,6 +18,7 @@
 import { createContext, useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 import { DEFAULT_MODEL_ID } from '../../../shared/types'
+import type { ThinkingMode } from '../../../shared/types'
 
 // ── Types ────────────────────────────────────────────────────────
 interface ModelStoreValue {
@@ -25,6 +26,10 @@ interface ModelStoreValue {
   selectedModel:    string
   /** Swap the active model — consumed by a future Model Switcher UI */
   setSelectedModel: (modelId: string) => void
+  /** Whether the model reasons before answering (Section 5 of CLAUDE.md) */
+  thinkingMode:     ThinkingMode
+  /** Toggle between thinking and fast mode */
+  setThinkingMode:  (mode: ThinkingMode) => void
 }
 
 // ── Context ──────────────────────────────────────────────────────
@@ -32,10 +37,11 @@ const ModelStoreContext = createContext<ModelStoreValue | null>(null)
 
 // ── Provider ─────────────────────────────────────────────────────
 export function ModelStoreProvider({ children }: { children: ReactNode }) {
-  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL_ID)
+  const [selectedModel,  setSelectedModel]  = useState<string>(DEFAULT_MODEL_ID)
+  const [thinkingMode,   setThinkingMode]   = useState<ThinkingMode>('fast')
 
   return (
-    <ModelStoreContext.Provider value={{ selectedModel, setSelectedModel }}>
+    <ModelStoreContext.Provider value={{ selectedModel, setSelectedModel, thinkingMode, setThinkingMode }}>
       {children}
     </ModelStoreContext.Provider>
   )
