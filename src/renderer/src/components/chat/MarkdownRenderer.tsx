@@ -120,6 +120,10 @@ mermaid.initialize({
 // Monotonically-increasing counter → unique, stable DOM ids per block.
 let _mermaidIdCounter = 0
 
+// Cap for the diagram viewport — prevents tall flowcharts from dominating
+// the chat.  min() keeps the card from overflowing on small window sizes.
+const DIAGRAM_MAX_HEIGHT = 'min(440px, 60vh)'
+
 // ----------------------------------------------------------------
 // Streaming context
 //
@@ -141,8 +145,14 @@ const StreamingCtx = createContext(false)
 // max-width:100% / height:auto so diagrams scale to their container.
 // ----------------------------------------------------------------
 function makeResponsiveSvg(svg: string): string {
+  // Replace Mermaid's fixed pixel width with 100% so every diagram
+  // fills its card regardless of the SVG's natural content width.
+  // Tiny diagrams no longer render at their natural (small) pixel size;
+  // large diagrams fill the card and are capped by the container max-height.
+  // Remove explicit height — the browser derives it from the viewBox aspect
+  // ratio once width is set to 100%.
   return svg
-    .replace(/(<svg\b[^>]*?)\s+width="[\d.]+(?:px)?"/i,  '$1')
+    .replace(/(<svg\b[^>]*?)\s+width="[\d.]+(?:px)?"/i,  '$1 width="100%"')
     .replace(/(<svg\b[^>]*?)\s+height="[\d.]+(?:px)?"/i, '$1')
 }
 
@@ -271,11 +281,12 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   // ── Success: render the SVG ──
   return (
     <DiagramCard code={code}>
-      {/* SVG viewport — max-height caps very tall diagrams;
-          overflow-auto lets the user scroll within the card */}
+      {/* SVG viewport — DIAGRAM_MAX_HEIGHT prevents tall flowcharts from
+          dominating the chat; overflow-auto lets the user scroll within
+          the card on diagrams taller than the cap. */}
       <div
-        className="overflow-auto p-4 flex justify-center diagram-block"
-        style={{ maxHeight: '70vh' }}
+        className="overflow-auto p-4 diagram-block"
+        style={{ maxHeight: DIAGRAM_MAX_HEIGHT }}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     </DiagramCard>

@@ -78,11 +78,17 @@
 /* ----------------------------------------------------------------
    KaTeX overrides — ensure math renders white on dark background
    ---------------------------------------------------------------- */
-.katex { color: #f5f5f5; font-size: 1em; }
+/* 1.15em makes formulas slightly larger than body text (0.9375rem × 1.15 ≈ 17px)
+   so they stand out clearly from surrounding prose. Without this override
+   KaTeX defaults to 1em, making equations the same size as regular text
+   and hard to distinguish inline. */
+.katex { color: #f5f5f5; font-size: 1.15em; }
 .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0.25em 0;
+  /* Extra vertical breathing room and horizontal centering for display blocks */
+  padding: 0.75em 0;
+  text-align: center;
 }
 
 /* ----------------------------------------------------------------
@@ -179,10 +185,10 @@
    show a white background.
    ---------------------------------------------------------------- */
 .diagram-block svg {
-  /* Scale diagram to container width while keeping aspect ratio.
-     makeResponsiveSvg() strips the explicit px dimensions from the SVG
-     root so these CSS rules take effect — without that stripping, the
-     SVG's width/height attributes would override these properties. */
+  /* makeResponsiveSvg() sets width="100%" on the SVG root, so the diagram
+     always fills the card width.  height is removed from the SVG; the
+     browser derives it from the viewBox aspect ratio (height: auto below).
+     max-width is kept as a safety net for SVGs that already have width="100%". */
   max-width: 100%;
   height: auto;
   display: block;
