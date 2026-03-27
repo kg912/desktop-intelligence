@@ -114,4 +114,19 @@ describe('BASE_SYSTEM_PROMPT', () => {
     // Without this hint it falls back to describing plots in prose.
     expect(BASE_SYSTEM_PROMPT.toLowerCase()).toContain('echarts')
   })
+
+  it('explicitly restricts flowchart to software/code — not ML algorithms', () => {
+    // K-means, GMM, DBSCAN etc. must route to ECharts, not Mermaid flowcharts.
+    // The prompt must contain an explicit "NOT for … ML" restriction on flowchart.
+    const lower = BASE_SYSTEM_PROMPT.toLowerCase()
+    expect(lower).toContain('not for')
+  })
+
+  it('warns about Mermaid reserved-word node IDs (end, start)', () => {
+    // Using `end` or `start` as a Mermaid node ID causes a parse error.
+    // The model must be warned explicitly.
+    const lower = BASE_SYSTEM_PROMPT.toLowerCase()
+    expect(lower).toContain('end')
+    expect(lower).toContain('reserved')
+  })
 })
