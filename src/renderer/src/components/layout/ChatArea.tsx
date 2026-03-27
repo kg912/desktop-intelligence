@@ -30,10 +30,10 @@ function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
         </div>
         <div className="text-center">
           <h1 className="text-xl font-semibold text-content-primary tracking-tight">
-            Qwen Studio
+            Desktop Intelligence
           </h1>
           <p className="text-sm text-content-tertiary mt-1">
-            Local intelligence, zero latency
+            Local Inference. Zero Latency.
           </p>
         </div>
       </div>

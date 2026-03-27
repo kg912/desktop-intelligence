@@ -26,7 +26,7 @@ let _db: Database.Database | null = null
 export function getDB(): Database.Database {
   if (_db) return _db
 
-  const dbPath = path.join(app.getPath('userData'), 'qwen-studio.db')
+  const dbPath = path.join(app.getPath('userData'), 'desktop-intelligence.db')
   _db = new Database(dbPath)
   _db.pragma('journal_mode = WAL')
   _db.pragma('synchronous  = NORMAL')

@@ -1,5 +1,5 @@
 {
-  "name": "qwen-studio",
+  "name": "desktop-intelligence",
   "version": "1.0.0",
   "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
   "main": "out/main/index.js",
@@ -66,7 +66,7 @@
   },
   "build": {
     "appId": "com.local.qwenstudio",
-    "productName": "Qwen Studio",
+    "productName": "Desktop Intelligence",
     "directories": {
       "buildResources": "build",
       "output": "dist"

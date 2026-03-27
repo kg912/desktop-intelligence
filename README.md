@@ -1,4 +1,4 @@
-# Qwen Studio
+# Desktop Intelligence
 
 A native macOS desktop chat application that runs large language models entirely on your machine via [LM Studio](https://lmstudio.ai/). No cloud. No API keys. Full privacy.
 
@@ -79,7 +79,7 @@ npm test
 npm run package
 ```
 
-The packaged app is output to `dist/Qwen Studio-1.0.0-arm64.dmg`.
+The packaged app is output to `dist/Desktop Intelligence-1.0.0-arm64.dmg`.
 
 ---
 
@@ -120,7 +120,7 @@ All heavy work (PDF parsing, database writes, LM Studio API calls) runs in the E
 Since Electron swallows stdout in the packaged `.app`, launch from Terminal to see logs:
 
 ```bash
-/Applications/"Qwen Studio.app"/Contents/MacOS/"Qwen Studio"
+/Applications/"Desktop Intelligence.app"/Contents/MacOS/"Desktop Intelligence"
 ```
 
 Key sentinel log lines to watch:

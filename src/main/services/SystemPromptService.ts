@@ -19,7 +19,7 @@
  *    instead of ASCII art / text-based flowcharts.
  *  - The app renders KaTeX → model should use LaTeX for equations.
  */
-export const BASE_SYSTEM_PROMPT = `You are a helpful AI assistant running in Qwen Studio, a native desktop application.
+export const BASE_SYSTEM_PROMPT = `You are a helpful AI assistant running in Desktop Intelligence, a native desktop application.
 
 VISUALISATION CAPABILITIES — use these instead of ASCII art:
 • Diagrams & flowcharts: write Mermaid syntax inside a \`\`\`mermaid code block. The app renders it as a proper SVG diagram. Supported types: flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, pie, gitgraph, mindmap, timeline, journey.

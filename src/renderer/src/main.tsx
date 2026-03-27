@@ -13,9 +13,9 @@ async function bootstrap(): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(window as any).api = mockModule.mockApi
     // Expose demo trigger — reads live module binding so it works after useChat mounts
-    ;(window as any).__qwenDemo = (text?: string) =>
+    ;(window as any).__desktopIntelligenceDemo = (text?: string) =>
       mockModule.triggerDemo?.(text ?? 'Explain the math behind transformer self-attention')
-    console.info('[QwenStudio] Browser demo mode — call window.__qwenDemo() to start.')
+    console.info('[DesktopIntelligence] Browser demo mode — call window.__desktopIntelligenceDemo() to start.')
   }
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

@@ -40,7 +40,7 @@ function LoadingView() {
       </motion.div>
       <div className="text-center">
         <h2 className="text-lg font-semibold text-content-primary">Initializing</h2>
-        <p className="text-sm text-content-tertiary mt-1">Starting up Qwen Studio…</p>
+        <p className="text-sm text-content-tertiary mt-1">Starting up Desktop Intelligence…</p>
       </div>
     </div>
   )
@@ -207,7 +207,7 @@ export function ConnectionStatus({
           {/* App name watermark */}
           <div className="absolute bottom-8 text-center">
             <p className="text-xs text-content-muted tracking-widest uppercase">
-              Qwen Studio
+              Desktop Intelligence
             </p>
           </div>
         </motion.div>

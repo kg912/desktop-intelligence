@@ -1,4 +1,4 @@
-# CLAUDE.md — Qwen Studio: AI Orchestration Layer
+# CLAUDE.md — Desktop Intelligence: AI Orchestration Layer
 ## Authoritative Project Bible & Autonomous Agent Instructions
 
 > **READ THIS ENTIRE FILE BEFORE TOUCHING A SINGLE LINE OF CODE.**
@@ -39,6 +39,7 @@ append a row. Never delete rows. This is how you know what has and hasn't been d
 | 23 | 2026-03-26 | src/main/services/SystemPromptService.ts (new), src/main/services/__tests__/SystemPromptService.test.ts (new), src/main/ipc/handlers.ts | ASCII diagram fix: Created BASE_SYSTEM_PROMPT constant that tells the model about Mermaid SVG rendering and KaTeX math. Always prepended as the first system message in handlers.ts. 11 unit tests guard the prompt content (must contain mermaid, ```mermaid syntax, flowchart, sequenceDiagram, pie, LaTeX hints, SVG mention; must NOT suggest ASCII art as fallback; must fit in 512-token budget). 137 tests passing total. | ✅ Done |
 | 24 | 2026-03-26 | src/renderer/src/components/chat/MarkdownRenderer.tsx | MERMAID RENDERING FIX: Switched from dynamic import('mermaid') to static `import mermaid from 'mermaid'`. Changed securityLevel from 'antiscript' to 'loose' — 'antiscript' pipes SVG through DOMPurify which strips xmlns attrs in Electron's renderer; 'loose' injects SVG via innerHTML directly. Moved mermaid.initialize() to module level (eliminated ensureMermaid() lazy-init). Replaced unstable Date.now()+random ID with module-level counter (_mermaidIdCounter). Removed unused `inline` parameter from CodeBlock destructuring. 137/137 tests passing. | ✅ Done |
 | 17 | TBD | src/renderer/src/components/ErrorBanner.tsx (or equivalent) | **P1 OPEN:** Stale daemon error banner — never clears after daemon recovers. FIX: dispatch clear-error on first successful health check | 🟡 OPEN |
+| 25 | 2026-03-27 | package.json, package-lock.json, src/renderer/index.html, src/renderer/src/components/layout/ChatArea.tsx, src/renderer/src/components/ConnectionStatus.tsx, src/main/services/SystemPromptService.ts, src/main/services/DatabaseService.ts, src/renderer/src/main.tsx, README.md, CLAUDE.md | Full rebrand: "Qwen Studio" → "Desktop Intelligence" across all files. DB filename qwen-studio.db → desktop-intelligence.db. Tagline updated to "Local Inference. Zero Latency." Demo globals renamed __qwenDemo → __desktopIntelligenceDemo. | ✅ Done |
 
 **INSTRUCTIONS FOR UPDATING THIS LOG:**
 - Before starting work each session, read every row.
@@ -201,7 +202,7 @@ Retrieved chunks MUST be in the messages array before the fetch call:
 const ragChunks = await vectorSearch(query, chatId);
 const ragContext = ragChunks.map(c => c.text).join('\n\n---\n\n');
 
-const systemPrompt = `You are Qwen Studio assistant.
+const systemPrompt = `You are Desktop Intelligence assistant.
 ${ragContext.length > 0 ? `\n\nRELEVANT DOCUMENT CONTEXT:\n${ragContext}` : ''}`;
 
 const messages = [
@@ -304,7 +305,7 @@ These are known desired features. Do not spontaneously implement them. Wait for 
 ## 8. FILE STRUCTURE (REFERENCE)
 
 ```
-qwen-studio/
+desktop-intelligence/
 ├── electron/
 │   ├── main/
 │   │   ├── index.ts              — App entry, window creation
@@ -380,7 +381,7 @@ These sentinel logs must remain in the codebase permanently. They are the only w
 
 To view these logs from the packaged `.dmg`, launch from Terminal:
 ```bash
-/Applications/"Qwen Studio.app"/Contents/MacOS/"Qwen Studio"
+/Applications/"Desktop Intelligence.app"/Contents/MacOS/"Desktop Intelligence"
 ```
 
 ---
@@ -449,4 +450,4 @@ interface LMStudioPayload {
 
 ---
 
-*Last updated: 2026-03-26 | Version: 1.1 | Maintained by: Claude Code (update this on every session)*
+*Last updated: 2026-03-27 | Version: 1.2 | Maintained by: Claude Code (update this on every session)*
