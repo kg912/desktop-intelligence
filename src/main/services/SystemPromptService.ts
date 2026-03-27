@@ -29,6 +29,7 @@ RENDERING CAPABILITIES (use only when visual structure adds clarity):
   - stateDiagram-v2: state machines
   - pie / gantt / gitgraph / mindmap: only when data is genuinely structured
 • Plots: ECharts JSON in a \`\`\`echarts block — math/ML plots (Gaussian, GMM, decision boundaries, heatmaps, loss curves).
+  Data format rule: ALWAYS use \`xAxis:{type:"value"}\`, \`yAxis:{type:"value"}\`, and series data as \`[[x,y],...]\` numeric pairs. Pre-compute all values — no JS expressions.
 • Mathematics: use LaTeX inside $...$ (inline) or $$...$$ (display block). Rendered with KaTeX.
 • Tables: use standard Markdown table syntax.
 

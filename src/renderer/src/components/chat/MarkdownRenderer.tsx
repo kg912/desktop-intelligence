@@ -349,6 +349,75 @@ function deepMerge(
   return result
 }
 
+/**
+ * scheduleIdle — cross-browser requestIdleCallback wrapper.
+ * Returns a cancel function.
+ */
+function scheduleIdle(cb: () => void): () => void {
+  if (typeof requestIdleCallback !== 'undefined') {
+    const id = requestIdleCallback(cb, { timeout: 2000 })
+    return () => cancelIdleCallback(id)
+  }
+  const id = setTimeout(cb, 16)
+  return () => clearTimeout(id)
+}
+
+/**
+ * fixSeriesDataFormat
+ *
+ * Defensive repair for the most common LLM data format mistake:
+ *   xAxis.type: "value"  +  series[i].data: [y0, y1, …]   ← flat, no x coords
+ *
+ * ECharts silently produces an empty chart in this case because "value" axes
+ * expect [[x, y], …] pairs, not flat y-arrays.
+ *
+ * When all of the following are true the function synthesises x-coords:
+ *  • option.xAxis is a single object (not an array) with type === "value"
+ *  • option.xAxis has min / max defined (so we can derive the x range)
+ *  • a series element has data that is a flat array of numbers (not [[x,y]…])
+ *
+ * Any series already in [[x,y]…] format is left unchanged.
+ */
+function fixSeriesDataFormat(opt: Record<string, unknown>): Record<string, unknown> {
+  const xAxis = opt.xAxis
+  if (!xAxis || Array.isArray(xAxis) || typeof xAxis !== 'object') return opt
+  const xa = xAxis as Record<string, unknown>
+  if (xa['type'] !== 'value') return opt
+
+  const xMin  = typeof xa['min']  === 'number' ? xa['min']  : null
+  const xMax  = typeof xa['max']  === 'number' ? xa['max']  : null
+  const xData = Array.isArray(xa['data']) ? xa['data'] as unknown[] : null
+
+  const rawSeries = opt.series
+  if (!Array.isArray(rawSeries)) return opt
+
+  const fixedSeries = rawSeries.map((s) => {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return s
+    const series = s as Record<string, unknown>
+    const data   = series['data']
+    if (!Array.isArray(data) || data.length === 0) return series
+
+    // Already [[x,y],…] — leave as-is
+    if (Array.isArray(data[0])) return series
+
+    // Flat number array — synthesise x coordinates
+    const n = data.length
+    let xs: number[]
+
+    if (xData && xData.length === n) {
+      xs = xData.map(Number)
+    } else if (xMin !== null && xMax !== null) {
+      xs = Array.from({ length: n }, (_, i) => xMin + (i / (n - 1)) * (xMax - xMin))
+    } else {
+      return series  // can't fix — no x reference
+    }
+
+    return { ...series, data: data.map((y, i) => [xs[i], Number(y)]) }
+  })
+
+  return { ...opt, series: fixedSeries }
+}
+
 interface EchartsBlockProps {
   code: string
 }
@@ -356,15 +425,17 @@ interface EchartsBlockProps {
 function EchartsBlock({ code }: EchartsBlockProps) {
   const isStreaming = useContext(StreamingCtx)
 
-  // Parse the JSON option the model produced
-  const [option, setOption] = useState<Record<string, unknown> | null>(null)
-  const [error,  setError]  = useState<string | null>(null)
+  // `option` = parsed + dark-themed + format-fixed option object.
+  // `renderOption` = what ReactECharts actually receives, deferred to idle time
+  // so that echarts.init() never blocks a streaming token render.
+  const [option,       setOption]       = useState<Record<string, unknown> | null>(null)
+  const [renderOption, setRenderOption] = useState<Record<string, unknown> | null>(null)
+  const [error,        setError]        = useState<string | null>(null)
 
-  // Re-parse only when code changes (not on every streaming tick)
   const lastParsedCode = useRef<string | null>(null)
 
+  // ── Parse JSON when code changes (debounced while streaming) ──
   useEffect(() => {
-    // Wait for stream to settle — same debounce strategy as MermaidBlock
     if (code === lastParsedCode.current) return
     const delay = isStreaming ? 600 : 0
     let cancelled = false
@@ -377,17 +448,31 @@ function EchartsBlock({ code }: EchartsBlockProps) {
           throw new Error('ECharts option must be a JSON object')
         }
         lastParsedCode.current = code
-        setOption(deepMerge(ECHARTS_DARK_BASE, parsed as Record<string, unknown>))
+        const merged = deepMerge(ECHARTS_DARK_BASE, parsed as Record<string, unknown>)
+        setOption(fixSeriesDataFormat(merged))
         setError(null)
       } catch (err) {
         lastParsedCode.current = code
         setError(err instanceof Error ? err.message : String(err))
         setOption(null)
+        setRenderOption(null)
       }
     }, delay)
 
     return () => { cancelled = true; clearTimeout(timer) }
   }, [code, isStreaming])
+
+  // ── Defer ReactECharts mount to idle time ──────────────────────
+  // echarts.init() + setOption() is synchronous CPU work (~200–500 ms).
+  // Running it in componentDidMount of ReactECharts blocks the main thread
+  // and causes streaming token renders to visually pause.
+  // scheduleIdle() pushes the mount until the browser has a free moment,
+  // so streaming text always stays responsive.
+  useEffect(() => {
+    if (!option) { setRenderOption(null); return }
+    const cancel = scheduleIdle(() => setRenderOption(option))
+    return cancel
+  }, [option])
 
   const border = error ? 'border-accent-900/30' : 'border-surface-border/60'
 
@@ -417,14 +502,15 @@ function EchartsBlock({ code }: EchartsBlockProps) {
             {code}
           </pre>
         </div>
-      ) : !option ? (
-        <div className="px-4 py-6 flex justify-center">
+      ) : !renderOption ? (
+        // Shown while: (a) still streaming/debouncing, (b) idle-scheduled, (c) error
+        <div className="px-4 py-6 flex justify-center" style={{ height: '80px' }}>
           <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
         </div>
       ) : (
         <div className="p-2">
           <ReactECharts
-            option={option}
+            option={renderOption}
             style={{ height: '360px', width: '100%' }}
             opts={{ renderer: 'svg', locale: 'EN' }}
             notMerge
