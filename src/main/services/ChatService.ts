@@ -126,7 +126,16 @@ export class ChatService {
     // 'thinking' → reasoning chain with 8k budget; 'fast' → disabled.
     // LM Studio/MLX passes unknown fields through to the model backend,
     // so this is safe to send even if the build doesn't honour it.
-    const thinkingField = payload.thinkingMode === 'thinking'
+    //
+    // IMPORTANT: max_tokens must be large enough for BOTH the thinking block
+    // AND the visible answer.  Qwen3.5 counts all generated tokens (think +
+    // answer) against max_tokens.  With 4096 the model could exhaust the
+    // budget inside the <think> block and never produce a visible answer —
+    // parseThinkBlocks then shows one giant unclosed thought with no answer.
+    // Thinking mode: 16 000 total (≥ budget_tokens 8 000 + full answer room).
+    // Fast mode:      4 096 total (unchanged — no thinking overhead).
+    const isThinking = payload.thinkingMode === 'thinking'
+    const thinkingField = isThinking
       ? { thinking: { type: 'enabled', budget_tokens: 8000 } }
       : { thinking: { type: 'disabled' } }
 
@@ -137,7 +146,7 @@ export class ChatService {
       messages:    builtMessages,
       stream:      true,
       temperature: 0.7,
-      max_tokens:  4096,
+      max_tokens:  isThinking ? 16000 : 4096,
       // Section 5.4: always send stop sequences to prevent Qwen runaway loop.
       // These fire at the server level before any tokens are streamed back,
       // so they catch runaway patterns earlier than the client-side detector.
