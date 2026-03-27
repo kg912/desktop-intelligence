@@ -120,9 +120,6 @@ mermaid.initialize({
 // Monotonically-increasing counter → unique, stable DOM ids per block.
 let _mermaidIdCounter = 0
 
-// Cap for the diagram viewport — prevents tall flowcharts from dominating
-// the chat.  min() keeps the card from overflowing on small window sizes.
-const DIAGRAM_MAX_HEIGHT = 'min(440px, 60vh)'
 
 // ----------------------------------------------------------------
 // Streaming context
@@ -281,12 +278,11 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   // ── Success: render the SVG ──
   return (
     <DiagramCard code={code}>
-      {/* SVG viewport — DIAGRAM_MAX_HEIGHT prevents tall flowcharts from
-          dominating the chat; overflow-auto lets the user scroll within
-          the card on diagrams taller than the cap. */}
+      {/* Diagram renders at full height — no scroll, no clip.
+          The outer ChatArea scroll container handles vertical navigation.
+          The system prompt's ≤10 node rule keeps diagrams from being huge. */}
       <div
-        className="overflow-auto p-4 diagram-block"
-        style={{ maxHeight: DIAGRAM_MAX_HEIGHT }}
+        className="p-4 diagram-block"
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     </DiagramCard>
