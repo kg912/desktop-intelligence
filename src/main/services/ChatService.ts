@@ -146,7 +146,11 @@ export class ChatService {
       messages:    builtMessages,
       stream:      true,
       temperature: 0.7,
-      max_tokens:  isThinking ? 16000 : 4096,
+      // Running on own compute — no per-token billing.
+      // Thinking mode: 32 768 tokens (matches Qwen3.5's typical context window,
+      // ensures the full thinking block + a complete answer always fit).
+      // Fast mode: 16 384 tokens (4× the old cap; generous for any response type).
+      max_tokens:  isThinking ? 32768 : 16384,
       // Section 5.4: always send stop sequences to prevent Qwen runaway loop.
       // These fire at the server level before any tokens are streamed back,
       // so they catch runaway patterns earlier than the client-side detector.

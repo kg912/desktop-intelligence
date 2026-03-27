@@ -68,23 +68,28 @@ export function parseThinkBlocks(raw: string): ParsedContent {
  * CodeBlockKind
  *
  * Determines how the renderer should display a fenced code block:
- *  - 'inline'  → no language tag; render as a plain `<code>` span
- *  - 'mermaid' → diagram syntax; hand off to the Mermaid SVG renderer
- *  - 'code'    → everything else; syntax-highlight with highlight.js
+ *  - 'inline'   → no language tag; render as a plain `<code>` span
+ *  - 'mermaid'  → diagram syntax; hand off to the Mermaid SVG renderer
+ *  - 'echarts'  → ECharts JSON option object; rendered as an interactive plot
+ *  - 'code'     → everything else; syntax-highlight with highlight.js
  */
-export type CodeBlockKind = 'inline' | 'mermaid' | 'code'
+export type CodeBlockKind = 'inline' | 'mermaid' | 'echarts' | 'code'
 
 /**
  * classifyCodeBlock
  *
  * Pure function — takes the language string extracted from a markdown fence
- * (e.g. "python", "mermaid", undefined) and returns the rendering strategy.
+ * (e.g. "python", "mermaid", "echarts", undefined) and returns the rendering
+ * strategy.
  *
  * Case-insensitive for the language name so `Mermaid` and `MERMAID` both work.
+ * `plot` is accepted as an alias for `echarts` so the model can write either.
  */
 export function classifyCodeBlock(lang: string | undefined): CodeBlockKind {
   if (!lang) return 'inline'
-  if (lang.toLowerCase() === 'mermaid') return 'mermaid'
+  const lower = lang.toLowerCase()
+  if (lower === 'mermaid') return 'mermaid'
+  if (lower === 'echarts' || lower === 'plot') return 'echarts'
   return 'code'
 }
 

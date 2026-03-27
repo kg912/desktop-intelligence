@@ -28,6 +28,7 @@ RENDERING CAPABILITIES (use only when visual structure adds clarity):
   - classDiagram / erDiagram: code architecture and data models
   - stateDiagram-v2: state machines
   - pie / gantt / gitgraph / mindmap: only when data is genuinely structured
+• Plots: ECharts JSON in a \`\`\`echarts block — math/ML plots (Gaussian, GMM, decision boundaries, heatmaps, loss curves).
 • Mathematics: use LaTeX inside $...$ (inline) or $$...$$ (display block). Rendered with KaTeX.
 • Tables: use standard Markdown table syntax.
 

@@ -30,9 +30,10 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
-import { Check, Copy, Terminal, ChevronRight, GitBranch } from 'lucide-react'
+import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2 } from 'lucide-react'
 import hljs from 'highlight.js'
 import mermaid from 'mermaid'
+import ReactECharts from 'echarts-for-react'
 import { cn } from '../../lib/utils'
 import {
   parseThinkBlocks,
@@ -290,6 +291,151 @@ function MermaidBlock({ code }: MermaidBlockProps) {
 }
 
 // ----------------------------------------------------------------
+// ECharts plot block
+// ----------------------------------------------------------------
+
+/**
+ * Dark-palette base applied to every ECharts option the model generates.
+ * The user-supplied option is deep-merged on top, so model values always win.
+ * Keeping colour/bg overrides here means the model only needs to specify
+ * data (series, axes, title) — not theme boilerplate.
+ */
+const ECHARTS_DARK_BASE: Record<string, unknown> = {
+  backgroundColor: 'transparent',
+  textStyle:       { color: '#e5e5e5' },
+  title:           { textStyle: { color: '#f5f5f5' }, subtextStyle: { color: '#a3a3a3' } },
+  legend:          { textStyle: { color: '#a3a3a3' }, inactiveColor: '#525252' },
+  tooltip: {
+    backgroundColor: '#1a1a1a',
+    borderColor:     '#3a3a3a',
+    textStyle:       { color: '#f5f5f5' },
+  },
+  // Accent palette: red / blue / green / orange / purple / cyan / yellow / rose
+  color: ['#f87171','#60a5fa','#86efac','#fb923c','#c084fc','#67e8f9','#fcd34d','#f472b6'],
+  xAxis: {
+    axisLine:      { lineStyle: { color: '#3a3a3a' } },
+    axisLabel:     { color: '#a3a3a3' },
+    splitLine:     { lineStyle: { color: '#1f1f1f' } },
+    nameTextStyle: { color: '#a3a3a3' },
+  },
+  yAxis: {
+    axisLine:      { lineStyle: { color: '#3a3a3a' } },
+    axisLabel:     { color: '#a3a3a3' },
+    splitLine:     { lineStyle: { color: '#1f1f1f' } },
+    nameTextStyle: { color: '#a3a3a3' },
+  },
+}
+
+/** Recursively merge base into override — override values always win. */
+function deepMerge(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base }
+  for (const [k, v] of Object.entries(override)) {
+    const b = base[k]
+    if (
+      v !== null && typeof v === 'object' && !Array.isArray(v) &&
+      b !== null && typeof b === 'object' && !Array.isArray(b)
+    ) {
+      result[k] = deepMerge(
+        b as Record<string, unknown>,
+        v as Record<string, unknown>
+      )
+    } else {
+      result[k] = v
+    }
+  }
+  return result
+}
+
+interface EchartsBlockProps {
+  code: string
+}
+
+function EchartsBlock({ code }: EchartsBlockProps) {
+  const isStreaming = useContext(StreamingCtx)
+
+  // Parse the JSON option the model produced
+  const [option, setOption] = useState<Record<string, unknown> | null>(null)
+  const [error,  setError]  = useState<string | null>(null)
+
+  // Re-parse only when code changes (not on every streaming tick)
+  const lastParsedCode = useRef<string | null>(null)
+
+  useEffect(() => {
+    // Wait for stream to settle — same debounce strategy as MermaidBlock
+    if (code === lastParsedCode.current) return
+    const delay = isStreaming ? 600 : 0
+    let cancelled = false
+
+    const timer = setTimeout(() => {
+      if (cancelled) return
+      try {
+        const parsed = JSON.parse(code)
+        if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+          throw new Error('ECharts option must be a JSON object')
+        }
+        lastParsedCode.current = code
+        setOption(deepMerge(ECHARTS_DARK_BASE, parsed as Record<string, unknown>))
+        setError(null)
+      } catch (err) {
+        lastParsedCode.current = code
+        setError(err instanceof Error ? err.message : String(err))
+        setOption(null)
+      }
+    }, delay)
+
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [code, isStreaming])
+
+  const border = error ? 'border-accent-900/30' : 'border-surface-border/60'
+
+  return (
+    <div
+      className={`group my-4 rounded-xl overflow-hidden border ${border}`}
+      style={{ background: '#141414' }}
+    >
+      {/* Header bar */}
+      <div
+        className={`flex items-center justify-between px-4 py-2.5 border-b ${border}`}
+        style={{ background: '#111' }}
+      >
+        <div className="flex items-center gap-2">
+          <BarChart2 className={`w-3.5 h-3.5 ${error ? 'text-accent-800' : 'text-content-muted'}`} />
+          <span className={`text-[11px] font-mono font-medium tracking-wide uppercase ${error ? 'text-accent-800' : 'text-content-tertiary'}`}>
+            {error ? 'Plot (parse error)' : 'Plot'}
+          </span>
+        </div>
+        <CopyButton text={code} />
+      </div>
+
+      {/* Body */}
+      {error ? (
+        <div className="overflow-x-auto">
+          <pre className="p-4 m-0 text-[13px] leading-relaxed font-mono text-content-secondary whitespace-pre">
+            {code}
+          </pre>
+        </div>
+      ) : !option ? (
+        <div className="px-4 py-6 flex justify-center">
+          <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
+        </div>
+      ) : (
+        <div className="p-2">
+          <ReactECharts
+            option={option}
+            style={{ height: '360px', width: '100%' }}
+            opts={{ renderer: 'svg', locale: 'EN' }}
+            notMerge
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ----------------------------------------------------------------
 // Copy button
 // ----------------------------------------------------------------
 function CopyButton({ text }: { text: string }) {
@@ -354,6 +500,11 @@ function CodeBlock({ className, children }: CodeProps) {
   // ── Mermaid diagram ──
   if (kind === 'mermaid') {
     return <MermaidBlock code={rawCode} />
+  }
+
+  // ── ECharts interactive plot ──
+  if (kind === 'echarts') {
+    return <EchartsBlock code={rawCode} />
   }
 
   // ── Syntax-highlighted code block (highlight.js) ──

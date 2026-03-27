@@ -81,11 +81,13 @@ describe('BASE_SYSTEM_PROMPT', () => {
     expect(hasMandatoryAlways).toBe(false)
   })
 
-  it('fits within a 512-token budget (≈ 1900 characters at 3.7 chars/token)', () => {
-    // A base prompt larger than ~500 tokens wastes context on a 32k-context model.
+  it('fits within a ~600-token budget (≈ 2200 characters at 3.7 chars/token)', () => {
+    // A base prompt larger than ~600 tokens wastes context on a 32k-context model.
     // This is a soft guard — adjust the limit if the prompt is intentionally
     // expanded, but do so consciously.
-    expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(1_900)
+    // Raised from 1900 → 2200 when ECharts plot rendering capability was added
+    // (the new capability hint is ~120 chars and genuinely needed).
+    expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(2_200)
   })
 
   // ── Diagram syntax rules ──────────────────────────────────────────────
@@ -105,5 +107,11 @@ describe('BASE_SYSTEM_PROMPT', () => {
     // `Note over` is sequenceDiagram syntax; using it in a Gantt causes a
     // parse error.  The system prompt must warn the model explicitly.
     expect(BASE_SYSTEM_PROMPT.toLowerCase()).toContain('note over')
+  })
+
+  it('mentions echarts plot block for math/ML visualizations', () => {
+    // The model must know it can produce interactive charts via ```echarts blocks.
+    // Without this hint it falls back to describing plots in prose.
+    expect(BASE_SYSTEM_PROMPT.toLowerCase()).toContain('echarts')
   })
 })

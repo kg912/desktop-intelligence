@@ -305,6 +305,27 @@ describe('classifyCodeBlock', () => {
   it('does NOT classify "notmermaid" as mermaid', () => {
     expect(classifyCodeBlock('notmermaid')).toBe('code')
   })
+
+  // ── ECharts / plot blocks ───────────────────────────────────────
+  it('returns "echarts" for the exact string "echarts"', () => {
+    expect(classifyCodeBlock('echarts')).toBe('echarts')
+  })
+
+  it('returns "echarts" for uppercase "ECHARTS" (case-insensitive)', () => {
+    expect(classifyCodeBlock('ECHARTS')).toBe('echarts')
+  })
+
+  it('returns "echarts" for "plot" (alias)', () => {
+    expect(classifyCodeBlock('plot')).toBe('echarts')
+  })
+
+  it('returns "echarts" for "PLOT" (alias, case-insensitive)', () => {
+    expect(classifyCodeBlock('PLOT')).toBe('echarts')
+  })
+
+  it('does NOT classify "echarts-extra" as echarts', () => {
+    expect(classifyCodeBlock('echarts-extra')).toBe('code')
+  })
 })
 
 // ── Suite: isValidMermaidSyntax ───────────────────────────────────────────────
