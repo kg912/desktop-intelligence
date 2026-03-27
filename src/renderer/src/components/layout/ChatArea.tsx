@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
 import { MessageBubble } from '../chat/MessageBubble'
@@ -70,7 +70,13 @@ interface ChatAreaProps {
   onSuggest?:  (text: string) => void
 }
 
-export function ChatArea({ messages, isStreaming = false, onSuggest }: ChatAreaProps) {
+export interface ChatAreaHandle {
+  /** Immediately snap to the bottom of the message list. */
+  scrollToBottom: () => void
+}
+
+export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
+function ChatArea({ messages, isStreaming = false, onSuggest }, ref) {
   const bottomRef          = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -84,6 +90,15 @@ export function ChatArea({ messages, isStreaming = false, onSuggest }: ChatAreaP
   // actual user interaction.  Set to true just before each programmatic
   // scroll; cleared by the first onScroll handler invocation that follows.
   const isProgrammaticScroll = useRef(false)
+
+  // ── Imperative handle — lets Layout snap to bottom before async send ──
+  useImperativeHandle(ref, () => ({
+    scrollToBottom() {
+      userScrolledUp.current     = false
+      isProgrammaticScroll.current = true
+      bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
+    },
+  }))
 
   // ── Re-enable scroll whenever the USER sends a new message ──────
   // (their message is always the last one added with role 'user')
@@ -173,4 +188,4 @@ export function ChatArea({ messages, isStreaming = false, onSuggest }: ChatAreaP
       </AnimatePresence>
     </div>
   )
-}
+})

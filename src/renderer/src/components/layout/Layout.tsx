@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 import { ChatArea } from './ChatArea'
+import type { ChatAreaHandle } from './ChatArea'
 import { InputBar } from './InputBar'
 import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
@@ -14,6 +15,7 @@ import type { Message } from '../chat/MessageBubble'
 export function Layout() {
   const { setThinkingMode } = useModelStore()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const chatAreaRef = useRef<ChatAreaHandle>(null)
 
   // ── Chat history list (sidebar) ───────────────────────────────
   const [chats,        setChats]        = useState<Chat[]>([])
@@ -179,6 +181,11 @@ export function Layout() {
 
   // ── Process attachments and send ──────────────────────────────
   const handleSend = useCallback(async (text: string, rawAttachments?: Attachment[]) => {
+    // Snap to bottom immediately — before any async work or state changes —
+    // so the user lands at the bottom the instant they press send, even if
+    // they were scrolled up reading history.
+    chatAreaRef.current?.scrollToBottom()
+
     const list = rawAttachments ?? []
 
     // ── Pre-create the chat row BEFORE processFile is called ─────
@@ -290,6 +297,7 @@ export function Layout() {
         <TopBar />
 
         <ChatArea
+          ref={chatAreaRef}
           messages={messages}
           isStreaming={isStreaming}
           onSuggest={handleSuggest}
