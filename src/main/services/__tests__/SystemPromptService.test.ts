@@ -21,6 +21,11 @@
 import { describe, it, expect } from 'vitest'
 import { BASE_SYSTEM_PROMPT } from '../SystemPromptService'
 
+/** Soft character-count ceiling for the base system prompt.
+ *  Update this constant (and the comment below) whenever the limit is
+ *  intentionally raised — keeps the test name and assertion in sync. */
+const MAX_PROMPT_CHARS = 2_400
+
 describe('BASE_SYSTEM_PROMPT', () => {
   it('is a non-empty string', () => {
     expect(typeof BASE_SYSTEM_PROMPT).toBe('string')
@@ -81,13 +86,12 @@ describe('BASE_SYSTEM_PROMPT', () => {
     expect(hasMandatoryAlways).toBe(false)
   })
 
-  it('fits within a ~600-token budget (≈ 2200 characters at 3.7 chars/token)', () => {
-    // A base prompt larger than ~600 tokens wastes context on a 32k-context model.
-    // This is a soft guard — adjust the limit if the prompt is intentionally
-    // expanded, but do so consciously.
-    // Raised from 1900 → 2200 when ECharts plot rendering capability was added
-    // (the new capability hint is ~120 chars and genuinely needed).
-    expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(2_200)
+  it(`fits within a ~${Math.round(MAX_PROMPT_CHARS / 3.7)}-token budget (≈ ${MAX_PROMPT_CHARS} characters at 3.7 chars/token)`, () => {
+    // A base prompt larger than ~650 tokens wastes context on a 32k-context model.
+    // This is a soft guard — update MAX_PROMPT_CHARS above when expanding intentionally.
+    // History: 1900 → 2200 (ECharts capability), 2200 → 2400 (axis-type + flowchart
+    //   direction syntax rules — both prevent common model render errors).
+    expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(MAX_PROMPT_CHARS)
   })
 
   // ── Diagram syntax rules ──────────────────────────────────────────────
