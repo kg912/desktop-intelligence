@@ -7,12 +7,15 @@ import { processFile } from '../services/FileProcessorService'
 import { detectSearchIntent, performWebSearch } from '../services/WebSearchService'
 import { BASE_SYSTEM_PROMPT } from '../services/SystemPromptService'
 import {
+  getDB,
   getAllChats,
   createChat,
   getChatMessages,
   saveMessage,
   deleteChatById,
 } from '../services/DatabaseService'
+import { retrieveContext } from '../services/RAGService'
+import { slideIfNeeded } from '../services/ContextSliderService'
 import type {
   ConnectionState,
   DaemonState,
@@ -102,7 +105,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     let chatHasDocuments = false
     if (payload.chatId) {
       try {
-        const { getDB } = await import('../services/DatabaseService')
         const db  = getDB()
         const row = db
           .prepare('SELECT COUNT(*) AS n FROM documents WHERE chat_id = ?')
@@ -131,7 +133,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     let ragContext = ''
     if (lastUserMsg) {
       try {
-        const { retrieveContext } = await import('../services/RAGService')
         ragContext = await retrieveContext(lastUserMsg.content, payload.chatId)
       } catch (err) {
         console.error('[RAG] retrieveContext failed:', err)
@@ -144,7 +145,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
     // ── 5. Context sliding ───────────────────────────────────
     try {
-      const { slideIfNeeded } = await import('../services/ContextSliderService')
       enrichedMessages = await slideIfNeeded(
         payload.messages,
         enrichedSystemPrompt ?? '',

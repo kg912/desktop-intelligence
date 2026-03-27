@@ -147,6 +147,39 @@ function makeResponsiveSvg(svg: string): string {
 }
 
 // ----------------------------------------------------------------
+// Shared diagram card shell — used by both error and success states.
+// ----------------------------------------------------------------
+interface DiagramCardProps {
+  code:      string
+  isError?:  boolean
+  children:  React.ReactNode
+}
+
+function DiagramCard({ code, isError = false, children }: DiagramCardProps) {
+  const border = isError ? 'border-accent-900/30' : 'border-surface-border/60'
+  return (
+    <div
+      className={`group my-4 rounded-xl overflow-hidden border ${border}`}
+      style={{ background: '#141414' }}
+    >
+      <div
+        className={`flex items-center justify-between px-4 py-2.5 border-b ${border}`}
+        style={{ background: '#111' }}
+      >
+        <div className="flex items-center gap-2">
+          <GitBranch className={`w-3.5 h-3.5 ${isError ? 'text-accent-800' : 'text-content-muted'}`} />
+          <span className={`text-[11px] font-mono font-medium tracking-wide uppercase ${isError ? 'text-accent-800' : 'text-content-tertiary'}`}>
+            {isError ? 'Diagram (parse error)' : 'Diagram'}
+          </span>
+        </div>
+        <CopyButton text={code} />
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// ----------------------------------------------------------------
 // Mermaid diagram block
 // ----------------------------------------------------------------
 
@@ -213,28 +246,13 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   // ── Render error: fall back to plain text code block ──
   if (error) {
     return (
-      <div
-        className="group my-4 rounded-xl overflow-hidden border border-accent-900/30"
-        style={{ background: '#141414' }}
-      >
-        <div
-          className="flex items-center justify-between px-4 py-2.5 border-b border-accent-900/30"
-          style={{ background: '#111' }}
-        >
-          <div className="flex items-center gap-2">
-            <GitBranch className="w-3.5 h-3.5 text-accent-800" />
-            <span className="text-[11px] font-mono font-medium text-accent-800 tracking-wide uppercase">
-              Diagram (parse error)
-            </span>
-          </div>
-          <CopyButton text={code} />
-        </div>
+      <DiagramCard code={code} isError>
         <div className="overflow-x-auto">
           <pre className="p-4 m-0 text-[13px] leading-relaxed font-mono text-content-secondary whitespace-pre">
             {code}
           </pre>
         </div>
-      </div>
+      </DiagramCard>
     )
   }
 
@@ -245,33 +263,14 @@ function MermaidBlock({ code }: MermaidBlockProps) {
         className="my-4 rounded-xl border border-surface-border/60 px-4 py-6 flex justify-center"
         style={{ background: '#141414' }}
       >
-        <div
-          className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin"
-        />
+        <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
       </div>
     )
   }
 
   // ── Success: render the SVG ──
   return (
-    <div
-      className="group my-4 rounded-xl overflow-hidden border border-surface-border/60"
-      style={{ background: '#141414' }}
-    >
-      {/* Header */}
-      <div
-        className="flex items-center justify-between px-4 py-2.5 border-b border-surface-border/60"
-        style={{ background: '#111' }}
-      >
-        <div className="flex items-center gap-2">
-          <GitBranch className="w-3.5 h-3.5 text-content-muted" />
-          <span className="text-[11px] font-mono font-medium text-content-tertiary tracking-wide uppercase">
-            Diagram
-          </span>
-        </div>
-        <CopyButton text={code} />
-      </div>
-
+    <DiagramCard code={code}>
       {/* SVG viewport — max-height caps very tall diagrams;
           overflow-auto lets the user scroll within the card */}
       <div
@@ -279,7 +278,7 @@ function MermaidBlock({ code }: MermaidBlockProps) {
         style={{ maxHeight: '70vh' }}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
-    </div>
+    </DiagramCard>
   )
 }
 
@@ -290,10 +289,9 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
+    const markCopied = () => { setCopied(true); setTimeout(() => setCopied(false), 2000) }
     try {
       await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
     } catch {
       // Fallback for environments without clipboard API
       const el = document.createElement('textarea')
@@ -302,9 +300,8 @@ function CopyButton({ text }: { text: string }) {
       el.select()
       document.execCommand('copy')
       document.body.removeChild(el)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
     }
+    markCopied()
   }, [text])
 
   return (
@@ -479,7 +476,9 @@ interface MarkdownRendererProps {
 }
 
 export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
-  const { thought, answer, isThinking } = parseThinkBlocks(content)
+  // Memoised so the O(n) string scans only run when content actually changes,
+  // not on every re-render during streaming (which can fire 10–50× per second).
+  const { thought, answer, isThinking } = useMemo(() => parseThinkBlocks(content), [content])
   const hasThought = thought.length > 0
 
   // buildComponents() has no deps — created once, never recreated.

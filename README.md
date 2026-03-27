@@ -4,6 +4,8 @@ A native macOS desktop chat application that runs large language models entirely
 
 Built for **Apple Silicon** (M-series) with the `mlx-community/Qwen3.5-35B-A3B-6bit` model as the primary target, sustaining ~71 tokens/second on an M5 Pro.
 
+Built with Claude Code
+
 ---
 
 ## Features

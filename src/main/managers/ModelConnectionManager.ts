@@ -102,10 +102,8 @@ export class ModelConnectionManager extends EventEmitter {
       const models = response.data?.data ?? []
 
       if (models.length === 0) {
-        // LM Studio is up but no model is loaded — this is a genuine offline
-        // condition (user action required), so we show it immediately regardless
-        // of the failure counter.
-        this.consecutiveFailures = 0
+        // LM Studio is up but no model is loaded — genuine offline condition
+        // (user action required), show immediately regardless of failure counter.
         this.transitionTo('offline', null, 'LM Studio is running but no model is loaded. Load a model in LM Studio to continue.')
       } else {
         // Pick the first available model (they're already selected in LM Studio)
@@ -158,17 +156,30 @@ export class ModelConnectionManager extends EventEmitter {
     modelInfo: ModelInfo | null = null,
     error: string | null = null
   ): void {
-    const previousStatus = this.state.status
+    const previousStatus  = this.state.status
+    const newModelInfo    = status === 'ready' ? modelInfo : null
+    const newError        = status === 'offline' ? error : null
+
+    // Skip the emit entirely when nothing visible has changed — this prevents
+    // a steady-stream of no-op IPC messages to the renderer on every 15s poll.
+    if (
+      status       === previousStatus &&
+      newError     === this.state.error &&
+      (newModelInfo?.id ?? null) === (this.state.modelInfo?.id ?? null)
+    ) {
+      // Still update lastChecked so getState() is fresh
+      this.state = { ...this.state, lastChecked: Date.now() }
+      return
+    }
 
     this.state = {
       status,
-      modelInfo:     status === 'ready' ? modelInfo : null,
-      lastChecked:   Date.now(),
-      error:         status === 'offline' ? error : null,
+      modelInfo:      newModelInfo,
+      lastChecked:    Date.now(),
+      error:          newError,
       pollIntervalMs: this.state.pollIntervalMs
     }
 
-    // Always emit — the renderer decides whether to re-render
     this.emit('statusChange', this.getState(), previousStatus)
   }
 }

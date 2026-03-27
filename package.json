@@ -65,7 +65,7 @@
     "vitest": "^4.1.1"
   },
   "build": {
-    "appId": "com.local.qwenstudio",
+    "appId": "com.local.desktopintelligence",
     "productName": "Desktop Intelligence",
     "directories": {
       "buildResources": "build",

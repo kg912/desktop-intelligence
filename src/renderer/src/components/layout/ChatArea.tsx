@@ -127,6 +127,8 @@ export function ChatArea({ messages, isStreaming = false, onSuggest }: ChatAreaP
       isProgrammaticScroll.current = false
       return
     }
+    // Already at the bottom — nothing to re-enable, skip the layout read.
+    if (!userScrolledUp.current) return
     const el = scrollContainerRef.current
     if (!el) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
