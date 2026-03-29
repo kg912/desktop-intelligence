@@ -92,20 +92,8 @@ function createWindow(): void {
     }
   })
 
-  // Register all IPC handlers before loading content
-  registerIpcHandlers(() => mainWindow?.webContents ?? null)
-
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
-
-    // Start the daemon — pass DEFAULT_MODEL_ID so `lms load` is invoked on
-    // startup if the model isn't already loaded in LM Studio.
-    lmsDaemonManager.start(DEFAULT_MODEL_ID).catch((err) => {
-      console.error('[App] LMSDaemon unhandled error:', err)
-    })
-
-    // HTTP polling starts regardless — works with or without lms CLI
-    modelConnectionManager.start()
   })
 
   mainWindow.on('closed', () => {
@@ -124,9 +112,26 @@ function createWindow(): void {
 // App lifecycle
 // ----------------------------------------------------------------
 app.whenReady().then(() => {
+  // IPC handlers are registered ONCE here, not inside createWindow.
+  // On macOS, closing the window with ✕ keeps the app running; clicking the
+  // Dock icon calls createWindow() again via 'activate'. Registering handlers
+  // inside createWindow() would attempt to re-register the same ipcMain.handle
+  // channels, which Electron rejects with "Attempted to register a second
+  // handler" and crashes the main process.
+  registerIpcHandlers(() => mainWindow?.webContents ?? null)
+
   createWindow()
 
+  // Start the daemon and connection polling once — they survive window
+  // close/reopen cycles and do not need to be restarted per window.
+  lmsDaemonManager.start(DEFAULT_MODEL_ID).catch((err) => {
+    console.error('[App] LMSDaemon unhandled error:', err)
+  })
+  modelConnectionManager.start()
+
   app.on('activate', () => {
+    // On macOS: re-create the window when the Dock icon is clicked and no
+    // windows are open. IPC handlers and background services are already live.
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
     }
