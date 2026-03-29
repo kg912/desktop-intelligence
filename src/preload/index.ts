@@ -14,6 +14,9 @@ import type {
   WebSearchStatus,
   Chat,
   StoredMessage,
+  ModelConfig,
+  ReloadModelPayload,
+  ReloadResult,
 } from '../shared/types'
 
 const api = {
@@ -76,6 +79,17 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.WEB_SEARCH_STATUS, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.WEB_SEARCH_STATUS, h)
   },
+
+  // ── Matplotlib rendering ─────────────────────────────────────
+  renderMatplotlib: (code: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PYTHON_RENDER, code),
+
+  // ── Model settings (context length via /api/v0) ──────────────
+  getModelConfig: (): Promise<ModelConfig> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_MODEL),
+
+  reloadModel: (payload: ReloadModelPayload): Promise<ReloadResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_RELOAD, payload),
 
   // ── RAG (Phase 5 stubs) ──────────────────────────────────────
   ingestFile: (filePath: string): Promise<void> =>

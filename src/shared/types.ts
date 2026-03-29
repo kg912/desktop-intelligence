@@ -163,6 +163,11 @@ export const IPC_CHANNELS = {
   DB_NEW_CHAT:         'db:newChat',
   DB_DELETE_CHAT:      'db:deleteChat',
   DB_SAVE_MESSAGE:     'db:saveMessage',
+
+  PYTHON_RENDER:       'python:render',
+
+  SETTINGS_GET_MODEL:  'settings:getModelConfig',
+  SETTINGS_RELOAD:     'settings:reloadModel',
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -171,4 +176,22 @@ export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
 export interface LMStudioModelsResponse {
   object: 'list'
   data: ModelInfo[]
+}
+
+// --- Settings: model config ---
+export interface ModelConfig {
+  modelId:       string   // e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"
+  contextLength: number   // current n_ctx
+}
+
+export interface ReloadModelPayload {
+  modelId:       string
+  contextLength: number
+}
+
+export interface ReloadResult {
+  success:        boolean
+  error?:         string
+  /** Context length confirmed by re-reading /api/v0/models after reload */
+  confirmedCtx?:  number
 }

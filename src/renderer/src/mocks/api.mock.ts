@@ -202,6 +202,12 @@ export const mockApi: ElectronAPI = {
   ingestFile:        async () => {},
   onIngestProgress:  () => () => {},
 
+  // ── Matplotlib stub (browser cannot run Python) ───────────────
+  renderMatplotlib: async (_code: string) => ({
+    success: false as const,
+    error: 'matplotlib rendering requires the Electron runtime — not available in browser preview.',
+  }),
+
   // ── Chat History (in-memory mock) ─────────────────────────────
   getChats: async (): Promise<Chat[]> => [...mockChats],
 

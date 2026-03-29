@@ -273,6 +273,19 @@ export class ChatService {
       this.controller = null
     }
 
+    // ── Empty response guard ─────────────────────────────────────
+    // LM Studio silently returns an empty completion (0 content deltas) when
+    // the prompt exceeds the model's context window, or when the model stops
+    // immediately on a stop sequence. Surface this as a visible error so the
+    // user knows to start a new chat or switch to Fast mode.
+    if (totalTokens === 0 && firstTokenAt === null) {
+      console.warn('[ChatService] ⚠️  Empty response from LM Studio — possible context overflow or stop-sequence collision')
+      send(IPC_CHANNELS.CHAT_ERROR,
+        'The model returned an empty response. This usually means the conversation context is too long. ' +
+        'Try starting a new chat, or switch to Fast mode for lighter queries.'
+      )
+    }
+
     // ── Successful completion ────────────────────────────────────
     const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false)
     send(IPC_CHANNELS.CHAT_STREAM_END, stats)
@@ -288,6 +301,21 @@ export class ChatService {
   // ----------------------------------------------------------------
   // Helpers
   // ----------------------------------------------------------------
+
+  // Strip <think>…</think> blocks from assistant history messages before
+  // sending to LM Studio.  Past reasoning chains are useless to the model on
+  // the next turn — only the final answers matter — but they consume thousands
+  // of tokens.  Using lastIndexOf matches our renderer logic (Qwen sometimes
+  // mentions </think> inside the thought, so we split at the LAST occurrence).
+  private stripThinkBlocks(content: string): string {
+    const open  = '<think>'
+    const close = '</think>'
+    const start = content.indexOf(open)
+    if (start === -1) return content                       // no think block
+    const end = content.lastIndexOf(close)
+    if (end === -1) return content.slice(0, start).trim() // unclosed block
+    return (content.slice(0, start) + content.slice(end + close.length)).trim()
+  }
 
   // LM Studio vision content part shapes
   private buildMessages(
@@ -308,14 +336,33 @@ export class ChatService {
       msgs.push({ role: 'system', content: systemParts.join('\n\n') })
     }
 
+    // ── History trim ─────────────────────────────────────────────
+    // Assistant responses can be very large (ECharts JSON, Mermaid source,
+    // long explanations). Replaying the full unbounded history on every turn
+    // eventually overflows the model's context window, causing LM Studio to
+    // return a silent empty completion. We keep only the last HISTORY_WINDOW
+    // messages (always including the current user message at the end).
+    const HISTORY_WINDOW = 20  // ~10 exchange pairs; adjust if needed
+    const allMsgs = payload.messages.filter((m) => m.role !== 'divider')
+    const trimmed = allMsgs.length > HISTORY_WINDOW
+      ? allMsgs.slice(allMsgs.length - HISTORY_WINDOW)
+      : allMsgs
+
+    if (allMsgs.length > HISTORY_WINDOW) {
+      console.log(
+        `[ChatService] ✂️  History trimmed: ${allMsgs.length} → ${trimmed.length} messages ` +
+        `(HISTORY_WINDOW=${HISTORY_WINDOW})`
+      )
+    }
+
     // ── Image attachments go on the last user message ────────────
     const images = (payload.attachments ?? [])
       .filter((a) => a.kind === 'image' && a.dataUrl)
 
-    const lastIdx = payload.messages.length - 1
+    const lastIdx = trimmed.length - 1
 
-    for (let i = 0; i < payload.messages.length; i++) {
-      const m = payload.messages[i]
+    for (let i = 0; i < trimmed.length; i++) {
+      const m = trimmed[i]
 
       if (images.length > 0 && m.role === 'user' && i === lastIdx) {
         const parts: ContentPart[] = [{ type: 'text', text: m.content }]
@@ -324,7 +371,13 @@ export class ChatService {
         }
         msgs.push({ role: m.role, content: parts })
       } else {
-        msgs.push({ role: m.role, content: m.content })
+        // Strip think blocks from assistant history — past reasoning chains are
+        // pure overhead: they consume thousands of tokens per turn but contribute
+        // nothing to the next response.  Only the final answer is kept.
+        const content = m.role === 'assistant'
+          ? this.stripThinkBlocks(m.content)
+          : m.content
+        msgs.push({ role: m.role, content })
       }
     }
 

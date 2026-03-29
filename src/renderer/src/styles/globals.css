@@ -240,3 +240,48 @@
 .diagram-block .branch-label {
   fill: #f5f5f5;
 }
+
+/* ── Force dark fills on node shape primitives ─────────────────────────
+   Mermaid inlines fill colors directly on SVG shape elements via
+   style/classDef, which overrides themeVariables and produces
+   unreadable light-on-light nodes. !important in a stylesheet overrides
+   both presentation attributes AND inline style="" on SVG elements.
+   We target shape primitives only — <text> is intentionally excluded
+   so SVG text fill values (#f5f5f5) are preserved.
+   Pie chart slices (.pieCircle), sequence actors (.actor), and other
+   non-.node shapes are NOT under .node so they're unaffected.
+   ----------------------------------------------------------------------- */
+.diagram-block svg .node rect,
+.diagram-block svg .node circle,
+.diagram-block svg .node ellipse,
+.diagram-block svg .node polygon,
+.diagram-block svg .node path.label-container,
+.diagram-block svg .node path.basic,
+.diagram-block svg .node path.path {
+  fill: #1a1a1a !important;
+  stroke: #3a3a3a !important;
+}
+
+/* Cluster / subgraph backgrounds */
+.diagram-block svg .cluster rect {
+  fill: #141414 !important;
+  stroke: #2a2a2a !important;
+}
+
+/* Diamond decision shapes (rhombus) */
+.diagram-block svg .node .label-container {
+  fill: #1a1a1a !important;
+}
+
+/* Ensure HTML labels inside foreignObject are always readable */
+.diagram-block svg .node .label > div,
+.diagram-block svg .nodeLabel p,
+.diagram-block svg .nodeLabel {
+  color: #f5f5f5 !important;
+}
+
+/* Edge labels: transparent bg so they don't clash with forced dark nodes */
+.diagram-block svg .edgeLabel rect {
+  fill: transparent !important;
+  stroke: none !important;
+}

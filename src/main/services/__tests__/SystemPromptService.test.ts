@@ -24,7 +24,7 @@ import { BASE_SYSTEM_PROMPT } from '../SystemPromptService'
 /** Soft character-count ceiling for the base system prompt.
  *  Update this constant (and the comment below) whenever the limit is
  *  intentionally raised — keeps the test name and assertion in sync. */
-const MAX_PROMPT_CHARS = 2_400
+const MAX_PROMPT_CHARS = 3_000
 
 describe('BASE_SYSTEM_PROMPT', () => {
   it('is a non-empty string', () => {
@@ -87,10 +87,10 @@ describe('BASE_SYSTEM_PROMPT', () => {
   })
 
   it(`fits within a ~${Math.round(MAX_PROMPT_CHARS / 3.7)}-token budget (≈ ${MAX_PROMPT_CHARS} characters at 3.7 chars/token)`, () => {
-    // A base prompt larger than ~650 tokens wastes context on a 32k-context model.
+    // A base prompt larger than ~810 tokens wastes context on a 32k-context model.
     // This is a soft guard — update MAX_PROMPT_CHARS above when expanding intentionally.
     // History: 1900 → 2200 (ECharts capability), 2200 → 2400 (axis-type + flowchart
-    //   direction syntax rules — both prevent common model render errors).
+    //   direction syntax rules), 2400 → 3000 (matplotlib renderer added).
     expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(MAX_PROMPT_CHARS)
   })
 
@@ -117,6 +117,16 @@ describe('BASE_SYSTEM_PROMPT', () => {
     // The model must know it can produce interactive charts via ```echarts blocks.
     // Without this hint it falls back to describing plots in prose.
     expect(BASE_SYSTEM_PROMPT.toLowerCase()).toContain('echarts')
+  })
+
+  it('mentions matplotlib for complex scientific visualizations', () => {
+    // The model must know it can produce matplotlib charts via ```matplotlib blocks.
+    // Without this hint it falls back to ASCII art or prose for GMMs, contour plots, etc.
+    expect(BASE_SYSTEM_PROMPT.toLowerCase()).toContain('matplotlib')
+  })
+
+  it('includes the ```matplotlib fenced code block syntax hint', () => {
+    expect(BASE_SYSTEM_PROMPT).toContain('```matplotlib')
   })
 
   it('explicitly restricts flowchart to software/code — not ML algorithms', () => {

@@ -30,7 +30,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
-import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2 } from 'lucide-react'
+import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2, LineChart } from 'lucide-react'
 import hljs from 'highlight.js'
 import mermaid from 'mermaid'
 import ReactECharts from 'echarts-for-react'
@@ -303,12 +303,34 @@ function MermaidBlock({ code }: MermaidBlockProps) {
 const ECHARTS_DARK_BASE: Record<string, unknown> = {
   backgroundColor: 'transparent',
   textStyle:       { color: '#e5e5e5' },
-  title:           { textStyle: { color: '#f5f5f5' }, subtextStyle: { color: '#a3a3a3' } },
-  legend:          { textStyle: { color: '#a3a3a3' }, inactiveColor: '#525252' },
+  // Title: pinned to top with enough room for the legend below it
+  title: {
+    top: 8,
+    left: 'center',
+    textStyle:    { color: '#f5f5f5', fontSize: 14 },
+    subtextStyle: { color: '#a3a3a3' },
+  },
+  // Legend: always at the bottom so it never overlaps the title or chart area
+  legend: {
+    bottom: 4,
+    textStyle:     { color: '#a3a3a3' },
+    inactiveColor: '#525252',
+  },
   tooltip: {
     backgroundColor: '#1a1a1a',
     borderColor:     '#3a3a3a',
     textStyle:       { color: '#f5f5f5' },
+  },
+  // Grid: generous padding so axis names and tick labels never clip into the plot
+  // top accounts for title (≈30px) + any legend that overflows upward
+  // left/bottom leave room for y-axis name and x-axis labels
+  // right leaves room for the last x-axis label
+  grid: {
+    top:    55,
+    left:   60,
+    right:  24,
+    bottom: 48,
+    containLabel: true,   // auto-expand when tick labels are wider than the margin
   },
   // Accent palette: red / blue / green / orange / purple / cyan / yellow / rose
   color: ['#f87171','#60a5fa','#86efac','#fb923c','#c084fc','#67e8f9','#fcd34d','#f472b6'],
@@ -316,13 +338,15 @@ const ECHARTS_DARK_BASE: Record<string, unknown> = {
     axisLine:      { lineStyle: { color: '#3a3a3a' } },
     axisLabel:     { color: '#a3a3a3' },
     splitLine:     { lineStyle: { color: '#1f1f1f' } },
-    nameTextStyle: { color: '#a3a3a3' },
+    nameTextStyle: { color: '#a3a3a3', padding: [8, 0, 0, 0] },
+    nameLocation:  'end',
   },
   yAxis: {
     axisLine:      { lineStyle: { color: '#3a3a3a' } },
     axisLabel:     { color: '#a3a3a3' },
     splitLine:     { lineStyle: { color: '#1f1f1f' } },
-    nameTextStyle: { color: '#a3a3a3' },
+    nameTextStyle: { color: '#a3a3a3', padding: [0, 0, 8, 0] },
+    nameLocation:  'end',
   },
 }
 
@@ -418,6 +442,105 @@ function fixSeriesDataFormat(opt: Record<string, unknown>): Record<string, unkno
   return { ...opt, series: fixedSeries }
 }
 
+// ----------------------------------------------------------------
+// sanitizeFormatters
+//
+// Strips formatter strings that ECharts cannot safely evaluate:
+//  - JS function strings ("function(...)" or arrow "=>")
+//  - Partial-substitution hybrids: "{value} units", "150×{value}"
+//
+// A formatter is KEPT when it consists entirely of:
+//  - ECharts template tokens: {a}, {b}, {c}, {d}, {e}, {value} (+ optional %)
+//  - Safe separators: whitespace, \n, colon, comma, slash, pipe, <br/>
+//
+// Examples kept:  "{value}"  "{c}"  "{b}"  "{d}%"  "{c}\n{b}"  "{b}: {c}"
+// Examples dropped: "{value} AD"  "function(v){...}"  "Year {c}"
+// ----------------------------------------------------------------
+function isSafeFormatter(v: string): boolean {
+  if (v.includes('function') || v.includes('=>')) return false
+  // Strip all valid ECharts tokens (single letter or "value", optional %)
+  const stripped = v
+    .replace(/\{(?:[a-eA-E]|value)\}%?/g, '')
+    .replace(/<br\s*\/?>/gi, '')
+  // Remaining chars must only be safe separator characters
+  return /^[\s\n:,/|]*$/.test(stripped)
+}
+
+function sanitizeFormatters(obj: unknown): unknown {
+  if (Array.isArray(obj)) return obj.map(sanitizeFormatters)
+  if (obj !== null && typeof obj === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (k === 'formatter' && typeof v === 'string' && !isSafeFormatter(v)) {
+        // Drop unsafe formatter — ECharts default is always readable
+        continue
+      }
+      result[k] = sanitizeFormatters(v)
+    }
+    return result
+  }
+  return obj
+}
+
+// ----------------------------------------------------------------
+// fixYearAxes
+//
+// ECharts type:"value" axes auto-format numbers with locale commas:
+// 1260 → "1,260". For year-range axes (min ≥ 1000, max ≤ 2200) this
+// looks wrong. Setting formatter:"{value}" bypasses locale formatting
+// and shows the raw integer — "1260", "1271", etc.
+//
+// Only patches axes that are type:"value" with min/max in the year
+// range AND have no explicit formatter already set.
+// ----------------------------------------------------------------
+function isYearRange(axis: Record<string, unknown>): boolean {
+  if (axis['type'] !== 'value') return false
+  const min = typeof axis['min'] === 'number' ? axis['min'] : null
+  const max = typeof axis['max'] === 'number' ? axis['max'] : null
+  // If explicit min/max in year range, or if series data implies years
+  if (min !== null && max !== null) {
+    return min >= 800 && max <= 2200 && (max - min) < 1000
+  }
+  return false
+}
+
+function fixYearAxes(opt: Record<string, unknown>): Record<string, unknown> {
+  const patchAxis = (axis: unknown): unknown => {
+    if (!axis || typeof axis !== 'object' || Array.isArray(axis)) return axis
+    const a = axis as Record<string, unknown>
+    if (!isYearRange(a)) return axis
+    // Only add formatter if not already set
+    if (a['axisLabel'] && typeof a['axisLabel'] === 'object') {
+      const al = a['axisLabel'] as Record<string, unknown>
+      if (al['formatter']) return axis  // already has one, leave alone
+      return { ...a, axisLabel: { ...al, formatter: '{value}' } }
+    }
+    return { ...a, axisLabel: { ...(a['axisLabel'] as object ?? {}), formatter: '{value}' } }
+  }
+
+  const result = { ...opt }
+  if (result['xAxis']) result['xAxis'] = Array.isArray(result['xAxis'])
+    ? (result['xAxis'] as unknown[]).map(patchAxis)
+    : patchAxis(result['xAxis'])
+  if (result['yAxis']) result['yAxis'] = Array.isArray(result['yAxis'])
+    ? (result['yAxis'] as unknown[]).map(patchAxis)
+    : patchAxis(result['yAxis'])
+  return result
+}
+
+// ----------------------------------------------------------------
+// looksLikeEChartsOption
+//
+// Returns true when a parsed JSON object looks like an ECharts option
+// (has a series array). Used to route ```json blocks that the model
+// accidentally tagged as json instead of echarts.
+// ----------------------------------------------------------------
+function looksLikeEChartsOption(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+  const obj = parsed as Record<string, unknown>
+  return Array.isArray(obj['series']) && obj['series'].length > 0
+}
+
 interface EchartsBlockProps {
   code: string
 }
@@ -442,14 +565,42 @@ function EchartsBlock({ code }: EchartsBlockProps) {
 
     const timer = setTimeout(() => {
       if (cancelled) return
-      try {
-        const parsed = JSON.parse(code)
-        if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+
+      // ── JSON repair: fix the most common model output mistakes ───
+      // Models occasionally produce slightly malformed JSON:
+      //   1. Trailing commas before } or ]
+      //   2. A stray { before a "key": pair inside an object
+      // We try the raw code first, then the repaired version.
+      function repairEChartsJson(raw: string): string {
+        let s = raw.trim()
+        s = s.replace(/,(\s*[}\]])/g, '$1')                        // trailing commas
+        s = s.replace(/([,{\[]\s*)\{(\s*"[^"]+"\s*:)/g, '$1$2')   // stray { before key
+        return s
+      }
+
+      function tryParse(src: string): Record<string, unknown> {
+        const p = JSON.parse(src)
+        if (typeof p !== 'object' || Array.isArray(p) || p === null)
           throw new Error('ECharts option must be a JSON object')
+        return p as Record<string, unknown>
+      }
+
+      try {
+        let parsed: Record<string, unknown>
+        try {
+          parsed = tryParse(code)
+        } catch {
+          // First parse failed — attempt light repair
+          parsed = tryParse(repairEChartsJson(code))
         }
         lastParsedCode.current = code
-        const merged = deepMerge(ECHARTS_DARK_BASE, parsed as Record<string, unknown>)
-        setOption(fixSeriesDataFormat(merged))
+        const merged    = deepMerge(ECHARTS_DARK_BASE, parsed)
+        // Order matters: sanitize model formatters FIRST, then fixYearAxes adds correct ones.
+        // If reversed, fixYearAxes skips axes that already have a (bad) model formatter,
+        // then sanitizeFormatters removes it — leaving year axes with no formatter at all.
+        const sanitized = sanitizeFormatters(fixSeriesDataFormat(merged)) as Record<string, unknown>
+        const fixed     = fixYearAxes(sanitized)
+        setOption(fixed)
         setError(null)
       } catch (err) {
         lastParsedCode.current = code
@@ -566,6 +717,115 @@ function CopyButton({ text }: { text: string }) {
 // ----------------------------------------------------------------
 // Code block component
 // ----------------------------------------------------------------
+// Matplotlib block
+//
+// Sends the Python script to the main process via window.api.renderMatplotlib,
+// which wraps it with: dark-theme rcParams, pre-imported plt/np, and the
+// savefig → base64 epilogue.  The result is displayed as a PNG image.
+//
+// While streaming, rendering is deferred (same 600ms debounce as ECharts/Mermaid).
+// If python3 is missing or matplotlib is not installed, the error is shown
+// and the raw code is displayed as a fallback.
+// ----------------------------------------------------------------
+interface MatplotlibBlockProps {
+  code: string
+}
+
+function MatplotlibBlock({ code }: MatplotlibBlockProps) {
+  const isStreaming = useContext(StreamingCtx)
+  const [imageBase64, setImageBase64] = useState<string | null>(null)
+  const [error,       setError]       = useState<string | null>(null)
+  const [running,     setRunning]     = useState(false)
+  const lastRenderedCode = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (code === lastRenderedCode.current) return
+    let cancelled = false
+    // During streaming, debounce 400 ms — code block content stabilises once the
+    // closing ``` is received; after that, code stops changing and the timer fires.
+    // After streaming ends, execute immediately (delay=0).
+    const delay = isStreaming ? 400 : 0
+
+    const timer = setTimeout(async () => {
+      if (cancelled) return
+      setRunning(true)
+      lastRenderedCode.current = code
+      try {
+        const result = await window.api.renderMatplotlib(code)
+        if (cancelled) return
+        if (result.success && result.imageBase64) {
+          setImageBase64(result.imageBase64)
+          setError(null)
+        } else {
+          setError(result.error ?? 'matplotlib render failed')
+          setImageBase64(null)
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setRunning(false)
+      }
+    }, delay)
+
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [code, isStreaming])
+
+  const border = error ? 'border-accent-900/30' : 'border-surface-border/60'
+
+  return (
+    <div
+      className={`group my-4 rounded-xl overflow-hidden border ${border}`}
+      style={{ background: '#141414' }}
+    >
+      {/* Header */}
+      <div
+        className={`flex items-center justify-between px-4 py-2.5 border-b ${border}`}
+        style={{ background: '#111' }}
+      >
+        <div className="flex items-center gap-2">
+          <LineChart className={`w-3.5 h-3.5 ${error ? 'text-accent-800' : 'text-content-muted'}`} />
+          <span className={`text-[11px] font-mono font-medium tracking-wide uppercase ${error ? 'text-accent-800' : 'text-content-tertiary'}`}>
+            {error ? 'Plot (error)' : 'Plot'}
+          </span>
+        </div>
+        <CopyButton text={code} />
+      </div>
+
+      {/* Body */}
+      {(running || (!imageBase64 && !error && (isStreaming || Boolean(code)))) ? (
+        <div className="px-4 py-6 flex items-center justify-center gap-3" style={{ minHeight: '80px' }}>
+          <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
+          <span className="text-xs text-content-muted">{running ? 'Running Python…' : 'Rendering…'}</span>
+        </div>
+      ) : error ? (
+        <div className="p-4 space-y-2">
+          <p className="text-xs text-accent-500 font-mono">
+            {error.split('\n').filter((l) => l.trim()).at(-1) ?? error}
+          </p>
+          <details className="group">
+            <summary className="text-xs text-content-tertiary cursor-pointer select-none hover:text-content-secondary">
+              Show code
+            </summary>
+            <pre className="mt-2 text-[12px] leading-relaxed font-mono text-content-secondary whitespace-pre overflow-x-auto">
+              {code}
+            </pre>
+          </details>
+        </div>
+      ) : imageBase64 ? (
+        <div className="p-2">
+          <img
+            src={`data:image/png;base64,${imageBase64}`}
+            alt="matplotlib chart"
+            className="w-full rounded-lg"
+            style={{ background: '#0f0f0f' }}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+// ----------------------------------------------------------------
 interface CodeProps extends ComponentPropsWithoutRef<'code'> {
   inline?:    boolean
   className?: string
@@ -588,9 +848,25 @@ function CodeBlock({ className, children }: CodeProps) {
     return <MermaidBlock code={rawCode} />
   }
 
+  // ── Matplotlib chart ──
+  if (kind === 'matplotlib') {
+    return <MatplotlibBlock code={rawCode} />
+  }
+
   // ── ECharts interactive plot ──
+  // Also catches ```json blocks that the model tagged incorrectly — if the
+  // parsed object looks like an ECharts option (has a series array) we render
+  // it as a chart instead of a syntax-highlighted code block.
   if (kind === 'echarts') {
     return <EchartsBlock code={rawCode} />
+  }
+  if (lang === 'json') {
+    try {
+      const parsed = JSON.parse(rawCode)
+      if (looksLikeEChartsOption(parsed)) {
+        return <EchartsBlock code={rawCode} />
+      }
+    } catch { /* not valid JSON — fall through to code block */ }
   }
 
   // ── Syntax-highlighted code block (highlight.js) ──

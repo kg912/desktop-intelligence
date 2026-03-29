@@ -326,6 +326,23 @@ describe('classifyCodeBlock', () => {
   it('does NOT classify "echarts-extra" as echarts', () => {
     expect(classifyCodeBlock('echarts-extra')).toBe('code')
   })
+
+  // ── Matplotlib blocks ────────────────────────────────────────────────────────
+  it('returns "matplotlib" for the exact string "matplotlib"', () => {
+    expect(classifyCodeBlock('matplotlib')).toBe('matplotlib')
+  })
+
+  it('returns "matplotlib" for uppercase "MATPLOTLIB" (case-insensitive)', () => {
+    expect(classifyCodeBlock('MATPLOTLIB')).toBe('matplotlib')
+  })
+
+  it('returns "matplotlib" for mixed case "Matplotlib"', () => {
+    expect(classifyCodeBlock('Matplotlib')).toBe('matplotlib')
+  })
+
+  it('does NOT classify plain "python" as matplotlib (separate kind)', () => {
+    expect(classifyCodeBlock('python')).toBe('code')
+  })
 })
 
 // ── Suite: isValidMermaidSyntax ───────────────────────────────────────────────

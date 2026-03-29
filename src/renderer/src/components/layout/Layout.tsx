@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
+import { SettingsModal } from '../settings/SettingsModal'
 import { TopBar } from './TopBar'
 import { ChatArea } from './ChatArea'
 import type { ChatAreaHandle } from './ChatArea'
@@ -14,7 +15,8 @@ import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
   const { setThinkingMode } = useModelStore()
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed,  setSidebarCollapsed]  = useState(false)
+  const [settingsOpen,      setSettingsOpen]      = useState(false)
   const chatAreaRef = useRef<ChatAreaHandle>(null)
 
   // ── Chat history list (sidebar) ───────────────────────────────
@@ -256,6 +258,12 @@ export function Layout() {
 
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
+      {/* ── Settings modal (renders above everything) ── */}
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+
       {/* ── Sidebar ── */}
       <div className="relative flex-shrink-0 h-full">
         <Sidebar
@@ -266,6 +274,7 @@ export function Layout() {
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
           onDeleteChat={handleDeleteChat}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       </div>
 

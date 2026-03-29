@@ -165,9 +165,20 @@ export class LMSDaemonManager extends EventEmitter {
     return this.runCommand('starting-server', 'server', ['start'])
   }
 
-  private runLoadModel(modelId: string): Promise<void> {
-    this.transition('loading-model')
-    return this.runCommand('loading-model', 'load', [modelId], LOAD_TIMEOUT_MS)
+  private async runLoadModel(modelId: string): Promise<void> {
+    // Read the user's persisted context-length preference and apply it.
+    // Falls back to lms / LM Studio default when no preference is saved.
+    let contextArgs: string[] = []
+    try {
+      const { readSettings } = await import('../services/SettingsStore')
+      const { contextLength } = readSettings()
+      if (contextLength && contextLength > 0) {
+        contextArgs = ['--context-length', String(contextLength)]
+        console.log(`[LMSDaemon] Applying saved context length: ${contextLength}`)
+      }
+    } catch { /* non-fatal — proceed with lms default */ }
+
+    return this.runCommand('loading-model', 'load', [modelId, ...contextArgs], LOAD_TIMEOUT_MS)
   }
 
   /**

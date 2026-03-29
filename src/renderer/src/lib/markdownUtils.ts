@@ -71,9 +71,10 @@ export function parseThinkBlocks(raw: string): ParsedContent {
  *  - 'inline'   → no language tag; render as a plain `<code>` span
  *  - 'mermaid'  → diagram syntax; hand off to the Mermaid SVG renderer
  *  - 'echarts'  → ECharts JSON option object; rendered as an interactive plot
- *  - 'code'     → everything else; syntax-highlight with highlight.js
+ *  - 'matplotlib' → Python matplotlib script; executed server-side, result shown as PNG image
+ *  - 'code'       → everything else; syntax-highlight with highlight.js
  */
-export type CodeBlockKind = 'inline' | 'mermaid' | 'echarts' | 'code'
+export type CodeBlockKind = 'inline' | 'mermaid' | 'echarts' | 'matplotlib' | 'code'
 
 /**
  * classifyCodeBlock
@@ -90,6 +91,7 @@ export function classifyCodeBlock(lang: string | undefined): CodeBlockKind {
   const lower = lang.toLowerCase()
   if (lower === 'mermaid') return 'mermaid'
   if (lower === 'echarts' || lower === 'plot') return 'echarts'
+  if (lower === 'matplotlib') return 'matplotlib'
   return 'code'
 }
 

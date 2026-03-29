@@ -40,26 +40,7 @@ export default function App() {
       {/* ── Connection overlay ── */}
       <ConnectionStatus status={status} error={error} onRetry={retry} />
 
-      {/* ── Daemon error banner ── */}
-      <AnimatePresence>
-        {daemonState.phase === 'error' && appVisible && (
-          <div className="fixed top-0 inset-x-0 z-30 flex items-center justify-between
-                          px-5 py-2 bg-accent-950/90 border-b border-accent-900/50
-                          backdrop-blur-sm">
-            <span className="text-xs text-accent-400">
-              LMS Daemon error — {daemonState.error}
-            </span>
-            <button
-              onClick={retryDaemon}
-              className="text-xs px-3 py-1 rounded-lg bg-accent-900/50 border
-                         border-accent-800/40 text-accent-400 hover:text-accent-300
-                         transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* ── Daemon error banner — disabled (P1 OPEN: never clears after recovery) ── */}
 
       {/* ── App shell — CSS transition so preview env can't block it ── */}
       <div
