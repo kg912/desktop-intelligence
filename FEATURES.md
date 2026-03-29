@@ -33,7 +33,7 @@ A complete reference of every capability currently implemented in the app.
 - Diagrams are skipped while the model is still streaming (prevents half-parsed renders)
 
 ### Thinking / Fast Mode Toggle
-- **Thinking mode** (🧠): enables Qwen's internal chain-of-thought reasoning (`budget_tokens: 8000`). Higher quality for complex tasks — math, code review, document analysis, multi-step reasoning
+- **Thinking mode** (🧠): enables the model's chain-of-thought reasoning (`budget_tokens: 8000`). Higher quality for complex tasks — math, code review, document analysis, multi-step reasoning. Works with any reasoning-capable model (e.g. Qwen3, DeepSeek-R1)
 - **Fast mode** (⚡): direct responses with no reasoning step. Lower latency, ideal for conversational queries and simple lookups
 - Toggle is visible in the input bar; switching mid-conversation inserts a labelled divider
 - Mode automatically elevates to Thinking when a PDF or image is attached
@@ -115,6 +115,11 @@ LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergenc
 - Your chosen context length is saved to `app-settings.json` in `app.getPath('userData')`
 - On every app launch, the daemon manager reads this file and passes `--context-length <N>` to `lms load` automatically — no manual re-configuration needed after restarts
 
+### Model Selection
+- On first launch, a welcome screen lets you choose any model downloaded in LM Studio from a dropdown
+- Returning users have their previously selected model loaded automatically on startup
+- The settings pane (⚙️) lets you switch models at runtime — select a new model and click **Reload Model**
+
 ### Reload Process
 - Reload runs `lms unload --all` → waits → `lms load <model> --context-length <N>` via the `lms` CLI
 - 120-second timeout with live progress shown in the modal
@@ -130,7 +135,7 @@ LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergenc
 - Exponential-backoff health polling; connection overlay only appears after **two consecutive** failures — a single timeout during GPU-intensive generation is silently absorbed
 
 ### Runaway Generation Protection
-- **Server-side**: every LM Studio payload includes a `stop` sequences array (`<|im_end|>`, `<|endoftext|>`, and Qwen loop-trigger phrases)
+- **Server-side**: every LM Studio payload includes a `stop` sequences array (`<|im_end|>`, `<|endoftext|>`, and common loop-trigger phrases)
 - **Client-side**: if the same line appears 3+ consecutive times in the SSE stream, the stream is aborted immediately
 
 ### Context Overflow Protection
@@ -169,10 +174,9 @@ Features that are designed but not yet implemented:
 - [ ] Multi-document RAG (multiple PDFs in the same chat)
 - [ ] Conversation export (PDF / Markdown)
 - [ ] System prompt customisation UI
-- [ ] Model performance overlay (tokens/sec, context used %)
+- [ ] Model performance overlay (tokens/sec live, context used %)
 - [ ] Web search results with source citations
 - [ ] Keyboard shortcuts (Cmd+K for new chat, etc.)
-- [ ] Model switching from the settings pane (without restarting)
 
 ---
 

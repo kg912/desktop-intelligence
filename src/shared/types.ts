@@ -168,6 +168,10 @@ export const IPC_CHANNELS = {
 
   SETTINGS_GET_MODEL:  'settings:getModelConfig',
   SETTINGS_RELOAD:     'settings:reloadModel',
+
+  APP_IS_FIRST_LAUNCH:           'app:isFirstLaunch',
+  SETTINGS_GET_AVAILABLE_MODELS: 'settings:getAvailableModels',
+  APP_INITIALIZE:                'app:initialize',
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -194,4 +198,22 @@ export interface ReloadResult {
   error?:         string
   /** Context length confirmed by re-reading /api/v0/models after reload */
   confirmedCtx?:  number
+}
+
+// --- Model selection & first-launch onboarding ---
+
+/** A model returned by LM Studio's /api/v0/models endpoint */
+export interface AvailableModel {
+  /** LM Studio short identifier e.g. "qwen3.5-35b-a3b" or full HF path */
+  id:          string
+  /** Friendly label derived from the id */
+  displayName: string
+  /** "loaded" | "not-loaded" | unknown */
+  state:       string
+}
+
+/** Payload sent by the renderer when the user completes first-launch setup */
+export interface AppInitPayload {
+  modelId:       string
+  contextLength: number
 }

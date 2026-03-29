@@ -17,6 +17,8 @@ import type {
   ModelConfig,
   ReloadModelPayload,
   ReloadResult,
+  AvailableModel,
+  AppInitPayload,
 } from '../shared/types'
 
 const api = {
@@ -90,6 +92,16 @@ const api = {
 
   reloadModel: (payload: ReloadModelPayload): Promise<ReloadResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_RELOAD, payload),
+
+  // ── First-launch onboarding ───────────────────────────────────
+  isFirstLaunch: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_IS_FIRST_LAUNCH),
+
+  getAvailableModels: (): Promise<AvailableModel[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_AVAILABLE_MODELS),
+
+  initializeApp: (payload: AppInitPayload): Promise<ReloadResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_INITIALIZE, payload),
 
   // ── RAG (Phase 5 stubs) ──────────────────────────────────────
   ingestFile: (filePath: string): Promise<void> =>

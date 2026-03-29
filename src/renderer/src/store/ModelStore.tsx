@@ -5,9 +5,6 @@
  * renderer tree via React Context.
  *
  * Design goals:
- *   • Zero-latency display on startup — `selectedModel` defaults to
- *     DEFAULT_MODEL_ID so UI components show the correct model name
- *     immediately, before any IPC round-trip completes.
  *   • Single source of truth for the active model — all send-message
  *     paths read from here so switching models in the future requires
  *     only one `setSelectedModel` call anywhere in the UI.
@@ -17,7 +14,6 @@
 
 import { createContext, useContext, useState } from 'react'
 import type { ReactNode } from 'react'
-import { DEFAULT_MODEL_ID } from '../../../shared/types'
 import type { ThinkingMode } from '../../../shared/types'
 
 // ── Types ────────────────────────────────────────────────────────
@@ -37,7 +33,9 @@ const ModelStoreContext = createContext<ModelStoreValue | null>(null)
 
 // ── Provider ─────────────────────────────────────────────────────
 export function ModelStoreProvider({ children }: { children: ReactNode }) {
-  const [selectedModel,  setSelectedModel]  = useState<string>(DEFAULT_MODEL_ID)
+  // Intentionally empty string — App.tsx populates this via setSelectedModel
+  // once it has read the saved modelId from SettingsStore (IPC round-trip).
+  const [selectedModel,  setSelectedModel]  = useState<string>('')
   const [thinkingMode,   setThinkingMode]   = useState<ThinkingMode>('fast')
 
   return (

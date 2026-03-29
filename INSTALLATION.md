@@ -9,9 +9,10 @@ This guide walks you through setting up **Desktop Intelligence** from scratch on
 ### Hardware
 | RAM | Status |
 |-----|--------|
-| **64 GB+** | ✅ Ideal |
-| **48 GB** | ✅ Recommended minimum |
-| **< 48 GB** | ❌ Not recommended — the model requires ~29 GB free memory |
+| **64 GB+** | ✅ Ideal — runs large MoE models (35B+) with full performance and headroom |
+| **48 GB** | ✅ Recommended minimum for large models |
+| **32 GB** | ⚠️ Workable with smaller models (7B–14B); avoid loading 35B+ models |
+| **< 32 GB** | ❌ Not recommended — insufficient for most capable models |
 
 **Apple Silicon (M1 / M2 / M3 / M4 / M5) only.** Intel Macs are not supported.
 
@@ -53,21 +54,27 @@ export PATH="$HOME/.lmstudio/bin:$PATH"
 
 ---
 
-## Step 2 — Download the Model
+## Step 2 — Download a Model
 
-Desktop Intelligence is built around **`mlx-community/Qwen3.5-35B-A3B-6bit`** — a 35-billion-parameter Mixture-of-Experts model quantized to 6-bit for Apple Silicon via the MLX framework.
+Desktop Intelligence works with **any model you have downloaded in LM Studio**. You'll choose which model to use on first launch.
+
+**Recommended for best results (requires 48GB+ RAM):**
+- `mlx-community/Qwen3.5-35B-A3B-6bit` — a 35B MoE model optimised for Apple Silicon via MLX (~22 GB download)
+
+**Good options for 32 GB Macs:**
+- Any 7B–14B parameter MLX model from the `mlx-community` namespace
 
 ### Option A — Download via LM Studio UI (Recommended)
 
 1. Open LM Studio
 2. Click the **Search** tab (magnifying glass icon, left sidebar)
-3. Search for: `Qwen3.5-35B-A3B-6bit`
-4. Find the entry from **`mlx-community`** and click **Download**
-5. Wait for the download to complete (~22 GB)
+3. Search for your chosen model
+4. Click **Download** and wait for it to complete
 
 ### Option B — Download via CLI
 
 ```bash
+# Example — replace with any model ID from LM Studio's catalogue
 lms get mlx-community/Qwen3.5-35B-A3B-6bit
 ```
 
@@ -81,12 +88,12 @@ lms get mlx-community/Qwen3.5-35B-A3B-6bit
 2. Click **"Start Server"** if it isn't already running
 3. The server runs on `http://localhost:1234` by default — leave this as-is
 
-### (Optional) Pre-load the Model
+### (Optional) Pre-load a Model
 
-Desktop Intelligence auto-loads the model on launch. However, you can pre-load it manually to confirm everything works:
+Desktop Intelligence auto-loads your chosen model on launch. However, you can pre-load it manually to confirm everything works:
 
 1. In LM Studio, go to the **Local Server** tab
-2. Under **"Load a model to use it"**, select `mlx-community/Qwen3.5-35B-A3B-6bit`
+2. Under **"Load a model to use it"**, select your downloaded model
 3. Wait for the model to load (~30–60 seconds on first load)
 
 ---
@@ -126,12 +133,13 @@ npm run package
 ## Step 5 — First Launch
 
 1. Open **Desktop Intelligence**
-2. The app will automatically:
-   - Start the LM Studio server (if not already running)
-   - Load `mlx-community/Qwen3.5-35B-A3B-6bit` with `lms load`
-   - Begin health-checking the connection
-3. You'll see a connection overlay while the model loads. On first launch this takes **30–60 seconds**
-4. Once the overlay clears, you're ready to chat
+2. **On first launch**, a welcome screen appears:
+   - Select your model from the dropdown (populated from your LM Studio downloads)
+   - Set your preferred context length (default: 4K — see Step 6 for guidance)
+   - Click **Save & Connect**
+3. The app will start the LM Studio server and load your chosen model — this takes **30–60 seconds**
+4. On subsequent launches, your saved model and context length are applied automatically — you go straight to the connection overlay, then into the app
+5. Once the overlay clears, you're ready to chat
 
 ---
 
@@ -164,7 +172,7 @@ The model's context window controls how much conversation history it can see. Th
 
 - Ensure no other GPU-intensive apps are running
 - Check Activity Monitor → GPU History — the model should be using the GPU
-- Make sure you downloaded the **MLX** version of the model (`mlx-community/Qwen3.5-35B-A3B-6bit`), not a GGUF or other format
+- For best performance on Apple Silicon, use the **MLX** version of your chosen model (models in the `mlx-community` namespace), not GGUF or other formats
 
 ### Charts don't render
 

@@ -26,6 +26,8 @@ import type {
   ModelConfig,
   ReloadModelPayload,
   ReloadResult,
+  AvailableModel,
+  AppInitPayload,
 } from '../../shared/types'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
@@ -754,7 +756,7 @@ _real_close('all')
         // LMSDaemonManager reads this and passes --context-length on `lms load`.
         try {
           const { writeSettings } = await import('../services/SettingsStore')
-          writeSettings({ contextLength: confirmedCtx ?? contextLength })
+          writeSettings({ contextLength: confirmedCtx ?? contextLength, modelId })
         } catch { /* non-fatal */ }
 
         console.log(
@@ -764,6 +766,69 @@ _real_close('all')
       } catch (err) {
         const msg = (err as Error).message
         console.error('[Settings] reload error:', msg)
+        return { success: false, error: msg }
+      }
+    }
+  )
+
+  // ── app:isFirstLaunch ────────────────────────────────────────────
+  // Returns true when no modelId has been saved yet (no settings file,
+  // or settings file exists but modelId was never written).
+  ipcMain.handle(IPC_CHANNELS.APP_IS_FIRST_LAUNCH, async (): Promise<boolean> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const { modelId } = readSettings()
+    return !modelId
+  })
+
+  // ── settings:getAvailableModels ──────────────────────────────────
+  // Fetches the list of downloaded models from LM Studio's REST API.
+  // Returns [] when the server is not yet reachable.
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_GET_AVAILABLE_MODELS,
+    async (): Promise<AvailableModel[]> => {
+      try {
+        const res  = await fetch('http://localhost:1234/api/v0/models')
+        const json = await res.json() as { data?: Record<string, unknown>[] }
+        return (json.data ?? [])
+          .map((m) => {
+            const id = String(m.id ?? m.modelKey ?? m.identifier ?? '')
+            // Derive a friendly display name: take the last path segment, strip extension
+            const raw = id.split('/').pop() ?? id
+            const displayName = raw.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+            return { id, displayName, state: String(m.state ?? 'unknown') }
+          })
+          .filter((m) => m.id.length > 0)
+      } catch {
+        return []
+      }
+    }
+  )
+
+  // ── app:initialize ───────────────────────────────────────────────
+  // Called by FirstLaunchModal after the user picks a model.
+  // Saves settings, then loads the model via `lms load`.
+  ipcMain.handle(
+    IPC_CHANNELS.APP_INITIALIZE,
+    async (_, payload: AppInitPayload): Promise<ReloadResult> => {
+      const { modelId, contextLength } = payload
+      console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength}`)
+
+      const { writeSettings } = await import('../services/SettingsStore')
+      writeSettings({ modelId, contextLength })
+
+      const lmsBin = await findLmsBinAsync()
+      if (!lmsBin) {
+        return { success: false, error: 'lms CLI not found. Ensure LM Studio is installed with the lms command-line tool.' }
+      }
+
+      try {
+        console.log(`[App] Running: lms load "${modelId}" --context-length ${contextLength}`)
+        await runLmsArgs(lmsBin, ['load', modelId, '--context-length', String(contextLength)], 120_000)
+        console.log('[App] ✅ Model loaded successfully')
+        return { success: true, confirmedCtx: contextLength }
+      } catch (err) {
+        const msg = (err as Error).message
+        console.error('[App] initialize failed:', msg)
         return { success: false, error: msg }
       }
     }

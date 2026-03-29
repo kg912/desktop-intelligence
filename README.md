@@ -8,13 +8,14 @@ A native macOS desktop chat application that runs large language models entirely
 
 ## ⚠️ Hardware Requirements
 
-> **This application runs a 35-billion-parameter AI model entirely on-device and requires significant system memory.**
+> **This application runs large language models entirely on-device. Memory requirements depend on the model you choose.**
 >
 > | RAM | Status |
 > |-----|--------|
-> | **64 GB+** | ✅ Ideal — full performance, comfortable headroom |
-> | **48 GB** | ✅ Recommended minimum |
-> | **< 48 GB** | ❌ Not recommended — the model alone requires ~29 GB free memory; lower RAM will cause crashes or severe performance degradation |
+> | **64 GB+** | ✅ Ideal — runs large MoE models (35B+) with full performance and headroom |
+> | **48 GB** | ✅ Recommended minimum for large models |
+> | **32 GB** | ⚠️ Workable with smaller models (7B–14B); avoid loading 35B+ models |
+> | **< 32 GB** | ❌ Not recommended — insufficient for most capable models |
 >
 > **Apple Silicon (M-series) only.** Intel Macs are not supported.
 
@@ -26,10 +27,12 @@ A native macOS desktop chat application that runs large language models entirely
 
 ## What is this?
 
-Built for **Apple Silicon** (M-series) with `mlx-community/Qwen3.5-35B-A3B-6bit` as the primary model, sustaining **~71 tokens/second** on an M5 Pro. Fully offline — everything runs on your machine.
+Built for **Apple Silicon** (M-series), powered by [LM Studio](https://lmstudio.ai/). Works with **any model you have downloaded in LM Studio** — pick it from a dropdown on first launch. Fully offline — everything runs on your machine.
+
+Tested with `mlx-community/Qwen3.5-35B-A3B-6bit`, sustaining **~71 tokens/second** on an M5 Pro.
 
 - 📋 **[Full Feature List →](FEATURES.md)** — chat, RAG, visualizations, diagrams, math rendering, thinking mode, and more
-- 🚀 **[Installation Guide →](INSTALLATION.md)** — install LM Studio, download the model, and get running in minutes
+- 🚀 **[Installation Guide →](INSTALLATION.md)** — install LM Studio, download a model, and get running in minutes
 
 ---
 

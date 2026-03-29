@@ -19,6 +19,8 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 export interface AppSettings {
   /** Context length (n_ctx) to use when loading the model. */
   contextLength?: number
+  /** LM Studio model identifier chosen by the user (e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"). */
+  modelId?: string
 }
 
 function settingsPath(): string {

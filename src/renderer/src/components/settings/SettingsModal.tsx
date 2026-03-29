@@ -17,7 +17,9 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Settings, RefreshCw, AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react'
+import { X, Settings, RefreshCw, AlertCircle, CheckCircle2, ChevronRight, ChevronDown } from 'lucide-react'
+import { useModelStore } from '../../store/ModelStore'
+import type { AvailableModel } from '../../../../shared/types'
 
 // ── Context length preset steps ─────────────────────────────────────
 const PRESETS = [4096, 8192, 16384, 32768, 65536, 131072]
@@ -50,19 +52,25 @@ interface SettingsModalProps {
 
 // ── Component ─────────────────────────────────────────────────────────
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
+  const { setSelectedModel } = useModelStore()
+
   // Fetched from LM Studio on each open
-  const [fetchedCtx,   setFetchedCtx]   = useState<number | null>(null)
-  const [fetchedModel, setFetchedModel] = useState<string>('')
-  const [draftCtx,     setDraftCtx]     = useState<number>(32768)
+  const [fetchedCtx,      setFetchedCtx]      = useState<number | null>(null)
+  const [fetchedModel,    setFetchedModel]    = useState<string>('')
+  const [draftCtx,        setDraftCtx]        = useState<number>(32768)
+  const [draftModel,      setDraftModel]      = useState<string>('')
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([])
 
   // UI states
   const [loading,     setLoading]     = useState(false)   // fetching config
   const [reloading,   setReloading]   = useState(false)   // model reload in progress
   const [result,      setResult]      = useState<{ ok: boolean; msg: string } | null>(null)
 
-  const changed = fetchedCtx !== null && draftCtx !== fetchedCtx
+  // Changed if either context length or model differs from the fetched state
+  const changed = fetchedCtx !== null &&
+    (draftCtx !== fetchedCtx || draftModel !== fetchedModel)
 
-  // ── Fetch current config whenever modal opens ─────────────────
+  // ── Fetch current config + available models whenever modal opens ─
   useEffect(() => {
     if (!open) {
       setResult(null)
@@ -70,18 +78,25 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
     setLoading(true)
     setResult(null)
-    window.api.getModelConfig()
-      .then((cfg) => {
+    Promise.all([
+      window.api.getModelConfig(),
+      window.api.getAvailableModels(),
+    ])
+      .then(([cfg, models]) => {
         // Clamp to slider range — some models report >128K which breaks the UI
         const ctx = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
         setFetchedCtx(ctx)
         setFetchedModel(cfg.modelId)
         setDraftCtx(ctx)
+        setDraftModel(cfg.modelId)
+        setAvailableModels(models)
       })
       .catch(() => {
         setFetchedCtx(32768)
         setFetchedModel('unknown')
         setDraftCtx(32768)
+        setDraftModel('unknown')
+        setAvailableModels([])
       })
       .finally(() => setLoading(false))
   }, [open])
@@ -92,12 +107,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setReloading(true)
     setResult(null)
     try {
-      const res = await window.api.reloadModel({ modelId: fetchedModel, contextLength: draftCtx })
+      const res = await window.api.reloadModel({ modelId: draftModel, contextLength: draftCtx })
       if (res.success) {
         // Use the value confirmed by re-reading LM Studio; fall back to what we sent
         const actual = res.confirmedCtx ?? draftCtx
         setFetchedCtx(actual)
         setDraftCtx(actual)
+        setFetchedModel(draftModel)
+        // Propagate model switch to the global store so TopBar / chat payloads reflect it
+        setSelectedModel(draftModel)
         const msg = res.confirmedCtx && res.confirmedCtx !== draftCtx
           ? `Model reloaded. LM Studio reports ${fmtCtx(actual)} context (requested ${fmtCtx(draftCtx)}).`
           : `Model reloaded with ${fmtCtx(actual)} context.`
@@ -110,7 +128,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     } finally {
       setReloading(false)
     }
-  }, [changed, reloading, fetchedModel, draftCtx])
+  }, [changed, reloading, draftModel, draftCtx, setSelectedModel])
 
   // ── Close guard — ignore clicks when reloading ────────────────
   const safeClose = useCallback(() => {
@@ -176,23 +194,58 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             {/* ── Body ── */}
             <div className="px-6 py-5 space-y-6">
 
-              {/* Active model */}
+              {/* Active model — editable selector */}
               <div>
                 <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted mb-2">
                   Active Model
                 </p>
-                <div
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-surface-border/60"
-                  style={{ background: '#111' }}
-                >
+                {loading ? (
                   <div
-                    className="w-1.5 h-1.5 rounded-full bg-accent-500 flex-shrink-0"
-                    style={{ boxShadow: '0 0 6px rgba(220,38,38,0.7)' }}
-                  />
-                  <span className="text-xs font-mono text-content-secondary truncate">
-                    {loading ? 'Fetching…' : (fetchedModel || '—')}
-                  </span>
-                </div>
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-surface-border/60"
+                    style={{ background: '#111' }}
+                  >
+                    <div className="w-3 h-3 rounded-full border-2 border-neutral-600 border-t-red-500 animate-spin" />
+                    <span className="text-xs text-content-muted">Fetching…</span>
+                  </div>
+                ) : availableModels.length > 0 ? (
+                  <div className="relative">
+                    <select
+                      value={draftModel}
+                      onChange={(e) => setDraftModel(e.target.value)}
+                      disabled={reloading}
+                      className="w-full appearance-none px-3 py-2.5 pr-8 rounded-lg border text-xs font-mono
+                                 disabled:opacity-40 focus:outline-none transition-colors"
+                      style={{
+                        background:  '#111',
+                        color:       '#f5f5f5',
+                        border:      '1px solid #3a3a3a',
+                      }}
+                    >
+                      {availableModels.map((m) => (
+                        <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                          {m.id}{m.state === 'loaded' ? ' (loaded)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none text-content-muted"
+                    />
+                  </div>
+                ) : (
+                  /* Fallback when getAvailableModels returned empty (LM Studio not running yet) */
+                  <div
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-surface-border/60"
+                    style={{ background: '#111' }}
+                  >
+                    <div
+                      className="w-1.5 h-1.5 rounded-full bg-accent-500 flex-shrink-0"
+                      style={{ boxShadow: '0 0 6px rgba(220,38,38,0.7)' }}
+                    />
+                    <span className="text-xs font-mono text-content-secondary truncate">
+                      {fetchedModel || '—'}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Context Length */}
@@ -342,7 +395,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <>
                     <RefreshCw className="w-3.5 h-3.5" />
                     Reload Model
-                    {changed && (
+                    {changed && draftModel !== fetchedModel && (
+                      <span className="ml-auto text-[10px] text-accent-600 font-mono truncate max-w-[160px]">
+                        new model selected
+                      </span>
+                    )}
+                    {changed && draftCtx !== fetchedCtx && draftModel === fetchedModel && (
                       <span className="ml-auto flex items-center gap-1 text-[10px] text-accent-600 font-mono">
                         {fmtCtx(fetchedCtx ?? 0)} <ChevronRight className="w-3 h-3" /> {fmtCtx(draftCtx)}
                       </span>

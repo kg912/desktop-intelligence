@@ -343,7 +343,7 @@ export class ChatService {
     // return a silent empty completion. We keep only the last HISTORY_WINDOW
     // messages (always including the current user message at the end).
     const HISTORY_WINDOW = 20  // ~10 exchange pairs; adjust if needed
-    const allMsgs = payload.messages.filter((m) => m.role !== 'divider')
+    const allMsgs = payload.messages.filter((m) => (m.role as string) !== 'divider')
     const trimmed = allMsgs.length > HISTORY_WINDOW
       ? allMsgs.slice(allMsgs.length - HISTORY_WINDOW)
       : allMsgs

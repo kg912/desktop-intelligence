@@ -10,7 +10,6 @@ import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
-import { DEFAULT_MODEL_ID } from '../shared/types'
 
 // ----------------------------------------------------------------
 // Security: prevent renderer from loading arbitrary URLs
@@ -111,7 +110,7 @@ function createWindow(): void {
 // ----------------------------------------------------------------
 // App lifecycle
 // ----------------------------------------------------------------
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // IPC handlers are registered ONCE here, not inside createWindow.
   // On macOS, closing the window with ✕ keeps the app running; clicking the
   // Dock icon calls createWindow() again via 'activate'. Registering handlers
@@ -124,7 +123,14 @@ app.whenReady().then(() => {
 
   // Start the daemon and connection polling once — they survive window
   // close/reopen cycles and do not need to be restarted per window.
-  lmsDaemonManager.start(DEFAULT_MODEL_ID).catch((err) => {
+  //
+  // On first launch (no modelId saved), start the LM Studio server without
+  // loading a model — the renderer will show FirstLaunchModal and call
+  // APP_INITIALIZE once the user has chosen a model.
+  // On subsequent launches, reload the saved model automatically.
+  const { readSettings } = await import('./services/SettingsStore')
+  const savedSettings = readSettings()
+  lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err) => {
     console.error('[App] LMSDaemon unhandled error:', err)
   })
   modelConnectionManager.start()
