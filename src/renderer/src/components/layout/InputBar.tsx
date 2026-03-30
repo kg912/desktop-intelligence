@@ -303,7 +303,7 @@ export function InputBar({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message Qwen… (Shift+Enter for newline)"
+            placeholder="Message… (Shift+Enter for newline)"
             rows={1}
             className={cn(
               'flex-1 resize-none bg-transparent',

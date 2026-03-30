@@ -123,7 +123,7 @@ function OfflineView({
             <li>Open LM Studio</li>
             <li>Go to <span className="font-mono text-content-secondary">Local Server</span> tab</li>
             <li>Click <span className="font-mono text-content-secondary">Start Server</span></li>
-            <li>Load your Qwen model</li>
+            <li>Load your model in the Local Server tab</li>
           </ol>
         </div>
       </div>

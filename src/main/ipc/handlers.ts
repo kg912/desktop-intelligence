@@ -134,11 +134,14 @@ function parseLmsPs(output: string): { modelId: string | null; contextLength: nu
   }
 
   // Extract model identifier — covers "Identifier: qwen3.5-35b-a3b", HuggingFace paths, etc.
+  // NOTE: removed /model[:\s]+/ pattern — it matched table headers ("MODEL   STATUS")
+  // and placeholder text ("lms load <model path>") producing "status" or "path".
   const idPatterns: RegExp[] = [
     /identifier[:\s]+([a-z0-9][a-z0-9._/-]+)/i,
     /(mlx-community\/[\w.-]+)/i,
     /(qwen[\w.-]+)/i,
-    /model[:\s]+([a-z0-9][a-z0-9._/-]+)/i,
+    /(lmstudio-community\/[\w.-]+)/i,
+    /(bartowski\/[\w.-]+)/i,
   ]
   let modelId: string | null = null
   for (const re of idPatterns) {
@@ -640,20 +643,13 @@ _real_close('all')
     IPC_CHANNELS.SETTINGS_GET_MODEL,
     async (): Promise<ModelConfig> => {
       // ── 1. SettingsStore — ground truth once a preference exists ──
+      // modelId and contextLength are written here on every APP_INITIALIZE / SETTINGS_RELOAD,
+      // so this is the most reliable source — no lms ps parsing needed.
       try {
         const { readSettings } = await import('../services/SettingsStore')
-        const { contextLength: savedCtx } = readSettings()
+        const { contextLength: savedCtx, modelId: savedModelId } = readSettings()
         if (savedCtx && savedCtx > 0) {
-          // Try to enrich with the live model ID from lms ps (identifier only)
-          let modelId = DEFAULT_MODEL_ID
-          try {
-            const lmsBin = await findLmsBinAsync()
-            if (lmsBin) {
-              const psOut = await runLmsArgs(lmsBin, ['ps'], 5_000)
-              const { modelId: psId } = parseLmsPs(psOut)
-              if (psId) modelId = psId
-            }
-          } catch { /* use DEFAULT_MODEL_ID */ }
+          const modelId = savedModelId ?? DEFAULT_MODEL_ID
           console.log(`[Settings] From SettingsStore: modelId="${modelId}" contextLength=${savedCtx}`)
           return { modelId, contextLength: savedCtx }
         }
@@ -677,22 +673,15 @@ _real_close('all')
       }
 
       // ── 3. /api/v0/models GET — last resort ───────────────────────
+      // Prefer the loaded model; if none, return the first available one.
       try {
         const res     = await fetch('http://localhost:1234/api/v0/models')
         const raw     = await res.text()
         console.log('[Settings] GET /api/v0/models raw response:', raw)
         const json    = JSON.parse(raw) as { data?: Record<string, unknown>[] }
         const entries = json.data ?? []
-        const isTarget = (m: Record<string, unknown>): boolean => {
-          const id = String(m.id ?? m.modelKey ?? m.identifier ?? '').toLowerCase()
-          return (
-            id === DEFAULT_MODEL_ID.toLowerCase() ||
-            id.includes('qwen3.5-35b-a3b') ||
-            id.includes('qwen3.5-35b')
-          )
-        }
-        const loaded = entries.find((m) => isTarget(m) && String(m.state ?? '') === 'loaded')
-        const target = loaded ?? entries.find(isTarget)
+        const loaded  = entries.find((m) => String(m.state ?? '') === 'loaded')
+        const target  = loaded ?? entries[0]
         if (target) return extractModelConfig(target)
       } catch (err) {
         console.error('[Settings] getModelConfig REST fallback failed:', err)
