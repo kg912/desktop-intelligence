@@ -178,12 +178,13 @@ def execute_chart(user_code: str) -> dict:
     """Execute user matplotlib code and return base64 PNG or error."""
     user_stdout_capture = io.StringIO()
 
-    exec_globals = {
-        'plt': plt,
-        'np': np,
-        'scipy_stats': scipy_stats,
-        '__builtins__': __builtins__,
-    }
+    # Use module globals as the exec namespace so all pre-imported names
+    # (np, plt, scipy_stats, io, base64, _fix_cov, _FlexAxes, etc.) and
+    # all monkey-patch shims are available to user code without explicit import.
+    # dict() copy prevents user code from permanently mutating the module
+    # namespace between requests (e.g. redefining np or plt).
+    exec_globals = dict(globals())
+    exec_globals['__builtins__'] = __builtins__
 
     try:
         sys.stdout = user_stdout_capture

@@ -737,17 +737,29 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
   const [error,       setError]       = useState<string | null>(null)
   const [running,     setRunning]     = useState(false)
   const lastRenderedCode = useRef<string | null>(null)
+  // Always holds the latest code value so timeout callbacks can detect staleness.
+  const lastCodeRef = useRef<string>(code)
 
   useEffect(() => {
-    // Do NOT execute while streaming — partial code produces false errors.
-    // Wait until isStreaming goes false (full block received), then execute
-    // after a 200ms settle delay.
-    if (isStreaming) return
+    lastCodeRef.current = code
+
+    // Skip if we already rendered this exact code.
     if (code === lastRenderedCode.current) return
 
     let cancelled = false
+
+    // While streaming: wait 800ms of code stability before executing.
+    // At ~71 tok/s, 800ms ≈ 57 tokens of silence — reliable indicator that
+    // the closing ``` has been received and the model has moved on.
+    // After streaming ends: 200ms settle delay is sufficient.
+    const delay = isStreaming ? 800 : 200
+
     const timer = setTimeout(async () => {
       if (cancelled) return
+      // If code changed during our wait (another effect ran), abort — the
+      // newer invocation will handle the updated code.
+      if (lastCodeRef.current !== code) return
+
       setRunning(true)
       lastRenderedCode.current = code
       try {
@@ -765,7 +777,7 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
       } finally {
         if (!cancelled) setRunning(false)
       }
-    }, 200)
+    }, delay)
 
     return () => { cancelled = true; clearTimeout(timer) }
   }, [code, isStreaming])

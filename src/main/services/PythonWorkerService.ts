@@ -8,6 +8,10 @@
  * Protocol: newline-delimited JSON over stdin/stdout.
  *   Request:  { code: string }
  *   Response: { success: boolean, imageBase64?: string, error?: string }
+ *
+ * Multiple concurrent render() calls are queued (FIFO) rather than falling
+ * back to slow one-shot spawns. The Python worker is single-threaded so
+ * requests are processed one at a time, but they don't pay cold-start cost.
  */
 
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
@@ -17,15 +21,28 @@ import { app } from 'electron'
 const WORKER_TIMEOUT_MS = 30_000
 const READY_TIMEOUT_MS  = 15_000
 
+interface QueueItem {
+  code: string
+  resolve: (result: { success: boolean; imageBase64?: string; error?: string }) => void
+  timeoutHandle: ReturnType<typeof setTimeout>
+}
+
 export class PythonWorkerService {
   private proc: ChildProcessWithoutNullStreams | null = null
-  private ready   = false
+  private ready    = false
   private stopping = false
-  private buffer  = ''
-  private pendingResolve: ((result: { success: boolean; imageBase64?: string; error?: string }) => void) | null = null
-  private readyResolve:   (() => void)         | null = null
-  private readyReject:    ((err: Error) => void) | null = null
-  private requestTimeout: ReturnType<typeof setTimeout> | null = null
+  private buffer   = ''
+
+  // FIFO queue — requests wait here while the worker is busy
+  private queue: QueueItem[] = []
+  private processing = false
+
+  // The resolve/timeout for the request currently being processed
+  private _activeResolve: ((result: { success: boolean; imageBase64?: string; error?: string }) => void) | null = null
+  private _activeTimeout: ReturnType<typeof setTimeout> | null = null
+
+  private readyResolve: (() => void)          | null = null
+  private readyReject:  ((err: Error) => void) | null = null
 
   /** Path to worker_harness.py — works in both dev and packaged app. */
   private getWorkerPath(): string {
@@ -68,6 +85,7 @@ export class PythonWorkerService {
           continue
         }
 
+        // Ready signal
         if (parsed['ready'] && this.readyResolve) {
           console.log('[PythonWorker] Worker ready ✅')
           this.ready = true
@@ -77,12 +95,15 @@ export class PythonWorkerService {
           continue
         }
 
-        // Chart render response
-        if (this.pendingResolve) {
-          if (this.requestTimeout) { clearTimeout(this.requestTimeout); this.requestTimeout = null }
-          const resolve = this.pendingResolve
-          this.pendingResolve = null
+        // Chart render response — resolve the active request and process next
+        if (this._activeResolve) {
+          if (this._activeTimeout) { clearTimeout(this._activeTimeout); this._activeTimeout = null }
+          const resolve = this._activeResolve
+          this._activeResolve = null
+          this.processing = false
           resolve(parsed as { success: boolean; imageBase64?: string; error?: string })
+          // Immediately pick up the next queued request
+          this.processNext()
         }
       }
     })
@@ -97,10 +118,21 @@ export class PythonWorkerService {
         this.readyResolve = null
         this.readyReject  = null
       }
-      if (this.pendingResolve) {
-        if (this.requestTimeout) { clearTimeout(this.requestTimeout); this.requestTimeout = null }
-        this.pendingResolve({ success: false, error: 'Python worker exited unexpectedly' })
-        this.pendingResolve = null
+
+      // Reject the active in-flight request
+      if (this._activeResolve) {
+        if (this._activeTimeout) { clearTimeout(this._activeTimeout); this._activeTimeout = null }
+        this._activeResolve({ success: false, error: 'Python worker exited unexpectedly' })
+        this._activeResolve = null
+      }
+
+      // Drain the queue — every waiting request gets an error response
+      const draining = [...this.queue]
+      this.queue = []
+      this.processing = false
+      for (const item of draining) {
+        clearTimeout(item.timeoutHandle)
+        item.resolve({ success: false, error: 'Python worker exited unexpectedly' })
       }
 
       // Auto-restart on unexpected crash (not triggered by our own stop() call).
@@ -156,36 +188,61 @@ export class PythonWorkerService {
 
   /**
    * Render a matplotlib code block.
-   * Falls back to one-shot spawn if the worker is not yet ready or is busy.
+   * Requests are queued (FIFO) so multiple charts in one response all use
+   * the warm persistent worker rather than falling back to cold spawns.
+   * Falls back to one-shot spawn only if the worker is not yet ready.
    */
   async render(userCode: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> {
     if (!this.ready || !this.proc) {
       console.warn('[PythonWorker] Worker not ready — falling back to one-shot spawn')
       return this.fallbackRender(userCode)
     }
-    if (this.pendingResolve) {
-      console.warn('[PythonWorker] Worker busy — falling back to one-shot spawn')
-      return this.fallbackRender(userCode)
-    }
 
     return new Promise((resolve) => {
-      this.pendingResolve = resolve
-
-      this.requestTimeout = setTimeout(() => {
-        console.error('[PythonWorker] Request timed out — restarting worker')
-        this.pendingResolve = null
+      const timeoutHandle = setTimeout(() => {
+        // Remove from queue if still waiting (hasn't been picked up yet)
+        const idx = this.queue.findIndex(q => q.resolve === resolve)
+        if (idx !== -1) {
+          this.queue.splice(idx, 1)
+          console.error('[PythonWorker] Queued request timed out before execution')
+          resolve({ success: false, error: 'Chart render timed out after 30s' })
+          return
+        }
+        // It was the active request — resolve it and restart the worker
+        console.error('[PythonWorker] Active request timed out — restarting worker')
+        if (this._activeTimeout) { clearTimeout(this._activeTimeout); this._activeTimeout = null }
+        this._activeResolve = null
+        this.processing = false
         resolve({ success: false, error: 'Chart render timed out after 30s' })
         this.restart().catch(console.error)
       }, WORKER_TIMEOUT_MS)
 
-      try {
-        this.proc!.stdin.write(JSON.stringify({ code: userCode }) + '\n')
-      } catch (err) {
-        if (this.requestTimeout) { clearTimeout(this.requestTimeout); this.requestTimeout = null }
-        this.pendingResolve = null
-        resolve({ success: false, error: `Failed to send to worker: ${err}` })
-      }
+      this.queue.push({ code: userCode, resolve, timeoutHandle })
+      console.log(`[PythonWorker] Queued render request (queue depth: ${this.queue.length})`)
+      this.processNext()
     })
+  }
+
+  /** Pull the next item from the queue and send it to the worker. */
+  private processNext(): void {
+    if (this.processing || this.queue.length === 0 || !this.proc || !this.ready) return
+
+    const next = this.queue.shift()!
+    this.processing = true
+    this._activeResolve = next.resolve
+    this._activeTimeout = next.timeoutHandle
+
+    console.log(`[PythonWorker] Processing render (${this.queue.length} remaining in queue)`)
+    try {
+      this.proc.stdin.write(JSON.stringify({ code: next.code }) + '\n')
+    } catch (err) {
+      clearTimeout(next.timeoutHandle)
+      this._activeResolve = null
+      this._activeTimeout = null
+      this.processing = false
+      next.resolve({ success: false, error: `Failed to send to worker: ${err}` })
+      this.processNext()
+    }
   }
 
   /** One-shot fallback — minimal preamble, same stdout-based base64 output. */
