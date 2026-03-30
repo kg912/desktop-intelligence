@@ -102,7 +102,7 @@ Desktop Intelligence auto-loads your chosen model on launch. However, you can pr
 
 ### Option A — Use the Pre-built DMG (Recommended)
 
-1. Download `Desktop Intelligence-1.0.0-arm64.dmg` from the releases
+1. Download `Desktop Intelligence-1.5.0-arm64.dmg` from the releases
 2. Open the `.dmg` file
 3. Drag **Desktop Intelligence** to your Applications folder
 4. Launch the app
@@ -134,9 +134,15 @@ npm run package
 
 1. Open **Desktop Intelligence**
 2. **On first launch**, a welcome screen appears:
-   - Select your model from the dropdown (populated from your LM Studio downloads)
-   - Set your preferred context length (default: 4K — see Step 6 for guidance)
+
+   ![First-launch model selector](app_images/setup_screen_model_selector_form.png)
+
+   - **Active Model** dropdown — lists every model you have downloaded in LM Studio. Select the one you want to use.
+   - **Context Length** slider — controls how much conversation history the model can see. Default is 32K tokens, which is comfortable for most use. See Step 6 for guidance on higher values.
    - Click **Save & Connect**
+
+   > ⚠️ **RAM warning:** Large models (35B+) at high context lengths consume significant unified memory. A 35B model at 128K context can use 40–55 GB of RAM. On 32 GB machines, use a 7B–14B model and keep context at 32K or below.
+
 3. The app will start the LM Studio server and load your chosen model — this takes **30–60 seconds**
 4. On subsequent launches, your saved model and context length are applied automatically — you go straight to the connection overlay, then into the app
 5. Once the overlay clears, you're ready to chat
@@ -152,6 +158,9 @@ The model's context window controls how much conversation history it can see. Th
    - **32K** (32 768) — default, good for general use
    - **64K** (65 536) — good for document Q&A and long conversations
    - **128K** (131 072) — maximum; uses significantly more RAM
+
+   > ⚠️ **RAM warning:** Higher context lengths consume more unified memory. On 64 GB machines, 128K is fine. On 32 GB machines, stay at 32K or below — going higher with a large model risks system memory pressure and slowdowns.
+
 3. Click **Reload Model** and wait ~30–60 seconds
 4. Your preference is saved and applied automatically on every future launch
 
@@ -172,7 +181,7 @@ The model's context window controls how much conversation history it can see. Th
 
 - Ensure no other GPU-intensive apps are running
 - Check Activity Monitor → GPU History — the model should be using the GPU
-- For best performance on Apple Silicon, use the **MLX** version of your chosen model (models in the `mlx-community` namespace), not GGUF or other formats
+- For best performance on Apple Silicon, use the **MLX** version of your chosen model (look for models in the `mlx-community` namespace on Hugging Face / LM Studio), not GGUF or other formats
 
 ### Charts don't render
 
@@ -198,4 +207,4 @@ To update to a new version, simply replace the app in your Applications folder w
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-03-30 — v1.5.0*

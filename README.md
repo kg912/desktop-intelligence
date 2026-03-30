@@ -33,10 +33,21 @@ Tested with `mlx-community/Qwen3.5-35B-A3B-6bit`, sustaining **~71 tokens/second
 
 - 📋 **[Full Feature List →](FEATURES.md)** — chat, RAG, visualizations, diagrams, math rendering, thinking mode, and more
 - 🚀 **[Installation Guide →](INSTALLATION.md)** — install LM Studio, download a model, and get running in minutes
+- 📝 **[Changelog →](CHANGELOG.md)** — what's new in each release
 
 ---
 
 ## Screenshots
+
+### First Launch — Model Selection
+
+![First-launch model selector](app_images/setup_screen_model_selector_form.png)
+
+On first launch, choose any model you have downloaded in LM Studio and set your initial context window. Your selection is saved and applied automatically on every subsequent launch.
+
+> ⚠️ **RAM note:** Large models (35B+) require 48 GB of unified memory or more. Loading a 35B model at 128K context can use 40–55 GB of RAM — other apps will be compressed. On 32 GB machines, stick to 7B–14B parameter models.
+
+---
 
 ### Markdown, Code & Math
 
@@ -78,7 +89,7 @@ npm test
 npm run package
 ```
 
-The packaged app outputs to `dist/Desktop Intelligence-1.0.0-arm64.dmg`.
+The packaged app outputs to `dist/Desktop Intelligence-1.5.0-arm64.dmg`.
 
 ---
 
@@ -142,5 +153,7 @@ Key sentinel log lines:
 | `[Settings] ✅ Reload complete` | Model reloaded with new context length |
 
 ---
+
+*v1.5.0 — 2026-03-30*
 
 Built with [Claude Code](https://claude.ai/claude-code)

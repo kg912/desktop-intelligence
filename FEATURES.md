@@ -66,8 +66,10 @@ A complete reference of every capability currently implemented in the app.
 ## Native Data Visualizations
 
 ### Matplotlib Rendering
-- When the model writes a `python` code block containing `matplotlib` code, the app executes it natively via `python3 -c` subprocess and renders the output as an inline PNG image
-- Charts appear directly in the chat — no external viewer, no file exports
+- When the model writes a `python` code block containing `matplotlib` code, the app executes it natively and renders the output as an inline PNG image directly in the chat
+- A **persistent Python worker process** pre-imports `numpy`, `matplotlib`, and `scipy` once at app startup. Each chart render takes ~200ms instead of 3–4s
+- Multiple charts in a single response are queued (FIFO) on the warm worker — no fallback spawns
+- Each code block is monitored independently: rendering begins as soon as a block's code has been stable for 800ms, so Chart 1 can be rendering while the model is still writing Chart 2
 - Rendering happens asynchronously; a spinner shows while the chart is being generated
 
 ### Dark-Theme Styling
@@ -75,12 +77,16 @@ A complete reference of every capability currently implemented in the app.
 - No additional styling code required in model-generated plots
 
 ### Safety Shims
-The Python execution environment includes several safety shims that silently correct common model code mistakes:
-- **`plt.show()` / `plt.savefig()` / `plt.close()`** are replaced with no-ops — the engine captures the figure itself
-- **`_FlexAxes`**: when subplot count is capped, out-of-bounds axis access (e.g. `axes[2]` when only 2 exist) returns a hidden off-screen axis instead of raising `IndexError`
-- **`_fix_cov()`**: 1-D covariance vectors are automatically promoted to diagonal 2×2 matrices (fixes common GMM/multivariate normal errors)
-- **`_mvn_safe_pdf()`**: misshapen meshgrid arrays `(d, N)` are auto-transposed to `(N, d)` for `scipy.stats.multivariate_normal.pdf`
-- **`_auto_norm_imshow()`**: 2D float arrays are auto-normalised to `[min, max]` so feature maps don't render as all-white
+The Python execution environment includes safety shims that silently correct common model code mistakes:
+- **`plt.show()` / `plt.savefig()` / `plt.close()`** — replaced with no-ops; the engine captures the figure itself
+- **`matplotlib.use()`** — patched to no-op; `Agg` is already set at worker startup
+- **`_FlexAxes`** — out-of-bounds subplot axis access returns a hidden off-screen axis instead of `IndexError`
+- **`_fix_cov()`** — 1-D covariance vectors auto-promoted to diagonal 2×2 matrices (fixes GMM / multivariate normal errors)
+- **`_mvn_safe_pdf()`** — misshapen meshgrid `(d, N)` auto-transposed to `(N, d)` for `scipy.stats.multivariate_normal.pdf`
+- **`_auto_norm_imshow()`** — 2D float arrays auto-normalised to `[min, max]` so feature maps don't render all-white
+- **`_safe_barh()` / `_safe_bar()`** — Python list labels auto-converted to `np.array` before axis calls; prevents `TypeError: only integer scalar arrays can be converted to a scalar index`
+- **`_safe_scatter()`** — mismatched `x`/`y` arrays truncated to `min(len(x), len(y))`; prevents `ValueError: x and y must be the same size`
+- **`_safe_plot()`** — same truncation for two-argument `plot(x, y)` calls
 
 ### Supported Plot Types (tested)
 LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergence curves, backpropagation weight updates, Gaussian Mixture Models, 2D GMM contour plots, convolutional neural network feature maps, and general scientific plots (distributions, histograms, scatter plots, bar charts, heatmaps, time series)
@@ -180,4 +186,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-03-30 — v1.5.0*
