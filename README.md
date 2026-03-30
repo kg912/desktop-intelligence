@@ -6,7 +6,7 @@ A native macOS desktop chat application that runs large language models entirely
 
 ---
 
-## ⚠️ Hardware Requirements
+## ⚠️ Hardware Requirements & Disclaimer
 
 > **This application runs large language models entirely on-device. Memory requirements depend on the model you choose.**
 >
@@ -18,6 +18,10 @@ A native macOS desktop chat application that runs large language models entirely
 > | **< 32 GB** | ❌ Not recommended — insufficient for most capable models |
 >
 > **Apple Silicon (M-series) only.** Intel Macs are not supported.
+
+**Local LLM inference is computationally intensive and generates significant heat.** Running large models puts sustained load on your SoC in ways typical workloads do not. On Apple Silicon MacBooks, lighter models (3B–14B) run warm but manageable; dense 27B+ models cause the machine to run **very hot** with prolonged use. Ensure your machine has adequate ventilation and do not run intensive models on a blocked or poorly ventilated surface for extended periods.
+
+This project was built for **personal use and learning** on the author's own hardware. It is not a polished commercial product and is not recommended unless you understand what you're doing. The author accepts **no responsibility** for hardware damage, thermal throttling, reduced component lifespan, or any other adverse effects resulting from running this software. **Use at your own risk.**
 
 ---
 
