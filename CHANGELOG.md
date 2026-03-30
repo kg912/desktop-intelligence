@@ -4,6 +4,20 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.5.1] — 2026-03-30
+
+### Bug Fixes
+
+#### Mermaid Mindmap — Missing Header Auto-Recovery
+Models frequently omit the required `mindmap` keyword on the first line of a mindmap block, jumping straight to `root((Title))`. Previously this caused an immediate parse error with no diagram shown. The renderer now detects this pattern and silently prepends the missing `mindmap` header before passing the code to Mermaid — the diagram renders correctly without the user seeing any error.
+
+#### Mermaid Mindmap — Syntax Rules in System Prompt
+Two new rules added to the system prompt to prevent the most common mindmap errors:
+- The model is explicitly instructed that the first line of a mindmap block **must** be `mindmap` — never skip straight to `root()`
+- Node labels must be plain text only — no `^`, `/`, or math expressions (e.g. write `"QK transpose"` not `"QK^T"`)
+
+---
+
 ## [1.5.0] — 2026-03-30
 
 This is the first stable release. It represents the full feature-complete build as of March 2026 and is the recommended version for daily use.
