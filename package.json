@@ -85,6 +85,13 @@
       "**/node_modules/@xenova/transformers/**",
       "**/node_modules/sharp/**"
     ],
+    "extraResources": [
+      {
+        "from": "resources/python",
+        "to": "python",
+        "filter": ["**/*.py"]
+      }
+    ],
     "mac": {
       "target": [
         {

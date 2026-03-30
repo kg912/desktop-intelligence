@@ -10,6 +10,7 @@ import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
+import { pythonWorker } from './services/PythonWorkerService'
 
 // ----------------------------------------------------------------
 // Security: prevent renderer from loading arbitrary URLs
@@ -43,6 +44,7 @@ async function gracefulShutdown(): Promise<void> {
 
   console.log('[App] Graceful shutdown initiated…')
   modelConnectionManager.stop()
+  pythonWorker.stop()
 
   // Kill child processes and stop LM Studio server
   await lmsDaemonManager.shutdown()
@@ -134,6 +136,12 @@ app.whenReady().then(async () => {
     console.error('[App] LMSDaemon unhandled error:', err)
   })
   modelConnectionManager.start()
+
+  // Pre-warm the persistent Python worker so the first chart renders fast.
+  // Non-fatal: if python3 is missing, render() will fall back to one-shot spawn.
+  pythonWorker.start().catch((err: Error) => {
+    console.warn('[PythonWorker] Failed to start at launch:', err.message)
+  })
 
   app.on('activate', () => {
     // On macOS: re-create the window when the Dock icon is clicked and no

@@ -6,6 +6,7 @@ import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 import { detectSearchIntent, performWebSearch } from '../services/WebSearchService'
 import { BASE_SYSTEM_PROMPT } from '../services/SystemPromptService'
+import { pythonWorker } from '../services/PythonWorkerService'
 import {
   getDB,
   getAllChats,
@@ -341,270 +342,24 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── Matplotlib rendering ─────────────────────────────────────
   /**
-   * extractPythonError
-   *
-   * Converts raw Python stderr into a concise, user-readable error string.
-   * Finds "File "<string>", line N" in the traceback, maps the line number
-   * back to user code (subtracting the preamble), and returns:
-   *   "Line N: <offending line>\n<error type>: <message>"
-   */
-  function extractPythonError(stderr: string, userCode: string, preambleLines: number): string {
-    const lines = stderr.split('\n')
-    const fileLineIdx = lines.findIndex(l => l.includes('File "<string>"'))
-    if (fileLineIdx >= 0) {
-      const lineNumMatch = lines[fileLineIdx].match(/line (\d+)/)
-      if (lineNumMatch) {
-        const absLine    = parseInt(lineNumMatch[1])
-        const userLineNum = Math.max(1, absLine - preambleLines)
-        const userLines  = userCode.split('\n')
-        const offending  = userLines[userLineNum - 1]?.trim() ?? '(unknown)'
-        const errorLine  = lines.filter(l => l.trim()).at(-1) ?? 'unknown error'
-        return `Line ${userLineNum}: ${offending}\n${errorLine}`
-      }
-    }
-    return lines.filter(l => l.trim()).at(-1) ?? stderr.trim()
-  }
-
-  /**
    * python:render
    *
-   * Executes a matplotlib Python script and returns the chart as a
-   * base64-encoded PNG.  The script is wrapped with:
-   *  - matplotlib Agg backend (no display needed)
-   *  - Dark theme rcParams matching the app palette
-   *  - Pre-imported plt and np so the model code stays concise
-   *  - Automatic tight_layout() + savefig() → base64 on stdout
-   *
-   * The model must NOT call plt.show(), plt.savefig(), or import matplotlib.
-   *
-   * Timeout: 30 seconds — prevents runaway scripts from blocking IPC.
+   * Delegates to PythonWorkerService — a persistent python3 process that
+   * pre-imports matplotlib/numpy/scipy once at startup, cutting per-render
+   * latency from ~3-4s (cold spawn) to ~200ms (warm worker).
+   * Falls back to one-shot spawn automatically if the worker is not ready.
    */
   ipcMain.handle(
     IPC_CHANNELS.PYTHON_RENDER,
     async (_evt, userCode: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> => {
-      const { spawn } = await import('child_process')
-
-      const PREAMBLE = `
-import sys, io, base64
-import matplotlib
-matplotlib.use('Agg')
-# Prevent model code from calling matplotlib.use() again (already set to Agg).
-import matplotlib as _mpl_module
-_mpl_module.use = lambda *a, **kw: None  # silently ignore subsequent calls
-import matplotlib.pyplot as plt
-import numpy as np
-try:
-    import scipy
-    from scipy import stats as scipy_stats
-except ImportError:
-    pass
-
-# ── Banned import guard ───────────────────────────────────────────
-# Intercept __import__ so model code that tries to import a banned library
-# gets a clear, actionable error instead of a cryptic ModuleNotFoundError.
-import builtins as _builtins
-_orig_import = _builtins.__import__
-_BANNED = frozenset(['sklearn', 'pandas', 'seaborn', 'torch', 'tensorflow', 'keras'])
-def _guarded_import(name, *args, **kwargs):
-    root = name.split('.')[0]
-    if root in _BANNED:
-        raise ImportError(
-            f"'{name}' is not available in this sandbox. "
-            f"Use numpy, scipy, or matplotlib directly instead."
-        )
-    return _orig_import(name, *args, **kwargs)
-_builtins.__import__ = _guarded_import
-
-plt.rcParams.update({
-    'figure.facecolor':  '#0f0f0f',
-    'axes.facecolor':    '#141414',
-    'axes.edgecolor':    '#3a3a3a',
-    'axes.labelcolor':   '#a3a3a3',
-    'grid.color':        '#2a2a2a',
-    'grid.linestyle':    '--',
-    'grid.alpha':        0.6,
-    'text.color':        '#f5f5f5',
-    'xtick.color':       '#a3a3a3',
-    'ytick.color':       '#a3a3a3',
-    'legend.facecolor':  '#1a1a1a',
-    'legend.edgecolor':  '#3a3a3a',
-    'legend.labelcolor': '#f5f5f5',
-    'axes.prop_cycle':   plt.cycler(color=[
-        '#f87171','#60a5fa','#86efac','#fb923c',
-        '#c084fc','#67e8f9','#fcd34d','#f472b6']),
-    'figure.figsize':    (10, 6),
-    'lines.linewidth':   2,
-    'font.size':         11,
-    'axes.titlesize':    13,
-    'axes.titlecolor':   '#f5f5f5',
-    'axes.titlepad':     10,
-})
-
-# ── Safety shims: prevent model code from crashing the runner ──────
-# plt.show / plt.savefig / plt.close are no-ops — the engine epilogue
-# captures the figure itself after user code runs.
-_real_savefig = plt.savefig
-_real_close   = plt.close
-plt.show    = lambda *a, **kw: None
-plt.savefig = lambda *a, **kw: None
-plt.close   = lambda *a, **kw: None
-
-# suptitle(pad=...) is not a Text property — strip it silently.
-_orig_suptitle = plt.Figure.suptitle
-def _safe_suptitle(self, t, **kw):
-    kw.pop('pad', None)
-    return _orig_suptitle(self, t, **kw)
-plt.Figure.suptitle = _safe_suptitle
-
-# Cap plt.subplots() at 2 visible columns.  To prevent IndexError when model
-# code accesses axes[2] or axes[3], wrap the returned axes in _FlexAxes — a
-# list subclass that returns a hidden off-screen axes for out-of-range indices
-# instead of raising IndexError.  Tuple unpacking (ax1, ax2 = axes) still
-# works because the list has exactly the capped number of real elements.
-class _FlexAxes(list):
-    def __init__(self, ax_list, fig):
-        super().__init__(ax_list)
-        self._fig = fig
-        self._overflow = {}
-    def __getitem__(self, i):
-        if isinstance(i, int) and not (-len(self) <= i < len(self)):
-            if i not in self._overflow:
-                ax = self._fig.add_axes([0, 0, 0.001, 0.001])
-                ax.set_visible(False)
-                self._overflow[i] = ax
-            return self._overflow[i]
-        return list.__getitem__(self, i)
-
-_orig_subplots = plt.subplots
-def _safe_subplots(nrows=1, ncols=1, **kw):
-    orig_ncols = int(ncols)
-    ncols = min(orig_ncols, 3)
-    nrows = min(int(nrows), 3)
-    if orig_ncols != ncols and 'figsize' in kw:
-        w, h = kw['figsize']
-        kw['figsize'] = (w * ncols / orig_ncols, h)
-    fig, axes = _orig_subplots(nrows, ncols, **kw)
-    # Only wrap in _FlexAxes when we actually capped (orig_ncols > ncols).
-    # If the model requested ≤2 columns we return the numpy array untouched so
-    # that axes.flatten(), tuple unpacking, and all normal numpy ops work fine.
-    if orig_ncols > ncols:
-        if nrows == 1:
-            return fig, _FlexAxes(list(np.atleast_1d(axes)), fig)
-        else:
-            return fig, [_FlexAxes(list(row), fig) for row in axes]
-    return fig, axes
-plt.subplots = _safe_subplots
-
-# Shared covariance-matrix repair.  Models frequently write:
-#   covs = [[0.8, 0.3], [1.2, -0.4]]   — 1-D vectors, not 2×2 matrices.
-# _fix_cov() turns any 1-D array into a diagonal matrix (treating the values
-# as per-axis variances) and ensures the result is square.
-def _fix_cov(cov, d=None):
-    if cov is None or (isinstance(cov, (int, float)) and not hasattr(cov, '__len__')):
-        return cov  # scalar — leave alone
-    c = np.asarray(cov, dtype=float)
-    if c.ndim == 1:
-        c = np.diag(np.abs(c))   # [sx, sy] → diag(|sx|, |sy|)
-    elif c.ndim == 2 and c.shape[0] != c.shape[1]:
-        c = np.diag(np.abs(np.diag(c)))  # non-square fallback
-    return c
-
-# scipy.stats.multivariate_normal.pdf:
-#   • auto-fix 1-D covariance vectors → diagonal matrices
-#   • auto-transpose x when shape is (d, N) instead of (N, d)
-try:
-    from scipy.stats import multivariate_normal as _mvn_dist
-    _mvn_orig_pdf = _mvn_dist.pdf
-    def _mvn_safe_pdf(x, mean=None, cov=1, allow_singular=False, **kw):
-        x = np.asarray(x, dtype=float)
-        cov = _fix_cov(cov)
-        if mean is not None:
-            _m = np.asarray(mean, dtype=float)
-            d = _m.shape[0] if _m.ndim >= 1 else 1
-            if x.ndim == 2 and x.shape[0] == d and x.shape[1] != d:
-                x = x.T  # (d, N) → (N, d)
-        return _mvn_orig_pdf(x, mean=mean, cov=cov, allow_singular=allow_singular, **kw)
-    _mvn_dist.pdf = _mvn_safe_pdf
-except Exception:
-    pass
-
-# np.random.multivariate_normal: auto-fix 1-D covariance vectors.
-_orig_mvn_random = np.random.multivariate_normal
-def _safe_mvn_random(mean, cov, size=None, **kw):
-    cov = _fix_cov(cov)
-    return _orig_mvn_random(mean, cov, size=size, **kw)
-np.random.multivariate_normal = _safe_mvn_random
-
-# Auto-normalise imshow for 2-D float arrays so colormaps use the full
-# data range — prevents charts that appear all-white or all-black when
-# values cluster near zero.
-import matplotlib.axes as _mplaxes
-_orig_imshow = _mplaxes.Axes.imshow
-def _auto_norm_imshow(self, X, **kw):
-    if 'vmin' not in kw and 'vmax' not in kw and 'norm' not in kw:
-        try:
-            arr = np.asarray(X)
-            if arr.ndim == 2:
-                vmin, vmax = float(arr.min()), float(arr.max())
-                if vmin != vmax:
-                    kw['vmin'] = vmin
-                    kw['vmax'] = vmax
-        except Exception:
-            pass
-    return _orig_imshow(self, X, **kw)
-_mplaxes.Axes.imshow = _auto_norm_imshow
-`.trimStart()
-
-      const EPILOGUE = `
-
-# ── Engine epilogue: capture figure and emit base64 PNG ───────────
-try:
-    plt.gcf().tight_layout()
-except Exception:
-    pass
-_buf = io.BytesIO()
-_real_savefig(_buf, format='png', dpi=150, bbox_inches='tight', facecolor='#0f0f0f')
-_buf.seek(0)
-sys.stdout.buffer.write(base64.b64encode(_buf.read()))
-_real_close('all')
-`
-
-      const preambleLines = PREAMBLE.split('\n').length
-      const fullScript = PREAMBLE + userCode + EPILOGUE
-
-      return new Promise((resolve) => {
-        const proc = spawn('python3', ['-c', fullScript], {
-          timeout: 30_000,
-          env: { ...process.env, MPLBACKEND: 'Agg' },
-        })
-
-        const chunks: Buffer[] = []
-        const errChunks: string[] = []
-
-        proc.stdout.on('data', (d: Buffer) => chunks.push(d))
-        proc.stderr.on('data', (d: Buffer) => errChunks.push(d.toString()))
-
-        proc.on('close', (code: number | null) => {
-          if (code === 0 && chunks.length > 0) {
-            const imageBase64 = Buffer.concat(chunks).toString('ascii')
-            console.log(`[Python] ✅ matplotlib render OK (${imageBase64.length} base64 chars)`)
-            resolve({ success: true, imageBase64 })
-          } else {
-            const rawErr = errChunks.join('').trim() || `python3 exited with code ${code}`
-            const err    = extractPythonError(rawErr, userCode, preambleLines)
-            console.error('[Python] ❌ matplotlib render failed:', rawErr)
-            resolve({ success: false, error: err })
-          }
-        })
-
-        proc.on('error', (err: Error) => {
-          const msg = err.message.includes('ENOENT')
-            ? 'python3 not found. Install Python 3 + matplotlib to render this chart.'
-            : err.message
-          console.error('[Python] ❌ spawn error:', msg)
-          resolve({ success: false, error: msg })
-        })
-      })
+      console.log('[Python] Rendering chart via persistent worker…')
+      const result = await pythonWorker.render(userCode)
+      if (result.success) {
+        console.log(`[Python] ✅ Chart rendered (${result.imageBase64?.length ?? 0} base64 chars)`)
+      } else {
+        console.error('[Python] ❌ Chart render failed:', result.error)
+      }
+      return result
     }
   )
 
