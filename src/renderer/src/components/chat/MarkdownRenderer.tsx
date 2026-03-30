@@ -739,13 +739,13 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
   const lastRenderedCode = useRef<string | null>(null)
 
   useEffect(() => {
+    // Do NOT execute while streaming — partial code produces false errors.
+    // Wait until isStreaming goes false (full block received), then execute
+    // after a 200ms settle delay.
+    if (isStreaming) return
     if (code === lastRenderedCode.current) return
-    let cancelled = false
-    // During streaming, debounce 400 ms — code block content stabilises once the
-    // closing ``` is received; after that, code stops changing and the timer fires.
-    // After streaming ends, execute immediately (delay=0).
-    const delay = isStreaming ? 400 : 0
 
+    let cancelled = false
     const timer = setTimeout(async () => {
       if (cancelled) return
       setRunning(true)
@@ -765,7 +765,7 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
       } finally {
         if (!cancelled) setRunning(false)
       }
-    }, delay)
+    }, 200)
 
     return () => { cancelled = true; clearTimeout(timer) }
   }, [code, isStreaming])
@@ -799,8 +799,8 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
         </div>
       ) : error ? (
         <div className="p-4 space-y-2">
-          <p className="text-xs text-accent-500 font-mono">
-            {error.split('\n').filter((l) => l.trim()).at(-1) ?? error}
+          <p className="text-xs text-accent-500 font-mono whitespace-pre-wrap">
+            {error.split('\n').slice(0, 3).join('\n')}
           </p>
           <details className="group">
             <summary className="text-xs text-content-tertiary cursor-pointer select-none hover:text-content-secondary">

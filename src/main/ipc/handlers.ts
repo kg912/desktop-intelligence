@@ -341,6 +341,31 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── Matplotlib rendering ─────────────────────────────────────
   /**
+   * extractPythonError
+   *
+   * Converts raw Python stderr into a concise, user-readable error string.
+   * Finds "File "<string>", line N" in the traceback, maps the line number
+   * back to user code (subtracting the preamble), and returns:
+   *   "Line N: <offending line>\n<error type>: <message>"
+   */
+  function extractPythonError(stderr: string, userCode: string, preambleLines: number): string {
+    const lines = stderr.split('\n')
+    const fileLineIdx = lines.findIndex(l => l.includes('File "<string>"'))
+    if (fileLineIdx >= 0) {
+      const lineNumMatch = lines[fileLineIdx].match(/line (\d+)/)
+      if (lineNumMatch) {
+        const absLine    = parseInt(lineNumMatch[1])
+        const userLineNum = Math.max(1, absLine - preambleLines)
+        const userLines  = userCode.split('\n')
+        const offending  = userLines[userLineNum - 1]?.trim() ?? '(unknown)'
+        const errorLine  = lines.filter(l => l.trim()).at(-1) ?? 'unknown error'
+        return `Line ${userLineNum}: ${offending}\n${errorLine}`
+      }
+    }
+    return lines.filter(l => l.trim()).at(-1) ?? stderr.trim()
+  }
+
+  /**
    * python:render
    *
    * Executes a matplotlib Python script and returns the chart as a
@@ -363,6 +388,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 import sys, io, base64
 import matplotlib
 matplotlib.use('Agg')
+# Prevent model code from calling matplotlib.use() again (already set to Agg).
+import matplotlib as _mpl_module
+_mpl_module.use = lambda *a, **kw: None  # silently ignore subsequent calls
 import matplotlib.pyplot as plt
 import numpy as np
 try:
@@ -370,6 +398,22 @@ try:
     from scipy import stats as scipy_stats
 except ImportError:
     pass
+
+# ── Banned import guard ───────────────────────────────────────────
+# Intercept __import__ so model code that tries to import a banned library
+# gets a clear, actionable error instead of a cryptic ModuleNotFoundError.
+import builtins as _builtins
+_orig_import = _builtins.__import__
+_BANNED = frozenset(['sklearn', 'pandas', 'seaborn', 'torch', 'tensorflow', 'keras'])
+def _guarded_import(name, *args, **kwargs):
+    root = name.split('.')[0]
+    if root in _BANNED:
+        raise ImportError(
+            f"'{name}' is not available in this sandbox. "
+            f"Use numpy, scipy, or matplotlib directly instead."
+        )
+    return _orig_import(name, *args, **kwargs)
+_builtins.__import__ = _guarded_import
 
 plt.rcParams.update({
     'figure.facecolor':  '#0f0f0f',
@@ -434,7 +478,7 @@ class _FlexAxes(list):
 _orig_subplots = plt.subplots
 def _safe_subplots(nrows=1, ncols=1, **kw):
     orig_ncols = int(ncols)
-    ncols = min(orig_ncols, 2)
+    ncols = min(orig_ncols, 3)
     nrows = min(int(nrows), 3)
     if orig_ncols != ncols and 'figsize' in kw:
         w, h = kw['figsize']
@@ -525,6 +569,7 @@ sys.stdout.buffer.write(base64.b64encode(_buf.read()))
 _real_close('all')
 `
 
+      const preambleLines = PREAMBLE.split('\n').length
       const fullScript = PREAMBLE + userCode + EPILOGUE
 
       return new Promise((resolve) => {
@@ -545,8 +590,9 @@ _real_close('all')
             console.log(`[Python] ✅ matplotlib render OK (${imageBase64.length} base64 chars)`)
             resolve({ success: true, imageBase64 })
           } else {
-            const err = errChunks.join('').trim() || `python3 exited with code ${code}`
-            console.error('[Python] ❌ matplotlib render failed:', err)
+            const rawErr = errChunks.join('').trim() || `python3 exited with code ${code}`
+            const err    = extractPythonError(rawErr, userCode, preambleLines)
+            console.error('[Python] ❌ matplotlib render failed:', rawErr)
             resolve({ success: false, error: err })
           }
         })

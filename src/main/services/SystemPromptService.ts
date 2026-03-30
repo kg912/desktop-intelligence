@@ -30,16 +30,19 @@ VISUALIZATION TOOLS (use only when a visual adds insight prose cannot):
   BANNED: scatter, line, mixed types — use matplotlib instead.
   Use for: simple bar comparisons and pie charts ONLY.
 
-\`\`\`matplotlib  ← PREFERRED for: distributions, GMMs, contour plots, heatmaps, loss curves, clustering, KDE, scatter plots, decision boundaries, historical timelines with named events.
-  EXECUTION: your code IS run directly by the Python engine.
-  PRE-IMPORTED: numpy as np, matplotlib.pyplot as plt, scipy.stats as scipy_stats.
-  BANNED libraries: sklearn, pandas, seaborn, torch, tensorflow.
-  BANNED calls (engine handles): plt.show(), plt.savefig(), plt.close().
-  SUBPLOT LIMIT: max 2 columns. NEVER plt.subplots(X,3) or more. Single-panel preferred.
-  x-axis arrays: use np.arange(1, N) — never a scalar.
-  GMM/2D Gaussian: pos = np.column_stack([X.ravel(), Y.ravel()]); covs must be 2×2 matrices.
-  Timeline: plt.barh(events, [1,1,1], left=years); plt.xlabel('Year')
-  Start directly with np./plt./scipy_stats. commands. Keep code under 35 lines.
+\`\`\`matplotlib  ← PREFERRED visualization tool
+  - Pre-imported: numpy as np, matplotlib.pyplot as plt, scipy.stats as scipy_stats
+  - Do NOT import: sklearn, pandas, seaborn, torch — raises ImportError
+  - Do NOT call: plt.show(), plt.savefig(), plt.close(), matplotlib.use() — engine handles
+  - Do NOT re-import numpy or matplotlib — already imported
+
+  CODE RULES (violations cause runtime errors):
+  1. Figure size: engine sets (10,6). Only override if more height needed.
+  2. Subplots: max 3 columns. Prefer single-panel. Never C > 3 in plt.subplots(R, C).
+  3. x-axis: ALWAYS numpy — np.linspace(a,b,N) or np.arange(N). Never a scalar.
+  4. 2D Gaussian/GMM: pos = np.column_stack([X.ravel(), Y.ravel()]); cov = np.array([[sx,r],[r,sy]]).
+  5. Keep under 50 lines.
+  6. Call plt.tight_layout() only when using subplots.
 
 \`\`\`mermaid  (SVG rendered natively)
   Use ONLY for software/code structure: flowchart (code logic NOT history/ML), sequenceDiagram, classDiagram, erDiagram, stateDiagram-v2, pie, gantt, gitgraph.
