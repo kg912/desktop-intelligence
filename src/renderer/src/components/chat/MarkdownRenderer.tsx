@@ -211,14 +211,23 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   const lastRenderedCode = useRef<string | null>(null)
 
   useEffect(() => {
+    // Attempt recovery before giving up on invalid syntax.
+    // Most common case: model wrote a mindmap but omitted the 'mindmap' header
+    // line, jumping straight to root((Title)). Prepend the missing keyword.
+    let codeToRender = code
     if (!isValidMermaidSyntax(code)) {
-      setError('Unrecognised diagram syntax — showing source')
-      return
+      const firstLine = code.trim().split('\n')[0].trim().toLowerCase()
+      if (firstLine.startsWith('root(')) {
+        codeToRender = 'mindmap\n' + code
+      } else {
+        setError('Unrecognised diagram syntax — showing source')
+        return
+      }
     }
 
     // Nothing to do if the code hasn't changed since last render.
     // This fires when isStreaming flips false after a block already rendered.
-    if (code === lastRenderedCode.current) return
+    if (codeToRender === lastRenderedCode.current) return
 
     // Debounce strategy:
     //   • isStreaming=true  → wait 600 ms for code to stabilise.
@@ -232,16 +241,16 @@ function MermaidBlock({ code }: MermaidBlockProps) {
 
     const timer = setTimeout(async () => {
       try {
-        const { svg: out } = await mermaid.render(id.current, code)
+        const { svg: out } = await mermaid.render(id.current, codeToRender)
         if (!cancelled) {
-          lastRenderedCode.current = code
+          lastRenderedCode.current = codeToRender
           setSvg(makeResponsiveSvg(out))
           setError(null)
         }
       } catch (err) {
         console.error('[Mermaid] render failed:', err)
         if (!cancelled) {
-          lastRenderedCode.current = code   // don't retry identical bad code
+          lastRenderedCode.current = codeToRender   // don't retry identical bad code
           setError(err instanceof Error ? err.message : String(err))
           setSvg(null)
         }
