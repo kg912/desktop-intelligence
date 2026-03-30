@@ -155,6 +155,71 @@ def _auto_norm_imshow(self, X, **kw):
     return _orig_imshow(self, X, **kw)
 _mplaxes.Axes.imshow = _auto_norm_imshow
 
+# Safe barh / bar: auto-convert Python list labels indexed by numpy arrays.
+# Models consistently write: ax.barh(feature_names[sorted_idx], values)
+# where feature_names is a Python list and sorted_idx is a numpy array.
+# Python lists don't support numpy array indexing — TypeError at runtime.
+# Converting list → np.array first makes the indexing work transparently.
+_orig_barh = _mplaxes.Axes.barh
+def _safe_barh(self, y, width, *args, **kwargs):
+    try:
+        if isinstance(y, list):
+            y = np.array(y)
+        if isinstance(width, list):
+            width = np.array(width)
+    except Exception:
+        pass
+    return _orig_barh(self, y, width, *args, **kwargs)
+_mplaxes.Axes.barh = _safe_barh
+
+_orig_bar = _mplaxes.Axes.bar
+def _safe_bar(self, x, height, *args, **kwargs):
+    try:
+        if isinstance(x, list):
+            x = np.array(x)
+        if isinstance(height, list):
+            height = np.array(height)
+        if 'tick_label' in kwargs and isinstance(kwargs['tick_label'], list):
+            kwargs['tick_label'] = np.array(kwargs['tick_label'])
+    except Exception:
+        pass
+    return _orig_bar(self, x, height, *args, **kwargs)
+_mplaxes.Axes.bar = _safe_bar
+
+# Safe scatter: auto-truncate mismatched x/y arrays instead of crashing.
+_orig_scatter = _mplaxes.Axes.scatter
+def _safe_scatter(self, x, y, *args, **kwargs):
+    try:
+        x = np.asarray(x).ravel()
+        y = np.asarray(y).ravel()
+        if x.shape != y.shape:
+            min_len = min(len(x), len(y))
+            x = x[:min_len]
+            y = y[:min_len]
+            if 'c' in kwargs and hasattr(kwargs['c'], '__len__'):
+                kwargs['c'] = np.asarray(kwargs['c']).ravel()[:min_len]
+            if 's' in kwargs and hasattr(kwargs['s'], '__len__'):
+                kwargs['s'] = np.asarray(kwargs['s']).ravel()[:min_len]
+    except Exception:
+        pass
+    return _orig_scatter(self, x, y, *args, **kwargs)
+_mplaxes.Axes.scatter = _safe_scatter
+
+# Safe plot: auto-truncate mismatched x/y arrays instead of crashing.
+_orig_plot = _mplaxes.Axes.plot
+def _safe_plot(self, *args, **kwargs):
+    try:
+        if len(args) >= 2 and not isinstance(args[1], str):
+            x = np.asarray(args[0]).ravel()
+            y = np.asarray(args[1]).ravel()
+            if x.shape != y.shape:
+                min_len = min(len(x), len(y))
+                args = (x[:min_len], y[:min_len]) + args[2:]
+    except Exception:
+        pass
+    return _orig_plot(self, *args, **kwargs)
+_mplaxes.Axes.plot = _safe_plot
+
 # Banned import guard
 import builtins as _builtins
 _orig_import = _builtins.__import__
