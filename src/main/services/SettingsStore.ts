@@ -21,6 +21,10 @@ export interface AppSettings {
   contextLength?: number
   /** LM Studio model identifier chosen by the user (e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"). */
   modelId?: string
+  /** Whether Brave Search is enabled. */
+  braveSearchEnabled?: boolean
+  /** User-entered Brave Search API key (superseded by BRAVE_SEARCH_API_KEY env var). */
+  braveSearchApiKey?:  string
 }
 
 function settingsPath(): string {

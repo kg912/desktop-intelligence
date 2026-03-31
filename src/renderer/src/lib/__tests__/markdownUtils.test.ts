@@ -71,9 +71,9 @@ describe('parseThinkBlocks — fully closed block', () => {
     expect(result.thought).toBe('reasoning here')
   })
 
-  it('preserves the answer text exactly — no trimming', () => {
+  it('preserves the answer text exactly — no trimming of content', () => {
     const result = parseThinkBlocks('<think>t</think>  answer with leading space')
-    expect(result.answer).toBe('answer with leading space')
+    expect(result.answer).toContain('answer with leading space')
   })
 
   it('handles multi-line thought content', () => {
@@ -178,6 +178,72 @@ describe('parseThinkBlocks — fully closed block', () => {
     expect(result.answer).not.toContain('I will just generate')
     expect(result.answer).toContain('## Summary')
   })
+
+  // ── Regression: Qwen3.5 verbatim echo (cleanAnswerEcho) ──────────────────
+  //
+  // Qwen3 in search-augmented mode often puts P1 (internal reasoning) + P2 (draft
+  // answer) inside <think>, then repeats both P1+P2 verbatim after </think>.
+  // The visible chat should show ONLY P2. P1 is internal monologue.
+
+  it('REGRESSION: strips IMO paragraph from answer when thought and answer share same start', () => {
+    const P1 = 'The user is asking about MSFT stock performance. I found some information ' +
+               'from the search results indicating recent price movements. However, since ' +
+               'the current date is April 1, 2026, I should use yfinance to get the most ' +
+               'current stock data and create a proper visualization showing recent performance.'
+    const P2 = 'Based on the latest available data, Microsoft (MSFT) stock has been trading ' +
+               'in a range of approximately **$363.07 to $368.15** as of March 31, 2026.'
+
+    // Model puts P1+P2 in <think>, then repeats P1+P2 verbatim after </think>
+    const raw = `<think>${P1}\n\n${P2}</think>\n\n${P1}\n\n${P2}`
+    const result = parseThinkBlocks(raw)
+
+    // The IMO paragraph (P1) must NOT appear in the answer
+    expect(result.answer).not.toContain('The user is asking about MSFT')
+    expect(result.answer).not.toContain('I found some information')
+    expect(result.answer).not.toContain('I should use yfinance')
+    // The user-facing answer (P2) must appear in the answer
+    expect(result.answer).toContain('Based on the latest available data')
+    expect(result.answer).toContain('$363.07 to $368.15')
+    // The thought accordion keeps everything (useful for the user to inspect)
+    expect(result.thought).toContain(P1)
+    expect(result.thought).toContain(P2)
+  })
+
+  it('REGRESSION: does NOT strip when answer starts differently from thought (Agentic AI pattern)', () => {
+    // Thought: starts with numbered reasoning list
+    // Answer:  starts with prose — different start → cleanAnswerEcho must NOT fire
+    const thought =
+      '1. Multi-agent systems replacing single agents\n' +
+      '2. Microservices revolution in AI architecture\n' +
+      '8. Agentic Ops moving to enterprise production\n\n' +
+      'I should create a mermaid mindmap for this taxonomy.'
+    const answer =
+      'Based on the latest search results, here are the key Agentic AI trends for 2025-2026:\n\n' +
+      '## Core Trends in Agentic AI\n\n' +
+      '**1. Multi-Agent Systems Over Single Agents**\n' +
+      'Single all-purpose agents are being replaced by orchestrated teams.'
+
+    const raw = `<think>${thought}</think>\n\n${answer}`
+    const result = parseThinkBlocks(raw)
+
+    // Answer must be untouched — thought and answer have different starts
+    expect(result.answer).toContain('Based on the latest search results')
+    expect(result.answer).toContain('## Core Trends')
+    expect(result.answer).toContain('Multi-Agent Systems')
+  })
+
+  it('REGRESSION: normal non-echo response is untouched (thought ≠ answer prefix)', () => {
+    // Thought = pure reasoning; answer = clean reply — no shared start
+    const raw =
+      '<think>This is a coding question about Python inheritance. I should explain super().</think>' +
+      'In Python, `super()` is used to call a method from a parent class.\n\n' +
+      '```python\nclass Child(Parent):\n    def method(self):\n        super().method()\n```'
+    const result = parseThinkBlocks(raw)
+
+    expect(result.answer).toContain('`super()` is used')
+    expect(result.answer).toContain('```python')
+    expect(result.thought).toContain('Python inheritance')
+  })
 })
 
 describe('parseThinkBlocks — streaming (open block)', () => {
@@ -244,6 +310,54 @@ describe('parseThinkBlocks — plain responses (no think tags)', () => {
     const result = parseThinkBlocks('<thinking>not a think block</thinking>answer')
     expect(result.thought).toBe('')
     expect(result.answer).toBe('<thinking>not a think block</thinking>answer')
+  })
+})
+
+// ── Suite: parseThinkBlocks — streamEnded recovery ───────────────────────────
+
+describe('parseThinkBlocks — streamEnded=true recovery', () => {
+  it('when stream ended and think block is still open: surfaces thought as answer', () => {
+    const raw = '<think>I was reasoning about this when tokens ran out'
+    const result = parseThinkBlocks(raw, true)
+    expect(result.isThinking).toBe(false)
+    expect(result.answer).toContain('I was reasoning about this when tokens ran out')
+  })
+
+  it('when stream ended and think block is still open: thought field also populated', () => {
+    const raw = '<think>partial reasoning content'
+    const result = parseThinkBlocks(raw, true)
+    expect(result.thought).toBe('partial reasoning content')
+  })
+
+  it('when stream still in progress (streamEnded=false): open block stays as isThinking', () => {
+    const raw = '<think>still reasoning...'
+    const result = parseThinkBlocks(raw, false)
+    expect(result.isThinking).toBe(true)
+    expect(result.answer).toBe('')
+  })
+
+  it('fully closed block is unaffected by streamEnded flag', () => {
+    const raw = '<think>thought</think>real answer'
+    const result = parseThinkBlocks(raw, true)
+    expect(result.answer).toBe('real answer')
+    expect(result.thought).toBe('thought')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('plain response unaffected by streamEnded flag', () => {
+    const raw = 'Here is a plain answer with no think tags'
+    const result = parseThinkBlocks(raw, true)
+    expect(result.answer).toBe(raw)
+    expect(result.thought).toBe('')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('default streamEnded=false preserves existing behaviour for open blocks', () => {
+    // Calling with no second arg should behave identically to false
+    const raw = '<think>reasoning in progress'
+    const withDefault  = parseThinkBlocks(raw)
+    const withExplicit = parseThinkBlocks(raw, false)
+    expect(withDefault).toEqual(withExplicit)
   })
 })
 

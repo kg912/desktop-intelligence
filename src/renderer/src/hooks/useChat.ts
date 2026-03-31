@@ -60,12 +60,22 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   const [messages,    setMessages]    = useState<Message[]>([])
   const [isStreaming, setIsStreaming]  = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  const [liveToolCall, setLiveToolCall] = useState<Message['liveToolCall']>(null)
 
   // Read selected model and thinking mode from global store.
   const { selectedModel, thinkingMode } = useModelStore()
 
   // Ref so event-listener callbacks always see the latest assistant id
   const assistantIdRef = useRef<string | null>(null)
+
+  // Ref to track the live tool call state inside event-handler closures
+  const liveToolCallRef = useRef<Message['liveToolCall']>(null)
+
+  // Think-block timeout: records when the first chunk arrived.
+  // If the think block is still unclosed after 45 s the UI would hang showing
+  // "Thinking…" forever.  ChatService has repetition detection, but this is a
+  // belt-and-suspenders guard in the renderer.
+  const thinkStartedAt = useRef<number | null>(null)
 
   // Tracks the active chat DB row across async boundaries.
   // Stays in sync with the `chatId` prop via useEffect.
@@ -111,6 +121,11 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       // Accumulate for DB persistence
       streamingContentRef.current += chunk
 
+      // Start the think-block timer on the first chunk
+      if (thinkStartedAt.current === null) {
+        thinkStartedAt.current = Date.now()
+      }
+
       const id = assistantIdRef.current
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id)
@@ -125,6 +140,21 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         }
         return updated
       })
+
+      // Safety net: if the think block has been open for > 45 s without closing,
+      // the model is likely stuck or hit max_tokens mid-thought.  Force-close the
+      // streaming state so parseThinkBlocks(content, streamEnded=true) recovers.
+      // ChatService's repetition detector is the primary guard; this handles cases
+      // where the model emits varied content slowly without repeating.
+      if (
+        thinkStartedAt.current !== null &&
+        streamingContentRef.current.includes('<think>') &&
+        !streamingContentRef.current.includes('</think>') &&
+        Date.now() - thinkStartedAt.current > 45_000
+      ) {
+        console.warn('[useChat] ⏱ Think block timeout — forcing stream end')
+        window.api.abortChat()
+      }
     })
 
     const unsubEnd = window.api.onChatStreamEnd((stats: GenerationStats) => {
@@ -135,6 +165,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       // Clear in-flight refs before any async work
       assistantIdRef.current      = null
       streamingContentRef.current = ''
+      thinkStartedAt.current      = null
 
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === assistantMsgId)
@@ -152,10 +183,37 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       setIsStreaming(false)
       setIsSearching(false)
 
+      // Persist toolCall or decide whether to surface a buffered error
+      const finalToolCall = liveToolCallRef.current
+      if (finalToolCall?.phase === 'done') {
+        // Persist successful search onto the message
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === assistantMsgId)
+          if (idx === -1) return prev
+          const updated = [...prev]
+          updated[idx] = { ...updated[idx], toolCall: { query: finalToolCall.query, results: finalToolCall.results ?? [] } }
+          return updated
+        })
+      } else if (finalToolCall?.phase === 'error') {
+        // Only show error card if the model explicitly mentioned the search failure.
+        // If the model just answered from training knowledge, show nothing — clean UX.
+        const mentionsFailure = /search.{0,40}(fail|unavailable|unable|error|couldn)/i.test(assistantContent)
+        if (mentionsFailure) {
+          patchAssistant({ liveToolCall: finalToolCall })
+          setLiveToolCall(finalToolCall)
+        }
+      }
+
+      setLiveToolCall(null)
+      liveToolCallRef.current = null
+
       // Persist assistant message to SQLite (fire-and-forget, works in both envs)
       if (activeChatId && assistantMsgId && assistantContent) {
+        const toolCallToSave = finalToolCall?.phase === 'done'
+          ? JSON.stringify({ query: finalToolCall.query, results: finalToolCall.results ?? [] })
+          : null
         window.api
-          .saveMessage(activeChatId, assistantMsgId, 'assistant', assistantContent)
+          .saveMessage(activeChatId, assistantMsgId, 'assistant', assistantContent, undefined, toolCallToSave)
           .catch((err) => console.warn('[DB] save assistant msg failed:', err))
       }
     })
@@ -164,6 +222,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       const id = assistantIdRef.current
       assistantIdRef.current      = null
       streamingContentRef.current = ''
+      liveToolCallRef.current     = null
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id)
         if (idx === -1) return prev
@@ -179,15 +238,26 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       })
       setIsStreaming(false)
       setIsSearching(false)
+      setLiveToolCall(null)
     })
 
     const unsubSearch = window.api.onWebSearchStatus((s) => {
-      if (s.status === 'searching') {
+      if (s.phase === 'searching') {
         setIsSearching(true)
-        patchAssistant({ isSearching: true })
-      } else {
+        liveToolCallRef.current = { phase: 'searching', query: s.query }
+        setLiveToolCall({ phase: 'searching', query: s.query })
+        patchAssistant({ isSearching: true, liveToolCall: { phase: 'searching', query: s.query } })
+      } else if (s.phase === 'done') {
         setIsSearching(false)
+        liveToolCallRef.current = { phase: 'done', query: s.query, results: s.results ?? [] }
+        setLiveToolCall({ phase: 'done', query: s.query, results: s.results ?? [] })
+        patchAssistant({ isSearching: false, liveToolCall: { phase: 'done', query: s.query, results: s.results ?? [] } })
+      } else {
+        // Buffer error — store in ref but don't surface to UI yet.
+        // CHAT_STREAM_END will decide whether to show it based on response content.
+        liveToolCallRef.current = { phase: 'error', query: s.query, error: s.error }
         patchAssistant({ isSearching: false })
+        setIsSearching(false)
       }
     })
 
@@ -208,6 +278,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     overrideChatId?: string
   ) => {
     if (isStreaming) return
+
+    setLiveToolCall(null)
+    liveToolCallRef.current = null
+    thinkStartedAt.current  = null
 
     // Map ProcessedAttachment → lightweight display metadata for the Message type.
     // Stored separately from content so they survive chat history round-trips.
@@ -348,8 +422,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     setMessages(msgs)
     setIsStreaming(false)
     setIsSearching(false)
+    setLiveToolCall(null)
     assistantIdRef.current      = null
     streamingContentRef.current = ''
+    liveToolCallRef.current     = null
   }, [])
 
   // ── Clear conversation (New Chat button) ──────────────────────
@@ -361,8 +437,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     setMessages([])
     setIsStreaming(false)
     setIsSearching(false)
+    setLiveToolCall(null)
     assistantIdRef.current      = null
     streamingContentRef.current = ''
+    liveToolCallRef.current     = null
     // Reset the chat ID ref now; the useEffect([chatId]) will also run
     // once Layout sets activeChatId → null, but resetting here prevents
     // any async handler from writing to the wrong chat in the interim.

@@ -14,7 +14,7 @@
  * requests are processed one at a time, but they don't pay cold-start cost.
  */
 
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, execSync, ChildProcessWithoutNullStreams } from 'child_process'
 import * as path from 'path'
 import { app } from 'electron'
 
@@ -55,6 +55,24 @@ export class PythonWorkerService {
   /** Start the worker. Resolves when the worker signals ready. */
   async start(): Promise<void> {
     if (this.proc) return  // already running
+
+    // Ensure yfinance is available before starting the worker
+    try {
+      execSync('python3 -c "import yfinance"', { timeout: 5_000, stdio: 'ignore' })
+      console.log('[PythonWorker] yfinance already installed')
+    } catch {
+      console.log('[PythonWorker] Installing yfinance...')
+      try {
+        execSync('pip3 install yfinance --break-system-packages --quiet', {
+          timeout: 60_000,
+          stdio: 'ignore',
+        })
+        console.log('[PythonWorker] yfinance installed successfully')
+      } catch (installErr) {
+        console.warn('[PythonWorker] yfinance install failed — finance charts unavailable:', installErr)
+        // Non-fatal: worker still starts; yfinance-dependent charts will error gracefully
+      }
+    }
 
     const workerPath = this.getWorkerPath()
     console.log('[PythonWorker] Starting worker:', workerPath)

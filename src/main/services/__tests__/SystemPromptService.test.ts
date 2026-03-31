@@ -24,7 +24,7 @@ import { BASE_SYSTEM_PROMPT } from '../SystemPromptService'
 /** Soft character-count ceiling for the base system prompt.
  *  Update this constant (and the comment below) whenever the limit is
  *  intentionally raised — keeps the test name and assertion in sync. */
-const MAX_PROMPT_CHARS = 3_000
+const MAX_PROMPT_CHARS = 3_500
 
 describe('BASE_SYSTEM_PROMPT', () => {
   it('is a non-empty string', () => {
@@ -87,10 +87,11 @@ describe('BASE_SYSTEM_PROMPT', () => {
   })
 
   it(`fits within a ~${Math.round(MAX_PROMPT_CHARS / 3.7)}-token budget (≈ ${MAX_PROMPT_CHARS} characters at 3.7 chars/token)`, () => {
-    // A base prompt larger than ~810 tokens wastes context on a 32k-context model.
+    // A base prompt larger than ~945 tokens wastes context on a 32k-context model.
     // This is a soft guard — update MAX_PROMPT_CHARS above when expanding intentionally.
     // History: 1900 → 2200 (ECharts capability), 2200 → 2400 (axis-type + flowchart
-    //   direction syntax rules), 2400 → 3000 (matplotlib renderer added).
+    //   direction syntax rules), 2400 → 3000 (matplotlib renderer added),
+    //   3000 → 3500 (THINKING RULE added to suppress CoT leaking outside <think>).
     expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(MAX_PROMPT_CHARS)
   })
 

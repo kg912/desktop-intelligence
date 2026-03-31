@@ -9,6 +9,7 @@ import { motion } from 'framer-motion'
 import { Sparkles, User, Globe, Paperclip } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
+import { ToolCallNotification } from './ToolCallNotification'
 import { cn } from '../../lib/utils'
 import type { GenerationStats } from '../../../../shared/types'
 
@@ -35,6 +36,8 @@ export interface Message {
   error:       string | null
   /** Files attached to this message — shown as pills above the bubble */
   attachments?: MessageAttachment[]
+  toolCall?: { query: string; results: Array<{ title: string; url: string }> } | null
+  liveToolCall?: { phase: 'searching' | 'done' | 'error'; query: string; results?: Array<{ title: string; url: string }>; error?: string } | null
 }
 
 // ── Animation variant ────────────────────────────────────────────
@@ -89,10 +92,12 @@ interface AssistantBubbleProps {
   isSearching:  boolean
   stats:       GenerationStats | null
   error:       string | null
+  toolCall?:     Message['toolCall']
+  liveToolCall?: Message['liveToolCall']
 }
 
 function AssistantBubble({
-  content, isThinking, isStreaming, isSearching, stats, error
+  content, isThinking, isStreaming, isSearching, stats, error, toolCall, liveToolCall
 }: AssistantBubbleProps) {
   return (
     <div className="flex gap-3">
@@ -119,6 +124,16 @@ function AssistantBubble({
 
       {/* Content */}
       <div className="flex-1 min-w-0 pb-1">
+        {/* Tool call notification */}
+        {(liveToolCall || toolCall) && (
+          <ToolCallNotification
+            phase={liveToolCall?.phase ?? 'done'}
+            query={liveToolCall?.query ?? toolCall!.query}
+            results={liveToolCall?.results ?? toolCall?.results}
+            error={liveToolCall?.error}
+          />
+        )}
+
         {/* Searching the web indicator */}
         {isSearching && !content && (
           <div className="flex items-center gap-2 py-1.5 text-content-muted text-xs">
@@ -210,6 +225,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             isSearching={message.isSearching}
             stats={message.stats}
             error={message.error}
+            toolCall={message.toolCall}
+            liveToolCall={message.liveToolCall}
           />
         )
       }

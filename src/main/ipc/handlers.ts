@@ -383,8 +383,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(
     IPC_CHANNELS.DB_SAVE_MESSAGE,
-    (_, chatId: string, id: string, role: string, content: string, attachmentsJson?: string): void =>
-      saveMessage(chatId, id, role, content, attachmentsJson ?? null)
+    (_, chatId: string, id: string, role: string, content: string, attachmentsJson?: string, toolCallJson?: string): void =>
+      saveMessage(chatId, id, role, content, attachmentsJson ?? null, toolCallJson ?? null)
   )
 
   // ── Settings: model config via lms CLI ─────────────────────────
@@ -623,4 +623,30 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
     }
   )
+
+  // ── MCP Settings ─────────────────────────────────────────────────
+  ipcMain.handle(IPC_CHANNELS.MCP_GET_SETTINGS, async () => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    return {
+      braveEnabled: s.braveSearchEnabled ?? false,
+      braveApiKey:  s.braveSearchApiKey  ?? '',
+    }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_SAVE_SETTINGS,
+    async (_, patch: { braveEnabled?: boolean; braveApiKey?: string }) => {
+      const { writeSettings } = await import('../services/SettingsStore')
+      // Only include defined fields — spreading undefined would erase existing keys
+      const cleanPatch: Record<string, unknown> = {}
+      if (patch.braveEnabled !== undefined) cleanPatch.braveSearchEnabled = patch.braveEnabled
+      if (patch.braveApiKey  !== undefined) cleanPatch.braveSearchApiKey  = patch.braveApiKey
+      writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS, () => ({
+    hasEnvKey: !!(process.env.BRAVE_SEARCH_API_KEY?.trim()),
+  }))
 }

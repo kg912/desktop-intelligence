@@ -84,6 +84,11 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE documents ADD COLUMN content TEXT NOT NULL DEFAULT ''`)
   } catch { /* column already exists */ }
 
+  // Tool call JSON (web search query + sources) for assistant messages
+  try {
+    _db.exec(`ALTER TABLE chat_messages ADD COLUMN toolcall_json TEXT`)
+  } catch { /* column already exists */ }
+
   return _db
 }
 
@@ -112,17 +117,19 @@ export function createChat(id: string, title: string): Chat {
 export function getChatMessages(chatId: string): StoredMessage[] {
   const rows = getDB()
     .prepare(
-      'SELECT role, content, attachments_json FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC'
+      'SELECT role, content, attachments_json, toolcall_json FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC'
     )
     .all(chatId) as Array<{
       role:             'user' | 'assistant' | 'system'
       content:          string
       attachments_json: string | null
+      toolcall_json:    string | null
     }>
   return rows.map((r) => ({
     role:            r.role,
     content:         r.content,
     attachmentsJson: r.attachments_json,
+    toolCallJson:    r.toolcall_json,
   }))
 }
 
@@ -136,16 +143,17 @@ export function saveMessage(
   id:              string,
   role:            string,
   content:         string,
-  attachmentsJson: string | null = null
+  attachmentsJson: string | null = null,
+  toolCallJson:    string | null = null
 ): void {
   const now = Date.now()
   getDB()
     .prepare(
       `INSERT OR IGNORE INTO chat_messages
-         (id, chat_id, role, content, created_at, attachments_json)
-       VALUES (?, ?, ?, ?, ?, ?)`
+         (id, chat_id, role, content, created_at, attachments_json, toolcall_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, chatId, role, content, now, attachmentsJson)
+    .run(id, chatId, role, content, now, attachmentsJson, toolCallJson)
   getDB()
     .prepare('UPDATE chats SET updated_at = ? WHERE id = ?')
     .run(now, chatId)

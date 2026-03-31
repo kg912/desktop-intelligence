@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
-import { SettingsModal } from '../settings/SettingsModal'
+import { SettingsPage } from '../settings/SettingsPage'
 import { TopBar } from './TopBar'
 import { ChatArea } from './ChatArea'
 import type { ChatAreaHandle } from './ChatArea'
@@ -77,6 +77,8 @@ export function Layout() {
         content:     wm.content,
         // Restore attachment pills from serialised metadata (null → undefined)
         attachments: wm.attachmentsJson ? JSON.parse(wm.attachmentsJson) : undefined,
+        // Restore web-search notification (null → undefined)
+        toolCall:    wm.toolCallJson    ? JSON.parse(wm.toolCallJson)    : undefined,
         stats:       null,
         isThinking:  false,
         isStreaming:  false,
@@ -258,68 +260,68 @@ export function Layout() {
 
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
-      {/* ── Settings modal (renders above everything) ── */}
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      />
+      {settingsOpen ? (
+        <SettingsPage onClose={() => setSettingsOpen(false)} />
+      ) : (
+        <>
+          {/* ── Sidebar ── */}
+          <div className="relative flex-shrink-0 h-full">
+            <Sidebar
+              collapsed={sidebarCollapsed}
+              onToggle={() => setSidebarCollapsed((v) => !v)}
+              chats={chats}
+              activeChatId={activeChatId}
+              onSelectChat={handleSelectChat}
+              onNewChat={handleNewChat}
+              onDeleteChat={handleDeleteChat}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          </div>
 
-      {/* ── Sidebar ── */}
-      <div className="relative flex-shrink-0 h-full">
-        <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggle={() => setSidebarCollapsed((v) => !v)}
-          chats={chats}
-          activeChatId={activeChatId}
-          onSelectChat={handleSelectChat}
-          onNewChat={handleNewChat}
-          onDeleteChat={handleDeleteChat}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
-      </div>
+          {/* ── Main column ── */}
+          <div
+            className="flex-1 flex flex-col h-full min-w-0 bg-background relative"
+            onDrop={handleMainDrop}
+            onDragOver={(e) => e.preventDefault()}
+          >
+            {/* Window-level drag overlay */}
+            <AnimatePresence>
+              {isDragging && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute inset-0 z-50 flex items-center justify-center
+                             bg-black/40 border-2 border-dashed border-red-700
+                             rounded-none pointer-events-none"
+                >
+                  <p className="text-sm text-red-400 font-medium select-none">
+                    Drop files to attach
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-      {/* ── Main column ── */}
-      <div
-        className="flex-1 flex flex-col h-full min-w-0 bg-background relative"
-        onDrop={handleMainDrop}
-        onDragOver={(e) => e.preventDefault()}
-      >
-        {/* Window-level drag overlay */}
-        <AnimatePresence>
-          {isDragging && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="absolute inset-0 z-50 flex items-center justify-center
-                         bg-black/40 border-2 border-dashed border-red-700
-                         rounded-none pointer-events-none"
-            >
-              <p className="text-sm text-red-400 font-medium select-none">
-                Drop files to attach
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            <TopBar />
 
-        <TopBar />
+            <ChatArea
+              ref={chatAreaRef}
+              messages={messages}
+              isStreaming={isStreaming}
+              onSuggest={handleSuggest}
+            />
 
-        <ChatArea
-          ref={chatAreaRef}
-          messages={messages}
-          isStreaming={isStreaming}
-          onSuggest={handleSuggest}
-        />
-
-        <InputBar
-          isStreaming={isStreaming}
-          onSend={handleSend}
-          onAbort={abort}
-          attachments={attachments}
-          onAttachments={setAttachments}
-        />
-      </div>
+            <InputBar
+              isStreaming={isStreaming}
+              onSend={handleSend}
+              onAbort={abort}
+              attachments={attachments}
+              onAttachments={setAttachments}
+            />
+          </div>
+        </>
+      )}
     </div>
   )
 }

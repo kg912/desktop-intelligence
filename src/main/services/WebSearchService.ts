@@ -64,7 +64,7 @@ export async function performWebSearch(
     if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.WEB_SEARCH_STATUS, s)
   }
 
-  push({ status: 'searching', query })
+  push({ phase: 'searching', query })
 
   try {
     const results = await Promise.race<string>([
@@ -74,10 +74,10 @@ export async function performWebSearch(
       ),
     ])
 
-    push({ status: 'done', query })
+    push({ phase: 'done', query })
     return results
   } catch {
-    push({ status: 'failed', query })
+    push({ phase: 'error', query, error: 'Web search failed or timed out.' })
     return '[System: Web search failed or timed out.]'
   }
 }

@@ -20,10 +20,12 @@ export interface ParsedContent {
  * Parses a raw model response string that may contain a Qwen3-style
  * `<think>…</think>` reasoning block.
  *
- * Three cases:
- *  1. Fully closed:   `<think>…</think>answer`  → thought + answer, isThinking=false
- *  2. Still open:     `<think>partial thought`   → thought so far, answer='', isThinking=true
- *  3. No think tags:  `plain response`            → thought='', answer=raw, isThinking=false
+ * Four cases:
+ *  1. Fully closed:        `<think>…</think>answer`  → thought + answer, isThinking=false
+ *  2. Still open, streaming: `<think>partial`         → thought so far, answer='', isThinking=true
+ *  3. Still open, stream ENDED: think block truncated by max_tokens — surface
+ *     the thought content as the answer so the user sees something, not blank.
+ *  4. No think tags:       `plain response`            → thought='', answer=raw, isThinking=false
  *
  * IMPORTANT — uses lastIndexOf, not a regex with non-greedy matching.
  *
@@ -35,8 +37,73 @@ export interface ParsedContent {
  *
  * Using lastIndexOf ensures we always split at the LAST `</think>` in the
  * output, which is the actual end-of-thought marker the model emitted.
+ *
+ * @param raw         Raw model output string
+ * @param streamEnded Pass true when streaming has finished — enables truncated
+ *                    think-block recovery (Case 3)
  */
-export function parseThinkBlocks(raw: string): ParsedContent {
+/**
+ * cleanAnswerEcho
+ *
+ * Qwen3-series models sometimes put their ENTIRE response (reasoning + draft answer)
+ * inside <think> and then repeat the same content verbatim after </think>.
+ * parseThinkBlocks faithfully returns thought=P1+P2, answer=P1+P2, so:
+ *   • The accordion shows both the reasoning (P1) AND the answer draft (P2)
+ *   • The chat shows the full repeated content including P1 (the internal reasoning)
+ *
+ * This function detects that pattern and strips the internal-monologue paragraphs (P1)
+ * from the start of rawAnswer, leaving only the user-facing answer (P2).
+ *
+ * TRIGGER: thought and rawAnswer must share the same first ≥80 characters.
+ *   • This fires  for the echo pattern: both start with "The user is asking…"
+ *   • This is SAFE for normal Qwen3 (reasoning ≠ answer prefix — no common start)
+ *   • This is SAFE for Agentic AI / search drafts where answer starts differently
+ *     from the numbered-list reasoning in thought
+ *
+ * After the trigger, internal-monologue paragraphs are removed from the answer start.
+ * A paragraph is "internal monologue" if it begins with a first-person or meta-commentary
+ * pattern showing the model talking to itself rather than the user.
+ */
+const IMO_PATTERNS: RegExp[] = [
+  /^The user (is|was|has been|asked|wants)\b/i,
+  /^I (found|should|will|need|can see|have|am going|notice|think|believe|want)\b/i,
+  /^Since the current date\b/i,
+  /^However,? since\b/i,
+  /^Let me (analyze|think|check|look|synthesize|consider|pull|gather)\b/i,
+  /^Based on (?:the|my|this|these) (?:search results?|context|information|analysis),? I\b/i,
+  /^Looking at (?:the|this|these)\b/i,
+  /^After (?:analyzing|reviewing|checking)\b/i,
+]
+
+function cleanAnswerEcho(rawAnswer: string, thought: string): string {
+  if (!rawAnswer || !thought) return rawAnswer
+
+  // Gate: only act when thought starts with the same first PROBE chars as rawAnswer.
+  // Using startsWith (not includes) is crucial — it prevents false-positives when the
+  // answer text merely appears somewhere *within* a longer thought.
+  const PROBE = 80
+  const probe = rawAnswer.trimStart().slice(0, PROBE)
+  if (probe.length < PROBE) return rawAnswer                 // answer too short to be sure
+  if (!thought.trimStart().startsWith(probe)) return rawAnswer  // no echo — bail fast
+
+  // Echo detected. Strip leading internal-monologue paragraphs from rawAnswer.
+  const paras = rawAnswer.trimStart().split(/\n\n+/)
+  let firstUserPara = 0
+  for (let i = 0; i < paras.length; i++) {
+    const p = paras[i].trim()
+    if (p === '' || IMO_PATTERNS.some(rx => rx.test(p))) {
+      firstUserPara = i + 1
+    } else {
+      break
+    }
+  }
+
+  if (firstUserPara === 0 || firstUserPara >= paras.length) return rawAnswer
+  const clean = paras.slice(firstUserPara).join('\n\n').trimStart()
+  return clean.length >= 20 ? clean : rawAnswer
+}
+
+export function parseThinkBlocks(raw: string, streamEnded = false): ParsedContent {
   const OPEN  = '<think>'
   const CLOSE = '</think>'
 
@@ -47,18 +114,28 @@ export function parseThinkBlocks(raw: string): ParsedContent {
   if (openIdx !== -1 && closeIdx !== -1 && openIdx < closeIdx) {
     const thought = raw.slice(openIdx + OPEN.length, closeIdx).trim()
     // Strip leading whitespace from the answer (newline after </think> is common)
-    const answer  = raw.slice(closeIdx + CLOSE.length).replace(/^\s*/, '')
+    const rawAnswer = raw.slice(closeIdx + CLOSE.length).replace(/^\s*/, '')
+    // Remove internal-monologue echo paragraphs the model repeated after </think>
+    const answer = cleanAnswerEcho(rawAnswer, thought)
     return { thought, answer, isThinking: false }
   }
 
-  // Case 2 — block still open (streaming the thought right now)
-  if (openIdx !== -1) {
+  // Case 2 — block still open AND streaming is still in progress
+  if (openIdx !== -1 && !streamEnded) {
     return { thought: raw.slice(openIdx + OPEN.length), answer: '', isThinking: true }
   }
 
-  // Case 3 — no think tags — plain response
+  // Case 3 — block still open but stream has ENDED (think block truncated by max_tokens)
+  // Surface the thought content as the answer so the user sees something, not a blank card.
+  if (openIdx !== -1 && streamEnded) {
+    const thought = raw.slice(openIdx + OPEN.length).trim()
+    return { thought, answer: thought, isThinking: false }
+  }
+
+  // Case 4 — no think tags — plain response
   return { thought: '', answer: raw, isThinking: false }
 }
+
 
 // ----------------------------------------------------------------
 // Code-block classifier

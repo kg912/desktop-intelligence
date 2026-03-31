@@ -28,6 +28,13 @@ try:
 except ImportError:
     scipy_stats = None
 
+try:
+    import yfinance as yf
+    _yfinance_available = True
+except ImportError:
+    yf = None
+    _yfinance_available = False
+
 # ── rcParams (dark theme) ─────────────────────────────────────────────────────
 plt.rcParams.update({
     'figure.facecolor':  '#0f0f0f',
@@ -223,7 +230,9 @@ _mplaxes.Axes.plot = _safe_plot
 # Banned import guard
 import builtins as _builtins
 _orig_import = _builtins.__import__
-_BANNED = frozenset(['sklearn', 'pandas', 'seaborn', 'torch', 'tensorflow', 'keras'])
+_BANNED = frozenset(['sklearn', 'seaborn', 'torch', 'tensorflow', 'keras'])
+# NOTE: pandas is NOT banned — yfinance imports it internally. The model is still
+# instructed via system prompt to use numpy arrays rather than pandas-style code.
 def _guarded_import(name, *args, **kwargs):
     root = name.split('.')[0]
     if root in _BANNED:

@@ -15,6 +15,9 @@ import { net } from 'electron'
 import type { WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
 import type { GenerationStats, ChatSendPayload } from '../../shared/types'
+import { readSettings } from './SettingsStore'
+import { braveSearch, formatSearchResults, resolveBraveApiKey } from './BraveSearchService'
+import { BASE_SYSTEM_PROMPT } from './SystemPromptService'
 
 const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
 
@@ -49,6 +52,206 @@ export const STOP_SEQUENCES = [
  */
 const REPETITION_WINDOW    = 3   // consecutive identical lines to trigger abort
 const REPETITION_MAX_LEN   = 200 // only track lines up to this length (ignore long prose)
+
+const BRAVE_SEARCH_TOOL = {
+  type: 'function',
+  function: {
+    name: 'brave_web_search',
+    description:
+      'Search the web for CURRENT or REAL-TIME information only. ' +
+      'Use ONLY for: live data (prices, weather, scores), recent news/events, ' +
+      'or when the user explicitly asks to search. ' +
+      'Do NOT use for general knowledge, concepts, history, coding, math, or creative tasks.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Specific, concise search query for current/real-time information.',
+        },
+        count: {
+          type: 'number',
+          description: 'Number of results (1-10, default 5).',
+        },
+      },
+      required: ['query'],
+    },
+  },
+} as const
+
+const WEB_SEARCH_SYSTEM_ADDENDUM = `
+You have access to a real-time web search tool: brave_web_search. Use it selectively and only when it genuinely adds value.
+
+USE the search tool when:
+- The user explicitly asks you to search, look something up, or find current information
+- The question requires data that changes frequently: stock prices, weather, live scores, election results, current news, product availability, today's events
+- You need to verify a specific fact that may have changed since your training
+- The user asks about something you don't know or aren't confident about — search rather than guess
+- If you are not confident you know what something is (a product, company, paper, person, or event), search for it rather than guessing. Never invent an explanation for something you don't recognise.
+
+DO NOT use the search tool for:
+- Stable conceptual/theoretical knowledge (math, physics, established CS theory, history)
+- Creative writing, coding help where you don't need current docs, math, analysis
+- Historical facts that do not change
+- Casual conversation
+
+IMPORTANT EXCEPTION: Even if you think you know something, SEARCH if:
+- It is a specific versioned product, library, framework, or course (content changes with releases)
+- It is a company's current offering, pricing, or status
+- It is a person's current role, recent work, or latest statements
+When in doubt about whether your knowledge is current enough, search.
+
+SELF-HONESTY RULE: Before answering from training knowledge, ask yourself: "Could this information have changed in the last year?" If yes, search first. Do not answer and then search when challenged — search proactively.
+
+CRITICAL — DATA INTEGRITY:
+- When you receive search results, only state facts, numbers, or data that are EXPLICITLY present in the search result snippets provided to you.
+- Do NOT fill gaps in search results with data from your training memory. If the search results don't contain the exact current price, score, or figure the user asked for, say so explicitly and direct the user to the source URLs.
+- If search results contain only links and titles but not the actual data value, say: "The search found these sources but the specific value wasn't in the snippets — check [URL] directly for the current figure."
+
+After searching, cite your sources using the result titles and URLs.
+When you do not search, answer directly from your training knowledge without mentioning the search tool.
+
+When you have received web search results:
+- Put ALL your analysis of the results inside <think>…</think>.
+- Your response to the user must start with the answer directly — never with "Step 1: Analyse…" or similar.
+- Keep your thinking block brief — the search results provide the key facts.
+`.trim()
+
+const WEB_SEARCH_DISABLED_ADDENDUM = `
+Web search is currently disabled. You do not have access to real-time information.
+
+If the user asks you to search the web or asks about current events or recent information:
+1. Tell the user that web search is disabled and can be enabled in Settings → MCP & Tools.
+2. Answer as best you can from your training knowledge, clearly noting your knowledge cutoff.
+3. Suggest that the user can paste relevant content directly into the chat for you to analyse.
+
+Never pretend to have searched when you have not.
+`.trim()
+
+/**
+ * Returns true if the user message plausibly requires real-time web search.
+ * Used to skip the non-streaming tool-call detection round for clearly
+ * non-search queries, saving one LM Studio round-trip per message.
+ *
+ * Intentionally permissive — false positives (unnecessary Step 1 round) are
+ * acceptable. False negatives (missing a search) produce hallucinations and
+ * break the ToolCallNotification UI because the model then hallucinates
+ * tool-call syntax as raw text that leaks into the markdown renderer.
+ */
+function messageNeedsSearch(userMessage: string): boolean {
+  const msg = userMessage.toLowerCase()
+
+  // Explicit search intent from the user
+  const explicitTriggers = [
+    'search', 'look up', 'look it up', 'find online', 'check online',
+    "what's the latest", 'what is the latest', 'current', 'right now',
+    'today', 'tonight', 'this week', 'this month', 'recent', 'recently',
+    'latest', 'breaking', 'news', 'update', 'updated',
+    'what is', 'who is', 'tell me about', 'explain what',
+    'have you heard of', 'do you know about', 'what do you know about',
+  ]
+  if (explicitTriggers.some(t => msg.includes(t))) return true
+
+  // Time-sensitive / real-time data signals
+  const timeSensitive = [
+    'price', 'stock', 'market', 'weather', 'forecast', 'score', 'result',
+    'standings', 'live', 'happening', 'schedule', 'release date',
+    'available', 'in stock', 'shipping', 'election', 'vote', 'poll',
+    'earnings', 'revenue', 'gdp', 'inflation', 'rate', 'bitcoin', 'crypto',
+    'launched', 'announced', 'released', 'dropped', 'just came out',
+  ]
+  if (timeSensitive.some(t => msg.includes(t))) return true
+
+  if (/who (is|are|was|were) (the )?(current|new|latest|now)/.test(msg)) return true
+  if (/what (is|are) (the )?(current|latest|new)/.test(msg)) return true
+
+  // Unknown proper nouns — capitalised non-common words in short queries may be
+  // named entities the model doesn't know (papers, products, companies, people).
+  // No recency-signal gate: "What is Dhurandhar" should always trigger search.
+  const COMMON_CAPS = new Set([
+    'The', 'This', 'That', 'What', 'When', 'Where', 'Why', 'How', 'Who',
+    'Can', 'Could', 'Would', 'Should', 'Does', 'Did', 'Has', 'Have', 'Will',
+    'Is', 'Are', 'Was', 'Were', 'Do', 'And', 'But', 'Or', 'So', 'If',
+    'I', 'My', 'We', 'You', 'It', 'He', 'She', 'They',
+  ])
+  const words = userMessage.trim().split(/\s+/)
+  const properNouns = words.filter((w, i) =>
+    i > 0 && /^[A-Z][a-zA-Z]{2,}/.test(w) && !COMMON_CAPS.has(w)
+  )
+  // Short query (≤8 words) containing a named proper noun → likely a definition search
+  if (properNouns.length >= 1 && words.length <= 8) return true
+  // "What/who is X" or "tell me about X" with a proper noun in longer queries
+  if (
+    /^(what|who|tell me about|explain|describe)\s+(is|are|was|were|the)\s+/i.test(msg) &&
+    properNouns.length >= 1
+  ) return true
+
+  return false
+}
+
+/**
+ * Sends `content` as a series of small chunks with a short delay between them.
+ *
+ * Purpose: when Step 1 (non-streaming) returns a direct answer without using a
+ * tool call, the entire response would normally be sent as ONE chunk followed
+ * immediately by CHAT_STREAM_END.  React batches those two state updates into a
+ * single paint, so `isStreaming` never renders as `true` and the typewriter
+ * cursor blink never appears.
+ *
+ * Sending in ~80-char chunks at ~16 ms intervals approximates a natural typing
+ * speed (~100 tok/s) and ensures at least several render cycles with
+ * `isStreaming=true`, restoring the animation.
+ */
+async function streamContentInChunks(
+  content: string,
+  sendFn: (channel: string, data: unknown) => void,
+  signal: AbortSignal
+): Promise<void> {
+  const CHUNK_SIZE = 80
+  const DELAY_MS   = 16
+  for (let i = 0; i < content.length; i += CHUNK_SIZE) {
+    if (signal.aborted) break
+    sendFn(IPC_CHANNELS.CHAT_STREAM_CHUNK, content.slice(i, i + CHUNK_SIZE))
+    await new Promise<void>((resolve) => setTimeout(resolve, DELAY_MS))
+  }
+}
+
+/**
+ * Attempts to parse a raw tool call from content text.
+ * Fallback for models that emit tool calls as text rather than structured tool_calls.
+ * Format: <tool_call>toolName<arg_key>k</arg_key><arg_value>v</arg_value>...</tool_call>
+ * Returns null if no recognisable tool call is found.
+ */
+function parseRawToolCall(content: string): { name: string; args: Record<string, string> } | null {
+  const match = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/)
+  if (!match) return null
+
+  const inner = match[1]
+  const nameMatch = inner.match(/^(\w+)/)
+  if (!nameMatch) return null
+
+  const args: Record<string, string> = {}
+  const keyPattern = /<arg_key>(.*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g
+  let m: RegExpExecArray | null
+  while ((m = keyPattern.exec(inner)) !== null) {
+    args[m[1]] = m[2]
+  }
+
+  return { name: nameMatch[1], args }
+}
+
+/**
+ * Strips a leading orphaned </think> tag from content.
+ * Happens when LM Studio processes the think block internally (non-streaming
+ * Step 1 round) but the closing tag leaks into message.content.
+ * Safe to apply to every chunk — only removes a tag at the very start.
+ */
+function stripLeadingThinkClose(content: string): string {
+  // Only strip the </think> tag and its immediately following whitespace.
+  // Do NOT trimStart() — that would eat "\n\n" chunks (paragraph/code-block
+  // separators sent as whitespace-only deltas), merging all text together.
+  return content.replace(/^<\/think>\s*/i, '')
+}
 
 // Vision content parts (OpenAI-compatible multimodal format)
 type ContentPart =
@@ -119,53 +322,42 @@ export class ChatService {
     this.controller = new AbortController()
     const { signal } = this.controller
 
+    // ── Read MCP settings ──────────────────────────────────────────
+    const appSettings  = readSettings()
+    const resolvedKey  = resolveBraveApiKey()
+    const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey)
+
+    // ── Build base messages ────────────────────────────────────────
     const builtMessages = applyThinkingPrefix(this.buildMessages(payload), payload.thinkingMode)
     console.log('🚀 FINAL LM STUDIO PAYLOAD:', JSON.stringify(builtMessages, null, 2))
 
-    // Section 5: thinking mode payload.
-    // 'thinking' → reasoning chain with 8k budget; 'fast' → disabled.
-    // LM Studio/MLX passes unknown fields through to the model backend,
-    // so this is safe to send even if the build doesn't honour it.
-    //
-    // IMPORTANT: max_tokens must be large enough for BOTH the thinking block
-    // AND the visible answer.  Qwen3.5 counts all generated tokens (think +
-    // answer) against max_tokens.  With 4096 the model could exhaust the
-    // budget inside the <think> block and never produce a visible answer —
-    // parseThinkBlocks then shows one giant unclosed thought with no answer.
-    // Thinking mode: 16 000 total (≥ budget_tokens 8 000 + full answer room).
-    // Fast mode:      4 096 total (unchanged — no thinking overhead).
     const isThinking = payload.thinkingMode === 'thinking'
-    const thinkingField = isThinking
-      ? { thinking: { type: 'enabled', budget_tokens: 8000 } }
-      : { thinking: { type: 'disabled' } }
 
-    const body = JSON.stringify({
-      // modelId is supplied by the frontend via ChatSendPayload.model,
-      // with DEFAULT_MODEL_ID as the fallback applied in handlers.ts.
+    const toolsField = braveEnabled
+      ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: 'auto' }
+      : {}
+
+    // ── Step 1 body — always thinking DISABLED ────────────────────
+    // Tool-detection only needs a yes/no on whether to call brave_web_search.
+    // Running with thinking enabled burns 8000 tokens and causes ~11s TTFT
+    // before the search even starts. Max 512 tokens is enough for a tool call.
+    const step1Body = {
       model:       modelId,
       messages:    builtMessages,
-      stream:      true,
-      temperature: 0.7,
-      // Running on own compute — no per-token billing.
-      // Thinking mode: 32 768 tokens (matches Qwen3.5's typical context window,
-      // ensures the full thinking block + a complete answer always fit).
-      // Fast mode: 16 384 tokens (4× the old cap; generous for any response type).
-      max_tokens:  isThinking ? 32768 : 16384,
-      // Section 5.4: always send stop sequences to prevent Qwen runaway loop.
-      // These fire at the server level before any tokens are streamed back,
-      // so they catch runaway patterns earlier than the client-side detector.
+      temperature: 0.1,
+      max_tokens:  512,
       stop:        STOP_SEQUENCES,
-      ...thinkingField,
-    })
+      thinking:    { type: 'disabled' },
+      stream:      false,
+      ...toolsField,
+    }
 
     const startTime = Date.now()
     let firstTokenAt: number | null = null
     let totalTokens  = 0
     let buffer       = ''
 
-    // ── Repetition detector state ────────────────────────────────
-    // Accumulates the in-progress output line being built from deltas.
-    // When a newline is seen we commit the line and check for repeats.
+    // Repetition detector state
     let lineBuffer       = ''
     let lastLine         = ''
     let consecutiveCount = 0
@@ -174,11 +366,201 @@ export class ChatService {
       if (!wc.isDestroyed()) wc.send(channel, data)
     }
 
+    let currentMessages = [...builtMessages]
+    // Tracks whether a tool-call round completed (search result was injected).
+    // Used to tune the Step 2 thinking budget: when search data is available
+    // the model should reason less (the data provides the facts).
+    let toolCallRound = false
+
+    // Heuristic: only attempt the non-streaming tool-call round when the user message
+    // plausibly requires real-time data. Conversational / knowledge questions skip it
+    // entirely, saving one LM Studio round-trip per message.
+    const userMessageText = (() => {
+      const last = payload.messages.at(-1)
+      if (!last) return ''
+      return typeof last.content === 'string' ? last.content : ''
+    })()
+    const shouldAttemptSearch = braveEnabled && messageNeedsSearch(userMessageText)
+
     try {
+      // ── Step 1: Non-streaming round for tool calls (only when shouldAttemptSearch) ──
+      if (shouldAttemptSearch) {
+        const r1 = await net.fetch(LMS_COMPLETIONS, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(step1Body),
+          signal,
+        } as RequestInit)
+
+        if (!r1.ok) throw new Error(`LM Studio ${r1.status}: ${await r1.text()}`)
+
+        const r1data = await r1.json() as {
+          choices?: Array<{
+            finish_reason?: string
+            message?: {
+              content?: string | null
+              tool_calls?: Array<{
+                id: string
+                type: string
+                function: { name: string; arguments: string }
+              }>
+            }
+          }>
+        }
+
+        const choice = r1data.choices?.[0]
+
+        if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls?.length) {
+          const toolCall = choice.message.tool_calls[0]
+
+          if (toolCall.function.name === 'brave_web_search') {
+            let args: { query: string; count?: number }
+            try { args = JSON.parse(toolCall.function.arguments) }
+            catch { args = { query: toolCall.function.arguments } }
+
+            console.log(`[MCP] 🔍 Brave Search: "${args.query}"`)
+            send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: args.query })
+
+            let searchResultText: string
+
+            try {
+              const results = await braveSearch(args.query, resolvedKey!, args.count ?? 5)
+              searchResultText = formatSearchResults(results)
+              console.log(`[MCP] ✅ Search returned ${results.length} results`)
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                phase:       'done',
+                query:       args.query,
+                resultCount: results.length,
+                results:     results.map(r => ({ title: r.title, url: r.url })),
+              })
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err)
+              console.error('[MCP] ❌ Search failed:', errMsg)
+
+              let userFacingReason: string
+              if (errMsg.includes('401'))
+                userFacingReason = 'the API key is invalid or expired'
+              else if (errMsg.includes('429'))
+                userFacingReason = 'the search quota has been exhausted for this billing period'
+              else if (errMsg.includes('ENOTFOUND') || errMsg.includes('network') || errMsg.includes('fetch'))
+                userFacingReason = 'the network request failed (check your internet connection)'
+              else
+                userFacingReason = 'an unexpected error occurred'
+
+              searchResultText = [
+                `Web search failed: ${userFacingReason}.`,
+                ``,
+                `Instructions for this response:`,
+                `1. Tell the user that web search failed and briefly state why (${userFacingReason}).`,
+                `2. Answer as best you can from your training knowledge, noting it may not be current.`,
+                `3. Suggest the user can paste relevant content directly into the chat for you to analyse.`,
+                `4. If the issue is a quota or key problem, suggest they check Settings → MCP & Tools.`,
+              ].join('\n')
+
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                phase: 'error',
+                query: args.query,
+                error: `Search failed: ${userFacingReason}`,
+              })
+            }
+
+            console.log(`[MCP] 📋 Search result injected (${searchResultText.length} chars):`)
+            console.log(searchResultText.slice(0, 500) + (searchResultText.length > 500 ? '...' : ''))
+            currentMessages = [
+              ...currentMessages,
+              { role: 'assistant', content: null as unknown as string, tool_calls: choice.message.tool_calls } as { role: string; content: string },
+              { role: 'tool', tool_call_id: toolCall.id, content: searchResultText } as { role: string; content: string },
+            ]
+            toolCallRound = true
+          }
+        } else if (choice?.message?.content && parseRawToolCall(choice.message.content)) {
+          // Raw tool call in content — model-agnostic fallback for models that can't
+          // emit structured tool_calls. Parse and execute the search.
+          const raw = parseRawToolCall(choice.message.content)!
+
+          if (raw.name === 'brave_web_search') {
+            const query = raw.args['query'] ?? ''
+            const count = raw.args['count'] ? parseInt(raw.args['count'], 10) : 5
+
+            if (query) {
+              console.log(`[MCP] 🔍 Brave Search (raw format): "${query}"`)
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query })
+
+              let searchResultText: string
+              try {
+                const results = await braveSearch(query, resolvedKey!, count)
+                searchResultText = formatSearchResults(results)
+                console.log(`[MCP] ✅ Search returned ${results.length} results (raw format)`)
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                  phase:       'done',
+                  query,
+                  resultCount: results.length,
+                  results:     results.map(r => ({ title: r.title, url: r.url })),
+                })
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err)
+                console.error('[MCP] ❌ Search failed (raw format):', errMsg)
+                searchResultText = 'Web search failed. Answer from your training knowledge instead.'
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query, error: 'Search failed' })
+              }
+
+              console.log(`[MCP] 📋 Search result injected (${searchResultText.length} chars, raw format):`)
+              console.log(searchResultText.slice(0, 500) + (searchResultText.length > 500 ? '...' : ''))
+              toolCallRound = true
+              const syntheticId = `call_${Date.now()}`
+              currentMessages = [
+                ...currentMessages,
+                {
+                  role: 'assistant',
+                  content: null as unknown as string,
+                  tool_calls: [{
+                    id: syntheticId, type: 'function',
+                    function: { name: 'brave_web_search', arguments: JSON.stringify({ query, count }) },
+                  }],
+                } as { role: string; content: string },
+                { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
+              ]
+            }
+          }
+        } else if (choice?.message?.content) {
+          // Model answered directly without a tool call.
+          // Stream content in small chunks so React has time to render
+          // `isStreaming=true` and the typewriter cursor blink is visible.
+          // Sending a single large chunk + immediate STREAM_END causes React
+          // to batch both updates into one paint, hiding the animation entirely.
+          const cleaned = stripLeadingThinkClose(choice.message.content)
+          await streamContentInChunks(cleaned, send, signal)
+          const elapsed = Date.now() - startTime
+          send(IPC_CHANNELS.CHAT_STREAM_END, { totalTokens: estimateTokens(cleaned), ttft: elapsed, tps: 0, totalMs: elapsed })
+          return
+        }
+      }
+
+      // ── Step 2: Final streaming request ────────────────────────────
+      // Always runs. currentMessages includes the tool result if a search happened.
+      // If Brave is disabled, this is the only request.
+      //
+      // Adaptive thinking budget: when search data was injected, use a smaller
+      // budget (4000) — the model has real facts and shouldn't speculate at length.
+      // Without a search round, allow the full 8000 for deep reasoning.
+      const step2ThinkingField = isThinking
+        ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
+        : { thinking: { type: 'disabled' } }
+
+      const streamBody = JSON.stringify({
+        model:       modelId,
+        messages:    currentMessages,
+        temperature: 0.7,
+        max_tokens:  isThinking ? 32768 : 16384,
+        stop:        STOP_SEQUENCES,
+        ...step2ThinkingField,
+        stream:      true,
+      })
+
       const response = await net.fetch(LMS_COMPLETIONS, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body,
+        body:    streamBody,
         signal,
       } as RequestInit)
 
@@ -192,7 +574,6 @@ export class ChatService {
       const reader  = response.body.getReader()
       const decoder = new TextDecoder()
 
-      // ── SSE parse loop ──────────────────────────────────────────
       let loopAborted = false
       while (true) {
         if (loopAborted) break
@@ -201,7 +582,6 @@ export class ChatService {
 
         buffer += decoder.decode(value, { stream: true })
 
-        // Split on newlines; keep trailing incomplete line in buffer
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
 
@@ -218,18 +598,16 @@ export class ChatService {
           const delta = parsed.choices?.[0]?.delta?.content
           if (!delta) continue
 
-          // Record time-to-first-token
           if (firstTokenAt === null) firstTokenAt = Date.now()
 
-          totalTokens += estimateTokens(delta)
-          send(IPC_CHANNELS.CHAT_STREAM_CHUNK, delta)
+          // Strip orphaned </think> that may appear at the start of the first chunk
+          const cleanedDelta = stripLeadingThinkClose(delta)
+          if (!cleanedDelta) continue
 
-          // ── Client-side repetition detector ───────────────────
-          // Accumulate deltas into lines; on each newline boundary,
-          // check if the model is stuck repeating the same output.
-          // This is a safety net — the server-side stop sequences fire
-          // first, but if LM Studio doesn't honour them this catches it.
-          lineBuffer += delta
+          totalTokens += estimateTokens(cleanedDelta)
+          send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
+
+          lineBuffer += cleanedDelta
           const newlineIdx = lineBuffer.indexOf('\n')
           if (newlineIdx !== -1) {
             const completedLine = lineBuffer.slice(0, newlineIdx).trim()
@@ -263,7 +641,6 @@ export class ChatService {
       if (!isAbort) {
         send(IPC_CHANNELS.CHAT_ERROR, (err as Error).message)
       }
-      // Fall through to send stream-end with partial stats even on abort
       const stats: GenerationStats = this.buildStats(
         startTime, firstTokenAt, totalTokens, true
       )
@@ -273,11 +650,6 @@ export class ChatService {
       this.controller = null
     }
 
-    // ── Empty response guard ─────────────────────────────────────
-    // LM Studio silently returns an empty completion (0 content deltas) when
-    // the prompt exceeds the model's context window, or when the model stops
-    // immediately on a stop sequence. Surface this as a visible error so the
-    // user knows to start a new chat or switch to Fast mode.
     if (totalTokens === 0 && firstTokenAt === null) {
       console.warn('[ChatService] ⚠️  Empty response from LM Studio — possible context overflow or stop-sequence collision')
       send(IPC_CHANNELS.CHAT_ERROR,
@@ -286,7 +658,6 @@ export class ChatService {
       )
     }
 
-    // ── Successful completion ────────────────────────────────────
     const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false)
     send(IPC_CHANNELS.CHAT_STREAM_END, stats)
   }
@@ -324,7 +695,21 @@ export class ChatService {
     const msgs: Array<{ role: string; content: string | ContentPart[] }> = []
 
     // ── System prompt: explicit + document injections ────────────
-    const systemParts: string[] = []
+    // Read brave settings so we can inject the correct web-search addendum
+    const appSettings  = readSettings()
+    const resolvedKey  = resolveBraveApiKey()
+    const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey)
+
+    // Inject current date so models use the right year in search queries and
+    // time-sensitive reasoning — training cutoff is no longer the reference.
+    const _now = new Date()
+    const DATE_INJECTION = `Current date and time: ${_now.toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    })}, ${_now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}.`
+
+    const systemParts: string[] = [BASE_SYSTEM_PROMPT, DATE_INJECTION]
+    if (braveEnabled)         systemParts.push(WEB_SEARCH_SYSTEM_ADDENDUM)
+    if (!braveEnabled)        systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM)
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
 
     const docInjections = (payload.attachments ?? [])

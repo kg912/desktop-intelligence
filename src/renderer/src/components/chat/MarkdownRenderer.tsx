@@ -1019,7 +1019,10 @@ interface MarkdownRendererProps {
 export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
   // Memoised so the O(n) string scans only run when content actually changes,
   // not on every re-render during streaming (which can fire 10–50× per second).
-  const { thought, answer, isThinking } = useMemo(() => parseThinkBlocks(content), [content])
+  const { thought, answer, isThinking } = useMemo(
+    () => parseThinkBlocks(content, !isStreaming),
+    [content, isStreaming]
+  )
   const hasThought = thought.length > 0
 
   // buildComponents() has no deps — created once, never recreated.
@@ -1072,7 +1075,7 @@ export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRende
       {/* ── Main answer ───────────────────────────────────────── */}
       {answer && (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
+          remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
           rehypePlugins={[rehypeKatex]}
           components={components}
         >

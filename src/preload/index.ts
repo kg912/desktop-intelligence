@@ -103,6 +103,16 @@ const api = {
   initializeApp: (payload: AppInitPayload): Promise<ReloadResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_INITIALIZE, payload),
 
+  // ── MCP / Tool settings ──────────────────────────────────────────
+  mcpGetSettings: (): Promise<{ braveEnabled: boolean; braveApiKey: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_SETTINGS),
+
+  mcpSaveSettings: (patch: { braveEnabled?: boolean; braveApiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_SAVE_SETTINGS, patch),
+
+  mcpGetEnvKeyStatus: (): Promise<{ hasEnvKey: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS),
+
   // ── RAG (Phase 5 stubs) ──────────────────────────────────────
   ingestFile: (filePath: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.RAG_INGEST_FILE, filePath),
@@ -131,9 +141,10 @@ const api = {
     id:              string,
     role:            string,
     content:         string,
-    attachmentsJson?: string | null
+    attachmentsJson?: string | null,
+    toolCallJson?:   string | null
   ): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_MESSAGE, chatId, id, role, content, attachmentsJson),
+    ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_MESSAGE, chatId, id, role, content, attachmentsJson, toolCallJson),
 }
 
 contextBridge.exposeInMainWorld('api', api)

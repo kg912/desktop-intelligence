@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react'
-import { useModelStore } from '../../store/ModelStore'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   MessageSquarePlus,
@@ -174,7 +173,6 @@ export function Sidebar({
   onDeleteChat,
   onOpenSettings,
 }: SidebarProps) {
-  const { selectedModel } = useModelStore()
   const [searchQuery, setSearchQuery] = useState('')
 
   const sidebarWidth = 260
@@ -275,31 +273,18 @@ export function Sidebar({
             }
           </div>
 
-          {/* ── Bottom: model badge + settings cog ── */}
+          {/* ── Bottom: settings cog ── */}
           <div className="flex-shrink-0 px-3 py-3 border-t border-surface-border">
-            <div className="flex items-center gap-2">
-              {/* Model badge */}
-              <div className="flex-1 flex items-center gap-2 px-2.5 py-2 rounded-lg bg-surface-DEFAULT min-w-0">
-                <div
-                  className="w-1.5 h-1.5 rounded-full bg-accent-500 flex-shrink-0 animate-pulse-red"
-                  style={{ boxShadow: '0 0 6px rgba(220,38,38,0.7)' }}
-                />
-                <span className="text-[11px] font-mono text-content-tertiary truncate">
-                  {selectedModel}
-                </span>
-              </div>
-              {/* Settings cog */}
-              <button
-                onClick={onOpenSettings}
-                className="no-drag flex-shrink-0 p-2 rounded-lg
-                           text-content-muted hover:text-content-secondary
-                           hover:bg-surface-hover
-                           transition-colors duration-100"
-                title="Model Settings"
-              >
-                <Settings className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <button
+              onClick={onOpenSettings}
+              className="no-drag p-2 rounded-lg
+                         text-content-muted hover:text-content-secondary
+                         hover:bg-surface-hover
+                         transition-colors duration-100"
+              title="Settings"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </motion.aside>

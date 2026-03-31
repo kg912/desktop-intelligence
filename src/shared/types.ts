@@ -71,6 +71,8 @@ export interface WireMessage {
 export interface StoredMessage extends WireMessage {
   /** JSON-encoded MessageAttachment[] or null when no files were attached */
   attachmentsJson: string | null
+  /** JSON-encoded { query, results } for web-search notifications, or null */
+  toolCallJson:    string | null
 }
 
 // --- File Attachments ---
@@ -101,8 +103,11 @@ export interface ProcessedAttachment {
 // --- Web Search ---
 
 export interface WebSearchStatus {
-  status: 'searching' | 'done' | 'failed'
-  query?: string
+  phase:       'searching' | 'done' | 'error'
+  query:       string
+  resultCount?: number
+  results?:    Array<{ title: string; url: string }>
+  error?:      string
 }
 
 export type ThinkingMode = 'thinking' | 'fast'
@@ -172,6 +177,10 @@ export const IPC_CHANNELS = {
   APP_IS_FIRST_LAUNCH:           'app:isFirstLaunch',
   SETTINGS_GET_AVAILABLE_MODELS: 'settings:getAvailableModels',
   APP_INITIALIZE:                'app:initialize',
+
+  MCP_GET_SETTINGS:    'mcp:getSettings',
+  MCP_SAVE_SETTINGS:   'mcp:saveSettings',
+  MCP_GET_ENV_KEY_STATUS: 'mcp:getEnvKeyStatus',
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
