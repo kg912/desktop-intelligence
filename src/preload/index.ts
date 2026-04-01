@@ -86,6 +86,15 @@ const api = {
   renderMatplotlib: (code: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PYTHON_RENDER, code),
 
+  // ── Image RAG — plot persistence ─────────────────────────────
+  storePlot: (payload: {
+    chatId:      string
+    code:        string
+    imageBase64: string
+    caption:     string
+  }): Promise<{ id: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLOT_STORE, payload),
+
   // ── Model settings (context length via /api/v0) ──────────────
   getModelConfig: (): Promise<ModelConfig> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_MODEL),

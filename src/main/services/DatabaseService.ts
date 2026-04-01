@@ -5,6 +5,7 @@
  * Tables:
  *   documents / chunks  — Phase 5 RAG
  *   chats / chat_messages — Phase 6 conversation history
+ *   plot_store — Image RAG: stores matplotlib chart PNGs + metadata
  *
  * Lazy-initialised on first access (requires app to be ready).
  *
@@ -65,6 +66,17 @@ export function getDB(): Database.Database {
       role       TEXT    NOT NULL,
       content    TEXT    NOT NULL,
       created_at INTEGER NOT NULL,
+      FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+    );
+
+    -- ── Image RAG: stored matplotlib plots ────────────────────────
+    CREATE TABLE IF NOT EXISTS plot_store (
+      id         TEXT    PRIMARY KEY,
+      chat_id    TEXT    NOT NULL,
+      code       TEXT    NOT NULL,
+      image_path TEXT    NOT NULL,
+      caption    TEXT    NOT NULL DEFAULT '',
+      ts         INTEGER NOT NULL,
       FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
     );
   `)
@@ -160,5 +172,14 @@ export function saveMessage(
 }
 
 export function deleteChatById(chatId: string): void {
+  // Delete plot PNG files from disk before removing the DB row.
+  // The plot_store FK has ON DELETE CASCADE so rows auto-delete,
+  // but we must clean up the actual files on disk separately.
+  try {
+    const { deletePlotsForChat } = require('./PlotStore') as typeof import('./PlotStore')
+    deletePlotsForChat(chatId)
+  } catch (err) {
+    console.warn('[DB] deletePlotsForChat failed (non-fatal):', err)
+  }
   getDB().prepare('DELETE FROM chats WHERE id = ?').run(chatId)
 }

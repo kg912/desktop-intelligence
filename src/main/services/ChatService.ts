@@ -18,6 +18,7 @@ import type { GenerationStats, ChatSendPayload } from '../../shared/types'
 import { readSettings } from './SettingsStore'
 import { braveSearch, formatSearchResults, resolveBraveApiKey } from './BraveSearchService'
 import { BASE_SYSTEM_PROMPT } from './SystemPromptService'
+import { countTokens } from './tokenUtils'
 
 const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
 
@@ -339,6 +340,33 @@ type ContentPart =
 // Rough token estimator — Qwen tokenizer averages ~3.6 chars/token for English.
 // Good enough for the telemetry display; we don't need exact counts here.
 const estimateTokens = (text: string): number => Math.ceil(text.length / 3.6)
+
+/**
+ * Replaces matplotlib/python code fences in old assistant history messages
+ * with a compact stub describing what the chart was.
+ *
+ * Motivation: the code blocks in old turns are not needed by the model on
+ * the next turn — only the fact that a chart was generated matters.  Stubbing
+ * them saves a significant number of tokens without losing conversational context.
+ *
+ * Exported for unit testing.
+ */
+export function stubMatplotlibBlocks(content: string): string {
+  return content.replace(
+    /```(?:python|matplotlib)\n([\s\S]*?)```/gi,
+    (_match, code: string) => {
+      // Extract a human-readable caption from the code
+      const titleMatch  = code.match(/plt\.(?:title|suptitle)\(\s*['"]([^'"]+)['"]/)
+      const xlabelMatch = code.match(/plt\.xlabel\(\s*['"]([^'"]+)['"]/)
+      const varMatch    = code.match(/^(\w+)\s*=/m)
+      const caption =
+        titleMatch?.[1] ??
+        xlabelMatch?.[1] ??
+        (varMatch ? `chart of ${varMatch[1]}` : 'chart')
+      return `[Previously generated matplotlib chart: "${caption}"]`
+    }
+  )
+}
 
 // ── Exported helpers (also used by unit tests) ───────────────────
 
@@ -851,33 +879,61 @@ export class ChatService {
       msgs.push({ role: 'system', content: systemParts.join('\n\n') })
     }
 
-    // ── History trim ─────────────────────────────────────────────
-    // Assistant responses can be very large (ECharts JSON, Mermaid source,
-    // long explanations). Replaying the full unbounded history on every turn
-    // eventually overflows the model's context window, causing LM Studio to
-    // return a silent empty completion. We keep only the last HISTORY_WINDOW
-    // messages (always including the current user message at the end).
-    const HISTORY_WINDOW = 20  // ~10 exchange pairs; adjust if needed
-    const allMsgs = payload.messages.filter((m) => (m.role as string) !== 'divider')
-    const trimmed = allMsgs.length > HISTORY_WINDOW
-      ? allMsgs.slice(allMsgs.length - HISTORY_WINDOW)
-      : allMsgs
+    // ── Token-budget trim ─────────────────────────────────────────
+    // Replaces the old HISTORY_WINDOW = 20 message-count heuristic.
+    //
+    // Budget = context_window - max_output_tokens - system_tokens - overhead
+    //
+    // We walk messages newest→oldest, accumulate token estimates, and drop
+    // messages that would push us over budget.  This guarantees the payload
+    // always fits regardless of individual message sizes (e.g. long answers,
+    // large code blocks, or matplotlib responses).
+    const isThinkingMode   = payload.thinkingMode === 'thinking'
+    const maxOutputTokens  = isThinkingMode ? 32768 : 16384
+    const contextLength    = appSettings.contextLength ?? 32768
+    const systemTokenCount = countTokens(systemParts.join('\n\n'))
+    const OVERHEAD         = 512  // role formatting, stop tokens, misc.
+    const historyBudget    = Math.max(2000, contextLength - maxOutputTokens - systemTokenCount - OVERHEAD)
 
-    if (allMsgs.length > HISTORY_WINDOW) {
-      console.log(
-        `[ChatService] ✂️  History trimmed: ${allMsgs.length} → ${trimmed.length} messages ` +
-        `(HISTORY_WINDOW=${HISTORY_WINDOW})`
-      )
+    const allMsgs = payload.messages.filter((m) => (m.role as string) !== 'divider')
+
+    // Stub matplotlib code in old turns (beyond the 2 most recent pairs).
+    // The code itself is not needed by the model on the next turn; the stub
+    // caption preserves conversational context at a fraction of the token cost.
+    const RECENT_PAIRS   = 2
+    const recentBoundary = Math.max(0, allMsgs.length - RECENT_PAIRS * 2)
+
+    const processedMsgs = allMsgs.map((m, i) => {
+      if (m.role !== 'assistant') return m
+      const stripped = this.stripThinkBlocks(m.content)
+      const content  = i < recentBoundary ? stubMatplotlibBlocks(stripped) : stripped
+      return { ...m, content }
+    })
+
+    // Walk newest→oldest, keep messages within the budget.
+    let tokenSum = 0
+    const kept: typeof processedMsgs = []
+    for (let i = processedMsgs.length - 1; i >= 0; i--) {
+      const m          = processedMsgs[i]
+      const contentStr = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      const t          = countTokens(contentStr) + 4  // +4 per-message role overhead
+      if (tokenSum + t > historyBudget && kept.length > 0) {
+        console.log(
+          `[ChatService] ✂️ Budget trim: dropped messages 0–${i} ` +
+          `(budget=${historyBudget}, accumulated=${tokenSum}, ctx=${contextLength})`
+        )
+        break
+      }
+      tokenSum += t
+      kept.unshift(m)
     }
 
     // ── Image attachments go on the last user message ────────────
-    const images = (payload.attachments ?? [])
-      .filter((a) => a.kind === 'image' && a.dataUrl)
+    const images  = (payload.attachments ?? []).filter((a) => a.kind === 'image' && a.dataUrl)
+    const lastIdx = kept.length - 1
 
-    const lastIdx = trimmed.length - 1
-
-    for (let i = 0; i < trimmed.length; i++) {
-      const m = trimmed[i]
+    for (let i = 0; i < kept.length; i++) {
+      const m = kept[i]
 
       if (images.length > 0 && m.role === 'user' && i === lastIdx) {
         const parts: ContentPart[] = [{ type: 'text', text: m.content }]
@@ -886,13 +942,7 @@ export class ChatService {
         }
         msgs.push({ role: m.role, content: parts })
       } else {
-        // Strip think blocks from assistant history — past reasoning chains are
-        // pure overhead: they consume thousands of tokens per turn but contribute
-        // nothing to the next response.  Only the final answer is kept.
-        const content = m.role === 'assistant'
-          ? this.stripThinkBlocks(m.content)
-          : m.content
-        msgs.push({ role: m.role, content })
+        msgs.push({ role: m.role, content: m.content })
       }
     }
 

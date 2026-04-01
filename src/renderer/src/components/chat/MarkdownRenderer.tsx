@@ -40,6 +40,7 @@ import {
   classifyCodeBlock,
   isValidMermaidSyntax,
 } from '../../lib/markdownUtils'
+import { ChatIdCtx } from '../layout/ChatArea'
 
 // ----------------------------------------------------------------
 // Mermaid — initialised once at module load.
@@ -742,6 +743,7 @@ interface MatplotlibBlockProps {
 
 function MatplotlibBlock({ code }: MatplotlibBlockProps) {
   const isStreaming = useContext(StreamingCtx)
+  const chatId      = useContext(ChatIdCtx)
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [error,       setError]       = useState<string | null>(null)
   const [running,     setRunning]     = useState(false)
@@ -777,6 +779,16 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
         if (result.success && result.imageBase64) {
           setImageBase64(result.imageBase64)
           setError(null)
+          
+          // Image RAG: Fire and forget storage. Extract caption directly from code.
+          if (chatId) {
+            const titleMatch  = code.match(/plt\.(?:title|suptitle)\(\s*['"]([^'"]+)['"]/)
+            const xlabelMatch = code.match(/plt\.xlabel\(\s*['"]([^'"]+)['"]/)
+            const varMatch    = code.match(/^(\w+)\s*=/m)
+            const extractedCaption = titleMatch?.[1] ?? xlabelMatch?.[1] ?? (varMatch ? `chart of ${varMatch[1]}` : 'chart')
+            window.api.storePlot({ chatId, code, imageBase64: result.imageBase64, caption: String(extractedCaption) })
+              .catch(err => console.warn('[MatplotlibBlock] Could not store plot:', err))
+          }
         } else {
           setError(result.error ?? 'matplotlib render failed')
           setImageBase64(null)
@@ -789,7 +801,7 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
     }, delay)
 
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [code, isStreaming])
+  }, [code, isStreaming, chatId])
 
   const border = error ? 'border-accent-900/30' : 'border-surface-border/60'
 

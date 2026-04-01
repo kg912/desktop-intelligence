@@ -309,6 +309,7 @@ export function Layout() {
               ref={chatAreaRef}
               messages={messages}
               isStreaming={isStreaming}
+              activeChatId={activeChatId}
               onSuggest={handleSuggest}
             />
 

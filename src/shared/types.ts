@@ -181,6 +181,8 @@ export const IPC_CHANNELS = {
   MCP_GET_SETTINGS:    'mcp:getSettings',
   MCP_SAVE_SETTINGS:   'mcp:saveSettings',
   MCP_GET_ENV_KEY_STATUS: 'mcp:getEnvKeyStatus',
+
+  PLOT_STORE:          'plot:store',
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -225,4 +227,12 @@ export interface AvailableModel {
 export interface AppInitPayload {
   modelId:       string
   contextLength: number
+}
+
+/** Payload for persisting a rendered matplotlib chart (Image RAG) */
+export interface StorePlotPayload {
+  chatId:      string
+  code:        string
+  imageBase64: string
+  caption:     string
 }

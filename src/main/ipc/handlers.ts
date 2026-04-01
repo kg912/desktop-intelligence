@@ -7,6 +7,7 @@ import { processFile } from '../services/FileProcessorService'
 import { detectSearchIntent, performWebSearch } from '../services/WebSearchService'
 import { BASE_SYSTEM_PROMPT } from '../services/SystemPromptService'
 import { pythonWorker } from '../services/PythonWorkerService'
+import { savePlot, searchPlots } from '../services/PlotStore'
 import {
   getDB,
   getAllChats,
@@ -29,6 +30,7 @@ import type {
   ReloadResult,
   AvailableModel,
   AppInitPayload,
+  StorePlotPayload,
 } from '../../shared/types'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
@@ -158,6 +160,14 @@ function parseLmsPs(output: string): { modelId: string | null; contextLength: nu
 }
 
 /**
+ * Returns true when the user message plausibly references a previously
+ * generated chart — triggers Image RAG plot retrieval.
+ */
+function referencesPlot(msg: string): boolean {
+  return /\b(chart|graph|plot|visuali[sz]|figure|fig|earlier|previous|that\s+one|last\s+chart|earlier\s+chart|old\s+chart|the\s+one|showed?\s+me|made?\s+(a|that)|generated)\b/i.test(msg)
+}
+
+/**
  * registerIpcHandlers
  * All ipcMain.handle / ipcMain.on calls live here — nowhere else.
  */
@@ -218,8 +228,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
     // Model is dictated by the frontend (ModelStore). Fall back to DEFAULT_MODEL_ID
     // if the payload field is absent (e.g. during browser mock / unit tests).
-    const modelId     = payload.model ?? DEFAULT_MODEL_ID
-    const lastUserMsg = [...payload.messages].reverse().find((m) => m.role === 'user')
+    const modelId       = payload.model ?? DEFAULT_MODEL_ID
+    const lastUserMsg   = [...payload.messages].reverse().find((m) => m.role === 'user')
+    const userMessageText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
 
     // BASE_SYSTEM_PROMPT is always first — it tells the model about the app's
     // native rendering capabilities (Mermaid diagrams, KaTeX) so it stops
@@ -276,17 +287,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const enrichedSystemPrompt = systemParts.join('\n\n') || undefined
     let enrichedMessages       = payload.messages
 
-    // ── 5. Context sliding ───────────────────────────────────
-    try {
-      const { slideIfNeeded } = await import('../services/ContextSliderService')
-      enrichedMessages = await slideIfNeeded(
-        payload.messages,
-        enrichedSystemPrompt ?? '',
-        modelId
-      )
-    } catch {
-      // Leave messages unchanged if slider fails
-    }
+    // ── 5. Context sliding — now handled by ChatService token-budget trim ──
+    // slideIfNeeded() was removed. ChatService.buildMessages() reads the user's
+    // configured context window from SettingsStore and trims to a proper budget.
 
     // ── 6. Splice RAG context as a dedicated system message ──
     // Insert immediately before the last user message so the model sees
@@ -319,10 +322,50 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
     }
 
-    const enrichedPayload: ChatSendPayload = {
+    // ── 7. Image RAG — retrieve stored plots if user references a past chart ──
+    // When the user's message contains phrases like "that chart", "earlier graph",
+    // "the MSFT visualization", etc., we search the PlotStore for matching charts
+    // and inject them as vision image_url attachments on the current turn.
+    // Old chart turns in history are already stubbed by ChatService.buildMessages().
+    let enrichedPayload: ChatSendPayload = {
       ...payload,
       messages:     enrichedMessages,
       systemPrompt: enrichedSystemPrompt,
+    }
+
+    if (payload.chatId && referencesPlot(userMessageText)) {
+      try {
+        const plots = searchPlots(payload.chatId, userMessageText)
+        if (plots.length > 0) {
+          console.log(
+            `[PlotRAG] 🖼  Found ${plots.length} relevant plot(s): ` +
+            plots.map((p) => `"${p.caption}"`).join(', ')
+          )
+          const { readFileSync } = await import('fs')
+          const plotAttachments: ProcessedAttachment[] = plots
+            .map((p): ProcessedAttachment | null => {
+              try {
+                const imgBuf  = readFileSync(p.imagePath)
+                const dataUrl = `data:image/png;base64,${imgBuf.toString('base64')}`
+                return { id: p.id, name: p.caption || 'chart', kind: 'image', dataUrl, inject: null }
+              } catch {
+                console.warn(`[PlotRAG] Could not read plot file: ${p.imagePath}`)
+                return null
+              }
+            })
+            .filter((a): a is ProcessedAttachment => a !== null)
+
+          if (plotAttachments.length > 0) {
+            enrichedPayload = {
+              ...enrichedPayload,
+              attachments: [...(enrichedPayload.attachments ?? []), ...plotAttachments],
+            }
+            console.log(`[PlotRAG] ✅ Injected ${plotAttachments.length} retrieved chart(s) as vision attachments`)
+          }
+        }
+      } catch (err) {
+        console.warn('[PlotRAG] searchPlots failed (non-fatal):', err)
+      }
     }
 
     try {
@@ -339,6 +382,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.on(IPC_CHANNELS.CHAT_ABORT, () => {
     chatService.abort()
   })
+
 
   // ── Matplotlib rendering ─────────────────────────────────────
   /**
@@ -360,6 +404,22 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         console.error('[Python] ❌ Chart render failed:', result.error)
       }
       return result
+    }
+  )
+
+  /**
+   * plot:store
+   *
+   * Called by MatplotlibBlock in the renderer after a successful render.
+   * Saves the chart PNG to disk and inserts a metadata row into plot_store
+   * so the model can retrieve and re-display it in future turns via Image RAG.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.PLOT_STORE,
+    (_evt, payload: StorePlotPayload): { id: string } => {
+      const { chatId, code, imageBase64, caption } = payload
+      const id = savePlot(chatId, code, imageBase64, caption)
+      return { id }
     }
   )
 

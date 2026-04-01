@@ -1,4 +1,4 @@
-import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
 import { MessageBubble } from '../chat/MessageBubble'
@@ -65,10 +65,13 @@ function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
 // ChatArea
 // ----------------------------------------------------------------
 interface ChatAreaProps {
-  messages:    Message[]
+  messages:     Message[]
   isStreaming?: boolean
-  onSuggest?:  (text: string) => void
+  activeChatId: string | null
+  onSuggest?:   (text: string) => void
 }
+
+export const ChatIdCtx = createContext<string | null>(null)
 
 export interface ChatAreaHandle {
   /** Immediately snap to the bottom of the message list. */
@@ -76,7 +79,7 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ messages, isStreaming = false, onSuggest }, ref) {
+function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, ref) {
   const bottomRef          = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -181,13 +184,15 @@ function ChatArea({ messages, isStreaming = false, onSuggest }, ref) {
           </motion.div>
         ) : (
           <div key="messages" className="max-w-3xl mx-auto px-6 py-8">
-            <div className="space-y-6">
-              <AnimatePresence initial={false}>
-                {messages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} />
-                ))}
-              </AnimatePresence>
-            </div>
+            <ChatIdCtx.Provider value={activeChatId}>
+              <div className="space-y-6">
+                <AnimatePresence initial={false}>
+                  {messages.map((msg) => (
+                    <MessageBubble key={msg.id} message={msg} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </ChatIdCtx.Provider>
             <div ref={bottomRef} className="h-4" />
           </div>
         )}
