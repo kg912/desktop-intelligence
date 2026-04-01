@@ -79,6 +79,8 @@ Switch your active model or adjust the context window at runtime from the full-s
 
 Enable real-time web search by pasting your [Brave Search API key](https://brave.com/search/api/). The app performs a targeted search before answering time-sensitive questions — results are injected into the model's context, never hallucinated.
 
+![Brave Search in chat — live web results surfaced inline](app_images/brave_search_mcp_chat_demo.png)
+
 ---
 
 ## Quick Start (Development)
