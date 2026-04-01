@@ -4,6 +4,94 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.0-alpha-1] — 2026-04-01
+
+### Highlights
+
+- **Brave Search MCP tool calling** — the app can now perform real-time web searches before answering time-sensitive questions. Requires a free [Brave Search API key](https://brave.com/search/api/) configured in settings.
+- **Full-screen Settings panel** — the settings modal is replaced by a proper full-screen panel with a left-nav tab layout: Model, Web Search (MCP), and About.
+- **Think-block rendering fixes** — multiple regressions in `<think>` block parsing fixed, including the critical duplication bug where content appeared in both the accordion and the main chat body.
+- **Finance charts with live data** — `yfinance` is pre-installed and available in matplotlib code blocks for live stock and market data charts.
+
+---
+
+### New Features
+
+#### Brave Search MCP (Web Search Tool)
+
+Real-time web search powered by the [Brave Search API](https://brave.com/search/api/). When enabled:
+
+- A **two-step request** pattern is used: a non-streaming Step 1 detects whether the model wants to call the search tool (512 token budget, thinking disabled); if a tool call is requested, the search executes and the results are injected before streaming the final answer.
+- A **smart trigger heuristic** (`messageNeedsSearch`) limits Step 1 to queries that genuinely need live data — explicit keywords (`search`, `latest`, `current`, `today`), time-sensitive domains (prices, stock tickers, weather, election results), recency signals (`recent`, `2025`, `2026`), and proper nouns with recency context. Knowledge questions, coding help, and philosophy skip Step 1 entirely.
+- A **raw tool call fallback parser** handles models that emit `<tool_call>` XML in the content field rather than structured `tool_calls` — results are injected identically; the markup never reaches the UI.
+- Search results snippets are **sanitised** (markdown syntax stripped) before injection so formatting characters in snippets don't bleed into the rendered response.
+- **Search notification UI**: a searching spinner appears while the query is in flight; on completion, a collapsible pill shows the query and up to 5 source links; errors display a concise error card.
+- Search notifications **persist across chat switching** — the "Searched the web" pill is saved to SQLite alongside the message and restored when you re-open a conversation.
+- **Adaptive thinking budget**: when a search was performed, Step 2 uses a 4 000-token thinking budget; without search, 8 000 tokens — avoiding unnecessary token burn on simple post-search synthesis.
+
+![Brave Search MCP settings](app_images/settings_screen_brave_search_mcp_api_key_and_toggle.png)
+
+#### Full-Screen Settings Panel
+
+The floating settings modal is replaced with a proper full-screen settings page that opens when you click ⚙️ in the sidebar. The sidebar and chat are not rendered while settings is open.
+
+- **Left-nav tab layout** with three tabs: **Model**, **Web Search**, **About**
+- Model tab: active model name, context length slider/presets, Reload Model button
+- Web Search tab: Brave Search toggle, API key input (password field with show/hide), save button, unsaved-changes indicator, live green/amber key-status dot
+
+![Settings — model selection and context length](app_images/settings_screen_model_selection_and_context_length.png)
+
+- About tab: app version, author, link to changelog
+
+#### Finance Charts with Live Data
+
+`yfinance` is now available in matplotlib code blocks as the pre-imported alias `yf`. The worker pre-flight check installs it automatically if missing (`pip3 install yfinance`). Ask the model for a live stock chart and it will fetch real OHLCV data via `yf.Ticker().history()`.
+
+---
+
+### Bug Fixes
+
+#### Critical: Think-Block Content Duplication
+`stripLeadingThinkClose()` was incorrectly applied to **every** SSE delta chunk. Qwen3 and GLM models emit `</think>` as its own standalone chunk; stripping it on every iteration swallowed the token, leaving the `<think>` block unclosed. `parseThinkBlocks(content, true)` then hit Case 3 recovery (`answer = thought = full content`), causing the entire response to appear in both the thinking accordion and the main chat body simultaneously.
+
+**Fix:** `stripLeadingThinkClose()` is now gated by a `firstChunkProcessed` flag and runs only on the very first delta chunk of each stream, where an orphaned `</think>` can legitimately appear as a Step 1 leak.
+
+#### Think-Block Truncation Recovery
+When the model's think block is truncated by `max_tokens` (stream ends with `<think>` still open), `parseThinkBlocks` previously returned `answer: ''` — leaving the user with a blank response card. The new `streamEnded` parameter (passed as `!isStreaming` from `MarkdownRenderer`) enables Case 3 recovery: the thought content is surfaced as the answer so the user always sees something.
+
+#### Merged Text / Missing Spaces in Responses
+`stripLeadingThinkClose()` originally called `.trimStart()` after the regex replacement. Whitespace-only delta chunks (e.g. `"\n\n"`) matched nothing in the regex but `.trimStart()` still ran, converting them to `""`. Those chunks were then skipped by the `if (!cleanedDelta) continue` guard, stripping all paragraph breaks and spacing from responses. `.trimStart()` was removed.
+
+#### Step 1 Thinking Mode Waste (~11s TTFT)
+Step 1 (tool-detection round) previously ran with the same thinking settings as Step 2 — the model spent up to 8 000 thinking tokens deciding whether to call a tool, adding ~11 seconds before any content reached the user. Step 1 now uses a completely separate body: `thinking: disabled`, `temperature: 0.1`, `max_tokens: 512`.
+
+#### GLM-4 / Non-Qwen Structured CoT Leak
+Models like GLM-4.7-flash output numbered CoT steps ("1. Analyze the Request…") as plain text **outside** `</think>`. This rendered to the user verbatim. A `THINKING RULE` was added to the base system prompt: all reasoning must stay inside `<think>…</think>`; no numbered analysis steps outside the block, even after web search.
+
+#### Dollar Signs Rendered as LaTeX
+`$164.65 to $174.63` was being passed to KaTeX as math expressions and rendered as broken LaTeX. Fixed by passing `{ singleDollarTextMath: false }` to the `remarkMath` plugin — `$...$` inline math is disabled; `$$...$$` block math is unaffected.
+
+#### Typewriter Animation Missing on Direct Answers
+When `messageNeedsSearch()` fired Step 1 but the model answered directly (no tool call), the entire response was emitted as a single chunk followed immediately by `CHAT_STREAM_END`. React batched both updates; `isStreaming` never rendered as `true`; the typewriter cursor never appeared. Fixed by the new `streamContentInChunks()` helper that sends direct-answer content in 80-character chunks at 16ms intervals, preserving the streaming animation.
+
+#### Date Awareness in Queries
+Models were composing search queries using their training-cutoff year instead of the current date. The current date and time are now prepended to the system prompt on every request via `buildMessages()`.
+
+#### MCP Settings Persistence
+`MCP_SAVE_SETTINGS` was spreading `undefined` values that silently erased the API key on every toggle change. The handler now builds a clean patch of only the defined fields before merging into the settings store.
+
+---
+
+### Improvements
+
+- **System prompt token budget** relaxed from 3 000 → 3 500 characters to accommodate the new THINKING RULE and improved guidance without compression artefacts
+- **`pandas` unblocked** — removed from the Python sandbox banned-imports list; `yfinance` uses it internally and the model itself still writes `numpy`-first code
+- **Brave Search result sanitisation** — `**`, `*`, `__`, `_`, and backtick characters are stripped from snippet text before injection, preventing formatting bleed
+- **45-second think-block timeout** — if a `<think>` block has been open for more than 45 seconds without closing, the stream is automatically aborted (belt-and-suspenders guard for runaway thinking)
+- **Search error cards are transient** — if a search error occurred but the model produced a valid answer from its own knowledge, the error notification is cleared at stream end so it doesn't pollute the chat
+
+---
+
 ## [1.5.1] — 2026-03-30
 
 ### Bug Fixes

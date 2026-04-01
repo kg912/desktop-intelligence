@@ -102,7 +102,7 @@ Desktop Intelligence auto-loads your chosen model on launch. However, you can pr
 
 ### Option A — Use the Pre-built DMG (Recommended)
 
-1. Download `Desktop Intelligence-1.5.0-arm64.dmg` from the releases
+1. Download `Desktop Intelligence-1.6.0-alpha-1-arm64.dmg` from the releases
 2. Open the `.dmg` file
 3. Drag **Desktop Intelligence** to your Applications folder
 4. Launch the app
@@ -153,8 +153,8 @@ npm run package
 
 The model's context window controls how much conversation history it can see. The default is 32K tokens, which is comfortable for most conversations. For long document analysis or extended conversations, you may want more.
 
-1. Click the **⚙️** (cog icon) in the bottom-left of the sidebar
-2. Adjust the **Context Length** slider — recommended values:
+1. Click the **⚙️** (cog icon) in the bottom-left of the sidebar to open Settings
+2. In the **Model** tab, adjust the **Context Length** slider — recommended values:
    - **32K** (32 768) — default, good for general use
    - **64K** (65 536) — good for document Q&A and long conversations
    - **128K** (131 072) — maximum; uses significantly more RAM
@@ -163,6 +163,21 @@ The model's context window controls how much conversation history it can see. Th
 
 3. Click **Reload Model** and wait ~30–60 seconds
 4. Your preference is saved and applied automatically on every future launch
+
+---
+
+## Step 7 — Enable Web Search (Optional)
+
+Real-time web search is powered by the **Brave Search API** (free tier: 2 000 queries/month).
+
+1. Sign up at [brave.com/search/api](https://brave.com/search/api/) and copy your API key
+2. Click **⚙️** in the sidebar → **Web Search** tab
+3. Toggle **Enable Brave Search** on
+4. Paste your API key and click **Save**
+
+   ![Brave Search MCP settings](app_images/settings_screen_brave_search_mcp_api_key_and_toggle.png)
+
+Once enabled, the app will automatically perform a search before answering time-sensitive questions (current prices, recent news, live data). For knowledge questions and coding help, search is skipped.
 
 ---
 
@@ -207,4 +222,4 @@ To update to a new version, simply replace the app in your Applications folder w
 
 ---
 
-*Last updated: 2026-03-30 — v1.5.0*
+*Last updated: 2026-04-01 — v1.6.0-alpha-1*

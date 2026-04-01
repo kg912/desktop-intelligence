@@ -574,7 +574,8 @@ export class ChatService {
       const reader  = response.body.getReader()
       const decoder = new TextDecoder()
 
-      let loopAborted = false
+      let loopAborted         = false
+      let firstChunkProcessed = false
       while (true) {
         if (loopAborted) break
         const { done, value } = await reader.read()
@@ -600,8 +601,15 @@ export class ChatService {
 
           if (firstTokenAt === null) firstTokenAt = Date.now()
 
-          // Strip orphaned </think> that may appear at the start of the first chunk
-          const cleanedDelta = stripLeadingThinkClose(delta)
+          // Strip orphaned </think> only from the very first chunk — applying it to
+          // every chunk would swallow the standalone "</think>" chunk that Qwen/GLM
+          // emit, leaving the <think> block unclosed and triggering Case 3 recovery
+          // (answer = thought), which causes content to appear in both the accordion
+          // and the main chat body.
+          const cleanedDelta = firstChunkProcessed
+            ? delta
+            : stripLeadingThinkClose(delta)
+          firstChunkProcessed = true
           if (!cleanedDelta) continue
 
           totalTokens += estimateTokens(cleanedDelta)

@@ -67,11 +67,17 @@ Full Markdown rendering with syntax-highlighted code blocks, tables, and task li
 
 Ask the model to plot anything — distributions, decision boundaries, neural network activations, time series. Charts render natively via a `python3` subprocess with `matplotlib`, styled to match the dark UI.
 
-### Model Settings
+### Settings — Model & Context Length
 
-![Model settings pane](app_images/settings_pane.png)
+![Model settings — model selection and context length](app_images/settings_screen_model_selection_and_context_length.png)
 
-Adjust the model's context window at runtime. Your preference is persisted across restarts — the model reloads with your chosen `n_ctx` on every launch.
+Switch your active model or adjust the context window at runtime from the full-screen settings panel (⚙️). Your choices persist across restarts.
+
+### Settings — Brave Search MCP
+
+![Brave Search MCP settings](app_images/settings_screen_brave_search_mcp_api_key_and_toggle.png)
+
+Enable real-time web search by pasting your [Brave Search API key](https://brave.com/search/api/). The app performs a targeted search before answering time-sensitive questions — results are injected into the model's context, never hallucinated.
 
 ---
 
@@ -93,7 +99,7 @@ npm test
 npm run package
 ```
 
-The packaged app outputs to `dist/Desktop Intelligence-1.5.0-arm64.dmg`.
+The packaged app outputs to `dist/Desktop Intelligence-1.6.0-alpha-1-arm64.dmg`.
 
 ---
 
@@ -110,6 +116,7 @@ The packaged app outputs to `dist/Desktop Intelligence-1.5.0-arm64.dmg`.
 | Database | better-sqlite3 (SQLite) |
 | AI backend | LM Studio (`/v1/chat/completions`, OpenAI-compatible SSE) |
 | Visualizations | matplotlib via python3 subprocess |
+| Web search | Brave Search API (optional MCP tool) |
 | PDF parsing | pdf-parse |
 | Packaging | electron-builder (macOS arm64 DMG) |
 
@@ -158,6 +165,6 @@ Key sentinel log lines:
 
 ---
 
-*v1.5.0 — 2026-03-30*
+*v1.6.0-alpha-1 — 2026-04-01*
 
 Built with [Claude Code](https://claude.ai/claude-code)

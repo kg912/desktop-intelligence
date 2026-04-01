@@ -109,27 +109,26 @@ LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergenc
 
 ---
 
-## Model Settings
+## Settings Panel
 
-### Context Length Control
-- Adjust the model's context window (`n_ctx`) at runtime via the settings cog (⚙️) in the bottom-left of the sidebar
-- Slider with preset chips: **4K / 8K / 16K / 32K / 64K / 128K**
-- Custom values accepted via number input
-- "Reload Model" button is only active when the value has changed from the current loaded value
+Click ⚙️ in the sidebar to open the full-screen settings panel. Three tabs:
 
-### Persistent Context Length
-- Your chosen context length is saved to `app-settings.json` in `app.getPath('userData')`
-- On every app launch, the daemon manager reads this file and passes `--context-length <N>` to `lms load` automatically — no manual re-configuration needed after restarts
+### Model Tab
+- **Active model** — dropdown listing every model you have downloaded in LM Studio; switch at runtime
+- **Context Length** — slider with preset chips: **4K / 8K / 16K / 32K / 64K / 128K**; custom values via number input
+- **Reload Model** button — active only when model or context length differs from the current loaded value
+- Reload runs `lms unload --all` → `lms load <model> --context-length <N>` via the `lms` CLI (120-second timeout)
+- Your chosen model and context length are saved to `app-settings.json` in `app.getPath('userData')` and applied automatically on every subsequent launch
 
-### Model Selection
-- On first launch, a welcome screen lets you choose any model downloaded in LM Studio from a dropdown
-- Returning users have their previously selected model loaded automatically on startup
-- The settings pane (⚙️) lets you switch models at runtime — select a new model and click **Reload Model**
+### Web Search Tab (MCP)
+- Toggle to enable/disable Brave Search
+- API key field (password input with show/hide toggle)
+- Save button with unsaved-changes indicator and save confirmation feedback
+- Live key-status dot: green = active key, amber = no key configured
 
-### Reload Process
-- Reload runs `lms unload --all` → waits → `lms load <model> --context-length <N>` via the `lms` CLI
-- 120-second timeout with live progress shown in the modal
-- After reload, `lms ps` is queried to confirm the actual loaded context length
+### About Tab
+- App version and author
+- Link to the changelog
 
 ---
 
@@ -150,10 +149,17 @@ LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergenc
 
 ---
 
-## Web Search
+## Web Search (Brave Search MCP)
 
-- For queries that look like web searches (detected by keyword heuristics), the app performs a **DuckDuckGo** search and injects the results as a system message before calling the model
-- Web search is skipped entirely when the active chat has attached documents — local RAG always takes priority
+Requires a free [Brave Search API key](https://brave.com/search/api/) configured in Settings → Web Search.
+
+- Real-time web search via the **Brave Search API** — fetches live results for time-sensitive queries
+- A **smart trigger heuristic** limits search to queries that genuinely need live data: explicit keywords (`search`, `latest`, `current`, `today`), time-sensitive domains (stock prices, weather, election results, crypto), and proper nouns paired with a recency signal. Knowledge questions and coding help skip the search step entirely — no wasted latency.
+- **Two-step request pattern**: a non-streaming Step 1 (thinking disabled, 512 token budget) detects tool calls; Step 2 streams the final answer with results injected into context
+- A **raw tool call fallback parser** handles models that emit `<tool_call>` XML in the content field rather than structured `tool_calls`
+- **Search notification UI**: spinner while searching, collapsible pill showing query + up to 5 source links, error card on failure
+- Notifications **persist** — the "Searched the web" pill is saved to SQLite and restored when you re-open a conversation
+- Search errors are **transient** — if the model produces a valid answer from its own knowledge despite the search failure, the error card is hidden
 
 ---
 
@@ -186,4 +192,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-*Last updated: 2026-03-30 — v1.5.0*
+*Last updated: 2026-04-01 — v1.6.0-alpha-1*
