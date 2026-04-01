@@ -115,6 +115,12 @@ When you have received web search results:
 - Put ALL your analysis of the results inside <think>…</think>.
 - Your response to the user must start with the answer directly — never with "Step 1: Analyse…" or similar.
 - Keep your thinking block brief — the search results provide the key facts.
+
+TOOL CALL FORMAT: When you decide to search, use the structured tool_calls mechanism only. Do NOT:
+- Emit multiple queries as a JSON array
+- Wrap the tool call in a code block (\`\`\`brave_web_search ... \`\`\`)
+- Emit raw XML like <tool_call>...</tool_call>
+One search per response. If you need information on multiple topics, pick the most important one.
 `.trim()
 
 const WEB_SEARCH_DISABLED_ADDENDUM = `
@@ -219,25 +225,97 @@ async function streamContentInChunks(
 /**
  * Attempts to parse a raw tool call from content text.
  * Fallback for models that emit tool calls as text rather than structured tool_calls.
- * Format: <tool_call>toolName<arg_key>k</arg_key><arg_value>v</arg_value>...</tool_call>
+ *
+ * Handles all observed formats:
+ *   Format A — XML arg_key/arg_value:
+ *     <tool_call>brave_web_search<arg_key>query</arg_key><arg_value>...</arg_value></tool_call>
+ *   Format B — unquoted key=value:
+ *     <tool_call>brave_web_search query=the query here count=5</tool_call>
+ *   Format C — quoted key="value":
+ *     <tool_call>brave_web_search query="the query here"</tool_call>
+ *   Format D — JSON object after tool name:
+ *     <tool_call>brave_web_search {"query": "the query"}</tool_call>
+ *
  * Returns null if no recognisable tool call is found.
  */
 function parseRawToolCall(content: string): { name: string; args: Record<string, string> } | null {
   const match = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/)
   if (!match) return null
 
-  const inner = match[1]
+  const inner = match[1].trim()
   const nameMatch = inner.match(/^(\w+)/)
   if (!nameMatch) return null
+  const name = nameMatch[1]
+  const rest = inner.slice(name.length).trim()
 
   const args: Record<string, string> = {}
-  const keyPattern = /<arg_key>(.*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g
   let m: RegExpExecArray | null
-  while ((m = keyPattern.exec(inner)) !== null) {
+
+  // Format A: XML arg_key/arg_value tags
+  const xmlPattern = /<arg_key>(.*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g
+  while ((m = xmlPattern.exec(rest)) !== null) {
+    args[m[1]] = m[2].trim()
+  }
+  if (Object.keys(args).length > 0) return { name, args }
+
+  // Format C: quoted key="value" pairs (before unquoted to avoid partial match)
+  const quotedPattern = /(\w+)="([^"]*)"/g
+  while ((m = quotedPattern.exec(rest)) !== null) {
     args[m[1]] = m[2]
   }
+  if (Object.keys(args).length > 0) return { name, args }
 
-  return { name: nameMatch[1], args }
+  // Format B: unquoted key=value pairs
+  const unquotedPattern = /(\w+)=([^=\s"]+(?:\s+(?!\w+=)[^=\s"]+)*)/g
+  while ((m = unquotedPattern.exec(rest)) !== null) {
+    args[m[1]] = m[2].trim()
+  }
+  if (Object.keys(args).length > 0) return { name, args }
+
+  // Format D: JSON object
+  try {
+    const parsed = JSON.parse(rest)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      for (const [k, v] of Object.entries(parsed)) {
+        args[k] = String(v)
+      }
+      if (Object.keys(args).length > 0) return { name, args }
+    }
+  } catch { /* not JSON */ }
+
+  return { name, args }
+}
+
+/**
+ * Extracts a search query from code-fence tool calls or bare JSON arrays.
+ *
+ * Handles:
+ *   - ```BRAVE_WEB_SEARCH\n[{"query":"..."}, ...]\n```
+ *   - ```brave_web_search\n{"query":"..."}\n```
+ *   - Bare JSON array in content: [{"query":"..."}, ...]
+ *
+ * Returns the first query string found, or null.
+ */
+function extractQueryFromCodeFenceToolCall(content: string): string | null {
+  // Match fenced code blocks with tool-related language tags
+  const fencePattern = /```(?:brave_web_search|BRAVE_WEB_SEARCH|tool_call|TOOL_CALL)\n([\s\S]*?)```/i
+  const fenceMatch = content.match(fencePattern)
+  const raw = fenceMatch ? fenceMatch[1].trim() : content.trim()
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      const first = parsed[0]
+      if (typeof first === 'object' && first !== null && typeof first.query === 'string') {
+        return first.query
+      }
+    }
+    if (typeof parsed === 'object' && parsed !== null && typeof (parsed as Record<string, unknown>).query === 'string') {
+      return (parsed as Record<string, string>).query
+    }
+  } catch { /* not JSON */ }
+
+  return null
 }
 
 /**
@@ -345,7 +423,7 @@ export class ChatService {
       model:       modelId,
       messages:    builtMessages,
       temperature: 0.1,
-      max_tokens:  512,
+      max_tokens:  2048,  // raised from 512 — allows complete direct answers, not just tool call JSON
       stop:        STOP_SEQUENCES,
       thinking:    { type: 'disabled' },
       stream:      false,
@@ -523,16 +601,60 @@ export class ChatService {
             }
           }
         } else if (choice?.message?.content) {
-          // Model answered directly without a tool call.
-          // Stream content in small chunks so React has time to render
-          // `isStreaming=true` and the typewriter cursor blink is visible.
-          // Sending a single large chunk + immediate STREAM_END causes React
-          // to batch both updates into one paint, hiding the animation entirely.
-          const cleaned = stripLeadingThinkClose(choice.message.content)
-          await streamContentInChunks(cleaned, send, signal)
-          const elapsed = Date.now() - startTime
-          send(IPC_CHANNELS.CHAT_STREAM_END, { totalTokens: estimateTokens(cleaned), ttft: elapsed, tps: 0, totalMs: elapsed })
-          return
+          // Check for code-fence tool calls or JSON arrays BEFORE treating as direct answer.
+          // Some models wrap tool calls in ```BRAVE_WEB_SEARCH ... ``` fences or emit a
+          // JSON array of queries instead of using structured tool_calls.
+          const fenceQuery = extractQueryFromCodeFenceToolCall(choice.message.content)
+          if (fenceQuery) {
+            console.log(`[MCP] 🔍 Brave Search (code-fence format): "${fenceQuery}"`)
+            send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: fenceQuery })
+
+            let searchResultText: string
+            try {
+              const results = await braveSearch(fenceQuery, resolvedKey!, 5)
+              searchResultText = formatSearchResults(results)
+              console.log(`[MCP] ✅ Search returned ${results.length} results (code-fence format)`)
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                phase:       'done',
+                query:       fenceQuery,
+                resultCount: results.length,
+                results:     results.map(r => ({ title: r.title, url: r.url })),
+              })
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err)
+              console.error('[MCP] ❌ Search failed (code-fence format):', errMsg)
+              searchResultText = `Web search failed: ${errMsg}. Answer from training knowledge instead.`
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: fenceQuery, error: errMsg })
+            }
+
+            const syntheticId = `call_${Date.now()}`
+            currentMessages = [
+              ...currentMessages,
+              {
+                role: 'assistant',
+                content: null as unknown as string,
+                tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: fenceQuery }) } }],
+              } as { role: string; content: string },
+              { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
+            ]
+            toolCallRound = true
+            // Fall through to Step 2 streaming below with results injected.
+          } else {
+            // True direct answer — no tool call at all.
+            // Stream content in small chunks so React has time to render
+            // `isStreaming=true` and the typewriter cursor blink is visible.
+            const cleaned = stripLeadingThinkClose(choice.message.content)
+            await streamContentInChunks(cleaned, send, signal)
+            const elapsed = Date.now() - startTime
+            send(IPC_CHANNELS.CHAT_STREAM_END, {
+              totalTokens:  estimateTokens(cleaned),
+              ttft:         elapsed,
+              tokensPerSec: 0,
+              totalMs:      elapsed,
+              aborted:      false,
+            })
+            return
+          }
         }
       }
 

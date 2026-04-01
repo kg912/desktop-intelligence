@@ -120,7 +120,13 @@ function ChatArea({ messages, isStreaming = false, onSuggest }, ref) {
       behavior: isStreaming ? 'instant' : 'smooth',
       block:    'end',
     })
-  }, [messages.length, messages[messages.length - 1]?.content, isStreaming])
+  }, [
+    messages.length,
+    messages[messages.length - 1]?.content,
+    messages[messages.length - 1]?.isSearching,
+    messages[messages.length - 1]?.isThinking,
+    isStreaming,
+  ])
 
   // ── Pause auto-scroll when user scrolls UP ───────────────────────
   // onWheel fires for real trackpad / mouse-wheel gestures only; it does

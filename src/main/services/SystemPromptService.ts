@@ -55,8 +55,12 @@ VISUALIZATION TOOLS (use only when a visual adds insight):
   1. No colour — style, classDef, fill:, stroke: BREAK the dark renderer.
   2. ASCII-only node labels. No emoji. 3. Forbidden reserved IDs: end, start, graph, style, classDef.
   4. classDiagram: ClassName --|> Other. Never prefix "class". 5. Gantt: never use Note over.
-  6. Max 10 nodes. 7. mindmap first line MUST be exactly mindmap — never jump to root().
-  8. mindmap labels: plain text only — no ^, /, math symbols.
+  6. Max 10 nodes.
+  7. mindmap: first line MUST be exactly: mindmap
+     Line 2: root((Title)) — indented with 2 spaces.
+     Children: each level indented 2 more spaces than parent. INDENTATION IS MANDATORY — flat lists cause parse errors.
+     Example: mindmap\n  root((Topic))\n    Child One\n      Grandchild\n    Child Two
+  8. mindmap labels: plain text only — no ^, /, math symbols, or parentheses in labels.
 
 $...$ or $$...$$ — LaTeX math via KaTeX.
 Markdown table — event lists, comparisons, chronologies (no numeric axis).
