@@ -413,13 +413,24 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // Build wire messages from current history + new user message.
     // Divider messages are display-only — filter them before sending to LM Studio.
-    const wire: WireMessage[] = [...messages, userMsg]
-      .filter((m) => m.role !== 'divider')
-      .flatMap((m) => {
+    //
+    // Context-amnesia fix: when multiple past messages have toolCall data, only
+    // the LAST one gets the full results expanded. All earlier ones get a short
+    // stub ('[Previous search: <query>]') so stale search data from a prior turn
+    // cannot dominate the context and cause the model to re-answer the old question.
+    const allMsgsForWire = [...messages, userMsg].filter((m) => m.role !== 'divider')
+    const lastToolCallIndex = allMsgsForWire.reduce(
+      (last, m, i) => (m.toolCall ? i : last), -1
+    )
+
+    const wire: WireMessage[] = allMsgsForWire.flatMap((m, i) => {
         if (m.toolCall) {
-          const resultsStr = JSON.stringify(m.toolCall.results?.slice(0, 3) || [])
+          const isLastToolCall = i === lastToolCallIndex
+          const resultsStr = isLastToolCall
+            ? JSON.stringify(m.toolCall.results?.slice(0, 3) || [])
+            : `[Previous search: ${m.toolCall.query}]`
           const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(7)}`
-          
+
           return [
             {
               role: m.role as 'user' | 'assistant',
@@ -437,7 +448,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
             }
           ] as WireMessage[]
         }
-        
+
         return [{
           role: m.role as 'user' | 'assistant',
           content: m.content,

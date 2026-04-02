@@ -795,8 +795,21 @@ export class ChatService {
               toolCallRound = true
               // Fall through to Step 2 streaming with search result injected
             } else {
-              // Truly no tool call — stream the direct answer
-              const cleaned = stripLeadingThinkClose(directContent)
+              // Truly no tool call — stream the direct answer.
+              // Think-block duplication fix: if Step 1 returned content that
+              // contains a <think>...</think> block (Qwen reasoning mode),
+              // extract only the content AFTER the last </think> tag.
+              // streamContentInChunks must never receive raw think content —
+              // parseThinkBlocks on the renderer would surface it as both the
+              // accordion AND the answer body (Case 3 duplication).
+              const THINK_CLOSE = '</think>'
+              const closeIdx = directContent.lastIndexOf(THINK_CLOSE)
+              const afterThink = closeIdx !== -1
+                ? directContent.slice(closeIdx + THINK_CLOSE.length).trimStart()
+                : directContent
+              // If everything was inside <think> with no answer following,
+              // fall back to the full content so the user sees something.
+              const cleaned = stripLeadingThinkClose(afterThink || directContent)
               await streamContentInChunks(cleaned, send, signal)
               const elapsed = Date.now() - startTime
               send(IPC_CHANNELS.CHAT_STREAM_END, {

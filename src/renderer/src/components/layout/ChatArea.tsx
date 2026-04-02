@@ -104,13 +104,20 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
   }))
 
   // ── Re-enable scroll AND snap to bottom when the user sends a message ──
-  // The user message is always the last entry added with role 'user'.
-  // We fire scrollIntoView here (after React has committed the new message
-  // to the DOM) rather than in Layout.handleSend (which fires before the
-  // DOM reflects the new messages state, landing at the old bottom).
+  // sendMessage inserts both the user message AND the assistant placeholder
+  // in a single setMessages call, so after the state update the last message
+  // is the empty assistant placeholder (role 'assistant'), not the user message.
+  // Detecting the placeholder (empty content + isThinking=true) fires exactly
+  // once per send, immediately when it appears, before any streaming output.
   useEffect(() => {
-    const last = messages[messages.length - 1]
-    if (last?.role === 'user') {
+    const last       = messages[messages.length - 1]
+    const secondLast = messages[messages.length - 2]
+    if (
+      last?.role === 'assistant' &&
+      last?.content === '' &&
+      last?.isThinking === true &&
+      secondLast?.role === 'user'
+    ) {
       userScrolledUp.current       = false
       isProgrammaticScroll.current = true
       bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })

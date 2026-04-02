@@ -41,24 +41,23 @@ VISUALIZATION TOOLS (use only when a visual adds insight):
   2. Max 3 subplot columns. Never C > 3 in plt.subplots(R, C).
   3. x-axis: ALWAYS numpy — np.linspace(a,b,N) or np.arange(N). Never a scalar.
   4. 2D GMM: pos = np.column_stack([X.ravel(), Y.ravel()]); cov = np.array([[sx,r],[r,sy]]).
-  5. Keep under 50 lines. 6. plt.tight_layout() only with subplots.
+  5. Under 50 lines. 6. plt.tight_layout() only with subplots.
   7. List indexing: np.array(labels)[sorted_idx], never labels[sorted_idx].
+  8. Isolated scope — no variables persist between blocks. Every block must be fully self-contained: define its own data, variables, and figure.
 
-  FINANCE: yf.Ticker(sym).history(period=P, interval=I) — never simulate.
-  Periods: 1d/5m intraday · 5d/30m week · 1mo/1d month · 1y/1wk year.
-  Guard: if data.empty: plt.text(0.5,0.5,"No data",ha='center').
+  FINANCE: yf.Ticker(sym).history(period=P, interval=I). Periods: 1d/5m · 5d/30m · 1mo/1d · 1y/1wk. Guard: if data.empty: plt.text(0.5,0.5,'No data',ha='center').
 
 \`\`\`mermaid  (SVG rendered natively)
-  Use for software/code structure AND hierarchies/taxonomies: flowchart, sequenceDiagram, classDiagram, erDiagram, stateDiagram-v2, pie, gantt, gitgraph, mindmap.
-  NOT for ML algorithms, historical events, or numeric data
+  Use for software/code structure and hierarchies: flowchart, sequenceDiagram, classDiagram, erDiagram, stateDiagram-v2, pie, gantt, gitgraph, mindmap.
+  NOT for ML, historical events, or numeric data
   MERMAID RULES:
-  1. No colour — style, classDef, fill:, stroke: BREAK the dark renderer.
-  2. ASCII-only node labels. No emoji. 3. Forbidden reserved IDs: end, start, graph, style, classDef.
-  4. classDiagram: ClassName --|> Other. Never prefix "class". 5. Gantt: never use Note over.
+  1. No colour — style, classDef, fill:, stroke: BREAK renderer.
+  2. ASCII-only labels. No emoji. 3. Forbidden reserved IDs: end, start, graph, style, classDef.
+  4. classDiagram: ClassName --|> Other. Never prefix "class". 5. Gantt: no Note over.
   6. Max 10 nodes.
   7. mindmap: first line MUST be exactly: mindmap
      Line 2: root((Title)) — indented with 2 spaces.
-     Children: each level indented 2 more spaces than parent. INDENTATION IS MANDATORY — flat lists cause parse errors.
+     Children: each level 2 more spaces than parent. INDENTATION MANDATORY — flat lists cause parse errors.
      Example: mindmap\n  root((Topic))\n    Child One\n      Grandchild\n    Child Two
   8. mindmap labels: plain text only — no ^, /, math symbols, or parentheses in labels.
 
