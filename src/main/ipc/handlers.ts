@@ -16,6 +16,7 @@ import {
   saveMessage,
   deleteChatById,
 } from '../services/DatabaseService'
+import { retrieveContext } from '../services/RAGService'
 import type {
   ConnectionState,
   DaemonState,
@@ -270,13 +271,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     // timeout can never starve the RAG pipeline. Kept separate from
     // systemParts so it is injected as a dedicated system message
     // immediately before the user's last turn (step 6 below).
-    // Dynamic import keeps uuid (ESM-only dep of RAGService) out of the CJS
-    // main bundle — static import causes Vite to emit require('uuid') which
-    // Electron rejects at startup with ERR_REQUIRE_ESM.
     let ragContext = ''
     if (lastUserMsg) {
       try {
-        const { retrieveContext } = await import('../services/RAGService')
         ragContext = await retrieveContext(lastUserMsg.content, payload.chatId)
       } catch (err) {
         console.error('[RAG] retrieveContext failed:', err)

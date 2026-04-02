@@ -4,6 +4,15 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.0-alpha-2] — 2026-04-02
+
+### Bug Fixes
+
+#### Mid-Stream Tool Call Leak
+When models emitted a mid-stream tool call using Qwen's specific XML-like syntax (`<function=...><parameter=...></parameter></function>`), the raw parser failed to recognize it. This resulted in the streaming mechanism failing to intercept the tool call, allowing the raw XML to leak into the UI. Support for this format has been added to `parseRawToolCall`, and the stream cutoff heuristic has been updated to detect `</parameter>`, cleanly halting generation and extracting the query in real time.
+
+---
+
 ## [1.6.0-alpha-1] — 2026-04-01
 
 ### Highlights

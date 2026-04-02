@@ -244,6 +244,21 @@ function parseRawToolCall(content: string): { name: string; args: Record<string,
   if (!match) return null
 
   const inner = match[1].trim()
+
+  // Format E: Qwen structured format
+  const funcMatch = inner.match(/<function=([^>]+)>([\s\S]*?)(?:<\/function>|$)/)
+  if (funcMatch) {
+    const name = funcMatch[1].trim()
+    const argsContent = funcMatch[2]
+    const args: Record<string, string> = {}
+    const paramRegex = /<parameter=([^>]+)>([\s\S]*?)(?:<\/parameter>|$)/g
+    let pm: RegExpExecArray | null
+    while ((pm = paramRegex.exec(argsContent)) !== null) {
+      args[pm[1].trim()] = pm[2].trim()
+    }
+    if (Object.keys(args).length > 0) return { name, args }
+  }
+
   const nameMatch = inner.match(/^(\w+)/)
   if (!nameMatch) return null
   const name = nameMatch[1]
@@ -315,6 +330,70 @@ function extractQueryFromCodeFenceToolCall(content: string): string | null {
       return (parsed as Record<string, string>).query
     }
   } catch { /* not JSON */ }
+
+  return null
+}
+
+/**
+ * Mid-stream tool call detection logic.
+ * Handles extracting tool queries from incomplete or incorrectly formatted tags during SSE stream decoding.
+ * Returns the detected query and the cleaned buffer to retract.
+ */
+function detectMidStreamToolCall(buffer: string): { query: string; cleanedBuffer: string } | null {
+  // Case 1: Closed <tool_call> tag (e.g. standard fallback)
+  if (buffer.includes('</tool_call>')) {
+    const raw = parseRawToolCall(buffer)
+    const q = raw?.args?.['query']
+    if (q) {
+      return {
+        query: q,
+        cleanedBuffer: buffer.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '').trim(),
+      }
+    }
+  }
+
+  // Case 2: Unclosed <tool_call> (often emitted at stream end or mid-stream before stop token)
+  const unclosedMatch = buffer.match(/<tool_call>([\s\S]+)$/i)
+  if (unclosedMatch) {
+    const inner = unclosedMatch[1].trim()
+    // It's likely a complete JSON object if it ends with } or a completed format C string ="..." or a completed Qwen parameter tag
+    if (inner.endsWith('}') || inner.includes('="') || inner.includes('</parameter>')) {
+      const fakeClosed = buffer + '</tool_call>'
+      const raw = parseRawToolCall(fakeClosed)
+      const q = raw?.args?.['query']
+      if (q) {
+        return {
+          query: q,
+          cleanedBuffer: buffer.replace(/<tool_call>[\s\S]*$/i, '').trim(),
+        }
+      }
+    }
+  }
+
+  // Case 3: Closed code fence (```brave_web_search)
+  const fenceQuery = extractQueryFromCodeFenceToolCall(buffer)
+  if (fenceQuery) {
+    return {
+      query: fenceQuery,
+      cleanedBuffer: buffer.replace(/```(?:brave_web_search|BRAVE_WEB_SEARCH|tool_call|TOOL_CALL)[\s\S]*?```/gi, '').trim(),
+    }
+  }
+
+  // Case 4: Unclosed code fence
+  const unclosedFenceMatch = buffer.match(/```(?:brave_web_search|BRAVE_WEB_SEARCH|tool_call|TOOL_CALL)\n([\s\S]+)$/i)
+  if (unclosedFenceMatch) {
+    const inner = unclosedFenceMatch[1].trim()
+    if (inner.endsWith('}') || inner.endsWith(']')) {
+      const fakeClosed = buffer + '\n```'
+      const fq = extractQueryFromCodeFenceToolCall(fakeClosed)
+      if (fq) {
+        return {
+          query: fq,
+          cleanedBuffer: buffer.replace(/```(?:brave_web_search|BRAVE_WEB_SEARCH|tool_call|TOOL_CALL)[\s\S]*$/i, '').trim(),
+        }
+      }
+    }
+  }
 
   return null
 }
@@ -814,11 +893,12 @@ export class ChatService {
           // state before the RETRACT could clean them up — causing the raw XML
           // to appear in the chat even as the search spinner was visible.
           streamBuffer += cleanedDelta
-          if (!toolCallIntercepted && streamBuffer.includes('</tool_call>')) {
-            const midRaw   = parseRawToolCall(streamBuffer)
-            const midQuery = midRaw?.args?.['query'] || extractQueryFromCodeFenceToolCall(streamBuffer)
+          
+          if (!toolCallIntercepted) {
+            const detected = detectMidStreamToolCall(streamBuffer)
+            if (detected) {
+              const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected
 
-            if (midQuery) {
               toolCallIntercepted = true
               console.log(`[MCP] 🔍 Brave Search (mid-stream): "${midQuery}"`)
 
@@ -827,7 +907,6 @@ export class ChatService {
               loopAborted = true
 
               // Retract the tool call XML from what was already sent to the renderer
-              const cleanedSoFar = streamBuffer.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
               send(IPC_CHANNELS.CHAT_STREAM_RETRACT, cleanedSoFar)
 
               // Execute the search

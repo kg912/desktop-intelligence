@@ -16,7 +16,7 @@
 import path from 'path'
 import fs   from 'fs'
 import { app } from 'electron'
-import { v4 as uuidv4 } from 'uuid'
+import crypto from 'crypto'
 import { getDB } from './DatabaseService'
 
 export interface PlotRecord {
@@ -58,7 +58,7 @@ export function savePlot(
   imageBase64: string,
   caption:     string
 ): string {
-  const id        = uuidv4()
+  const id        = crypto.randomUUID()
   const imagePath = path.join(plotsDir(), `${id}.png`)
 
   try {

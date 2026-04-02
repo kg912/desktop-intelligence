@@ -36,7 +36,7 @@
  * and future use (keyword ranking, etc.) but is not used in this implementation.
  */
 
-import { v4 as uuid } from 'uuid'
+import crypto from 'crypto'
 import { getDB }      from './DatabaseService'
 
 // Maximum characters of document text to inject into the system prompt.
@@ -64,7 +64,7 @@ export async function ingestDocument(
   }
 
   const db    = getDB()
-  const docId = uuid()
+  const docId = crypto.randomUUID()
 
   db.prepare(
     `INSERT OR REPLACE INTO documents (id, name, path, ts, chat_id, content) VALUES (?, ?, '', ?, ?, ?)`
