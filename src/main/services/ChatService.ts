@@ -807,12 +807,12 @@ export class ChatService {
           firstChunkProcessed = true
           if (!cleanedDelta) continue
 
-          totalTokens += estimateTokens(cleanedDelta)
-          send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
-
           // ── Mid-stream tool call interception ──────────────────────
-          // Some models emit <tool_call>...</tool_call> inline while streaming
-          // Step 2. Accumulate chunks and check once we see the closing tag.
+          // IMPORTANT: accumulate into streamBuffer and run the check BEFORE
+          // sending the chunk to the renderer. Sending first (old order) meant
+          // chunks containing <tool_call> text were already committed to React
+          // state before the RETRACT could clean them up — causing the raw XML
+          // to appear in the chat even as the search spinner was visible.
           streamBuffer += cleanedDelta
           if (!toolCallIntercepted && streamBuffer.includes('</tool_call>')) {
             const midRaw   = parseRawToolCall(streamBuffer)
@@ -911,6 +911,12 @@ export class ChatService {
               break  // Exit the original loop — retry loop handled the rest
             }
           }
+
+          // Only reach here if no tool call was intercepted — safe to send the chunk.
+          // If a tool call WAS detected, we broke out of the inner for-loop above
+          // and the chunk containing <tool_call> is never forwarded to the renderer.
+          totalTokens += estimateTokens(cleanedDelta)
+          send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
 
           lineBuffer += cleanedDelta
           const newlineIdx = lineBuffer.indexOf('\n')

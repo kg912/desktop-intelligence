@@ -85,6 +85,13 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   // A ref avoids stale-closure issues inside the event-handler useEffect.
   const streamingContentRef = useRef<string>('')
 
+  // Set to the retracted content when CHAT_STREAM_RETRACT fires.
+  // The next chunk handler reads this, resets streamingContentRef to the
+  // retracted baseline, then clears the flag — preventing React 18 automatic-
+  // batching stale-closure race where a chunk arriving in the same microtask
+  // as the retract would append to the un-retracted prev.content.
+  const retractedContentRef = useRef<string | null>(null)
+
   // Tracks the thinking mode used for the previous turn so a divider can be
   // inserted into the message list when the user switches modes mid-conversation.
   const prevThinkingModeRef = useRef<'thinking' | 'fast'>('fast')
@@ -118,6 +125,15 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   // ── Subscribe to streaming events from main ───────────────────
   useEffect(() => {
     const unsubChunk = window.api.onChatStreamChunk((chunk: string) => {
+      // If a RETRACT fired, reset streamingContentRef to the clean retracted
+      // baseline before appending this chunk. This prevents the React 18
+      // automatic-batching race where a chunk in the same microtask queue as
+      // the retract would read stale prev.content and append to dirty content.
+      if (retractedContentRef.current !== null) {
+        streamingContentRef.current = retractedContentRef.current
+        retractedContentRef.current = null
+      }
+
       // Accumulate for DB persistence
       streamingContentRef.current += chunk
 
@@ -127,13 +143,16 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       }
 
       const id = assistantIdRef.current
+      // Use streamingContentRef as the content source rather than appending
+      // chunk to prev.content — eliminates stale-closure issues after retract.
+      const fullContent = streamingContentRef.current
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id)
         if (idx === -1) return prev
         const updated = [...prev]
         updated[idx] = {
           ...updated[idx],
-          content:    updated[idx].content + chunk,
+          content:     fullContent,
           isThinking:  false,
           isStreaming:  true,
           isSearching:  false,
@@ -268,6 +287,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     // message content to the clean version so the tool call XML never appears.
     const unsubRetract = window.api.onChatStreamRetract((cleanContent: string) => {
       streamingContentRef.current = cleanContent
+      // Signal to the next chunk handler to reset from this baseline rather
+      // than appending to whatever prev.content holds at that instant.
+      retractedContentRef.current = cleanContent
       const id = assistantIdRef.current
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id)
@@ -297,8 +319,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     if (isStreaming) return
 
     setLiveToolCall(null)
-    liveToolCallRef.current = null
-    thinkStartedAt.current  = null
+    liveToolCallRef.current  = null
+    thinkStartedAt.current   = null
+    retractedContentRef.current = null
 
     // Map ProcessedAttachment → lightweight display metadata for the Message type.
     // Stored separately from content so they survive chat history round-trips.
