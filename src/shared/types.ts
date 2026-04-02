@@ -59,8 +59,14 @@ export interface Chat {
  * Wire message shape sent over IPC — lean, no id/timestamp overhead.
  */
 export interface WireMessage {
-  role:    'user' | 'assistant' | 'system'
+  role:    'user' | 'assistant' | 'system' | 'tool'
   content: string
+  tool_call_id?: string
+  tool_calls?: Array<{
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
 }
 
 /**

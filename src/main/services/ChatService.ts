@@ -185,6 +185,9 @@ function messageNeedsSearch(userMessage: string): boolean {
   const properNouns = words.filter((w, i) =>
     i > 0 && /^[A-Z][a-zA-Z]{2,}/.test(w) && !COMMON_CAPS.has(w)
   )
+  
+  if (words.length <= 3 && properNouns.length === 0) return false
+
   // Short query (≤8 words) containing a named proper noun → likely a definition search
   if (properNouns.length >= 1 && words.length <= 8) return true
   // "What/who is X" or "tell me about X" with a proper noun in longer queries
@@ -216,9 +219,10 @@ async function streamContentInChunks(
 ): Promise<void> {
   const CHUNK_SIZE = 80
   const DELAY_MS   = 16
-  for (let i = 0; i < content.length; i += CHUNK_SIZE) {
+  const cleanedContent = stripLeadingThinkClose(content)
+  for (let i = 0; i < cleanedContent.length; i += CHUNK_SIZE) {
     if (signal.aborted) break
-    sendFn(IPC_CHANNELS.CHAT_STREAM_CHUNK, content.slice(i, i + CHUNK_SIZE))
+    sendFn(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedContent.slice(i, i + CHUNK_SIZE))
     await new Promise<void>((resolve) => setTimeout(resolve, DELAY_MS))
   }
 }
@@ -1033,6 +1037,11 @@ export class ChatService {
     return (content.slice(0, start) + content.slice(end + close.length)).trim()
   }
 
+  private cleanAssistantHistory(content: string): string {
+    // Strips any [System Note: ...] prefixes injected by orchestration loops
+    return content.replace(/\[System Note:[\s\S]*?\]/gi, '').trim()
+  }
+
   // LM Studio vision content part shapes
   private buildMessages(
     payload: ChatSendPayload
@@ -1090,11 +1099,17 @@ export class ChatService {
     const RECENT_PAIRS   = 2
     const recentBoundary = Math.max(0, allMsgs.length - RECENT_PAIRS * 2)
 
+    const lastUserIdx = allMsgs.map(m => m.role).lastIndexOf('user')
+
     const processedMsgs = allMsgs.map((m, i) => {
+      if (m.role === 'tool' && i < lastUserIdx) {
+        return { ...m, content: '[Previous Search Results for query]' }
+      }
       if (m.role !== 'assistant') return m
-      const stripped = this.stripThinkBlocks(m.content)
+      
+      const stripped = this.cleanAssistantHistory(this.stripThinkBlocks(m.content as string))
       const content  = i < recentBoundary ? stubMatplotlibBlocks(stripped) : stripped
-      return { ...m, content }
+      return { ...m, content: content || '' }
     })
 
     // Walk newest→oldest, keep messages within the budget.
@@ -1123,7 +1138,7 @@ export class ChatService {
       const m = kept[i]
 
       if (images.length > 0 && m.role === 'user' && i === lastIdx) {
-        const parts: ContentPart[] = [{ type: 'text', text: m.content }]
+        const parts: ContentPart[] = [{ type: 'text', text: m.content as string }]
         for (const img of images) {
           parts.push({ type: 'image_url', image_url: { url: img.dataUrl! } })
         }

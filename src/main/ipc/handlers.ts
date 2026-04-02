@@ -4,7 +4,7 @@ import { modelConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
-import { detectSearchIntent, performWebSearch } from '../services/WebSearchService'
+
 import { BASE_SYSTEM_PROMPT } from '../services/SystemPromptService'
 import { pythonWorker } from '../services/PythonWorkerService'
 import { savePlot, searchPlots } from '../services/PlotStore'
@@ -257,14 +257,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
     }
 
-    // ── 2. Web search — only when no local documents exist for this chat ──
-    if (lastUserMsg && !chatHasDocuments) {
-      const query = detectSearchIntent(lastUserMsg.content)
-      if (query) {
-        const searchResult = await performWebSearch(query, wc)
-        systemParts.push(searchResult)
-      }
-    }
+
 
     // ── 3. RAG context retrieval ─────────────────────────────
     // Runs unconditionally (independent of web search) so a web search

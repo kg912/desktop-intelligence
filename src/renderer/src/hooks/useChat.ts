@@ -415,16 +415,33 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     // Divider messages are display-only — filter them before sending to LM Studio.
     const wire: WireMessage[] = [...messages, userMsg]
       .filter((m) => m.role !== 'divider')
-      .map((m) => {
-        let content = m.content
+      .flatMap((m) => {
         if (m.toolCall) {
           const resultsStr = JSON.stringify(m.toolCall.results?.slice(0, 3) || [])
-          content += `\n\n[System Note: An automated web search for "${m.toolCall.query}" was executed during this turn. Results:\n${resultsStr}\n]`
+          const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(7)}`
+          
+          return [
+            {
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+              tool_calls: [{
+                id: toolCallId,
+                type: 'function',
+                function: { name: 'brave_web_search', arguments: JSON.stringify({ query: m.toolCall.query }) }
+              }]
+            },
+            {
+              role: 'tool',
+              tool_call_id: toolCallId,
+              content: resultsStr
+            }
+          ] as WireMessage[]
         }
-        return {
-          role:    m.role as 'user' | 'assistant',
-          content,
-        }
+        
+        return [{
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        }] as WireMessage[]
       })
 
     try {

@@ -4,6 +4,17 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.0-alpha-4] — 2026-04-02
+
+### Search Repetition and Context Deduplication
+
+- **Context Optimization**: Modified the wire payloads to explicitly push `tool` messages and tool_calls to the LLM backend rather than injecting them via System Notes. Introduced pruning logic into `ChatService.ts` that detects subsequent tool outputs across historical turns and stubs them to `[Previous Search Results for query]`, radically shrinking the size of old web search snippets across conversational turns.
+- **Removed Double Search Execution**: Eliminated duplicate legacy fallback functions (`detectSearchIntent`) from generic IPC payloads in favor of uniform MCP protocol streaming.
+- **Clean Assistant Context**: Automatically filters out previously injected textual tool footprints (`[System Note: ...]`) using `cleanAssistantHistory` to eliminate artifact bloat.
+- **Improved Typewriter Animation Sync**: Prevented early chunks from flashing without the typewriter animation during non-stream tool detection branches and effectively applied `<think>` block truncations directly inside the output streams.
+- **Conversational Follow-up Avoidance**: Expanded `messageNeedsSearch` to explicitly abandon checks on short generic texts (under 3 words with no Proper Nouns) to prevent the intelligence module from initiating real-time search on follow-up phrases like "tell me more" or "seriously?".
+
+---
 ## [1.6.0-alpha-3] — 2026-04-02
 
 ### Bug Fixes
