@@ -415,10 +415,17 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     // Divider messages are display-only — filter them before sending to LM Studio.
     const wire: WireMessage[] = [...messages, userMsg]
       .filter((m) => m.role !== 'divider')
-      .map((m) => ({
-        role:    m.role as 'user' | 'assistant',
-        content: m.content,
-      }))
+      .map((m) => {
+        let content = m.content
+        if (m.toolCall) {
+          const resultsStr = JSON.stringify(m.toolCall.results?.slice(0, 3) || [])
+          content += `\n\n[System Note: An automated web search for "${m.toolCall.query}" was executed during this turn. Results:\n${resultsStr}\n]`
+        }
+        return {
+          role:    m.role as 'user' | 'assistant',
+          content,
+        }
+      })
 
     try {
       await window.api.sendChatMessage({

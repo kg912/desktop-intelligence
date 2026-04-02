@@ -4,7 +4,7 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
-## [1.6.0-alpha-2] — 2026-04-02
+## [1.6.0-alpha-3] — 2026-04-02
 
 ### Bug Fixes
 
@@ -229,3 +229,7 @@ Initial scaffold. Core Electron + React + Vite + TypeScript application with:
 ---
 
 *For a detailed technical change log, see [CLAUDE.md](CLAUDE.md) Section 0.*
+
+### Core Agentic Logic Updates
+*   **Resolved `<think>` Tag UI Bleed:** Addressed an edge-case regression during mid-stream tool execution where a partially generated unclosed `<think>` tag would persist in the message UI state, forcing the `MarkdownRenderer` to apply Case 3 retrieval and resulting in duplicated text. The orchestration loop now proactively closes mismatched `think` tags before dispatching `CHAT_STREAM_RETRACT`.
+*   **Persistent Tool-Call Context Memory:** Resolved a model "amnesia" hallucination issue across multi-turn prompts (e.g., repeating searches for stale context) by injecting a dynamically generated `[System Note: ...]` detailing the parsed query and results of prior inline tool calls into the internal `.content` tracker. Ensures model retains explicit awareness of its prior functional executions while preserving frontend isolation.

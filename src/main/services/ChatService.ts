@@ -815,215 +815,170 @@ export class ChatService {
       // Adaptive thinking budget: when search data was injected, use a smaller
       // budget (4000) — the model has real facts and shouldn't speculate at length.
       // Without a search round, allow the full 8000 for deep reasoning.
-      const step2ThinkingField = isThinking
-        ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
-        : { thinking: { type: 'disabled' } }
+      let searchLoopCount = 0
+      const MAX_SEARCH_LOOPS = 3
 
-      const streamBody = JSON.stringify({
-        model:       modelId,
-        messages:    currentMessages,
-        temperature: 0.7,
-        max_tokens:  isThinking ? 32768 : 16384,
-        stop:        STOP_SEQUENCES,
-        ...step2ThinkingField,
-        stream:      true,
-      })
+      while (searchLoopCount < MAX_SEARCH_LOOPS) {
+        const step2ThinkingField = isThinking
+          ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
+          : { thinking: { type: 'disabled' } }
 
-      const response = await net.fetch(LMS_COMPLETIONS, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    streamBody,
-        signal,
-      } as RequestInit)
+        const streamBody = JSON.stringify({
+          model:       modelId,
+          messages:    currentMessages,
+          temperature: 0.7,
+          max_tokens:  isThinking ? 32768 : 16384,
+          stop:        STOP_SEQUENCES,
+          ...step2ThinkingField,
+          stream:      true,
+        })
 
-      if (!response.ok) {
-        const errText = await response.text()
-        throw new Error(`LM Studio ${response.status}: ${errText}`)
-      }
+        const response = await net.fetch(LMS_COMPLETIONS, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    streamBody,
+          signal:  this.controller?.signal || signal,
+        } as RequestInit)
 
-      if (!response.body) throw new Error('LM Studio returned no response body')
+        if (!response.ok) {
+          const errText = await response.text()
+          throw new Error(`LM Studio ${response.status}: ${errText}`)
+        }
 
-      const reader  = response.body.getReader()
-      const decoder = new TextDecoder()
+        if (!response.body) throw new Error('LM Studio returned no response body')
 
-      let loopAborted         = false
-      let firstChunkProcessed = false
-      let streamBuffer        = ''   // accumulates all chunks for mid-stream tool call detection
-      let toolCallIntercepted = false
-      while (true) {
-        if (loopAborted) break
-        const { done, value } = await reader.read()
-        if (done) break
+        const reader  = response.body.getReader()
+        const decoder = new TextDecoder()
 
-        buffer += decoder.decode(value, { stream: true })
+        let loopAborted         = false
+        let firstChunkProcessed = false
+        let streamBuffer        = ''
+        let toolCallIntercepted = false
+        
+        while (true) {
+          if (loopAborted) break
+          const { done, value } = await reader.read()
+          if (done) break
 
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
+          buffer += decoder.decode(value, { stream: true })
 
-        for (const raw of lines) {
-          const line = raw.trim()
-          if (!line.startsWith('data:')) continue
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
 
-          const data = line.slice(5).trim()
-          if (data === '[DONE]') break
+          for (const raw of lines) {
+            const line = raw.trim()
+            if (!line.startsWith('data:')) continue
 
-          let parsed: { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> }
-          try { parsed = JSON.parse(data) } catch { continue }
+            const data = line.slice(5).trim()
+            if (data === '[DONE]') break
 
-          const delta = parsed.choices?.[0]?.delta?.content
-          if (!delta) continue
+            let parsed: { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> }
+            try { parsed = JSON.parse(data) } catch { continue }
 
-          if (firstTokenAt === null) firstTokenAt = Date.now()
+            const delta = parsed.choices?.[0]?.delta?.content
+            if (!delta) continue
 
-          // Strip orphaned </think> only from the very first chunk — applying it to
-          // every chunk would swallow the standalone "</think>" chunk that Qwen/GLM
-          // emit, leaving the <think> block unclosed and triggering Case 3 recovery
-          // (answer = thought), which causes content to appear in both the accordion
-          // and the main chat body.
-          const cleanedDelta = firstChunkProcessed
-            ? delta
-            : stripLeadingThinkClose(delta)
-          firstChunkProcessed = true
-          if (!cleanedDelta) continue
+            if (firstTokenAt === null) firstTokenAt = Date.now()
 
-          // ── Mid-stream tool call interception ──────────────────────
-          // IMPORTANT: accumulate into streamBuffer and run the check BEFORE
-          // sending the chunk to the renderer. Sending first (old order) meant
-          // chunks containing <tool_call> text were already committed to React
-          // state before the RETRACT could clean them up — causing the raw XML
-          // to appear in the chat even as the search spinner was visible.
-          streamBuffer += cleanedDelta
-          
-          if (!toolCallIntercepted) {
-            const detected = detectMidStreamToolCall(streamBuffer)
-            if (detected) {
-              const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected
+            const cleanedDelta = firstChunkProcessed
+              ? delta
+              : stripLeadingThinkClose(delta)
+            firstChunkProcessed = true
+            if (!cleanedDelta) continue
 
-              toolCallIntercepted = true
-              console.log(`[MCP] 🔍 Brave Search (mid-stream): "${midQuery}"`)
+            streamBuffer += cleanedDelta
+            
+            if (!toolCallIntercepted) {
+              const detected = detectMidStreamToolCall(streamBuffer)
+              if (detected) {
+                const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected
+                let patchedCleaned = cleanedSoFar
+                const openCount  = (patchedCleaned.match(/<think>/gi) || []).length
+                const closeCount = (patchedCleaned.match(/<\/think>/gi) || []).length
+                if (openCount > closeCount) {
+                  patchedCleaned += '\n</think>\n'
+                }
 
-              // Abort current stream before making the next fetch
-              this.abort()
-              loopAborted = true
+                toolCallIntercepted = true
+                console.log(`[MCP] \uD83D\uDD0D Brave Search (interception depth ${searchLoopCount + 1}): "${midQuery}"`)
 
-              // Retract the tool call XML from what was already sent to the renderer
-              send(IPC_CHANNELS.CHAT_STREAM_RETRACT, cleanedSoFar)
+                this.abort()
+                loopAborted = true
 
-              // Execute the search
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: midQuery })
-              let midStreamResult: string
-              try {
-                const results = await braveSearch(midQuery, resolvedKey!, 5)
-                midStreamResult = formatSearchResults(results)
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                  phase:       'done',
-                  query:       midQuery,
-                  resultCount: results.length,
-                  results:     results.map(r => ({ title: r.title, url: r.url })),
-                })
-              } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err)
-                midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: midQuery, error: errMsg })
+                send(IPC_CHANNELS.CHAT_STREAM_RETRACT, patchedCleaned)
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: midQuery })
+                
+                let midStreamResult: string
+                try {
+                  const results = await braveSearch(midQuery, resolvedKey!, 5)
+                  midStreamResult = formatSearchResults(results)
+                  send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                    phase:       'done',
+                    query:       midQuery,
+                    resultCount: results.length,
+                    results:     results.map(r => ({ title: r.title, url: r.url })),
+                  })
+                } catch (err) {
+                  const errMsg = err instanceof Error ? err.message : String(err)
+                  midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`
+                  send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: midQuery, error: errMsg })
+                }
+
+                const toolCallId = `call_${Date.now()}`
+                currentMessages = [
+                  ...currentMessages,
+                  {
+                    role: 'assistant',
+                    content: patchedCleaned || (null as unknown as string),
+                    tool_calls: [{ id: toolCallId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: midQuery }) } }],
+                  } as { role: string; content: string },
+                  { role: 'tool', tool_call_id: toolCallId, content: midStreamResult } as { role: string; content: string },
+                ]
+
+                this.controller = new AbortController()
+                
+                searchLoopCount++
+                toolCallRound = true
+                break // Break out of `for const raw`
               }
+            }
 
-              // Rebuild messages: cleanedSoFar as partial assistant content + tool result
-              const syntheticId = `call_${Date.now()}`
-              const postInterceptMessages = [
-                ...currentMessages,
-                {
-                  role: 'assistant',
-                  content: cleanedSoFar || (null as unknown as string),
-                  tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: midQuery }) } }],
-                } as { role: string; content: string },
-                { role: 'tool', tool_call_id: syntheticId, content: midStreamResult } as { role: string; content: string },
-              ]
+            totalTokens += estimateTokens(cleanedDelta)
+            send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
 
-              // New controller — previous was aborted above
-              this.controller = new AbortController()
-              const retryResponse = await net.fetch(LMS_COMPLETIONS, {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({
-                  model:       modelId,
-                  messages:    postInterceptMessages,
-                  temperature: 0.7,
-                  max_tokens:  isThinking ? 32768 : 16384,
-                  stop:        STOP_SEQUENCES,
-                  ...step2ThinkingField,
-                  stream:      true,
-                }),
-                signal: this.controller.signal,
-              } as RequestInit)
+            lineBuffer += cleanedDelta
+            const newlineIdx = lineBuffer.indexOf('\n')
+            if (newlineIdx !== -1) {
+              const completedLine = lineBuffer.slice(0, newlineIdx).trim()
+              lineBuffer = lineBuffer.slice(newlineIdx + 1)
 
-              if (retryResponse.ok && retryResponse.body) {
-                const retryReader  = retryResponse.body.getReader()
-                const retryDecoder = new TextDecoder()
-                let retryBuffer = ''
-                let retryFirstChunk = false
-                let retryDone = false
-                while (!retryDone) {
-                  const { done: rd, value: rv } = await retryReader.read()
-                  if (rd) break
-                  retryBuffer += retryDecoder.decode(rv, { stream: true })
-                  const retryLines = retryBuffer.split('\n')
-                  retryBuffer = retryLines.pop() ?? ''
-                  for (const rline of retryLines) {
-                    const rl = rline.trim()
-                    if (!rl.startsWith('data:')) continue
-                    const rdata = rl.slice(5).trim()
-                    if (rdata === '[DONE]') { retryDone = true; break }
-                    let rparsed: { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> }
-                    try { rparsed = JSON.parse(rdata) } catch { continue }
-                    const rdelta = rparsed.choices?.[0]?.delta?.content
-                    if (!rdelta) continue
-                    if (firstTokenAt === null) firstTokenAt = Date.now()
-                    const rc = retryFirstChunk ? rdelta : stripLeadingThinkClose(rdelta)
-                    retryFirstChunk = true
-                    if (!rc) continue
-                    totalTokens += estimateTokens(rc)
-                    send(IPC_CHANNELS.CHAT_STREAM_CHUNK, rc)
+              if (
+                completedLine.length > 0 &&
+                completedLine.length <= REPETITION_MAX_LEN
+              ) {
+                if (completedLine === lastLine) {
+                  consecutiveCount++
+                  if (consecutiveCount >= REPETITION_WINDOW) {
+                    console.warn(
+                      `[ChatService] \uD83D\uDD01 Repetition detected \u2014 "${completedLine}" ` +
+                      `repeated ${consecutiveCount} times. Aborting stream.`
+                    )
+                    this.abort()
+                    loopAborted = true
+                    break
                   }
+                } else {
+                  lastLine         = completedLine
+                  consecutiveCount = 1
                 }
-              }
-
-              break  // Exit the original loop — retry loop handled the rest
-            }
-          }
-
-          // Only reach here if no tool call was intercepted — safe to send the chunk.
-          // If a tool call WAS detected, we broke out of the inner for-loop above
-          // and the chunk containing <tool_call> is never forwarded to the renderer.
-          totalTokens += estimateTokens(cleanedDelta)
-          send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
-
-          lineBuffer += cleanedDelta
-          const newlineIdx = lineBuffer.indexOf('\n')
-          if (newlineIdx !== -1) {
-            const completedLine = lineBuffer.slice(0, newlineIdx).trim()
-            lineBuffer = lineBuffer.slice(newlineIdx + 1)
-
-            if (
-              completedLine.length > 0 &&
-              completedLine.length <= REPETITION_MAX_LEN
-            ) {
-              if (completedLine === lastLine) {
-                consecutiveCount++
-                if (consecutiveCount >= REPETITION_WINDOW) {
-                  console.warn(
-                    `[ChatService] 🔁 Repetition detected — "${completedLine}" ` +
-                    `repeated ${consecutiveCount} times. Aborting stream.`
-                  )
-                  this.abort()
-                  loopAborted = true
-                  break
-                }
-              } else {
-                lastLine         = completedLine
-                consecutiveCount = 1
               }
             }
           }
+        }
+
+        // Exit outer loop if stream finished naturally or repetition aborted it
+        if (!toolCallIntercepted) {
+          break
         }
       }
     } catch (err) {
