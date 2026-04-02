@@ -185,10 +185,9 @@ export function Layout() {
 
   // ── Process attachments and send ──────────────────────────────
   const handleSend = useCallback(async (text: string, rawAttachments?: Attachment[]) => {
-    // Snap to bottom immediately — before any async work or state changes —
-    // so the user lands at the bottom the instant they press send, even if
-    // they were scrolled up reading history.
-    chatAreaRef.current?.scrollToBottom()
+    // Note: scrollToBottom is handled by ChatArea's useEffect that fires after
+    // React commits the new user message to the DOM — calling it here (before
+    // setMessages) would land at the pre-send bottom position.
 
     const list = rawAttachments ?? []
 

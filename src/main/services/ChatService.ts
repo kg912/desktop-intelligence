@@ -668,20 +668,63 @@ export class ChatService {
             toolCallRound = true
             // Fall through to Step 2 streaming below with results injected.
           } else {
-            // True direct answer — no tool call at all.
-            // Stream content in small chunks so React has time to render
-            // `isStreaming=true` and the typewriter cursor blink is visible.
-            const cleaned = stripLeadingThinkClose(choice.message.content)
-            await streamContentInChunks(cleaned, send, signal)
-            const elapsed = Date.now() - startTime
-            send(IPC_CHANNELS.CHAT_STREAM_END, {
-              totalTokens:  estimateTokens(cleaned),
-              ttft:         elapsed,
-              tokensPerSec: 0,
-              totalMs:      elapsed,
-              aborted:      false,
-            })
-            return
+            // Direct answer path — but first check if the content contains a raw
+            // tool call that wasn't caught by the earlier parsers (e.g. two
+            // concatenated <tool_call> tags, or a format variation we haven't seen).
+            const directContent = choice.message.content
+            const inlineRaw     = parseRawToolCall(directContent)
+            const inlineQuery   = (inlineRaw?.args?.['query']) || extractQueryFromCodeFenceToolCall(directContent)
+
+            if (inlineQuery) {
+              // Tool call buried in the direct answer — execute it and fall through
+              // to Step 2 with the result injected. Never stream the raw XML.
+              console.log(`[MCP] 🔍 Brave Search (inline recovery): "${inlineQuery}"`)
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: inlineQuery })
+
+              let searchResultText: string
+              try {
+                const results = await braveSearch(inlineQuery, resolvedKey!, 5)
+                searchResultText = formatSearchResults(results)
+                console.log(`[MCP] ✅ Search returned ${results.length} results (inline recovery)`)
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                  phase:       'done',
+                  query:       inlineQuery,
+                  resultCount: results.length,
+                  results:     results.map(r => ({ title: r.title, url: r.url })),
+                })
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err)
+                console.error('[MCP] ❌ Search failed (inline recovery):', errMsg)
+                searchResultText = `Web search failed: ${errMsg}. Answer from training knowledge.`
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: inlineQuery, error: errMsg })
+              }
+
+              const syntheticId = `call_${Date.now()}`
+              currentMessages = [
+                ...currentMessages,
+                {
+                  role: 'assistant',
+                  content: null as unknown as string,
+                  tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: inlineQuery }) } }],
+                } as { role: string; content: string },
+                { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
+              ]
+              toolCallRound = true
+              // Fall through to Step 2 streaming with search result injected
+            } else {
+              // Truly no tool call — stream the direct answer
+              const cleaned = stripLeadingThinkClose(directContent)
+              await streamContentInChunks(cleaned, send, signal)
+              const elapsed = Date.now() - startTime
+              send(IPC_CHANNELS.CHAT_STREAM_END, {
+                totalTokens:  estimateTokens(cleaned),
+                ttft:         elapsed,
+                tokensPerSec: 0,
+                totalMs:      elapsed,
+                aborted:      false,
+              })
+              return
+            }
           }
         }
       }
@@ -726,6 +769,8 @@ export class ChatService {
 
       let loopAborted         = false
       let firstChunkProcessed = false
+      let streamBuffer        = ''   // accumulates all chunks for mid-stream tool call detection
+      let toolCallIntercepted = false
       while (true) {
         if (loopAborted) break
         const { done, value } = await reader.read()
@@ -764,6 +809,108 @@ export class ChatService {
 
           totalTokens += estimateTokens(cleanedDelta)
           send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
+
+          // ── Mid-stream tool call interception ──────────────────────
+          // Some models emit <tool_call>...</tool_call> inline while streaming
+          // Step 2. Accumulate chunks and check once we see the closing tag.
+          streamBuffer += cleanedDelta
+          if (!toolCallIntercepted && streamBuffer.includes('</tool_call>')) {
+            const midRaw   = parseRawToolCall(streamBuffer)
+            const midQuery = midRaw?.args?.['query'] || extractQueryFromCodeFenceToolCall(streamBuffer)
+
+            if (midQuery) {
+              toolCallIntercepted = true
+              console.log(`[MCP] 🔍 Brave Search (mid-stream): "${midQuery}"`)
+
+              // Abort current stream before making the next fetch
+              this.abort()
+              loopAborted = true
+
+              // Retract the tool call XML from what was already sent to the renderer
+              const cleanedSoFar = streamBuffer.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim()
+              send(IPC_CHANNELS.CHAT_STREAM_RETRACT, cleanedSoFar)
+
+              // Execute the search
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: midQuery })
+              let midStreamResult: string
+              try {
+                const results = await braveSearch(midQuery, resolvedKey!, 5)
+                midStreamResult = formatSearchResults(results)
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                  phase:       'done',
+                  query:       midQuery,
+                  resultCount: results.length,
+                  results:     results.map(r => ({ title: r.title, url: r.url })),
+                })
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err)
+                midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`
+                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: midQuery, error: errMsg })
+              }
+
+              // Rebuild messages: cleanedSoFar as partial assistant content + tool result
+              const syntheticId = `call_${Date.now()}`
+              const postInterceptMessages = [
+                ...currentMessages,
+                {
+                  role: 'assistant',
+                  content: cleanedSoFar || (null as unknown as string),
+                  tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: midQuery }) } }],
+                } as { role: string; content: string },
+                { role: 'tool', tool_call_id: syntheticId, content: midStreamResult } as { role: string; content: string },
+              ]
+
+              // New controller — previous was aborted above
+              this.controller = new AbortController()
+              const retryResponse = await net.fetch(LMS_COMPLETIONS, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                  model:       modelId,
+                  messages:    postInterceptMessages,
+                  temperature: 0.7,
+                  max_tokens:  isThinking ? 32768 : 16384,
+                  stop:        STOP_SEQUENCES,
+                  ...step2ThinkingField,
+                  stream:      true,
+                }),
+                signal: this.controller.signal,
+              } as RequestInit)
+
+              if (retryResponse.ok && retryResponse.body) {
+                const retryReader  = retryResponse.body.getReader()
+                const retryDecoder = new TextDecoder()
+                let retryBuffer = ''
+                let retryFirstChunk = false
+                let retryDone = false
+                while (!retryDone) {
+                  const { done: rd, value: rv } = await retryReader.read()
+                  if (rd) break
+                  retryBuffer += retryDecoder.decode(rv, { stream: true })
+                  const retryLines = retryBuffer.split('\n')
+                  retryBuffer = retryLines.pop() ?? ''
+                  for (const rline of retryLines) {
+                    const rl = rline.trim()
+                    if (!rl.startsWith('data:')) continue
+                    const rdata = rl.slice(5).trim()
+                    if (rdata === '[DONE]') { retryDone = true; break }
+                    let rparsed: { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> }
+                    try { rparsed = JSON.parse(rdata) } catch { continue }
+                    const rdelta = rparsed.choices?.[0]?.delta?.content
+                    if (!rdelta) continue
+                    if (firstTokenAt === null) firstTokenAt = Date.now()
+                    const rc = retryFirstChunk ? rdelta : stripLeadingThinkClose(rdelta)
+                    retryFirstChunk = true
+                    if (!rc) continue
+                    totalTokens += estimateTokens(rc)
+                    send(IPC_CHANNELS.CHAT_STREAM_CHUNK, rc)
+                  }
+                }
+              }
+
+              break  // Exit the original loop — retry loop handled the rest
+            }
+          }
 
           lineBuffer += cleanedDelta
           const newlineIdx = lineBuffer.indexOf('\n')

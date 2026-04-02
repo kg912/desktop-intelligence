@@ -103,12 +103,17 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
     },
   }))
 
-  // ── Re-enable scroll whenever the USER sends a new message ──────
-  // (their message is always the last one added with role 'user')
+  // ── Re-enable scroll AND snap to bottom when the user sends a message ──
+  // The user message is always the last entry added with role 'user'.
+  // We fire scrollIntoView here (after React has committed the new message
+  // to the DOM) rather than in Layout.handleSend (which fires before the
+  // DOM reflects the new messages state, landing at the old bottom).
   useEffect(() => {
     const last = messages[messages.length - 1]
     if (last?.role === 'user') {
-      userScrolledUp.current = false
+      userScrolledUp.current       = false
+      isProgrammaticScroll.current = true
+      bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
     }
   }, [messages.length])
 
@@ -156,9 +161,12 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
     const el = scrollContainerRef.current
     if (!el) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    // 150 px of slack: re-enable once the user is clearly back near the
-    // live output, without requiring pixel-perfect positioning.
-    if (distanceFromBottom <= 150) {
+    // Use 20% of the visible container height as the re-enable threshold.
+    // This is zoom-independent: scrolling to within the bottom 20% of the
+    // visible area re-enables auto-scroll regardless of OS/browser zoom level.
+    // Capped at 300px so very tall monitors don't create an oversized zone.
+    const threshold = Math.min(el.clientHeight * 0.20, 300)
+    if (distanceFromBottom <= threshold) {
       userScrolledUp.current = false
     }
   }

@@ -152,6 +152,7 @@ export const IPC_CHANNELS = {
   CHAT_SEND:           'chat:send',
   CHAT_STREAM_CHUNK:   'chat:streamChunk',
   CHAT_STREAM_END:     'chat:streamEnd',
+  CHAT_STREAM_RETRACT: 'chat:streamRetract',
   CHAT_ABORT:          'chat:abort',
   CHAT_ERROR:          'chat:error',
 

@@ -261,7 +261,24 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       }
     })
 
-    return () => { unsubChunk(); unsubEnd(); unsubErr(); unsubSearch() }
+    // ── Mid-stream tool call retraction ─────────────────────────
+    // When the main process detects a <tool_call> tag mid-stream, it aborts
+    // the stream, executes the search, and sends CHAT_STREAM_RETRACT with the
+    // pre-tool-call content. We reset streamingContentRef and the assistant
+    // message content to the clean version so the tool call XML never appears.
+    const unsubRetract = window.api.onChatStreamRetract((cleanContent: string) => {
+      streamingContentRef.current = cleanContent
+      const id = assistantIdRef.current
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === id)
+        if (idx === -1) return prev
+        const updated = [...prev]
+        updated[idx] = { ...updated[idx], content: cleanContent }
+        return updated
+      })
+    })
+
+    return () => { unsubChunk(); unsubEnd(); unsubErr(); unsubSearch(); unsubRetract() }
   }, [patchAssistant])
 
   // ── Send a message ────────────────────────────────────────────

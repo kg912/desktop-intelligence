@@ -66,6 +66,12 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_END, h)
   },
 
+  onChatStreamRetract: (cb: (cleanContent: string) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, c: string): void => cb(c)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_RETRACT, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_RETRACT, h)
+  },
+
   onChatError: (cb: (msg: string) => void): (() => void) => {
     const h = (_: Electron.IpcRendererEvent, m: string): void => cb(m)
     ipcRenderer.on(IPC_CHANNELS.CHAT_ERROR, h)
