@@ -14,7 +14,7 @@
 import { net } from 'electron'
 import type { WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
-import type { GenerationStats, ChatSendPayload } from '../../shared/types'
+import type { GenerationStats, ChatSendPayload, WireMessage } from '../../shared/types'
 import { readSettings } from './SettingsStore'
 import { braveSearch, formatSearchResults, resolveBraveApiKey } from './BraveSearchService'
 import { BASE_SYSTEM_PROMPT } from './SystemPromptService'
@@ -922,7 +922,16 @@ export class ChatService {
                 this.abort()
                 loopAborted = true
 
-                send(IPC_CHANNELS.CHAT_STREAM_RETRACT, patchedCleaned)
+                // Think-flash fix: send only the text that appeared BEFORE the
+                // <think> block to the renderer.  patchedCleaned (which contains
+                // the partial reasoning) is still used for currentMessages so the
+                // model sees its own prior reasoning in the LM Studio context.
+                const thinkStart = patchedCleaned.indexOf('<think>')
+                const retractedClean = thinkStart > 0
+                  ? patchedCleaned.slice(0, thinkStart).trim()
+                  : thinkStart === 0 ? '' : patchedCleaned
+
+                send(IPC_CHANNELS.CHAT_STREAM_RETRACT, retractedClean)
                 send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: midQuery })
                 
                 let midStreamResult: string
@@ -1148,16 +1157,30 @@ export class ChatService {
     const lastIdx = kept.length - 1
 
     for (let i = 0; i < kept.length; i++) {
-      const m = kept[i]
+      const m  = kept[i]
+      const wm = m as unknown as WireMessage
 
       if (images.length > 0 && m.role === 'user' && i === lastIdx) {
+        // Vision message — build multipart content, but still preserve any
+        // tool_calls / tool_call_id that might be on this message.
         const parts: ContentPart[] = [{ type: 'text', text: m.content as string }]
         for (const img of images) {
           parts.push({ type: 'image_url', image_url: { url: img.dataUrl! } })
         }
-        msgs.push({ role: m.role, content: parts })
+        const wireMsg: Record<string, unknown> = { role: m.role, content: parts }
+        if (wm.tool_calls)    wireMsg.tool_calls    = wm.tool_calls
+        if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id
+        msgs.push(wireMsg as { role: string; content: string | ContentPart[] })
       } else {
-        msgs.push({ role: m.role, content: m.content })
+        // Standard message — preserve tool_calls and tool_call_id so LM Studio
+        // sees a valid assistant→tool message pair.  Plain destructuring
+        // ({ role, content }) silently drops these fields, producing an
+        // invalid tool message whose tool_call_id references a non-existent
+        // tool_calls entry on the preceding assistant message.
+        const wireMsg: Record<string, unknown> = { role: m.role, content: m.content }
+        if (wm.tool_calls)    wireMsg.tool_calls    = wm.tool_calls
+        if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id
+        msgs.push(wireMsg as { role: string; content: string | ContentPart[] })
       }
     }
 

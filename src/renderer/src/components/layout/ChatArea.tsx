@@ -120,7 +120,13 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
     ) {
       userScrolledUp.current       = false
       isProgrammaticScroll.current = true
-      bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
+      // requestAnimationFrame guarantees the scroll runs after the browser has
+      // painted the new messages into the DOM.  Without it, bottomRef.current
+      // may point to the old bottom position (before AnimatePresence has
+      // inserted the new message nodes), causing the scroll to land short.
+      requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
+      })
     }
   }, [messages.length])
 
