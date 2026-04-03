@@ -409,10 +409,13 @@ function detectMidStreamToolCall(buffer: string): { query: string; cleanedBuffer
  * Safe to apply to every chunk — only removes a tag at the very start.
  */
 function stripLeadingThinkClose(content: string): string {
-  // Only strip the </think> tag and its immediately following whitespace.
+  // Only strip the closing tag and its immediately following whitespace.
   // Do NOT trimStart() — that would eat "\n\n" chunks (paragraph/code-block
   // separators sent as whitespace-only deltas), merging all text together.
-  return content.replace(/^<\/think>\s*/i, '')
+  // Handles both Qwen3 </think> and Gemma 4 <channel|> orphaned close tags.
+  return content
+    .replace(/^<\/think>\s*/i, '')
+    .replace(/^<channel\|>\s*/i, '')
 }
 
 // Vision content parts (OpenAI-compatible multimodal format)
@@ -1050,13 +1053,28 @@ export class ChatService {
   // of tokens.  Using lastIndexOf matches our renderer logic (Qwen sometimes
   // mentions </think> inside the thought, so we split at the LAST occurrence).
   private stripThinkBlocks(content: string): string {
+    // Strip Qwen3-style <think>…</think> blocks
     const open  = '<think>'
     const close = '</think>'
-    const start = content.indexOf(open)
-    if (start === -1) return content                       // no think block
-    const end = content.lastIndexOf(close)
-    if (end === -1) return content.slice(0, start).trim() // unclosed block
-    return (content.slice(0, start) + content.slice(end + close.length)).trim()
+    let result = content
+    const start = result.indexOf(open)
+    if (start !== -1) {
+      const end = result.lastIndexOf(close)
+      if (end === -1) result = result.slice(0, start).trim()
+      else result = (result.slice(0, start) + result.slice(end + close.length)).trim()
+    }
+
+    // Strip Gemma 4-style <|channel>thought\n…<channel|> blocks
+    const gOpen  = '<|channel>thought\n'
+    const gClose = '<channel|>'
+    const gStart = result.indexOf(gOpen)
+    if (gStart !== -1) {
+      const gEnd = result.lastIndexOf(gClose)
+      if (gEnd === -1) result = result.slice(0, gStart).trim()
+      else result = (result.slice(0, gStart) + result.slice(gEnd + gClose.length)).trim()
+    }
+
+    return result
   }
 
   private cleanAssistantHistory(content: string): string {
@@ -1087,6 +1105,14 @@ export class ChatService {
     if (braveEnabled)         systemParts.push(WEB_SEARCH_SYSTEM_ADDENDUM)
     if (!braveEnabled)        systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM)
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
+
+    // Gemma 4 thinking activation — Gemma does not support the `thinking:{type}`
+    // payload field; instead it is activated by a <|think|> prefix in the system
+    // prompt.  Detection is by model name (only route that is reliable here since
+    // we don't yet have content to inspect).
+    if (payload.thinkingMode === 'thinking' && payload.model?.toLowerCase().includes('gemma')) {
+      systemParts[0] = '<|think|>\n' + systemParts[0]
+    }
 
     const docInjections = (payload.attachments ?? [])
       .filter((a) => a.kind === 'document' && a.inject)

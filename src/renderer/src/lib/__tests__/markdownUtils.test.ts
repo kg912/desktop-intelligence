@@ -361,6 +361,91 @@ describe('parseThinkBlocks — streamEnded=true recovery', () => {
   })
 })
 
+// ── Suite: parseThinkBlocks — Gemma 4 channel-block format ───────────────────
+
+describe('parseThinkBlocks — Gemma 4 channel-block format', () => {
+  const GOPEN  = '<|channel>thought\n'
+  const GCLOSE = '<channel|>'
+
+  it('fully closed Gemma block: splits thought and answer correctly', () => {
+    const raw = `${GOPEN}I should reason carefully here.${GCLOSE}Here is the answer.`
+    const result = parseThinkBlocks(raw)
+    expect(result.thought).toBe('I should reason carefully here.')
+    expect(result.answer).toBe('Here is the answer.')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('fully closed Gemma block: isThinking is false', () => {
+    const raw = `${GOPEN}reasoning${GCLOSE}done`
+    expect(parseThinkBlocks(raw).isThinking).toBe(false)
+  })
+
+  it('fully closed Gemma block: multi-line thought is preserved', () => {
+    const raw = `${GOPEN}Step 1: analyse\nStep 2: conclude${GCLOSE}Result.`
+    const result = parseThinkBlocks(raw)
+    expect(result.thought).toContain('Step 1')
+    expect(result.thought).toContain('Step 2')
+    expect(result.answer).toBe('Result.')
+  })
+
+  it('fully closed Gemma block: uses lastIndexOf for close marker (greedy)', () => {
+    // Model mentions <channel|> inside its own thought — must split at the LAST one
+    const raw = `${GOPEN}The tag format is: ${GCLOSE}text. Done.${GCLOSE}Final answer.`
+    const result = parseThinkBlocks(raw)
+    expect(result.answer).toBe('Final answer.')
+    expect(result.thought).toContain('The tag format is:')
+  })
+
+  it('still-open Gemma block during streaming: isThinking=true, answer empty', () => {
+    const raw = `${GOPEN}still reasoning...`
+    const result = parseThinkBlocks(raw, false)
+    expect(result.isThinking).toBe(true)
+    expect(result.answer).toBe('')
+    expect(result.thought).toBe('still reasoning...')
+  })
+
+  it('still-open Gemma block after stream ended: surfaces thought as answer', () => {
+    const raw = `${GOPEN}thinking when tokens ran out`
+    const result = parseThinkBlocks(raw, true)
+    expect(result.isThinking).toBe(false)
+    expect(result.answer).toContain('thinking when tokens ran out')
+    expect(result.thought).toContain('thinking when tokens ran out')
+  })
+
+  it('empty Gemma thought block (thinking disabled): no accordion, answer returned', () => {
+    // When Gemma thinking is disabled the model emits an empty block
+    const raw = `${GOPEN}${GCLOSE}The actual answer here.`
+    const result = parseThinkBlocks(raw)
+    expect(result.thought).toBe('')
+    expect(result.answer).toBe('The actual answer here.')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('whitespace-only Gemma thought block: treated as empty (no accordion)', () => {
+    const raw = `${GOPEN}   \n   ${GCLOSE}The answer.`
+    const result = parseThinkBlocks(raw)
+    expect(result.thought).toBe('')
+    expect(result.answer).toBe('The answer.')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('plain response with no Gemma tags: falls through to normal handling', () => {
+    const raw = 'Just a plain response with no channel tags.'
+    const result = parseThinkBlocks(raw)
+    expect(result.answer).toBe(raw)
+    expect(result.thought).toBe('')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('Qwen <think> tag is not confused with Gemma format', () => {
+    const raw = '<think>Qwen reasoning</think>Qwen answer'
+    const result = parseThinkBlocks(raw)
+    expect(result.thought).toBe('Qwen reasoning')
+    expect(result.answer).toBe('Qwen answer')
+    expect(result.isThinking).toBe(false)
+  })
+})
+
 // ── Suite: classifyCodeBlock ──────────────────────────────────────────────────
 
 describe('classifyCodeBlock', () => {

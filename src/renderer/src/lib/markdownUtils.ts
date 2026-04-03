@@ -104,6 +104,37 @@ function cleanAnswerEcho(rawAnswer: string, thought: string): string {
 }
 
 export function parseThinkBlocks(raw: string, streamEnded = false): ParsedContent {
+  // ── Gemma 4 channel-block format detection ─────────────────────────────────
+  // Gemma 4 uses <|channel>thought\n…<channel|> instead of <think>…</think>.
+  // Detection is purely content-based — no model-name check required.
+  const GEMMA_OPEN  = '<|channel>thought\n'
+  const GEMMA_CLOSE = '<channel|>'
+
+  if (raw.includes(GEMMA_OPEN)) {
+    const gOpenIdx  = raw.indexOf(GEMMA_OPEN)
+    const gCloseIdx = raw.lastIndexOf(GEMMA_CLOSE)
+
+    // Case 1 — fully closed Gemma block
+    if (gCloseIdx !== -1 && gOpenIdx < gCloseIdx) {
+      const thought   = raw.slice(gOpenIdx + GEMMA_OPEN.length, gCloseIdx).trim()
+      const rawAnswer = raw.slice(gCloseIdx + GEMMA_CLOSE.length).replace(/^\s*/, '')
+      // Empty-block guard — thinking was disabled; don't show an empty accordion
+      if (!thought) return { thought: '', answer: rawAnswer, isThinking: false }
+      const answer = cleanAnswerEcho(rawAnswer, thought)
+      return { thought, answer, isThinking: false }
+    }
+
+    // Case 2 — block still open AND streaming in progress
+    if (!streamEnded) {
+      return { thought: raw.slice(gOpenIdx + GEMMA_OPEN.length), answer: '', isThinking: true }
+    }
+
+    // Case 3 — block still open but stream ENDED (truncated by max_tokens)
+    const thought = raw.slice(gOpenIdx + GEMMA_OPEN.length).trim()
+    return { thought, answer: thought, isThinking: false }
+  }
+
+  // ── Qwen3-style <think>…</think> ───────────────────────────────────────────
   const OPEN  = '<think>'
   const CLOSE = '</think>'
 
