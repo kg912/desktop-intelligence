@@ -107,6 +107,11 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // Dev-mode debug build: open DevTools automatically
+  if (process.env.DEV_MODE === 'true') {
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
+  }
 }
 
 // ----------------------------------------------------------------

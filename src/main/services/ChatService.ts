@@ -22,6 +22,9 @@ import { countTokens } from './tokenUtils'
 
 const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
 
+// Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true)
+const DEBUG = process.env.DEV_MODE === 'true'
+
 // TARGET_MODEL_ID removed — the model is now supplied dynamically via the IPC
 // payload (ChatSendPayload.model) and passed as the modelId argument to send().
 // The DEFAULT_MODEL_ID fallback lives in shared/types.ts.
@@ -583,6 +586,10 @@ export class ChatService {
     try {
       // ── Step 1: Non-streaming round for tool calls (only when shouldAttemptSearch) ──
       if (shouldAttemptSearch) {
+        // 4c — Step 1 payload diagnostic
+        if (DEBUG) {
+          console.log('[DEBUG] Step 1 body:', JSON.stringify(step1Body, null, 2))
+        }
         const r1 = await net.fetch(LMS_COMPLETIONS, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -604,6 +611,11 @@ export class ChatService {
               }>
             }
           }>
+        }
+
+        // 4d — Step 1 response diagnostic
+        if (DEBUG) {
+          console.log('[DEBUG] Step 1 response:', JSON.stringify(r1data, null, 2))
         }
 
         const choice = r1data.choices?.[0]
@@ -904,6 +916,11 @@ export class ChatService {
             const delta = parsed.choices?.[0]?.delta?.content
             if (!delta) continue
 
+            // 4a — first raw SSE delta diagnostic
+            if (DEBUG && !firstChunkProcessed) {
+              console.log('[DEBUG] First raw SSE delta:', JSON.stringify(delta))
+            }
+
             if (firstTokenAt === null) firstTokenAt = Date.now()
 
             const cleanedDelta = firstChunkProcessed
@@ -1013,6 +1030,11 @@ export class ChatService {
 
         // Exit outer loop if stream finished naturally or repetition aborted it
         if (!toolCallIntercepted) {
+          // 4b — full accumulated stream content diagnostic
+          if (DEBUG) {
+            console.log('[DEBUG] Full stream content at end (length:', streamBuffer.length, '):')
+            console.log('[DEBUG]', streamBuffer.slice(0, 500))
+          }
           break
         }
       }

@@ -34,6 +34,8 @@ import type {
 // In a packaged OR dev Electron process the UA always contains 'Electron'.
 const IS_BROWSER_MOCK = !navigator.userAgent.includes('Electron')
 
+const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
+
 // ── Empty assistant placeholder ──────────────────────────────────
 function makeAssistant(): Message {
   return {
@@ -180,6 +182,14 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       const assistantMsgId   = assistantIdRef.current
       const assistantContent = streamingContentRef.current
       const activeChatId     = currentChatIdRef.current
+
+      if (DEBUG) {
+        console.log('[DEBUG useChat streamEnd] contentLen:', assistantContent.length,
+          '| hasThinkOpen:', assistantContent.includes('<think>'),
+          '| hasThinkClose:', assistantContent.includes('</think>'),
+          '| lastCloseIdx:', assistantContent.lastIndexOf('</think>'),
+          '| first200:', assistantContent.slice(0, 200))
+      }
 
       // Clear in-flight refs before any async work
       assistantIdRef.current      = null

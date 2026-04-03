@@ -5,6 +5,8 @@
  * in a plain Node environment with Vitest.
  */
 
+const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
+
 // ----------------------------------------------------------------
 // <think> tag parser
 // ----------------------------------------------------------------
@@ -104,6 +106,14 @@ function cleanAnswerEcho(rawAnswer: string, thought: string): string {
 }
 
 export function parseThinkBlocks(raw: string, streamEnded = false): ParsedContent {
+  if (DEBUG) {
+    console.log('[DEBUG parseThinkBlocks] input len:', raw.length,
+      '| hasOpen:', raw.includes('<think>'),
+      '| hasClose:', raw.includes('</think>'),
+      '| lastCloseIdx:', raw.lastIndexOf('</think>'),
+      '| streamEnded:', streamEnded)
+  }
+
   // ── Gemma 4 channel-block format detection ─────────────────────────────────
   // Gemma 4 uses <|channel>thought\n…<channel|> instead of <think>…</think>.
   // Detection is purely content-based — no model-name check required.
@@ -148,11 +158,13 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
     const rawAnswer = raw.slice(closeIdx + CLOSE.length).replace(/^\s*/, '')
     // Remove internal-monologue echo paragraphs the model repeated after </think>
     const answer = cleanAnswerEcho(rawAnswer, thought)
+    if (DEBUG) console.log('[DEBUG parseThinkBlocks] Case 1 (closed): thoughtLen=', thought.length, 'answerLen=', answer.length)
     return { thought, answer, isThinking: false }
   }
 
   // Case 2 — block still open AND streaming is still in progress
   if (openIdx !== -1 && !streamEnded) {
+    if (DEBUG) console.log('[DEBUG parseThinkBlocks] Case 2 (open+streaming): thoughtLen=', raw.slice(openIdx + OPEN.length).length)
     return { thought: raw.slice(openIdx + OPEN.length), answer: '', isThinking: true }
   }
 
@@ -160,10 +172,12 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
   // Surface the thought content as the answer so the user sees something, not a blank card.
   if (openIdx !== -1 && streamEnded) {
     const thought = raw.slice(openIdx + OPEN.length).trim()
+    if (DEBUG) console.log('[DEBUG parseThinkBlocks] Case 3 (open+ended): thoughtLen=', thought.length)
     return { thought, answer: thought, isThinking: false }
   }
 
   // Case 4 — no think tags — plain response
+  if (DEBUG) console.log('[DEBUG parseThinkBlocks] Case 4 (plain): answerLen=', raw.length)
   return { thought: '', answer: raw, isThinking: false }
 }
 
