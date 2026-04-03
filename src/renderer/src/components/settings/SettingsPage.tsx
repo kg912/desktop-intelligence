@@ -3,9 +3,7 @@ import { Settings, Globe, Info } from 'lucide-react'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { MCPSettingsPanel } from './MCPSettingsPanel'
 import { cn } from '../../lib/utils'
-
-const APP_VERSION = '1.5.1'
-const APP_AUTHOR  = 'Karan Grover'
+import { version, author } from '../../../../../package.json'
 
 type SettingsTab = 'model' | 'mcp' | 'about'
 
@@ -58,11 +56,11 @@ function AboutPanel() {
       <div className="space-y-3 text-sm">
         <div className="flex items-center justify-between py-2.5 border-b border-surface-border/30">
           <span className="text-content-secondary">Version</span>
-          <span className="text-content-primary font-mono">{APP_VERSION}</span>
+          <span className="text-content-primary font-mono">{version}</span>
         </div>
         <div className="flex items-center justify-between py-2.5 border-b border-surface-border/30">
           <span className="text-content-secondary">Author</span>
-          <span className="text-content-primary">{APP_AUTHOR}</span>
+          <span className="text-content-primary">{author}</span>
         </div>
         <div className="flex items-center justify-between py-2.5">
           <span className="text-content-secondary">Changelog</span>
@@ -143,7 +141,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-12 pb-8 w-full" style={{ maxWidth: 720, paddingTop: 160 }}>
           {tab === 'model' && <ModelSettingsPanel />}
-          {tab === 'mcp'   && <MCPSettingsPanel />}
+          {tab === 'mcp' && <MCPSettingsPanel />}
           {tab === 'about' && <AboutPanel />}
         </div>
       </div>

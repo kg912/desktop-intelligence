@@ -2,7 +2,7 @@
 // discoverable when the app is launched as a packaged .app bundle
 // (packaged Electron apps do not inherit the user's shell environment).
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-call
-;(require('fix-path') as () => void)()
+; (require('fix-path') as () => void)()
 
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
@@ -75,21 +75,21 @@ let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width:            1280,
-    height:           800,
-    minWidth:         900,
-    minHeight:        600,
-    show:             false,
-    titleBarStyle:    'hiddenInset',
-    vibrancy:         'under-window',
-    backgroundColor:  '#0f0f0f',
+    width: 1280,
+    height: 800,
+    minWidth: 900,
+    minHeight: 600,
+    show: false,
+    titleBarStyle: 'hiddenInset',
+    vibrancy: 'under-window',
+    backgroundColor: '#0f0f0f',
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
-      preload:          join(__dirname, '../preload/index.js'),
+      preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration:  false,
-      sandbox:          false,
-      webSecurity:      true
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: true
     }
   })
 
