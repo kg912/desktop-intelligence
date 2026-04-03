@@ -471,8 +471,14 @@ export function stubMatplotlibBlocks(content: string): string {
  */
 export function applyThinkingPrefix(
   messages: Array<{ role: string; content: string | ContentPart[] }>,
-  thinkingMode: import('../../shared/types').ThinkingMode | undefined
+  thinkingMode: import('../../shared/types').ThinkingMode | undefined,
+  model?: string
 ): Array<{ role: string; content: string | ContentPart[] }> {
+  // Gemma models do not recognise /think or /no_think — they are Qwen/MLX-specific
+  // soft-prompt tokens. Injecting them into Gemma messages causes them to be echoed
+  // verbatim inside the <think> block, polluting the thought accordion with junk text.
+  if (model?.toLowerCase().includes('gemma')) return messages
+
   const isFast      = thinkingMode !== 'thinking'
   const prefix      = isFast ? '/no_think\n' : '/think\n'
   const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user')
@@ -520,7 +526,7 @@ export class ChatService {
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey)
 
     // ── Build base messages ────────────────────────────────────────
-    const builtMessages = applyThinkingPrefix(this.buildMessages(payload), payload.thinkingMode)
+    const builtMessages = applyThinkingPrefix(this.buildMessages(payload), payload.thinkingMode, payload.model)
     console.log('🚀 FINAL LM STUDIO PAYLOAD:', JSON.stringify(builtMessages, null, 2))
 
     const isThinking = payload.thinkingMode === 'thinking'
