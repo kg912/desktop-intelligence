@@ -893,6 +893,7 @@ export class ChatService {
         let firstChunkProcessed = false
         let streamBuffer        = ''
         let toolCallIntercepted = false
+        let reasoningOpen       = false
         
         while (true) {
           if (loopAborted) break
@@ -911,10 +912,25 @@ export class ChatService {
             const data = line.slice(5).trim()
             if (data === '[DONE]') break
 
-            let parsed: { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> }
+            let parsed: { choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string }> }
             try { parsed = JSON.parse(data) } catch { continue }
 
-            const delta = parsed.choices?.[0]?.delta?.content
+            const deltaContent    = parsed.choices?.[0]?.delta?.content ?? ''
+            const deltaReasoning  = parsed.choices?.[0]?.delta?.reasoning_content ?? ''
+
+            // LM Studio 0.4.9+ routes Gemma 4 thinking tokens into reasoning_content rather
+            // than content. Wrap them in <think>...</think> so the existing parseThinkBlocks
+            // pipeline handles them identically to Qwen3 — no other code needs to change.
+            // Qwen3/GLM never emit reasoning_content, so this branch never fires for them.
+            let delta = ''
+            if (deltaReasoning) {
+              delta = reasoningOpen ? deltaReasoning : '<think>' + deltaReasoning
+              reasoningOpen = true
+            } else if (deltaContent) {
+              delta = reasoningOpen ? '</think>' + deltaContent : deltaContent
+              reasoningOpen = false
+            }
+
             if (!delta) continue
 
             // 4a — first raw SSE delta diagnostic
