@@ -1121,14 +1121,37 @@ export class ChatService {
     const RECENT_PAIRS   = 2
     const recentBoundary = Math.max(0, allMsgs.length - RECENT_PAIRS * 2)
 
-    const lastUserIdx = allMsgs.map(m => m.role).lastIndexOf('user')
+    const lastUserIdx      = allMsgs.map(m => m.role).lastIndexOf('user')
+    const lastAssistantIdx = allMsgs.map(m => m.role).lastIndexOf('assistant')
 
     const processedMsgs = allMsgs.map((m, i) => {
       if (m.role === 'tool' && i < lastUserIdx) {
         return { ...m, content: '[Previous Search Results for query]' }
       }
+
+      // Topic-anchoring fix: truncate assistant messages from previous search turns.
+      // Step 1 runs with thinking:disabled and temperature:0.1 — it anchors heavily
+      // to the most prominent text in context.  A 400–700 token MSFT analysis sitting
+      // just before the new question causes the model to generate a tool call for the
+      // old topic rather than the new one.  We keep only the first 150 chars as a
+      // coherence stub; the full content of the MOST RECENT assistant message is
+      // preserved so the model has its latest answer for context.
+      const wm = m as unknown as WireMessage
+      if (
+        m.role === 'assistant' &&
+        wm.tool_calls &&
+        wm.tool_calls.length > 0 &&
+        i < lastAssistantIdx
+      ) {
+        const contentStr = typeof m.content === 'string' ? m.content : ''
+        const stub = contentStr.length > 150
+          ? contentStr.slice(0, 150).trimEnd() + '… [previous answer truncated]'
+          : contentStr
+        return { ...m, content: stub }
+      }
+
       if (m.role !== 'assistant') return m
-      
+
       const stripped = this.cleanAssistantHistory(this.stripThinkBlocks(m.content as string))
       const content  = i < recentBoundary ? stubMatplotlibBlocks(stripped) : stripped
       return { ...m, content: content || '' }

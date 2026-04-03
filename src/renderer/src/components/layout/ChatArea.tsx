@@ -118,14 +118,23 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
       last?.isThinking === true &&
       secondLast?.role === 'user'
     ) {
-      userScrolledUp.current       = false
-      isProgrammaticScroll.current = true
-      // requestAnimationFrame guarantees the scroll runs after the browser has
-      // painted the new messages into the DOM.  Without it, bottomRef.current
-      // may point to the old bottom position (before AnimatePresence has
-      // inserted the new message nodes), causing the scroll to land short.
+      userScrolledUp.current = false
+      // Scroll the container directly rather than using bottomRef.scrollIntoView.
+      // bottomRef lives inside the messages div, which AnimatePresence (mode="wait")
+      // does not mount until the empty-state exit animation finishes (~150ms).
+      // During that window bottomRef.current is null and scrollIntoView does nothing.
+      // scrollContainerRef is always mounted — it is the outermost div and never
+      // unmounts.  Setting scrollTop = scrollHeight is synchronous and reliable.
+      // Double-rAF ensures execution after both the React commit phase AND the
+      // browser layout/paint, so scrollHeight reflects the newly added messages.
       requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
+        requestAnimationFrame(() => {
+          const el = scrollContainerRef.current
+          if (el) {
+            isProgrammaticScroll.current = true
+            el.scrollTop = el.scrollHeight
+          }
+        })
       })
     }
   }, [messages.length])
