@@ -64,8 +64,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   const [isSearching, setIsSearching] = useState(false)
   const [liveToolCall, setLiveToolCall] = useState<Message['liveToolCall']>(null)
 
-  // Read selected model and thinking mode from global store.
-  const { selectedModel, thinkingMode } = useModelStore()
+  // Read selected model, thinking mode, and context-usage setter from global store.
+  const { selectedModel, thinkingMode, setContextUsage } = useModelStore()
 
   // Ref so event-listener callbacks always see the latest assistant id
   const assistantIdRef = useRef<string | null>(null)
@@ -211,6 +211,13 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       })
       setIsStreaming(false)
       setIsSearching(false)
+
+      // Update context utilisation bar if the server sent a prompt_tokens figure
+      if (stats.promptTokens) {
+        window.api.getModelConfig().then((config) => {
+          setContextUsage({ used: stats.promptTokens!, total: config.contextLength })
+        }).catch(() => { /* non-fatal — bar simply stays at previous value */ })
+      }
 
       // Persist toolCall or decide whether to surface a buffered error
       const finalToolCall = liveToolCallRef.current
@@ -523,6 +530,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     setIsStreaming(false)
     setIsSearching(false)
     setLiveToolCall(null)
+    setContextUsage(null)   // reset context bar on new chat
     assistantIdRef.current      = null
     streamingContentRef.current = ''
     liveToolCallRef.current     = null

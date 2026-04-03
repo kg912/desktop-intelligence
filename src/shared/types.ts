@@ -131,11 +131,12 @@ export interface ChatSendPayload {
 }
 
 export interface GenerationStats {
-  ttft:         number   // ms to first token
-  tokensPerSec: number   // tokens / sec
-  totalMs:      number   // total wall time
-  totalTokens:  number   // estimated output tokens
-  aborted?:     boolean
+  ttft:          number   // ms to first token
+  tokensPerSec:  number   // tokens / sec
+  totalMs:       number   // total wall time
+  totalTokens:   number   // estimated output tokens
+  promptTokens?: number   // server-reported prompt+output token count from usage field
+  aborted?:      boolean
 }
 
 /**

@@ -26,6 +26,10 @@ interface ModelStoreValue {
   thinkingMode:     ThinkingMode
   /** Toggle between thinking and fast mode */
   setThinkingMode:  (mode: ThinkingMode) => void
+  /** Context window utilisation from the last completed response; null before first response */
+  contextUsage:     { used: number; total: number } | null
+  /** Update context utilisation — called from useChat after each stream-end */
+  setContextUsage:  (usage: { used: number; total: number } | null) => void
 }
 
 // ── Context ──────────────────────────────────────────────────────
@@ -37,9 +41,10 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   // once it has read the saved modelId from SettingsStore (IPC round-trip).
   const [selectedModel,  setSelectedModel]  = useState<string>('')
   const [thinkingMode,   setThinkingMode]   = useState<ThinkingMode>('fast')
+  const [contextUsage,   setContextUsage]   = useState<{ used: number; total: number } | null>(null)
 
   return (
-    <ModelStoreContext.Provider value={{ selectedModel, setSelectedModel, thinkingMode, setThinkingMode }}>
+    <ModelStoreContext.Provider value={{ selectedModel, setSelectedModel, thinkingMode, setThinkingMode, contextUsage, setContextUsage }}>
       {children}
     </ModelStoreContext.Provider>
   )

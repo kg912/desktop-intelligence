@@ -912,8 +912,17 @@ export class ChatService {
             const data = line.slice(5).trim()
             if (data === '[DONE]') break
 
-            let parsed: { choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string }> }
+            let parsed: {
+              choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string }>
+              usage?:   { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+            }
             try { parsed = JSON.parse(data) } catch { continue }
+
+            // Capture the server-authoritative token count when LM Studio sends it.
+            // This overwrites the running estimate with the real figure from the final chunk.
+            if (parsed.usage?.prompt_tokens) {
+              totalTokens = parsed.usage.prompt_tokens
+            }
 
             const deltaContent    = parsed.choices?.[0]?.delta?.content ?? ''
             const deltaReasoning  = parsed.choices?.[0]?.delta?.reasoning_content ?? ''
@@ -1296,6 +1305,7 @@ export class ChatService {
       tokensPerSec: Math.round((totalTokens / elapsed) * 10) / 10,
       totalMs,
       totalTokens,
+      promptTokens: totalTokens,   // server figure when available (usage.prompt_tokens overwrites estimate)
       aborted,
     }
   }
