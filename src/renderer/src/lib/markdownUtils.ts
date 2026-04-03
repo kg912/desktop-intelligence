@@ -169,6 +169,28 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
 
 
 // ----------------------------------------------------------------
+// Currency dollar pre-escaper
+// ----------------------------------------------------------------
+
+/**
+ * escapeCurrencyDollars
+ *
+ * Replaces `$` signs that introduce a currency amount (i.e. immediately
+ * followed by a digit) with `\$` so remark-math ignores them. This lets
+ * `singleDollarTextMath` remain enabled while preventing price strings
+ * like `$164.65`, `$1,200`, and `$0.99` from being fed to KaTeX.
+ *
+ * Math expressions such as `$K$`, `$\pi_k$`, and `$\mathbf{x}$` are
+ * unaffected because they start with a letter or backslash, not a digit.
+ *
+ * Pure function — safe to call in a React useMemo.
+ */
+export function escapeCurrencyDollars(md: string): string {
+  // \$(?=\d) — dollar sign whose next char is a digit
+  return md.replace(/\$(?=\d)/g, '\\$')
+}
+
+// ----------------------------------------------------------------
 // Code-block classifier
 // ----------------------------------------------------------------
 

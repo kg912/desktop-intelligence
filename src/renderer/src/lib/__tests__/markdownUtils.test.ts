@@ -46,6 +46,7 @@ import {
   classifyCodeBlock,
   isValidMermaidSyntax,
   MERMAID_START_KEYWORDS,
+  escapeCurrencyDollars,
 } from '../markdownUtils'
 
 // ── Suite: parseThinkBlocks ───────────────────────────────────────────────────
@@ -647,5 +648,58 @@ describe('isValidMermaidSyntax', () => {
     for (const kw of required) {
       expect(MERMAID_START_KEYWORDS.map((k) => k.toLowerCase())).toContain(kw)
     }
+  })
+})
+
+// ── Suite: escapeCurrencyDollars ──────────────────────────────────────────────
+
+describe('escapeCurrencyDollars', () => {
+  it('escapes a simple price — $164.65 → \\$164.65', () => {
+    expect(escapeCurrencyDollars('$164.65')).toBe('\\$164.65')
+  })
+
+  it('escapes a price with comma separator — $1,200 → \\$1,200', () => {
+    expect(escapeCurrencyDollars('$1,200')).toBe('\\$1,200')
+  })
+
+  it('escapes a zero-cents price — $0.99 → \\$0.99', () => {
+    expect(escapeCurrencyDollars('$0.99')).toBe('\\$0.99')
+  })
+
+  it('escapes multiple currency amounts in one string', () => {
+    const result = escapeCurrencyDollars('Price range: $164.65 to $174.63')
+    expect(result).toBe('Price range: \\$164.65 to \\$174.63')
+  })
+
+  it('leaves math expression $K$ unchanged (followed by letter, not digit)', () => {
+    expect(escapeCurrencyDollars('$K$')).toBe('$K$')
+  })
+
+  it('leaves math expression $\\pi$ unchanged (followed by backslash)', () => {
+    expect(escapeCurrencyDollars('$\\pi$')).toBe('$\\pi$')
+  })
+
+  it('leaves math expression $\\mathbf{x}$ unchanged', () => {
+    expect(escapeCurrencyDollars('$\\mathbf{x}$')).toBe('$\\mathbf{x}$')
+  })
+
+  it('leaves display math $$....$$ unchanged', () => {
+    const md = '$$\\sum_{k=1}^{K} \\pi_k = 1$$'
+    expect(escapeCurrencyDollars(md)).toBe(md)
+  })
+
+  it('handles mixed math and currency in the same string', () => {
+    const input  = 'The cost is $42 and the variable is $x$.'
+    const result = escapeCurrencyDollars(input)
+    expect(result).toBe('The cost is \\$42 and the variable is $x$.')
+  })
+
+  it('returns plain text unchanged when no dollar signs present', () => {
+    const plain = 'No dollar signs here at all.'
+    expect(escapeCurrencyDollars(plain)).toBe(plain)
+  })
+
+  it('returns empty string unchanged', () => {
+    expect(escapeCurrencyDollars('')).toBe('')
   })
 })

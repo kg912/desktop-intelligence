@@ -39,6 +39,7 @@ import {
   parseThinkBlocks,
   classifyCodeBlock,
   isValidMermaidSyntax,
+  escapeCurrencyDollars,
 } from '../../lib/markdownUtils'
 import { ChatIdCtx } from '../layout/ChatArea'
 
@@ -1031,10 +1032,13 @@ interface MarkdownRendererProps {
 export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
   // Memoised so the O(n) string scans only run when content actually changes,
   // not on every re-render during streaming (which can fire 10–50× per second).
-  const { thought, answer, isThinking } = useMemo(
+  const { thought, answer: rawAnswer, isThinking } = useMemo(
     () => parseThinkBlocks(content, !isStreaming),
     [content, isStreaming]
   )
+  // Escape currency dollar signs ($164.65 → \$164.65) before remarkMath sees
+  // the content, so price strings are never fed to KaTeX as inline math.
+  const answer = useMemo(() => escapeCurrencyDollars(rawAnswer), [rawAnswer])
   const hasThought = thought.length > 0
 
   // buildComponents() has no deps — created once, never recreated.
@@ -1087,7 +1091,7 @@ export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRende
       {/* ── Main answer ───────────────────────────────────────── */}
       {answer && (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+          remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
           components={components}
         >
