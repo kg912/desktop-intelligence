@@ -18,6 +18,7 @@ const DEV_MODE = process.env.DEV_MODE === 'true'
 
 if (DEV_MODE) {
   app.setName('[DEV] Desktop Intelligence')
+  console.log('[App] DEV_MODE=true — DevTools will open automatically')
 }
 
 // ----------------------------------------------------------------
@@ -103,18 +104,16 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    // Open DevTools after show() so the window + webContents are fully
+    // initialised. 'undocked' docks to the bottom of the app window so
+    // it's always visible — easier to spot than a detached floating window.
+    if (DEV_MODE || is.dev) {
+      mainWindow?.webContents.openDevTools({ mode: 'undocked' })
+    }
   })
 
   mainWindow.on('closed', () => {
     mainWindow = null
-  })
-
-  // Open DevTools after the page has finished loading so the window is
-  // guaranteed to be ready. Covers both Electron dev mode and DEV_MODE builds.
-  mainWindow.webContents.on('did-finish-load', () => {
-    if (DEV_MODE || is.dev) {
-      mainWindow?.webContents.openDevTools({ mode: 'detach' })
-    }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
