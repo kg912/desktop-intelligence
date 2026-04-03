@@ -12,6 +12,14 @@ import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 
+// Baked in at build time by electron.vite.config.ts define — always a literal
+// boolean in the packaged app, never dependent on runtime env vars.
+const DEV_MODE = process.env.DEV_MODE === 'true'
+
+if (DEV_MODE) {
+  app.setName('[DEV] Desktop Intelligence')
+}
+
 // ----------------------------------------------------------------
 // Security: prevent renderer from loading arbitrary URLs
 // ----------------------------------------------------------------
@@ -101,16 +109,18 @@ function createWindow(): void {
     mainWindow = null
   })
 
+  // Open DevTools after the page has finished loading so the window is
+  // guaranteed to be ready. Covers both Electron dev mode and DEV_MODE builds.
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (DEV_MODE || is.dev) {
+      mainWindow?.webContents.openDevTools({ mode: 'detach' })
+    }
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-
-  // Dev-mode debug build: open DevTools automatically
-  if (process.env.DEV_MODE === 'true') {
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
 }
 

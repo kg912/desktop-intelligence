@@ -10,7 +10,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder",
-    "package:dev": "cross-env DEV_MODE=true electron-vite build && electron-builder",
+    "package:dev": "cross-env DEV_MODE=true electron-vite build && electron-builder --config.productName=\"[DEV] Desktop Intelligence\" --config.appId=\"com.local.desktopintelligence.dev\"",
     "test": "npm rebuild better-sqlite3 && vitest run",
     "test:watch": "npm rebuild better-sqlite3 && vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",

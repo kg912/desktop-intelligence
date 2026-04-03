@@ -11,6 +11,12 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    // Bake DEV_MODE into the main-process bundle at build time.
+    // process.env.DEV_MODE is not available at runtime in a packaged app
+    // because cross-env only sets it during the build command invocation.
+    define: {
+      'process.env.DEV_MODE': JSON.stringify(process.env.DEV_MODE === 'true'),
+    },
     build: {
       rollupOptions: {
         input: {
