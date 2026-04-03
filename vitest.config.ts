@@ -2,6 +2,12 @@ import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 
 export default defineConfig({
+  // Inject compile-time constants that Rollup define would normally provide.
+  // Without this, test files that import main-process modules using __DEV_MODE__
+  // throw ReferenceError because Vitest doesn't run the Rollup define pass.
+  define: {
+    __DEV_MODE__: 'false',
+  },
   test: {
     environment: 'node',
     include: [

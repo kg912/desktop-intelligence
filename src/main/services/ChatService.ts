@@ -22,8 +22,9 @@ import { countTokens } from './tokenUtils'
 
 const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
 
-// Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true)
-const DEBUG = process.env.DEV_MODE === 'true'
+// Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true).
+// __DEV_MODE__ is a compile-time constant injected by Rollup define — see globals.d.ts.
+const DEBUG = __DEV_MODE__
 
 // TARGET_MODEL_ID removed — the model is now supplied dynamically via the IPC
 // payload (ChatSendPayload.model) and passed as the modelId argument to send().

@@ -12,9 +12,9 @@ import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 
-// Baked in at build time by electron.vite.config.ts define — always a literal
-// boolean in the packaged app, never dependent on runtime env vars.
-const DEV_MODE = process.env.DEV_MODE === 'true'
+// Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
+// DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
+const DEV_MODE = __DEV_MODE__
 
 if (DEV_MODE) {
   app.setName('[DEV] Desktop Intelligence')

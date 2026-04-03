@@ -12,10 +12,13 @@ export default defineConfig({
       }
     },
     // Bake DEV_MODE into the main-process bundle at build time.
-    // process.env.DEV_MODE is not available at runtime in a packaged app
-    // because cross-env only sets it during the build command invocation.
+    // We use __DEV_MODE__ (not process.env.DEV_MODE) because Rollup treats
+    // process.env as a real Node.js runtime object in the main process and
+    // will NOT replace individual property accesses on it. The double-underscore
+    // naming convention is the standard signal to Rollup that this is a
+    // compile-time constant, not a runtime variable.
     define: {
-      'process.env.DEV_MODE': JSON.stringify(process.env.DEV_MODE === 'true'),
+      __DEV_MODE__: JSON.stringify(process.env.DEV_MODE === 'true'),
     },
     build: {
       rollupOptions: {
