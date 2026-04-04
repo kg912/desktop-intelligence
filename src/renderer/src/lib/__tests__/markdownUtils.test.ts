@@ -702,4 +702,22 @@ describe('escapeCurrencyDollars', () => {
   it('returns empty string unchanged', () => {
     expect(escapeCurrencyDollars('')).toBe('')
   })
+
+  it('inserts newline before $$ when preceded by non-newline text', () => {
+    // Model writes: "...the equation is $$A = B$$..."
+    const result = escapeCurrencyDollars('the equation is $$A = B$$')
+    expect(result).toContain('\n$$')
+    // The $$ at the start of the block must be on its own line
+    const lines = result.split('\n')
+    expect(lines.some(l => l.startsWith('$$'))).toBe(true)
+  })
+
+  it('inserts newline after $$ when followed by non-newline text', () => {
+    // Model writes: "$$A = B$$ is the formula"
+    const result = escapeCurrencyDollars('$$A = B$$ is the formula')
+    expect(result).toContain('$$\n')
+    // The text after the closing $$ must be on a new line
+    const lines = result.split('\n')
+    expect(lines.some(l => l.startsWith('$$'))).toBe(true)
+  })
 })

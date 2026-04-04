@@ -200,8 +200,16 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
  * Pure function — safe to call in a React useMemo.
  */
 export function escapeCurrencyDollars(md: string): string {
-  // \$(?=\d) — dollar sign whose next char is a digit
-  return md.replace(/\$(?=\d)/g, '\\$')
+  return md
+    // \$(?=\d) — dollar sign whose next char is a digit
+    .replace(/\$(?=\d)/g, '\\$')
+    // Ensure $$ display blocks are preceded by a newline when inline with text.
+    // Only fires when a space/tab immediately precedes $$ (distinguishes text
+    // separator from math content chars like digits/letters before closing $$).
+    // Note: $$$$ in replacement string = literal $$ (each $$ → single $).
+    .replace(/([ \t])\$\$/g, '$1\n$$$$')
+    // Ensure $$ display blocks are followed by a newline when inline with text.
+    .replace(/\$\$([ \t])/g, '$$$$\n$1')
 }
 
 // ----------------------------------------------------------------

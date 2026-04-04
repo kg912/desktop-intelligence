@@ -30,7 +30,7 @@ export function TopBar() {
                     px-4 h-[52px] border-b border-surface-border/50 relative">
 
       {/* Left spacer — mirrors right side width to keep model name centred */}
-      <div className="w-32" />
+      <div className="w-36" />
 
       {/* Centre: model name */}
       <div className="no-drag flex items-center gap-2">
@@ -47,15 +47,16 @@ export function TopBar() {
       </div>
 
       {/* Right: context utilisation bar (hidden until first response) */}
-      <div className="no-drag w-32 flex items-center justify-end">
+      <div className="no-drag w-36 flex items-center justify-end">
         {contextUsage && (
           <div
-            className="relative"
+            className="relative cursor-default"
+            style={{ padding: '12px 4px', margin: '-12px -4px' }}
             onMouseEnter={() => setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
           >
             {/* Progress bar track */}
-            <div className="w-28 h-1.5 rounded-full bg-surface-border/40 overflow-hidden cursor-default">
+            <div className="w-32 h-1.5 rounded-full bg-surface-border/40 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${barColour}`}
                 style={{ width: `${pct}%` }}
@@ -64,11 +65,11 @@ export function TopBar() {
 
             {/* Tooltip */}
             {showTooltip && (
-              <div className="absolute right-0 top-5 z-50 min-w-[180px]
+              <div className="absolute right-0 top-5 z-50 min-w-[210px]
                               rounded-xl border border-surface-border
                               bg-surface-elevated/95 backdrop-blur-sm
                               px-3.5 py-2.5 shadow-xl">
-                <p className="text-[11px] font-medium text-content-primary mb-2">
+                <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
                   Context Utilization
                 </p>
                 {/* Mini bar inside tooltip */}
@@ -78,14 +79,14 @@ export function TopBar() {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <p className="text-[11px] text-content-secondary">
+                <p className="text-[11px] text-content-secondary whitespace-nowrap">
                   Used:{' '}
                   <span className="text-content-primary font-medium">
                     {contextUsage.used.toLocaleString()}
                   </span>{' '}
                   tokens ({pct}%)
                 </p>
-                <p className="text-[11px] text-content-secondary">
+                <p className="text-[11px] text-content-secondary whitespace-nowrap">
                   Length:{' '}
                   <span className="text-content-primary font-medium">
                     {contextUsage.total.toLocaleString()}
