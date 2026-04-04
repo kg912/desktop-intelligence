@@ -628,6 +628,8 @@ export class ChatService {
     let firstTokenAt: number | null = null
     let totalTokens  = 0
     let buffer       = ''
+    let searchLoopCount = 0
+    const MAX_SEARCH_LOOPS = 1  // one mid-stream retry max; more wastes 30+s and hallucinates
 
     // Repetition detector state
     let lineBuffer       = ''
@@ -677,6 +679,7 @@ export class ChatService {
             finish_reason?: string
             message?: {
               content?: string | null
+              reasoning_content?: string | null
               tool_calls?: Array<{
                 id: string
                 type: string
@@ -890,12 +893,20 @@ export class ChatService {
               // Fall through to Step 2 streaming with search result injected
             } else {
               // Truly no tool call — stream the direct answer.
-              // Think-block duplication fix: if Step 1 returned content that
-              // contains a <think>...</think> block (Qwen reasoning mode),
-              // extract only the content AFTER the last </think> tag.
-              // streamContentInChunks must never receive raw think content —
-              // parseThinkBlocks on the renderer would surface it as both the
-              // accordion AND the answer body (Case 3 duplication).
+              // Bug 1 fix: Gemma 4 (and LM Studio 0.4.9+) puts reasoning tokens into
+              // reasoning_content on the non-streaming response, not into content.
+              // Reconstruct a <think>...</think> block so the renderer shows the
+              // thinking accordion — identical to what the streaming path does.
+              const rawContent   = choice.message.content ?? ''
+              const rawReasoning = (choice.message as Record<string, unknown>).reasoning_content as string ?? ''
+              const directContent = rawReasoning
+                ? `<think>${rawReasoning}</think>${rawContent}`
+                : rawContent
+
+              // Think-block duplication fix: extract only the content AFTER the last
+              // </think> tag. streamContentInChunks must never receive raw think content —
+              // parseThinkBlocks on the renderer would surface it as both the accordion
+              // AND the answer body (Case 3 duplication).
               const THINK_CLOSE = '</think>'
               const closeIdx = directContent.lastIndexOf(THINK_CLOSE)
               const afterThink = closeIdx !== -1
@@ -926,9 +937,6 @@ export class ChatService {
       // Adaptive thinking budget: when search data was injected, use a smaller
       // budget (4000) — the model has real facts and shouldn't speculate at length.
       // Without a search round, allow the full 8000 for deep reasoning.
-      let searchLoopCount = 0
-      const MAX_SEARCH_LOOPS = 3
-
       while (searchLoopCount < MAX_SEARCH_LOOPS) {
         const step2ThinkingField = isThinking
           ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
@@ -1148,6 +1156,20 @@ export class ChatService {
       return
     } finally {
       this.controller = null
+    }
+
+    // Search-limit guard: if the while loop was exhausted by MAX_SEARCH_LOOPS and
+    // no tokens were streamed, the model kept attempting searches without producing
+    // an answer. Surface a clear error rather than letting it silently hallucinate.
+    if (searchLoopCount >= MAX_SEARCH_LOOPS && totalTokens === 0) {
+      console.warn('[ChatService] ⚠️  Search limit reached — model attempted search again after limit')
+      send(IPC_CHANNELS.CHAT_ERROR,
+        'The search tool was called multiple times without producing an answer. ' +
+        'Try rephrasing your question or disabling web search in Settings → MCP & Tools.'
+      )
+      const stats = this.buildStats(startTime, firstTokenAt, 0, true)
+      send(IPC_CHANNELS.CHAT_STREAM_END, stats)
+      return
     }
 
     if (totalTokens === 0 && firstTokenAt === null) {
