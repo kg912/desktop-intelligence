@@ -248,6 +248,36 @@ async function streamContentInChunks(
  * Returns null if no recognisable tool call is found.
  */
 function parseRawToolCall(content: string): { name: string; args: Record<string, string> } | null {
+  // Format F: pipe-delimited format used by Gemma 4 and similar models
+  // <|tool_call>call:brave_web_search{queries:["...","..."]}<tool_call|>
+  const pipeMatch = content.match(/<\|tool_call>([\s\S]*?)<tool_call\|>/)
+  if (pipeMatch) {
+    const inner = pipeMatch[1].trim()
+    // Strip the "call:" prefix to get the function name
+    const callMatch = inner.match(/^call:(\w+)(.*)$/s)
+    if (callMatch) {
+      const name = callMatch[1].trim()
+      const argsStr = callMatch[2].trim()
+      try {
+        const parsed = JSON.parse(argsStr)
+        if (typeof parsed === 'object' && parsed !== null) {
+          const args: Record<string, string> = {}
+          // Normalise: "queries" array → take first element as "query"
+          if (Array.isArray(parsed.queries) && parsed.queries.length > 0) {
+            args['query'] = String(parsed.queries[0])
+          } else if (typeof parsed.query === 'string') {
+            args['query'] = parsed.query
+          }
+          // Pass through any other string fields
+          for (const [k, v] of Object.entries(parsed)) {
+            if (k !== 'queries' && k !== 'query') args[k] = String(v)
+          }
+          if (args['query']) return { name, args }
+        }
+      } catch { /* not valid JSON — fall through */ }
+    }
+  }
+
   const match = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/)
   if (!match) return null
 
@@ -373,6 +403,36 @@ function detectMidStreamToolCall(buffer: string): { query: string; cleanedBuffer
         return {
           query: q,
           cleanedBuffer: buffer.replace(/<tool_call>[\s\S]*$/i, '').trim(),
+        }
+      }
+    }
+  }
+
+  // Case 5: Closed pipe-delimited tag <|tool_call>...<tool_call|>
+  if (buffer.includes('<tool_call|>')) {
+    const raw = parseRawToolCall(buffer)
+    const q = raw?.args?.['query']
+    if (q) {
+      return {
+        query: q,
+        cleanedBuffer: buffer.replace(/<\|tool_call>[\s\S]*?<tool_call\|>/gi, '').trim(),
+      }
+    }
+  }
+
+  // Case 6: Unclosed pipe-delimited tag — stream ended before <tool_call|>
+  const unclosedPipeMatch = buffer.match(/<\|tool_call>([\s\S]+)$/i)
+  if (unclosedPipeMatch) {
+    const inner = unclosedPipeMatch[1].trim()
+    // Looks complete if it ends with ] or } (JSON closed)
+    if (inner.endsWith(']') || inner.endsWith('}')) {
+      const fakeClosed = buffer + '<tool_call|>'
+      const raw = parseRawToolCall(fakeClosed)
+      const q = raw?.args?.['query']
+      if (q) {
+        return {
+          query: q,
+          cleanedBuffer: buffer.replace(/<\|tool_call>[\s\S]*$/i, '').trim(),
         }
       }
     }
