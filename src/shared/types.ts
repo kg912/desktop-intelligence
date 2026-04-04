@@ -128,6 +128,8 @@ export interface ChatSendPayload {
   model?:         string
   /** Controls whether the model reasons before answering (Section 5 of CLAUDE.md) */
   thinkingMode?:  ThinkingMode
+  /** True when the chat has RAG documents; suppresses web search Step 1 round */
+  hasDocuments?:  boolean
 }
 
 export interface GenerationStats {

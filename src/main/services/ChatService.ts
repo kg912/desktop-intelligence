@@ -533,6 +533,16 @@ export class ChatService {
     const builtMessages = applyThinkingPrefix(this.buildMessages(payload), payload.thinkingMode, payload.model)
     console.log('🚀 FINAL LM STUDIO PAYLOAD:', JSON.stringify(builtMessages, null, 2))
 
+    // For Step 1 (non-streaming tool detection), strip the <|think|> prefix from
+    // the system message. Gemma 4 activates thinking via this system prompt token,
+    // which overrides thinking:disabled in the payload and causes 30-50s silent waits.
+    // builtMessages (with <|think|> intact) is still used for currentMessages → Step 2.
+    const step1Messages = builtMessages.map((m, i) =>
+      i === 0 && m.role === 'system' && typeof m.content === 'string'
+        ? { ...m, content: (m.content as string).replace(/^<\|think\|>\n/, '') }
+        : m
+    )
+
     const isThinking = payload.thinkingMode === 'thinking'
 
     const toolsField = braveEnabled
@@ -545,7 +555,7 @@ export class ChatService {
     // before the search even starts. Max 512 tokens is enough for a tool call.
     const step1Body = {
       model:       modelId,
-      messages:    builtMessages,
+      messages:    step1Messages,
       temperature: 0.1,
       max_tokens:  2048,  // raised from 512 — allows complete direct answers, not just tool call JSON
       stop:        STOP_SEQUENCES,
@@ -582,7 +592,9 @@ export class ChatService {
       if (!last) return ''
       return typeof last.content === 'string' ? last.content : ''
     })()
-    const shouldAttemptSearch = braveEnabled && messageNeedsSearch(userMessageText)
+    const shouldAttemptSearch = braveEnabled
+      && !payload.hasDocuments          // never search when RAG docs are present
+      && messageNeedsSearch(userMessageText)
 
     try {
       // ── Step 1: Non-streaming round for tool calls (only when shouldAttemptSearch) ──
@@ -1167,11 +1179,6 @@ export class ChatService {
     if (payload.thinkingMode === 'thinking' && payload.model?.toLowerCase().includes('gemma')) {
       systemParts[0] = '<|think|>\n' + systemParts[0]
     }
-
-    const docInjections = (payload.attachments ?? [])
-      .filter((a) => a.kind === 'document' && a.inject)
-      .map((a) => a.inject!)
-    if (docInjections.length > 0) systemParts.push(docInjections.join('\n\n'))
 
     if (systemParts.length > 0) {
       msgs.push({ role: 'system', content: systemParts.join('\n\n') })

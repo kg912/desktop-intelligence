@@ -5,7 +5,6 @@ import { lmsDaemonManager } from '../managers/LMSDaemonManager'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 
-import { BASE_SYSTEM_PROMPT } from '../services/SystemPromptService'
 import { pythonWorker } from '../services/PythonWorkerService'
 import { savePlot, searchPlots } from '../services/PlotStore'
 import {
@@ -233,10 +232,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const lastUserMsg   = [...payload.messages].reverse().find((m) => m.role === 'user')
     const userMessageText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
 
-    // BASE_SYSTEM_PROMPT is always first — it tells the model about the app's
-    // native rendering capabilities (Mermaid diagrams, KaTeX) so it stops
-    // generating ASCII art and text-based diagrams.
-    const systemParts: string[] = [BASE_SYSTEM_PROMPT]
+    // BASE_SYSTEM_PROMPT and date injection are assembled by ChatService.buildMessages().
+    // handlers.ts must NOT add them here — they would be duplicated in every request.
+    const systemParts: string[] = []
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
 
     // ── 1. Routing guard: check if this chat has local documents ──
@@ -321,6 +319,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       ...payload,
       messages:     enrichedMessages,
       systemPrompt: enrichedSystemPrompt,
+      hasDocuments: chatHasDocuments,   // suppresses web search Step 1 when RAG docs are present
     }
 
     if (payload.chatId && referencesPlot(userMessageText)) {
