@@ -605,28 +605,49 @@ export class ChatService {
 
     const isThinking = payload.thinkingMode === 'thinking'
 
-    const toolsField = braveEnabled
-      ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: 'auto' }
-      : {}
-
-    // ── Step 1 body — always thinking DISABLED ────────────────────
-    // Tool-detection only needs a yes/no on whether to call brave_web_search.
-    // Running with thinking enabled burns 8000 tokens and causes ~11s TTFT
-    // before the search even starts. Max 150 tokens is enough for a tool call.
+    // ── Step 1 body — structured JSON decision ────────────────────────
+    // Instead of open-ended tool_calls, we force a schema-constrained JSON
+    // response. LM Studio honours response_format for Gemma 4 (confirmed).
+    // The model must respond with exactly {"action":"search","queries":[...]}
+    // or {"action":"answer"} — no free-form output, no runaway tool call loops.
     const step1Body = {
-      model: modelId,
-      messages: step1Messages,
+      model:       modelId,
+      messages:    [
+        // Prepend a terse decision-only system message so the model understands
+        // it must output JSON, not a full answer.
+        {
+          role:    'system',
+          content: 'You are a search decision agent. Respond ONLY with valid JSON matching the schema. ' +
+                   'Use {"action":"search","queries":["query1"]} ONLY for: current events, live prices, ' +
+                   'recent news, sports scores, weather, or anything that changes day-to-day. ' +
+                   'Use {"action":"answer"} for everything else: knowledge questions, coding, math, ' +
+                   'history, definitions, explanations, or anything stable.',
+        },
+        // Include only the last user message — no history needed for this decision.
+        ...step1Messages.filter(m => m.role === 'user').slice(-1),
+      ],
       temperature: 0.1,
-      max_tokens: 150,  // raised to 150 — allows tool call JSON only
-      stop: STOP_SEQUENCES,
-      thinking: { type: 'disabled' },
-      stream: false,
-      "include_thoughts": false,
-      "thinking_budget": 0,
-      "extra_body": {
-        "enable_thinking": false
-      },
-      ...toolsField,
+      max_tokens:  80,
+      stream:      false,
+      thinking:    { type: 'disabled' },
+      ...(braveEnabled ? {
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name:   'search_decision',
+            strict: true,
+            schema: {
+              type:       'object',
+              properties: {
+                action:  { type: 'string', enum: ['search', 'answer'] },
+                queries: { type: 'array', items: { type: 'string' }, maxItems: 3 },
+              },
+              required:             ['action'],
+              additionalProperties: false,
+            },
+          },
+        },
+      } : {}),
     }
 
     const startTime = Date.now()
@@ -700,239 +721,43 @@ export class ChatService {
         }
 
         const choice = r1data.choices?.[0]
+        const rawDecision = choice?.message?.content ?? ''
 
-        if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls?.length) {
-          const toolCall = choice.message.tool_calls[0]
+        // Parse the structured JSON decision from response_format
+        let decision: { action: string; queries?: string[] } = { action: 'answer' }
+        try {
+          decision = JSON.parse(rawDecision)
+        } catch {
+          // response_format not honoured or malformed — treat as no-search
+          console.warn('[Step1] Failed to parse decision JSON, falling through to Step 2:', rawDecision.slice(0, 100))
+        }
 
-          if (toolCall.function.name === 'brave_web_search') {
-            let args: { query: string; count?: number }
-            try { args = JSON.parse(toolCall.function.arguments) }
-            catch { args = { query: toolCall.function.arguments } }
+        console.log('[Step1] Decision:', JSON.stringify(decision))
 
-            console.log(`[MCP] 🔍 Brave Search: "${args.query}"`)
-            send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: args.query })
+        if (decision.action === 'search') {
+          const queries = (decision.queries ?? [])
+            .map((q: string) => q.trim())
+            .filter((q: string) => q.length > 0)
+            .slice(0, 3)
 
-            let searchResultText: string
-
-            try {
-              const results = await braveSearch(args.query, resolvedKey!, args.count ?? 5)
-              searchResultText = formatSearchResults(results)
-              console.log(`[MCP] ✅ Search returned ${results.length} results`)
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase: 'done',
-                query: args.query,
-                resultCount: results.length,
-                results: results.map(r => ({ title: r.title, url: r.url })),
-              })
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err)
-              console.error('[MCP] ❌ Search failed:', errMsg)
-
-              let userFacingReason: string
-              if (errMsg.includes('401'))
-                userFacingReason = 'the API key is invalid or expired'
-              else if (errMsg.includes('429'))
-                userFacingReason = 'the search quota has been exhausted for this billing period'
-              else if (errMsg.includes('ENOTFOUND') || errMsg.includes('network') || errMsg.includes('fetch'))
-                userFacingReason = 'the network request failed (check your internet connection)'
-              else
-                userFacingReason = 'an unexpected error occurred'
-
-              searchResultText = [
-                `Web search failed: ${userFacingReason}.`,
-                ``,
-                `Instructions for this response:`,
-                `1. Tell the user that web search failed and briefly state why (${userFacingReason}).`,
-                `2. Answer as best you can from your training knowledge, noting it may not be current.`,
-                `3. Suggest the user can paste relevant content directly into the chat for you to analyse.`,
-                `4. If the issue is a quota or key problem, suggest they check Settings → MCP & Tools.`,
-              ].join('\n')
-
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase: 'error',
-                query: args.query,
-                error: `Search failed: ${userFacingReason}`,
-              })
-            }
-
-            console.log(`[MCP] 📋 Search result injected (${searchResultText.length} chars):`)
-            console.log(searchResultText.slice(0, 500) + (searchResultText.length > 500 ? '...' : ''))
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: null as unknown as string, tool_calls: choice.message.tool_calls } as { role: string; content: string },
-              { role: 'tool', tool_call_id: toolCall.id, content: searchResultText } as { role: string; content: string },
-            ]
-            toolCallRound = true
-          }
-        } else if (choice?.message?.content && parseRawToolCall(choice.message.content)) {
-          // Raw tool call in content — model-agnostic fallback for models that can't
-          // emit structured tool_calls. Parse and execute the search.
-          const raw = parseRawToolCall(choice.message.content)!
-
-          if (raw.name === 'brave_web_search') {
-            const query = raw.args['query'] ?? ''
-            const count = raw.args['count'] ? parseInt(raw.args['count'], 10) : 5
-
-            if (query) {
-              console.log(`[MCP] 🔍 Brave Search (raw format): "${query}"`)
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query })
-
-              let searchResultText: string
-              try {
-                const results = await braveSearch(query, resolvedKey!, count)
-                searchResultText = formatSearchResults(results)
-                console.log(`[MCP] ✅ Search returned ${results.length} results (raw format)`)
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                  phase: 'done',
-                  query,
-                  resultCount: results.length,
-                  results: results.map(r => ({ title: r.title, url: r.url })),
-                })
-              } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err)
-                console.error('[MCP] ❌ Search failed (raw format):', errMsg)
-                searchResultText = 'Web search failed. Answer from your training knowledge instead.'
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query, error: 'Search failed' })
-              }
-
-              console.log(`[MCP] 📋 Search result injected (${searchResultText.length} chars, raw format):`)
-              console.log(searchResultText.slice(0, 500) + (searchResultText.length > 500 ? '...' : ''))
-              toolCallRound = true
-              const syntheticId = `call_${Date.now()}`
-              currentMessages = [
-                ...currentMessages,
-                {
-                  role: 'assistant',
-                  content: null as unknown as string,
-                  tool_calls: [{
-                    id: syntheticId, type: 'function',
-                    function: { name: 'brave_web_search', arguments: JSON.stringify({ query, count }) },
-                  }],
-                } as { role: string; content: string },
-                { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
-              ]
-            }
-          }
-        } else if (choice?.message?.content) {
-          // Check for code-fence tool calls or JSON arrays BEFORE treating as direct answer.
-          // Some models wrap tool calls in ```BRAVE_WEB_SEARCH ... ``` fences or emit a
-          // JSON array of queries instead of using structured tool_calls.
-          const fenceQuery = extractQueryFromCodeFenceToolCall(choice.message.content)
-          if (fenceQuery) {
-            console.log(`[MCP] 🔍 Brave Search (code-fence format): "${fenceQuery}"`)
-            send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: fenceQuery })
-
-            let searchResultText: string
-            try {
-              const results = await braveSearch(fenceQuery, resolvedKey!, 5)
-              searchResultText = formatSearchResults(results)
-              console.log(`[MCP] ✅ Search returned ${results.length} results (code-fence format)`)
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase: 'done',
-                query: fenceQuery,
-                resultCount: results.length,
-                results: results.map(r => ({ title: r.title, url: r.url })),
-              })
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err)
-              console.error('[MCP] ❌ Search failed (code-fence format):', errMsg)
-              searchResultText = `Web search failed: ${errMsg}. Answer from training knowledge instead.`
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: fenceQuery, error: errMsg })
-            }
+          if (queries.length > 0) {
+            const primaryQuery = queries[0]
+            const searchResultText = await executeSearchQueries(queries, resolvedKey!, send, primaryQuery)
 
             const syntheticId = `call_${Date.now()}`
             currentMessages = [
               ...currentMessages,
               {
-                role: 'assistant',
-                content: null as unknown as string,
-                tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: fenceQuery }) } }],
+                role:       'assistant',
+                content:    null as unknown as string,
+                tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: primaryQuery }) } }],
               } as { role: string; content: string },
               { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
             ]
             toolCallRound = true
-            // Fall through to Step 2 streaming below with results injected.
-          } else {
-            // Direct answer path — but first check if the content contains a raw
-            // tool call that wasn't caught by the earlier parsers (e.g. two
-            // concatenated <tool_call> tags, or a format variation we haven't seen).
-            const directContent = choice.message.content
-            const inlineRaw = parseRawToolCall(directContent)
-            const inlineQuery = (inlineRaw?.args?.['query']) || extractQueryFromCodeFenceToolCall(directContent)
-
-            if (inlineQuery) {
-              // Tool call buried in the direct answer — execute it and fall through
-              // to Step 2 with the result injected. Never stream the raw XML.
-              console.log(`[MCP] 🔍 Brave Search (inline recovery): "${inlineQuery}"`)
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: inlineQuery })
-
-              let searchResultText: string
-              try {
-                const results = await braveSearch(inlineQuery, resolvedKey!, 5)
-                searchResultText = formatSearchResults(results)
-                console.log(`[MCP] ✅ Search returned ${results.length} results (inline recovery)`)
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                  phase: 'done',
-                  query: inlineQuery,
-                  resultCount: results.length,
-                  results: results.map(r => ({ title: r.title, url: r.url })),
-                })
-              } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err)
-                console.error('[MCP] ❌ Search failed (inline recovery):', errMsg)
-                searchResultText = `Web search failed: ${errMsg}. Answer from training knowledge.`
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: inlineQuery, error: errMsg })
-              }
-
-              const syntheticId = `call_${Date.now()}`
-              currentMessages = [
-                ...currentMessages,
-                {
-                  role: 'assistant',
-                  content: null as unknown as string,
-                  tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: inlineQuery }) } }],
-                } as { role: string; content: string },
-                { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
-              ]
-              toolCallRound = true
-              // Fall through to Step 2 streaming with search result injected
-            } else {
-              // Truly no tool call — stream the direct answer.
-              // Bug 1 fix: Gemma 4 (and LM Studio 0.4.9+) puts reasoning tokens into
-              // reasoning_content on the non-streaming response, not into content.
-              // Reconstruct a <think>...</think> block so the renderer shows the
-              // thinking accordion — identical to what the streaming path does.
-              const rawContent = choice.message.content ?? ''
-              const rawReasoning = (choice.message as Record<string, unknown>).reasoning_content as string ?? ''
-              const directContent = rawReasoning
-                ? `<think>${rawReasoning}</think>${rawContent}`
-                : rawContent
-
-              // Think-block duplication fix: extract only the content AFTER the last
-              // </think> tag. streamContentInChunks must never receive raw think content —
-              // parseThinkBlocks on the renderer would surface it as both the accordion
-              // AND the answer body (Case 3 duplication).
-              const THINK_CLOSE = '</think>'
-              const closeIdx = directContent.lastIndexOf(THINK_CLOSE)
-              const afterThink = closeIdx !== -1
-                ? directContent.slice(closeIdx + THINK_CLOSE.length).trimStart()
-                : directContent
-              // If everything was inside <think> with no answer following,
-              // fall back to the full content so the user sees something.
-              const cleaned = stripLeadingThinkClose(afterThink || directContent)
-              await streamContentInChunks(cleaned, send, signal)
-              const elapsed = Date.now() - startTime
-              send(IPC_CHANNELS.CHAT_STREAM_END, {
-                totalTokens: estimateTokens(cleaned),
-                ttft: elapsed,
-                tokensPerSec: 0,
-                totalMs: elapsed,
-                aborted: false,
-              })
-              return
-            }
           }
         }
+        // action === 'answer' → fall through to Step 2 streaming with no search injected
       }
 
       // ── Step 2: Final streaming request ────────────────────────────

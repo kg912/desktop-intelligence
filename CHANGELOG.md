@@ -4,6 +4,23 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.1] — 2026-04-05
+
+### Improvement: Structured JSON decision for web search (Step 1)
+
+Replaced the open-ended `tool_calls` / `tool_choice: auto` mechanism in Step 1 with a
+`response_format: json_schema` constrained request. LM Studio's grammar sampler forces
+the model to emit exactly `{"action":"search","queries":[...]}` or `{"action":"answer"}`.
+
+Benefits:
+- Eliminates the 70-tool-call runaway loop that Gemma 4 produced with `tool_choice: auto`
+- Step 1 now completes in ~11 tokens regardless of model behaviour
+- Removes all Step 1 fallback parsers (raw tool call, code-fence, inline recovery paths)
+- Multi-query support preserved — `queries` array passed directly to `executeSearchQueries`
+- Graceful fallback: if `response_format` is not honoured, JSON parse fails and the request falls through to Step 2 with no search (safe default)
+
+---
+
 ## [1.6.0] — 2026-04-05
 
 ### Highlights
