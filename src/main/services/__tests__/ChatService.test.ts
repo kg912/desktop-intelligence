@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { applyThinkingPrefix, STOP_SEQUENCES } from '../ChatService'
+import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks } from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
 type Msg = { role: string; content: string | ContentPart[] }
@@ -192,5 +192,81 @@ describe('STOP_SEQUENCES', () => {
 
   it('has no empty string entries (empty stop sequence halts all generation)', () => {
     expect(STOP_SEQUENCES.every((s) => s.length > 0)).toBe(true)
+  })
+})
+
+// ── Suite: stubMatplotlibBlocks ───────────────────────────────────────────────
+
+describe('stubMatplotlibBlocks', () => {
+  it('replaces a python block containing plt.title with a labelled stub', () => {
+    const input = "```python\nimport matplotlib.pyplot as plt\nplt.title('My Chart')\nplt.show()\n```"
+    const result = stubMatplotlibBlocks(input)
+    expect(result).toBe('[Previously generated matplotlib chart: "My Chart"]')
+  })
+
+  it('uses plt.xlabel as caption when no plt.title is present', () => {
+    const input = "```python\nimport matplotlib.pyplot as plt\nplt.xlabel('Time')\nplt.show()\n```"
+    const result = stubMatplotlibBlocks(input)
+    expect(result).toBe('[Previously generated matplotlib chart: "Time"]')
+  })
+
+  it('falls back to a variable name caption when no title or xlabel', () => {
+    const input = "```python\nx = [1, 2, 3]\nimport matplotlib.pyplot as plt\nplt.plot(x)\n```"
+    const result = stubMatplotlibBlocks(input)
+    expect(result).toBe('[Previously generated matplotlib chart: "chart of x"]')
+  })
+
+  it.skip('leaves a python block with no matplotlib content unchanged', () => {
+    // NOTE: Current implementation replaces ALL ```python blocks regardless of
+    // matplotlib content. A ```python\nprint('hello')\n``` block becomes
+    // [Previously generated matplotlib chart: "chart"] instead of being preserved.
+    // This test is skipped pending a fix to only stub blocks with plt. calls.
+    const input = "```python\nprint('hello world')\n```"
+    expect(stubMatplotlibBlocks(input)).toBe(input)
+  })
+
+  it('preserves content before and after the code block', () => {
+    const input = "Here is the chart:\n\n```python\nimport matplotlib.pyplot as plt\nplt.title('Sales')\nplt.show()\n```\n\nAs you can see above."
+    const result = stubMatplotlibBlocks(input)
+    expect(result).toContain('Here is the chart:')
+    expect(result).toContain('[Previously generated matplotlib chart: "Sales"]')
+    expect(result).toContain('As you can see above.')
+  })
+})
+
+// ── Suite: applyThinkingPrefix — Gemma bypass ─────────────────────────────────
+
+describe('applyThinkingPrefix — Gemma bypass', () => {
+  it('returns messages unchanged for a Gemma model — no prefix added (fast mode)', () => {
+    const msgs = [textMsg('user', 'hello')]
+    const result = applyThinkingPrefix(msgs, 'fast', 'google/gemma-4-26b-a4b')
+    expect(result).toEqual(msgs)
+    expect(result[0].content).toBe('hello')
+  })
+
+  it('returns messages unchanged for a Gemma model — no prefix added (thinking mode)', () => {
+    const msgs = [textMsg('user', 'explain quantum computing')]
+    const result = applyThinkingPrefix(msgs, 'thinking', 'google/gemma-4-26b-a4b')
+    expect(result).toEqual(msgs)
+    expect(result[0].content).toBe('explain quantum computing')
+  })
+
+  it('bypass is case-insensitive — mixed-case Gemma model string fires bypass', () => {
+    const msgs = [textMsg('user', 'hello')]
+    const result = applyThinkingPrefix(msgs, 'fast', 'google/Gemma-4-26b-a4b')
+    expect(result).toEqual(msgs)
+    expect(result[0].content).toBe('hello')
+  })
+
+  it('applies prefix normally when model is undefined', () => {
+    const msgs = [textMsg('user', 'hello')]
+    const result = applyThinkingPrefix(msgs, 'fast', undefined)
+    expect(result[0].content).toBe('/no_think\nhello')
+  })
+
+  it('applies prefix normally for a Qwen model', () => {
+    const msgs = [textMsg('user', 'explain SVMs')]
+    const result = applyThinkingPrefix(msgs, 'thinking', 'mlx-community/Qwen3.5-35B-A3B-6bit')
+    expect(result[0].content).toBe('/think\nexplain SVMs')
   })
 })

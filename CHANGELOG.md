@@ -4,6 +4,40 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.0] — 2026-04-05
+
+### Highlights
+
+- **Gemma 4 full support** — `google/gemma-4-26b-a4b` and the Gemma 4 series work out of the box. Thinking, web search, and streaming all handled natively.
+- **Context utilisation indicator** — live progress bar in the top-right corner shows how much of the model's context window is in use, with a hover tooltip showing exact token counts.
+- **LaTeX math fixes** — single `$...$` inline math re-enabled with currency dollar protection. Display `$$...$$` blocks normalised to their own lines.
+- **Web search stability** — search loop cap, document-chat search suppression, and Step 1 token budget tightened.
+
+### Gemma 4 Support
+- `reasoning_content` field read from both streaming (SSE `delta.reasoning_content`) and non-streaming (Step 1 `message.reasoning_content`) LM Studio responses; wrapped in `<think>...</think>` so the existing accordion pipeline handles it with no renderer changes
+- Thinking activated via `<|think|>` system prompt token — Gemma's native mechanism; the `thinking: {type}` payload field is not used for Gemma
+- `/think` and `/no_think` soft-prompt prefixes skipped for Gemma models — they are Qwen-specific and cause junk text in Gemma's thought accordion if injected
+- Format F pipe-delimited tool calls (`<|tool_call>call:brave_web_search{queries:[...]}<tool_call|>`) detected and parsed — queries array preserved, primary query used for search execution
+- Step 1 `max_tokens` reduced from 512 → 150 — prevents Gemma from generating runaway tool call loops before the token limit terminates the response
+
+### Context Utilisation Indicator
+- `promptTokens` added to `GenerationStats`; populated from `usage.prompt_tokens` in the LM Studio response
+- `contextUsage: { used, total } | null` added to `ModelStore`
+- `TopBar` renders a slim progress bar with colour transitions (muted → amber → red as context fills); hover tooltip shows exact counts
+- Resets on new chat; persists and updates across turns in the same conversation
+
+### Web Search Stability
+- `hasDocuments` flag in `ChatSendPayload` suppresses Step 1 web search when a PDF is attached — RAG answers the question, not the web
+- `MAX_SEARCH_LOOPS` reduced 3 → 1; explicit error message shown when the limit is hit rather than silent hallucination
+- Search loop exhaustion guard: if the loop exits with zero tokens delivered, a user-facing error is sent instead of an empty response
+
+### Bug Fixes
+- Duplicate system prompt content in PDF chat requests — `BASE_SYSTEM_PROMPT` was being added by both `handlers.ts` and `ChatService.buildMessages()`; removed from `handlers.ts`
+- Duplicate RAG document content — `docInjections` in `buildMessages()` and the RAG system message in `handlers.ts` both injected the same PDF text; `docInjections` path removed
+- `reasoning_content` from Step 1 non-streaming response was silently dropped — thinking accordion never showed on direct answers; fixed by reconstructing `<think>...</think>` from the field before passing to `streamContentInChunks`
+
+---
+
 ## [1.6.0-alpha-4] — 2026-04-02
 
 ### Search Repetition and Context Deduplication

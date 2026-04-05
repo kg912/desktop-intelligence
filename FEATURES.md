@@ -4,6 +4,21 @@ A complete reference of every capability currently implemented in the app.
 
 ---
 
+## Recommended Models
+
+Desktop Intelligence is tested on Apple Silicon and optimised for local MoE models. These are the best options:
+
+| Model | Notes |
+|-------|-------|
+| `google/gemma-4-26b-a4b` | **Top pick.** Gemma 4's 26B MoE with 4B active parameters. Exceptional reasoning, vision support, and fast inference. Available as GGUF directly in LM Studio — no MLX conversion needed. Native web search via mid-stream tool calls. |
+| `mlx-community/Qwen3.5-35B-A3B-6bit` | Excellent thinking mode and coding. ~71 tok/s on M5 Pro. Best-in-class for complex reasoning tasks when using MLX. |
+| Any Qwen3 14B–32B MLX | Strong balance of speed and quality. Fully supported: thinking mode, web search, tool calls. |
+| Any DeepSeek-R1 MLX distil (7B–14B) | Good reasoning at lower RAM. Works well on 32 GB machines. |
+
+All models above support Thinking mode. Gemma 4 and Qwen3 are the primary tested configurations.
+
+---
+
 ## Chat
 
 ### Streaming Responses
@@ -38,10 +53,16 @@ A complete reference of every capability currently implemented in the app.
 - Toggle is visible in the input bar; switching mid-conversation inserts a labelled divider
 - Mode automatically elevates to Thinking when a PDF or image is attached
 - `<think>...</think>` blocks are stripped from conversation history before re-sending to the model, reducing context usage by 60–80% in long thinking-mode sessions
+- Gemma 4 thinking is activated via a `<|think|>` system prompt token (Gemma's native mechanism). The `/think` and `/no_think` soft-prompt prefixes are Qwen-specific and are automatically skipped for Gemma models.
 
 ### Thought Process Accordion
-- The model's internal reasoning (`<think>...</think>`) is rendered in a collapsible accordion — dimmed, muted style so it doesn't dominate the UI
-- Collapsed by default; click to expand
+- The model's internal reasoning is rendered in a collapsible accordion — dimmed, muted style so it doesn't dominate the UI. Collapsed by default; click to expand. Supports both `<think>...</think>` (Qwen3, DeepSeek) and `<|channel>thought\n...<channel|>` (Gemma 4 native format); both are normalised to the same accordion component.
+
+### Context Utilisation Indicator
+- A slim progress bar in the top-right corner shows how much of the model's context window is currently in use
+- Colour transitions from muted → amber → red as context fills, giving an early warning before overflow
+- Hover over the bar to see exact token counts: e.g. "Used: 12,450 / 65,536 tokens (19%)"
+- Updates after every completed response; resets when you start a new chat
 
 ---
 
@@ -154,12 +175,14 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Three tabs:
 Requires a free [Brave Search API key](https://brave.com/search/api/) configured in Settings → Web Search.
 
 - Real-time web search via the **Brave Search API** — fetches live results for time-sensitive queries
-- A **smart trigger heuristic** limits search to queries that genuinely need live data: explicit keywords (`search`, `latest`, `current`, `today`), time-sensitive domains (stock prices, weather, election results, crypto), and proper nouns paired with a recency signal. Knowledge questions and coding help skip the search step entirely — no wasted latency.
-- **Two-step request pattern**: a non-streaming Step 1 (thinking disabled, 512 token budget) detects tool calls; Step 2 streams the final answer with results injected into context
-- A **raw tool call fallback parser** handles models that emit `<tool_call>` XML in the content field rather than structured `tool_calls`
+- A **smart trigger heuristic** limits search to queries that genuinely need live data: explicit keywords (`search`, `latest`, `current`, `today`), time-sensitive domains (stock prices, weather, scores, crypto), and proper nouns paired with a recency signal. Knowledge questions, coding help, and PDF chats skip search entirely.
+- **Two-step request pattern**: a lightweight non-streaming Step 1 (150 token budget, thinking disabled) detects whether the model wants to search; if so, results are injected before streaming the final answer in Step 2
+- For Gemma 4, Step 1 is bypassed — the model reasons during Step 2 streaming and emits a tool call mid-stream if it decides to search, which the app intercepts and handles transparently
+- Format F pipe-delimited tool calls (`<|tool_call>...<tool_call|>`) from Gemma 4 are detected and executed; the raw XML never reaches the UI
+- A **raw tool call fallback parser** handles five additional formats models may emit instead of structured `tool_calls` (XML arg tags, key=value pairs, JSON objects, Qwen function tags, code fences)
 - **Search notification UI**: spinner while searching, collapsible pill showing query + up to 5 source links, error card on failure
 - Notifications **persist** — the "Searched the web" pill is saved to SQLite and restored when you re-open a conversation
-- Search errors are **transient** — if the model produces a valid answer from its own knowledge despite the search failure, the error card is hidden
+- PDF chats never trigger web search — when a document is attached, the RAG pipeline answers the question instead
 
 ---
 
@@ -182,14 +205,12 @@ Requires a free [Brave Search API key](https://brave.com/search/api/) configured
 
 Features that are designed but not yet implemented:
 
-- [ ] KaTeX rendering for LaTeX in thinking blocks
 - [ ] Multi-document RAG (multiple PDFs in the same chat)
 - [ ] Conversation export (PDF / Markdown)
 - [ ] System prompt customisation UI
-- [ ] Model performance overlay (tokens/sec live, context used %)
 - [ ] Web search results with source citations
 - [ ] Keyboard shortcuts (Cmd+K for new chat, etc.)
 
 ---
 
-*Last updated: 2026-04-01 — v1.6.0-alpha-1*
+*Last updated: 2026-04-05 — v1.6.0*

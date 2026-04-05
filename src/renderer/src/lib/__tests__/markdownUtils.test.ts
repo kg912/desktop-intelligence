@@ -721,3 +721,33 @@ describe('escapeCurrencyDollars', () => {
     expect(lines.some(l => l.startsWith('$$'))).toBe(true)
   })
 })
+
+// ── Suite: parseThinkBlocks — reasoning_content reconstruction ────────────────
+//
+// The app reconstructs a <think>...</think> block from the `reasoning_content`
+// field of a non-streaming Step 1 LM Studio response, then passes the result
+// through parseThinkBlocks. These tests verify the resulting shape is correct.
+
+describe('parseThinkBlocks — reasoning_content reconstruction', () => {
+  it('produces correct thought and answer from a reconstructed think block', () => {
+    const result = parseThinkBlocks('<think>model decided to answer directly</think>The answer is 42', true)
+    expect(result.thought).toBe('model decided to answer directly')
+    expect(result.answer).toBe('The answer is 42')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('thought is non-empty when there is no content after the close tag', () => {
+    const result = parseThinkBlocks('<think>some reasoning</think>', true)
+    expect(result.thought).toContain('some reasoning')
+    // Answer should be empty or whitespace-only — no content after </think>
+    expect(result.answer.trim()).toBe('')
+    expect(result.isThinking).toBe(false)
+  })
+
+  it('returns empty thought and full answer when there is no think block', () => {
+    const result = parseThinkBlocks('No think block at all', true)
+    expect(result.thought).toBe('')
+    expect(result.answer).toBe('No think block at all')
+    expect(result.isThinking).toBe(false)
+  })
+})

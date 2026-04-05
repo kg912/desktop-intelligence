@@ -58,11 +58,15 @@ export PATH="$HOME/.lmstudio/bin:$PATH"
 
 Desktop Intelligence works with **any model you have downloaded in LM Studio**. You'll choose which model to use on first launch.
 
-**Recommended for best results (requires 48GB+ RAM):**
-- `mlx-community/Qwen3.5-35B-A3B-6bit` — a 35B MoE model optimised for Apple Silicon via MLX (~22 GB download)
+**Top recommendation (works on 48 GB+ machines):**
+- `google/gemma-4-26b-a4b` — Gemma 4's 26B Mixture-of-Experts model with only 4B parameters active at once. Exceptional reasoning, built-in vision support, and fast inference. Download directly in LM Studio (available as GGUF — no conversion needed).
+
+**Also excellent (48 GB+ recommended):**
+- `mlx-community/Qwen3.5-35B-A3B-6bit` — 35B MoE model optimised for Apple Silicon via MLX. Outstanding thinking mode. ~71 tok/s on M5 Pro (~22 GB download).
 
 **Good options for 32 GB Macs:**
-- Any 7B–14B parameter MLX model from the `mlx-community` namespace
+- Any Qwen3 14B MLX model from the `mlx-community` namespace
+- Any DeepSeek-R1 distilled 7B–14B MLX model
 
 ### Option A — Download via LM Studio UI (Recommended)
 
@@ -102,7 +106,7 @@ Desktop Intelligence auto-loads your chosen model on launch. However, you can pr
 
 ### Option A — Use the Pre-built DMG (Recommended)
 
-1. Download `Desktop Intelligence-1.6.0-alpha-1-arm64.dmg` from the releases
+1. Download `Desktop Intelligence-1.6.0-arm64.dmg` from the releases
 2. Open the `.dmg` file
 3. Drag **Desktop Intelligence** to your Applications folder
 4. Launch the app
@@ -222,4 +226,4 @@ To update to a new version, simply replace the app in your Applications folder w
 
 ---
 
-*Last updated: 2026-04-01 — v1.6.0-alpha-1*
+*Last updated: 2026-04-05 — v1.6.0*
