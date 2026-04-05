@@ -4,6 +4,22 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.5] — 2026-04-06
+
+### Bug Fix: Step 1 generates stale-year search queries
+Injected current date into Step 1 system message. Previously the model had no date
+context in Step 1 and defaulted to training-data years (2024/2025) when constructing
+search queries, even in April 2026.
+
+### Bug Fix: Mid-stream pipe tool call leaks raw XML to renderer
+Added `inPipeToolCall` flag that suppresses `CHAT_STREAM_CHUNK` sends while a
+`<|tool_call>...<tool_call|>` tag is being assembled across multiple SSE chunks.
+`streamBuffer` continues to accumulate normally so `detectMidStreamToolCall` fires
+correctly on the complete tag. Also strips `<|tool_response>` tokens from
+renderer-bound chunks.
+
+---
+
 ## [1.6.4] — 2026-04-06
 
 ### Bug Fix: Step 1 token budget too tight for multi-query responses

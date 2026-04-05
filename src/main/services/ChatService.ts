@@ -673,6 +673,11 @@ export class ChatService {
 
     const isThinking = payload.thinkingMode === 'thinking'
 
+    const now = new Date()
+    const dateStr = now.toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    })
+
     // ── Step 1 body — structured JSON decision ────────────────────────
     // Instead of open-ended tool_calls, we force a schema-constrained JSON
     // response. LM Studio honours response_format for Gemma 4 (confirmed).
@@ -693,7 +698,8 @@ export class ChatService {
                    '- Anything where the answer could have changed in the last 6 months\n' +
                    'Use {"action":"answer"} ONLY when the entire query is about stable knowledge:\n' +
                    '- Definitions, concepts, theory, history, math, code logic\n' +
-                   'IMPORTANT: If ANY part of the query is actionable or time-sensitive, choose search.',
+                   'IMPORTANT: If ANY part of the query is actionable or time-sensitive, choose search.' +
+                   `\nToday is ${dateStr}. Always include the current year in time-sensitive search queries.`,
         },
         // Include only the last user message — no history needed for this decision.
         ...step1Messages.filter(m => m.role === 'user').slice(-1),
@@ -877,6 +883,7 @@ export class ChatService {
         let streamBuffer = ''
         let toolCallIntercepted = false
         let reasoningOpen = false
+        let inPipeToolCall = false  // true while buffering an incomplete <|tool_call>...<tool_call|>
 
         while (true) {
           if (loopAborted) break
@@ -1004,10 +1011,21 @@ export class ChatService {
               }
             }
 
-            totalTokens += estimateTokens(cleanedDelta)
-            send(IPC_CHANNELS.CHAT_STREAM_CHUNK, cleanedDelta)
+            // Track whether we are inside an incomplete <|tool_call>...<tool_call|> span.
+            // Once the opening tag appears, hold back from renderer until closing tag arrives
+            // and detectMidStreamToolCall can fire on the complete tag.
+            if (cleanedDelta.includes('<|tool_call>')) inPipeToolCall = true
+            if (inPipeToolCall && streamBuffer.includes('<tool_call|>')) inPipeToolCall = false
 
-            lineBuffer += cleanedDelta
+            const chunkToSend = inPipeToolCall
+              ? ''
+              : cleanedDelta.replace(/<\|tool_response>/gi, '')
+
+            if (chunkToSend) {
+              totalTokens += estimateTokens(chunkToSend)
+              send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend)
+              lineBuffer += chunkToSend
+            }
             const newlineIdx = lineBuffer.indexOf('\n')
             if (newlineIdx !== -1) {
               const completedLine = lineBuffer.slice(0, newlineIdx).trim()
