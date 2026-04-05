@@ -21,9 +21,9 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export function MCPSettingsPanel() {
   // Persisted values — what's actually saved
-  const [saved, setSaved] = useState({ braveEnabled: false, braveApiKey: '' })
+  const [saved, setSaved] = useState({ braveEnabled: false, braveApiKey: '', maxSearchLoops: 4 })
   // Draft values — what the user is currently editing
-  const [draft, setDraft] = useState({ braveEnabled: false, braveApiKey: '' })
+  const [draft, setDraft] = useState({ braveEnabled: false, braveApiKey: '', maxSearchLoops: 4 })
 
   const [showKey, setShowKey] = useState(false)
   const [saving,  setSaving]  = useState(false)
@@ -32,24 +32,28 @@ export function MCPSettingsPanel() {
   useEffect(() => {
     window.api.mcpGetSettings()
       .then(s => {
-        setSaved(s)
-        setDraft(s)
+        setSaved({ braveEnabled: s.braveEnabled, braveApiKey: s.braveApiKey, maxSearchLoops: s.maxSearchLoops ?? 4 })
+        setDraft({ braveEnabled: s.braveEnabled, braveApiKey: s.braveApiKey, maxSearchLoops: s.maxSearchLoops ?? 4 })
       })
       .catch(console.error)
   }, [])
 
-  const isDirty = draft.braveEnabled !== saved.braveEnabled || draft.braveApiKey !== saved.braveApiKey
+  const isDirty = draft.braveEnabled !== saved.braveEnabled
+    || draft.braveApiKey !== saved.braveApiKey
+    || draft.maxSearchLoops !== saved.maxSearchLoops
 
   const handleToggle = (v: boolean) => setDraft(d => ({ ...d, braveEnabled: v }))
   const handleKeyChange = (v: string) => setDraft(d => ({ ...d, braveApiKey: v }))
+  const handleLoopsChange = (v: number) => setDraft(d => ({ ...d, maxSearchLoops: v }))
 
   const handleSave = async () => {
     setSaving(true)
     setSaveMsg(null)
     try {
       await window.api.mcpSaveSettings({
-        braveEnabled: draft.braveEnabled,
-        braveApiKey:  draft.braveApiKey,
+        braveEnabled:   draft.braveEnabled,
+        braveApiKey:    draft.braveApiKey,
+        maxSearchLoops: draft.maxSearchLoops,
       })
       setSaved({ ...draft })
       setSaveMsg('saved')
@@ -150,6 +154,38 @@ export function MCPSettingsPanel() {
             {isDirty && (
               <p className="text-xs text-amber-400">⚠ You have unsaved changes</p>
             )}
+
+            {/* Max search loops */}
+            <div className="space-y-2 pt-2 border-t border-surface-border/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-content-secondary">
+                  Max search rounds
+                </label>
+                <span className="text-xs font-mono text-white">{draft.maxSearchLoops}</span>
+              </div>
+
+              <input
+                type="range"
+                min={1}
+                max={8}
+                step={1}
+                value={draft.maxSearchLoops}
+                onChange={e => handleLoopsChange(Number(e.target.value))}
+                className="w-full accent-red-700 cursor-pointer"
+              />
+
+              <p className="text-xs text-content-muted leading-relaxed">
+                How many times the model can search mid-response before being forced to answer.
+                Default is 4. Values above 5 may cause slow responses and burn through your
+                search quota on complex queries.
+              </p>
+
+              {draft.maxSearchLoops > 5 && (
+                <p className="text-xs text-amber-500">
+                  ⚠ High value — each extra search round adds 3–5 seconds and uses quota.
+                </p>
+              )}
+            </div>
 
             {/* Save button */}
             <div className="flex items-center justify-between pt-1">

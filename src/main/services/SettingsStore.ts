@@ -25,6 +25,8 @@ export interface AppSettings {
   braveSearchEnabled?: boolean
   /** User-entered Brave Search API key (superseded by BRAVE_SEARCH_API_KEY env var). */
   braveSearchApiKey?:  string
+  /** Maximum number of mid-stream search rounds before forcing a final answer. Default: 4. */
+  maxSearchLoops?: number
 }
 
 function settingsPath(): string {

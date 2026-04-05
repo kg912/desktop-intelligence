@@ -4,6 +4,23 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.2] — 2026-04-05
+
+### Configurable max search rounds
+- `MAX_SEARCH_LOOPS` is now user-configurable from Settings → MCP & Tools
+- Default value: 4 (previously hardcoded to 1)
+- Slider control (range 1–8) appears only when Brave Search is enabled
+- Warning shown when value exceeds 5
+- Value persisted to `app-settings.json` and read on every request
+- DEBUG log confirms the value being used: `[ChatService] Max search loops: N (read from settings)`
+- Raising the default from 1 → 4 allows the model to perform follow-up mid-stream searches when the first result doesn't fully answer the question
+
+### Search detection improvements
+- Added actionable query signals to `messageNeedsSearch`: courses, recommendations, tutorials, certifications, enrol/enroll, bootcamp, and related terms now trigger Step 1
+- Step 1 system message updated to handle mixed queries — if ANY part of the message is actionable or time-sensitive, the model chooses search rather than defaulting to answer
+
+---
+
 ## [1.6.1] — 2026-04-05
 
 ### Improvement: Structured JSON decision for web search (Step 1)

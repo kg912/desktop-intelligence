@@ -160,6 +160,10 @@ function messageNeedsSearch(userMessage: string): boolean {
     'latest', 'breaking', 'news', 'update', 'updated',
     'what is', 'who is', 'tell me about', 'explain what',
     'have you heard of', 'do you know about', 'what do you know about',
+    'courses', 'course', 'best course', 'recommend', 'recommendation',
+    'where can i', 'how do i get', 'how can i learn', 'where to learn',
+    'available now', 'sign up', 'enrol', 'enroll', 'certification', 'certificate',
+    'bootcamp', 'tutorial', 'tutorials', 'learn online',
   ]
   if (explicitTriggers.some(t => msg.includes(t))) return true
 
@@ -672,11 +676,15 @@ export class ChatService {
         // it must output JSON, not a full answer.
         {
           role:    'system',
-          content: 'You are a search decision agent. Respond ONLY with valid JSON matching the schema. ' +
-                   'Use {"action":"search","queries":["query1"]} ONLY for: current events, live prices, ' +
-                   'recent news, sports scores, weather, or anything that changes day-to-day. ' +
-                   'Use {"action":"answer"} for everything else: knowledge questions, coding, math, ' +
-                   'history, definitions, explanations, or anything stable.',
+          content: 'You are a search decision agent. Respond ONLY with valid JSON.\n' +
+                   'Use {"action":"search","queries":["..."]} when ANY part of the query needs current data:\n' +
+                   '- Current events, news, prices, scores, weather\n' +
+                   '- Courses, tools, products, or resources available RIGHT NOW\n' +
+                   '- Recommendations for things to buy, enrol in, or use today\n' +
+                   '- Anything where the answer could have changed in the last 6 months\n' +
+                   'Use {"action":"answer"} ONLY when the entire query is about stable knowledge:\n' +
+                   '- Definitions, concepts, theory, history, math, code logic\n' +
+                   'IMPORTANT: If ANY part of the query is actionable or time-sensitive, choose search.',
         },
         // Include only the last user message — no history needed for this decision.
         ...step1Messages.filter(m => m.role === 'user').slice(-1),
@@ -710,7 +718,8 @@ export class ChatService {
     let totalTokens = 0
     let buffer = ''
     let searchLoopCount = 0
-    const MAX_SEARCH_LOOPS = 1  // one mid-stream retry max; more wastes 30+s and hallucinates
+    const MAX_SEARCH_LOOPS = appSettings.maxSearchLoops ?? 4
+    console.log(`[ChatService] Max search loops: ${MAX_SEARCH_LOOPS} (read from settings)`)
 
     // Repetition detector state
     let lineBuffer = ''
