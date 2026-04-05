@@ -4,6 +4,18 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.4] — 2026-04-06
+
+### Bug Fix: Step 1 token budget too tight for multi-query responses
+
+Raised `max_tokens` in `step1Body` from 80 → 250. The previous limit caused Gemma to hit
+`finish_reason: length` mid-way through generating the queries JSON array, producing
+truncated and unparseable JSON. The fallback silently set `action: answer`, suppressing
+web search entirely. 250 tokens comfortably fits 3 full query strings with JSON overhead
+while remaining well below the 2048 that caused runaway tool call generation previously.
+
+---
+
 ## [1.6.2] — 2026-04-05
 
 ### Configurable max search rounds

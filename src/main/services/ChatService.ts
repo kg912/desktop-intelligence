@@ -699,7 +699,7 @@ export class ChatService {
         ...step1Messages.filter(m => m.role === 'user').slice(-1),
       ],
       temperature: 0.1,
-      max_tokens:  80,
+      max_tokens:  250,  // enough for 3 full query strings with JSON overhead (~200 tokens worst case)
       stream:      false,
       thinking:    { type: 'disabled' },
       ...(braveEnabled ? {
