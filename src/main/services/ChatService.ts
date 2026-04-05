@@ -261,7 +261,16 @@ function parseRawToolCall(content: string): { name: string; args: Record<string,
     const callMatch = inner.match(/^call:(\w+)(.*)$/s)
     if (callMatch) {
       const name = callMatch[1].trim()
-      const argsStr = callMatch[2].trim()
+      const rawArgs = callMatch[2].trim()
+
+      // Gemma 4 uses LM Studio tokenizer delimiters instead of standard JSON quotes:
+      //   <|"> = opening string delimiter
+      //   <|"|> = closing string delimiter
+      // Normalise both to standard double quotes before attempting JSON.parse.
+      const argsStr = rawArgs
+        .replace(/<\|"\|>/g, '"')   // closing delimiter first (longer pattern)
+        .replace(/<\|"/g, '"')      // opening delimiter second
+
       try {
         const parsed = JSON.parse(argsStr)
         if (typeof parsed === 'object' && parsed !== null) {
