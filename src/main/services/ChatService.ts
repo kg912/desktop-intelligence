@@ -55,8 +55,8 @@ export const STOP_SEQUENCES = [
  * If the same line appears REPETITION_THRESHOLD times consecutively,
  * the stream is aborted and an error is sent to the renderer.
  */
-const REPETITION_WINDOW    = 3   // consecutive identical lines to trigger abort
-const REPETITION_MAX_LEN   = 200 // only track lines up to this length (ignore long prose)
+const REPETITION_WINDOW = 3   // consecutive identical lines to trigger abort
+const REPETITION_MAX_LEN = 200 // only track lines up to this length (ignore long prose)
 
 const BRAVE_SEARCH_TOOL = {
   type: 'function',
@@ -189,7 +189,7 @@ function messageNeedsSearch(userMessage: string): boolean {
   const properNouns = words.filter((w, i) =>
     i > 0 && /^[A-Z][a-zA-Z]{2,}/.test(w) && !COMMON_CAPS.has(w)
   )
-  
+
   if (words.length <= 3 && properNouns.length === 0) return false
 
   // Short query (≤8 words) containing a named proper noun → likely a definition search
@@ -222,7 +222,7 @@ async function streamContentInChunks(
   signal: AbortSignal
 ): Promise<void> {
   const CHUNK_SIZE = 80
-  const DELAY_MS   = 16
+  const DELAY_MS = 16
   const cleanedContent = stripLeadingThinkClose(content)
   for (let i = 0; i < cleanedContent.length; i += CHUNK_SIZE) {
     if (signal.aborted) break
@@ -484,7 +484,7 @@ function stripLeadingThinkClose(content: string): string {
 
 // Vision content parts (OpenAI-compatible multimodal format)
 type ContentPart =
-  | { type: 'text';      text:       string }
+  | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
 
 // Rough token estimator — Qwen tokenizer averages ~3.6 chars/token for English.
@@ -506,9 +506,9 @@ export function stubMatplotlibBlocks(content: string): string {
     /```(?:python|matplotlib)\n([\s\S]*?)```/gi,
     (_match, code: string) => {
       // Extract a human-readable caption from the code
-      const titleMatch  = code.match(/plt\.(?:title|suptitle)\(\s*['"]([^'"]+)['"]/)
+      const titleMatch = code.match(/plt\.(?:title|suptitle)\(\s*['"]([^'"]+)['"]/)
       const xlabelMatch = code.match(/plt\.xlabel\(\s*['"]([^'"]+)['"]/)
-      const varMatch    = code.match(/^(\w+)\s*=/m)
+      const varMatch = code.match(/^(\w+)\s*=/m)
       const caption =
         titleMatch?.[1] ??
         xlabelMatch?.[1] ??
@@ -543,22 +543,22 @@ export function applyThinkingPrefix(
   // verbatim inside the <think> block, polluting the thought accordion with junk text.
   if (model?.toLowerCase().includes('gemma')) return messages
 
-  const isFast      = thinkingMode !== 'thinking'
-  const prefix      = isFast ? '/no_think\n' : '/think\n'
+  const isFast = thinkingMode !== 'thinking'
+  const prefix = isFast ? '/no_think\n' : '/think\n'
   const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user')
 
   if (lastUserIdx === -1) return messages
 
   const result = [...messages]
-  const msg    = result[lastUserIdx]
+  const msg = result[lastUserIdx]
 
   if (typeof msg.content === 'string') {
     result[lastUserIdx] = { ...msg, content: prefix + msg.content }
   } else if (Array.isArray(msg.content)) {
-    const parts   = [...msg.content] as ContentPart[]
+    const parts = [...msg.content] as ContentPart[]
     const textIdx = parts.findIndex((p) => p.type === 'text')
     if (textIdx !== -1) {
-      const tp   = parts[textIdx] as { type: 'text'; text: string }
+      const tp = parts[textIdx] as { type: 'text'; text: string }
       parts[textIdx] = { type: 'text', text: prefix + tp.text }
       result[lastUserIdx] = { ...msg, content: parts }
     }
@@ -585,8 +585,8 @@ export class ChatService {
     const { signal } = this.controller
 
     // ── Read MCP settings ──────────────────────────────────────────
-    const appSettings  = readSettings()
-    const resolvedKey  = resolveBraveApiKey()
+    const appSettings = readSettings()
+    const resolvedKey = resolveBraveApiKey()
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey)
 
     // ── Build base messages ────────────────────────────────────────
@@ -612,28 +612,33 @@ export class ChatService {
     // ── Step 1 body — always thinking DISABLED ────────────────────
     // Tool-detection only needs a yes/no on whether to call brave_web_search.
     // Running with thinking enabled burns 8000 tokens and causes ~11s TTFT
-    // before the search even starts. Max 512 tokens is enough for a tool call.
+    // before the search even starts. Max 150 tokens is enough for a tool call.
     const step1Body = {
-      model:       modelId,
-      messages:    step1Messages,
+      model: modelId,
+      messages: step1Messages,
       temperature: 0.1,
-      max_tokens:  2048,  // raised from 512 — allows complete direct answers, not just tool call JSON
-      stop:        STOP_SEQUENCES,
-      thinking:    { type: 'disabled' },
-      stream:      false,
+      max_tokens: 150,  // raised to 150 — allows tool call JSON only
+      stop: STOP_SEQUENCES,
+      thinking: { type: 'disabled' },
+      stream: false,
+      "include_thoughts": false,
+      "thinking_budget": 0,
+      "extra_body": {
+        "enable_thinking": false
+      },
       ...toolsField,
     }
 
     const startTime = Date.now()
     let firstTokenAt: number | null = null
-    let totalTokens  = 0
-    let buffer       = ''
+    let totalTokens = 0
+    let buffer = ''
     let searchLoopCount = 0
     const MAX_SEARCH_LOOPS = 1  // one mid-stream retry max; more wastes 30+s and hallucinates
 
     // Repetition detector state
-    let lineBuffer       = ''
-    let lastLine         = ''
+    let lineBuffer = ''
+    let lastLine = ''
     let consecutiveCount = 0
 
     const send = (channel: string, data: unknown): void => {
@@ -666,9 +671,9 @@ export class ChatService {
           console.log('[DEBUG] Step 1 body:', JSON.stringify(step1Body, null, 2))
         }
         const r1 = await net.fetch(LMS_COMPLETIONS, {
-          method:  'POST',
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(step1Body),
+          body: JSON.stringify(step1Body),
           signal,
         } as RequestInit)
 
@@ -714,10 +719,10 @@ export class ChatService {
               searchResultText = formatSearchResults(results)
               console.log(`[MCP] ✅ Search returned ${results.length} results`)
               send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase:       'done',
-                query:       args.query,
+                phase: 'done',
+                query: args.query,
                 resultCount: results.length,
-                results:     results.map(r => ({ title: r.title, url: r.url })),
+                results: results.map(r => ({ title: r.title, url: r.url })),
               })
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err)
@@ -778,10 +783,10 @@ export class ChatService {
                 searchResultText = formatSearchResults(results)
                 console.log(`[MCP] ✅ Search returned ${results.length} results (raw format)`)
                 send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                  phase:       'done',
+                  phase: 'done',
                   query,
                   resultCount: results.length,
-                  results:     results.map(r => ({ title: r.title, url: r.url })),
+                  results: results.map(r => ({ title: r.title, url: r.url })),
                 })
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err)
@@ -823,10 +828,10 @@ export class ChatService {
               searchResultText = formatSearchResults(results)
               console.log(`[MCP] ✅ Search returned ${results.length} results (code-fence format)`)
               send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase:       'done',
-                query:       fenceQuery,
+                phase: 'done',
+                query: fenceQuery,
                 resultCount: results.length,
-                results:     results.map(r => ({ title: r.title, url: r.url })),
+                results: results.map(r => ({ title: r.title, url: r.url })),
               })
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err)
@@ -852,8 +857,8 @@ export class ChatService {
             // tool call that wasn't caught by the earlier parsers (e.g. two
             // concatenated <tool_call> tags, or a format variation we haven't seen).
             const directContent = choice.message.content
-            const inlineRaw     = parseRawToolCall(directContent)
-            const inlineQuery   = (inlineRaw?.args?.['query']) || extractQueryFromCodeFenceToolCall(directContent)
+            const inlineRaw = parseRawToolCall(directContent)
+            const inlineQuery = (inlineRaw?.args?.['query']) || extractQueryFromCodeFenceToolCall(directContent)
 
             if (inlineQuery) {
               // Tool call buried in the direct answer — execute it and fall through
@@ -867,10 +872,10 @@ export class ChatService {
                 searchResultText = formatSearchResults(results)
                 console.log(`[MCP] ✅ Search returned ${results.length} results (inline recovery)`)
                 send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                  phase:       'done',
-                  query:       inlineQuery,
+                  phase: 'done',
+                  query: inlineQuery,
                   resultCount: results.length,
-                  results:     results.map(r => ({ title: r.title, url: r.url })),
+                  results: results.map(r => ({ title: r.title, url: r.url })),
                 })
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err)
@@ -897,7 +902,7 @@ export class ChatService {
               // reasoning_content on the non-streaming response, not into content.
               // Reconstruct a <think>...</think> block so the renderer shows the
               // thinking accordion — identical to what the streaming path does.
-              const rawContent   = choice.message.content ?? ''
+              const rawContent = choice.message.content ?? ''
               const rawReasoning = (choice.message as Record<string, unknown>).reasoning_content as string ?? ''
               const directContent = rawReasoning
                 ? `<think>${rawReasoning}</think>${rawContent}`
@@ -918,11 +923,11 @@ export class ChatService {
               await streamContentInChunks(cleaned, send, signal)
               const elapsed = Date.now() - startTime
               send(IPC_CHANNELS.CHAT_STREAM_END, {
-                totalTokens:  estimateTokens(cleaned),
-                ttft:         elapsed,
+                totalTokens: estimateTokens(cleaned),
+                ttft: elapsed,
                 tokensPerSec: 0,
-                totalMs:      elapsed,
-                aborted:      false,
+                totalMs: elapsed,
+                aborted: false,
               })
               return
             }
@@ -943,20 +948,20 @@ export class ChatService {
           : { thinking: { type: 'disabled' } }
 
         const streamBody = JSON.stringify({
-          model:       modelId,
-          messages:    currentMessages,
+          model: modelId,
+          messages: currentMessages,
           temperature: 0.7,
-          max_tokens:  isThinking ? 32768 : 16384,
-          stop:        STOP_SEQUENCES,
+          max_tokens: isThinking ? 32768 : 16384,
+          stop: STOP_SEQUENCES,
           ...step2ThinkingField,
-          stream:      true,
+          stream: true,
         })
 
         const response = await net.fetch(LMS_COMPLETIONS, {
-          method:  'POST',
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    streamBody,
-          signal:  this.controller?.signal || signal,
+          body: streamBody,
+          signal: this.controller?.signal || signal,
         } as RequestInit)
 
         if (!response.ok) {
@@ -966,15 +971,15 @@ export class ChatService {
 
         if (!response.body) throw new Error('LM Studio returned no response body')
 
-        const reader  = response.body.getReader()
+        const reader = response.body.getReader()
         const decoder = new TextDecoder()
 
-        let loopAborted         = false
+        let loopAborted = false
         let firstChunkProcessed = false
-        let streamBuffer        = ''
+        let streamBuffer = ''
         let toolCallIntercepted = false
-        let reasoningOpen       = false
-        
+        let reasoningOpen = false
+
         while (true) {
           if (loopAborted) break
           const { done, value } = await reader.read()
@@ -994,7 +999,7 @@ export class ChatService {
 
             let parsed: {
               choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string }>
-              usage?:   { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+              usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
             }
             try { parsed = JSON.parse(data) } catch { continue }
 
@@ -1004,8 +1009,8 @@ export class ChatService {
               totalTokens = parsed.usage.prompt_tokens
             }
 
-            const deltaContent    = parsed.choices?.[0]?.delta?.content ?? ''
-            const deltaReasoning  = parsed.choices?.[0]?.delta?.reasoning_content ?? ''
+            const deltaContent = parsed.choices?.[0]?.delta?.content ?? ''
+            const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning_content ?? ''
 
             // LM Studio 0.4.9+ routes Gemma 4 thinking tokens into reasoning_content rather
             // than content. Wrap them in <think>...</think> so the existing parseThinkBlocks
@@ -1036,13 +1041,13 @@ export class ChatService {
             if (!cleanedDelta) continue
 
             streamBuffer += cleanedDelta
-            
+
             if (!toolCallIntercepted) {
               const detected = detectMidStreamToolCall(streamBuffer)
               if (detected) {
                 const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected
                 let patchedCleaned = cleanedSoFar
-                const openCount  = (patchedCleaned.match(/<think>/gi) || []).length
+                const openCount = (patchedCleaned.match(/<think>/gi) || []).length
                 const closeCount = (patchedCleaned.match(/<\/think>/gi) || []).length
                 if (openCount > closeCount) {
                   patchedCleaned += '\n</think>\n'
@@ -1065,16 +1070,16 @@ export class ChatService {
 
                 send(IPC_CHANNELS.CHAT_STREAM_RETRACT, retractedClean)
                 send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: midQuery })
-                
+
                 let midStreamResult: string
                 try {
                   const results = await braveSearch(midQuery, resolvedKey!, 5)
                   midStreamResult = formatSearchResults(results)
                   send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                    phase:       'done',
-                    query:       midQuery,
+                    phase: 'done',
+                    query: midQuery,
                     resultCount: results.length,
-                    results:     results.map(r => ({ title: r.title, url: r.url })),
+                    results: results.map(r => ({ title: r.title, url: r.url })),
                   })
                 } catch (err) {
                   const errMsg = err instanceof Error ? err.message : String(err)
@@ -1094,7 +1099,7 @@ export class ChatService {
                 ]
 
                 this.controller = new AbortController()
-                
+
                 searchLoopCount++
                 toolCallRound = true
                 break // Break out of `for const raw`
@@ -1126,7 +1131,7 @@ export class ChatService {
                     break
                   }
                 } else {
-                  lastLine         = completedLine
+                  lastLine = completedLine
                   consecutiveCount = 1
                 }
               }
@@ -1202,7 +1207,7 @@ export class ChatService {
   // mentions </think> inside the thought, so we split at the LAST occurrence).
   private stripThinkBlocks(content: string): string {
     // Strip Qwen3-style <think>…</think> blocks
-    const open  = '<think>'
+    const open = '<think>'
     const close = '</think>'
     let result = content
     const start = result.indexOf(open)
@@ -1213,7 +1218,7 @@ export class ChatService {
     }
 
     // Strip Gemma 4-style <|channel>thought\n…<channel|> blocks
-    const gOpen  = '<|channel>thought\n'
+    const gOpen = '<|channel>thought\n'
     const gClose = '<channel|>'
     const gStart = result.indexOf(gOpen)
     if (gStart !== -1) {
@@ -1238,8 +1243,8 @@ export class ChatService {
 
     // ── System prompt: explicit + document injections ────────────
     // Read brave settings so we can inject the correct web-search addendum
-    const appSettings  = readSettings()
-    const resolvedKey  = resolveBraveApiKey()
+    const appSettings = readSettings()
+    const resolvedKey = resolveBraveApiKey()
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey)
 
     // Inject current date so models use the right year in search queries and
@@ -1250,8 +1255,8 @@ export class ChatService {
     })}, ${_now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}.`
 
     const systemParts: string[] = [BASE_SYSTEM_PROMPT, DATE_INJECTION]
-    if (braveEnabled)         systemParts.push(WEB_SEARCH_SYSTEM_ADDENDUM)
-    if (!braveEnabled)        systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM)
+    if (braveEnabled) systemParts.push(WEB_SEARCH_SYSTEM_ADDENDUM)
+    if (!braveEnabled) systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM)
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
 
     // Gemma 4 thinking activation — Gemma does not support the `thinking:{type}`
@@ -1275,22 +1280,22 @@ export class ChatService {
     // messages that would push us over budget.  This guarantees the payload
     // always fits regardless of individual message sizes (e.g. long answers,
     // large code blocks, or matplotlib responses).
-    const isThinkingMode   = payload.thinkingMode === 'thinking'
-    const maxOutputTokens  = isThinkingMode ? 32768 : 16384
-    const contextLength    = appSettings.contextLength ?? 32768
+    const isThinkingMode = payload.thinkingMode === 'thinking'
+    const maxOutputTokens = isThinkingMode ? 32768 : 16384
+    const contextLength = appSettings.contextLength ?? 32768
     const systemTokenCount = countTokens(systemParts.join('\n\n'))
-    const OVERHEAD         = 512  // role formatting, stop tokens, misc.
-    const historyBudget    = Math.max(2000, contextLength - maxOutputTokens - systemTokenCount - OVERHEAD)
+    const OVERHEAD = 512  // role formatting, stop tokens, misc.
+    const historyBudget = Math.max(2000, contextLength - maxOutputTokens - systemTokenCount - OVERHEAD)
 
     const allMsgs = payload.messages.filter((m) => (m.role as string) !== 'divider')
 
     // Stub matplotlib code in old turns (beyond the 2 most recent pairs).
     // The code itself is not needed by the model on the next turn; the stub
     // caption preserves conversational context at a fraction of the token cost.
-    const RECENT_PAIRS   = 2
+    const RECENT_PAIRS = 2
     const recentBoundary = Math.max(0, allMsgs.length - RECENT_PAIRS * 2)
 
-    const lastUserIdx      = allMsgs.map(m => m.role).lastIndexOf('user')
+    const lastUserIdx = allMsgs.map(m => m.role).lastIndexOf('user')
     const lastAssistantIdx = allMsgs.map(m => m.role).lastIndexOf('assistant')
 
     const processedMsgs = allMsgs.map((m, i) => {
@@ -1322,7 +1327,7 @@ export class ChatService {
       if (m.role !== 'assistant') return m
 
       const stripped = this.cleanAssistantHistory(this.stripThinkBlocks(m.content as string))
-      const content  = i < recentBoundary ? stubMatplotlibBlocks(stripped) : stripped
+      const content = i < recentBoundary ? stubMatplotlibBlocks(stripped) : stripped
       return { ...m, content: content || '' }
     })
 
@@ -1330,9 +1335,9 @@ export class ChatService {
     let tokenSum = 0
     const kept: typeof processedMsgs = []
     for (let i = processedMsgs.length - 1; i >= 0; i--) {
-      const m          = processedMsgs[i]
+      const m = processedMsgs[i]
       const contentStr = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-      const t          = countTokens(contentStr) + 4  // +4 per-message role overhead
+      const t = countTokens(contentStr) + 4  // +4 per-message role overhead
       if (tokenSum + t > historyBudget && kept.length > 0) {
         console.log(
           `[ChatService] ✂️ Budget trim: dropped messages 0–${i} ` +
@@ -1345,11 +1350,11 @@ export class ChatService {
     }
 
     // ── Image attachments go on the last user message ────────────
-    const images  = (payload.attachments ?? []).filter((a) => a.kind === 'image' && a.dataUrl)
+    const images = (payload.attachments ?? []).filter((a) => a.kind === 'image' && a.dataUrl)
     const lastIdx = kept.length - 1
 
     for (let i = 0; i < kept.length; i++) {
-      const m  = kept[i]
+      const m = kept[i]
       const wm = m as unknown as WireMessage
 
       if (images.length > 0 && m.role === 'user' && i === lastIdx) {
@@ -1360,7 +1365,7 @@ export class ChatService {
           parts.push({ type: 'image_url', image_url: { url: img.dataUrl! } })
         }
         const wireMsg: Record<string, unknown> = { role: m.role, content: parts }
-        if (wm.tool_calls)    wireMsg.tool_calls    = wm.tool_calls
+        if (wm.tool_calls) wireMsg.tool_calls = wm.tool_calls
         if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id
         msgs.push(wireMsg as { role: string; content: string | ContentPart[] })
       } else {
@@ -1370,7 +1375,7 @@ export class ChatService {
         // invalid tool message whose tool_call_id references a non-existent
         // tool_calls entry on the preceding assistant message.
         const wireMsg: Record<string, unknown> = { role: m.role, content: m.content }
-        if (wm.tool_calls)    wireMsg.tool_calls    = wm.tool_calls
+        if (wm.tool_calls) wireMsg.tool_calls = wm.tool_calls
         if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id
         msgs.push(wireMsg as { role: string; content: string | ContentPart[] })
       }
@@ -1380,13 +1385,13 @@ export class ChatService {
   }
 
   private buildStats(
-    startTime:   number,
+    startTime: number,
     firstTokenAt: number | null,
-    totalTokens:  number,
-    aborted:      boolean
+    totalTokens: number,
+    aborted: boolean
   ): GenerationStats {
     const totalMs = Date.now() - startTime
-    const ttft    = firstTokenAt !== null ? firstTokenAt - startTime : totalMs
+    const ttft = firstTokenAt !== null ? firstTokenAt - startTime : totalMs
     const elapsed = Math.max(totalMs / 1000, 0.001)
 
     return {
