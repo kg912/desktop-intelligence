@@ -567,6 +567,61 @@ export function applyThinkingPrefix(
   return result
 }
 
+// ── executeSearchQueries ──────────────────────────────────────────────────────
+// Runs one or more search queries sequentially, merges results, and returns a
+// formatted context string for injection into Step 2. Sends WEB_SEARCH_STATUS
+// IPC events so the renderer can show the search spinner and result pill.
+async function executeSearchQueries(
+  queries: string[],
+  apiKey: string,
+  sendFn: (channel: string, data: unknown) => void,
+  primaryQuery: string
+): Promise<string> {
+  const deduped = [...new Set(queries.map(q => q.trim()).filter(q => q.length > 0))].slice(0, 3)
+  sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: primaryQuery })
+
+  const allResults: Array<{ title: string; url: string; description: string }> = []
+  const resultSections: string[] = []
+
+  for (const query of deduped) {
+    try {
+      const results = await braveSearch(query, apiKey, 5)
+      if (results.length > 0) {
+        allResults.push(...results)
+        const section = deduped.length > 1
+          ? `## Results for: "${query}"\n${formatSearchResults(results)}`
+          : formatSearchResults(results)
+        resultSections.push(section)
+        console.log(`[MCP] ✅ Search "${query}" returned ${results.length} results`)
+      }
+    } catch (err) {
+      console.error(`[MCP] ❌ Search failed for "${query}":`, err)
+    }
+  }
+
+  if (allResults.length === 0) {
+    sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: primaryQuery, error: 'All searches returned no results' })
+    return 'Web search returned no results. Answer from your training knowledge instead.'
+  }
+
+  // Dedup URLs, keep top 5 for the notification pill
+  const seen = new Set<string>()
+  const uniqueResults = allResults.filter(r => {
+    if (seen.has(r.url)) return false
+    seen.add(r.url)
+    return true
+  })
+
+  sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+    phase: 'done',
+    query: primaryQuery,
+    resultCount: uniqueResults.length,
+    results: uniqueResults.slice(0, 5).map(r => ({ title: r.title, url: r.url })),
+  })
+
+  return resultSections.join('\n\n')
+}
+
 export class ChatService {
   private controller: AbortController | null = null
 
