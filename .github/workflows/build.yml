@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     branches: [main]
-  workflow_dispatch: # Allows you to run this manually from the "Actions" tab
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.16.0' 
+          node-version: '22'
           cache: 'npm'
 
       - name: Debug Environment Versions
@@ -29,9 +29,7 @@ jobs:
           npm -v
 
       - name: Install dependencies
-        # We use 'npm ci' for speed and consistency. 
-        # If this fails, run 'npm install' locally and push the lockfile.
-        run: npm ci
+        run: npm install
 
       - name: Package Electron App
         run: npm run package
