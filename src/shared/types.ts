@@ -23,6 +23,8 @@ export interface ConnectionState {
   lastChecked:    number | null
   error:          string | null
   pollIntervalMs: number
+  /** Active AI provider — used by the connection overlay for provider-specific UI */
+  provider?:      AIProvider
 }
 
 // --- Daemon lifecycle ---

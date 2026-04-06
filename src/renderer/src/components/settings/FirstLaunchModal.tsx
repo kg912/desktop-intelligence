@@ -41,6 +41,9 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
   const [saveError,   setSaveError]   = useState<string | null>(null)
 
   // ── Fetch available models from the active backend ──────────────
+  // No dependency on `provider` — routing is server-side (SETTINGS_GET_AVAILABLE_MODELS
+  // reads provider from the settings file). The provider button's onClick must await
+  // setProvider() before calling fetchModels() to ensure the file is updated first.
   const fetchModels = useCallback(() => {
     setLoadingList(true)
     setListError(null)
@@ -54,18 +57,18 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
           setSelectedId((loaded ?? list[0]).id)
         }
         if (list.length === 0) {
-          const backend = provider === 'ollama' ? 'Ollama' : 'LM Studio'
-          setListError(`No models found. Make sure ${backend} is running and you have at least one model downloaded.`)
+          setListError('No models found. Make sure the selected provider is running and you have at least one model downloaded.')
         }
       })
       .catch(() => {
-        const backend = provider === 'ollama' ? 'Ollama' : 'LM Studio'
-        setListError(`Could not reach ${backend}. Make sure it is installed and running.`)
+        setListError('Could not reach the AI provider. Make sure it is installed and running.')
       })
       .finally(() => setLoadingList(false))
-  }, [provider])
+  }, [])  // ← no dependency on provider; routing is server-side
 
-  useEffect(() => { fetchModels() }, [fetchModels])
+  // Only fetch on initial mount — provider switches call fetchModels directly
+  // after awaiting setProvider() so the settings file is updated first.
+  useEffect(() => { fetchModels() }, [])
 
   // ── Save handler ────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
@@ -153,10 +156,21 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
               {(['lmstudio', 'ollama'] as AIProvider[]).map((p) => (
                 <button
                   key={p}
-                  onClick={() => {
+                  onClick={async () => {
+                    if (p === provider || saving) return
                     setProvider(p)
-                    // Re-fetch models for the new provider after persisting choice
-                    void window.api.setProvider(p).catch(() => null)
+                    setLoadingList(true)
+                    setListError(null)
+                    setModels([])
+                    setSelectedId('')
+                    try {
+                      // MUST await — getAvailableModels reads provider from disk;
+                      // firing both concurrently means the old provider is still
+                      // on disk when the model fetch runs.
+                      await window.api.setProvider(p)
+                    } catch { /* non-fatal */ }
+                    // Settings file now has the new provider — fetch is safe
+                    fetchModels()
                   }}
                   disabled={saving}
                   className="flex-1 py-2 rounded-md text-xs font-medium transition-all duration-150 focus:outline-none disabled:opacity-40"
@@ -195,7 +209,7 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
               >
                 <div className="w-3 h-3 rounded-full border-2 border-neutral-600 border-t-red-500 animate-spin" />
                 <span className="text-xs" style={{ color: '#525252' }}>
-                  Fetching models from LM Studio…
+                  {provider === 'ollama' ? 'Fetching models from Ollama…' : 'Fetching models from LM Studio…'}
                 </span>
               </div>
             ) : listError ? (
