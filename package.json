@@ -41,7 +41,8 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "tailwind-merge": "^3.5.0",
-    "tiktoken": "^1.0.22"
+    "tiktoken": "^1.0.22",
+    "uuid": "^11.0.0"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.1",
