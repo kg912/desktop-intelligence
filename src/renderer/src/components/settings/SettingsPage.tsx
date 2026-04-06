@@ -81,6 +81,8 @@ function AboutPanel() {
 export function SettingsPage({ onClose }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>('model')
 
+  const paddingTop = tab === 'mcp' ? 60 : 160;
+
   return (
     <div className="flex h-full w-full" style={{ background: '#0f0f0f' }}>
       {/* Left nav */}
@@ -139,7 +141,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
 
       {/* Content — same top offset as nav, horizontally centred inner block */}
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-12 pb-8 w-full" style={{ maxWidth: 720, paddingTop: 160 }}>
+        <div className="mx-auto px-12 pb-8 w-full" style={{ maxWidth: 720, paddingTop }}>
           {tab === 'model' && <ModelSettingsPanel />}
           {tab === 'mcp' && <MCPSettingsPanel />}
           {tab === 'about' && <AboutPanel />}
