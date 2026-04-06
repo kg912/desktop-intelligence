@@ -81,7 +81,7 @@ function AboutPanel() {
 export function SettingsPage({ onClose }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>('model')
 
-  const paddingTop = tab === 'mcp' ? 60 : 160;
+  const paddingTop = tab === 'model' ? 60 : 160;
 
   return (
     <div className="flex h-full w-full" style={{ background: '#0f0f0f' }}>
