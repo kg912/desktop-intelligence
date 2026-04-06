@@ -7,21 +7,19 @@ import type {
   LMStudioModelsResponse,
   AIProvider
 } from '../../shared/types'
+import { readSettings } from '../services/SettingsStore'
 
 /**
  * Returns the /v1/models health-check URL for the active provider.
  * LM Studio uses port 1234; Ollama uses port 11434 with its OpenAI-compat layer.
  * Both return the same { object: "list", data: [...] } shape.
+ * readSettings() is synchronous (readFileSync) — safe to call on every poll tick.
  */
 function getHealthUrl(): string {
-  try {
-    // Lazy import — avoids circular dep and keeps module loadable in tests
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { readSettings } = require('../services/SettingsStore') as { readSettings: () => { provider?: string } }
-    const { provider } = readSettings()
-    if (provider === 'ollama') return 'http://localhost:11434/v1/models'
-  } catch { /* fall through to default */ }
-  return 'http://localhost:1234/v1/models'
+  const { provider } = readSettings()
+  return provider === 'ollama'
+    ? 'http://localhost:11434/v1/models'
+    : 'http://localhost:1234/v1/models'
 }
 
 // Poll aggressively when offline, back off when connected
@@ -74,12 +72,7 @@ export class ModelConnectionManager extends EventEmitter {
     if (this.isPolling) return
     this.isPolling = true
     // Use the saved provider so the 'connecting' state carries the right label
-    let initialProvider: AIProvider = 'lmstudio'
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { readSettings } = require('../services/SettingsStore') as { readSettings: () => { provider?: string } }
-      if (readSettings().provider === 'ollama') initialProvider = 'ollama'
-    } catch { /* use default */ }
+    const initialProvider: AIProvider = readSettings().provider === 'ollama' ? 'ollama' : 'lmstudio'
     this.transitionTo('connecting', null, null, initialProvider)
     // Immediate first poll, then schedule recurring
     this.poll()
@@ -104,14 +97,7 @@ export class ModelConnectionManager extends EventEmitter {
     this.consecutiveFailures = 0
 
     // Read current provider so the 'connecting' overlay shows the right label.
-    // Matches the require pattern already used in getHealthUrl() and start().
-    let currentProvider: AIProvider = 'lmstudio'
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { readSettings } = require('../services/SettingsStore') as { readSettings: () => { provider?: string } }
-      if (readSettings().provider === 'ollama') currentProvider = 'ollama'
-    } catch { /* use default */ }
-
+    const currentProvider: AIProvider = readSettings().provider === 'ollama' ? 'ollama' : 'lmstudio'
     this.transitionTo('connecting', null, null, currentProvider)
     await this.poll()
     return this.getState()
@@ -123,14 +109,8 @@ export class ModelConnectionManager extends EventEmitter {
 
   private async poll(): Promise<void> {
     // Read current provider for URL routing and user-facing error messages.
-    // Done at poll time (not module load) so switches take effect immediately.
-    let currentProvider: AIProvider = 'lmstudio'
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { readSettings } = require('../services/SettingsStore') as { readSettings: () => { provider?: string } }
-      if (readSettings().provider === 'ollama') currentProvider = 'ollama'
-    } catch { /* use default */ }
-
+    // readSettings() is synchronous — safe to call on every poll tick.
+    const currentProvider: AIProvider = readSettings().provider === 'ollama' ? 'ollama' : 'lmstudio'
     const backendName = currentProvider === 'ollama' ? 'Ollama' : 'LM Studio'
 
     try {
