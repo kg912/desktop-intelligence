@@ -4,6 +4,22 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [1.6.6] — 2026-04-06
+
+### Bug Fix: Qwen 3.5 Step 1 decision lands in reasoning_content when thinking mode is on
+
+When the user has Thinking mode enabled, `/think\n` is prepended to the user message.
+Step 1 was passing this prefix through to Qwen verbatim, activating reasoning mode
+despite `thinking: disabled` in the payload. Qwen then put the JSON decision in
+`reasoning_content` instead of `content`, causing `JSON.parse` to fail on an empty
+string and silently suppressing web search.
+
+Two fixes:
+- Strip `/think` and `/no_think` prefixes from the user message before it enters Step 1
+- Fall back to `reasoning_content` when `content` is empty, so the decision is never lost
+
+---
+
 ## [1.6.5] — 2026-04-06
 
 ### Bug Fix: Step 1 generates stale-year search queries

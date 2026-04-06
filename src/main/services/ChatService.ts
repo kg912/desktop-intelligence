@@ -701,8 +701,17 @@ export class ChatService {
                    'IMPORTANT: If ANY part of the query is actionable or time-sensitive, choose search.' +
                    `\nToday is ${dateStr}. Always include the current year in time-sensitive search queries.`,
         },
-        // Include only the last user message — no history needed for this decision.
-        ...step1Messages.filter(m => m.role === 'user').slice(-1),
+        // Include only the last user message — stripped of any /think or /no_think prefix
+        // since thinking mode is irrelevant in Step 1 and the prefix causes Qwen to put
+        // its JSON decision in reasoning_content instead of content.
+        ...step1Messages
+          .filter(m => m.role === 'user')
+          .slice(-1)
+          .map(m =>
+            typeof m.content === 'string'
+              ? { ...m, content: m.content.replace(/^\/(think|no_think)\n/i, '') }
+              : m
+          ),
       ],
       temperature: 0.1,
       max_tokens:  250,  // enough for 3 full query strings with JSON overhead (~200 tokens worst case)
@@ -800,7 +809,10 @@ export class ChatService {
         }
 
         const choice = r1data.choices?.[0]
-        const rawDecision = choice?.message?.content ?? ''
+        // Qwen 3.5 puts the decision in reasoning_content when /think is active,
+        // leaving content empty. Fall back to reasoning_content if content is blank.
+        const rawDecision = (choice?.message?.content ?? '').trim() ||
+          ((choice?.message as Record<string, unknown>)?.reasoning_content as string ?? '').trim()
 
         // Parse the structured JSON decision from response_format
         let decision: { action: string; queries?: string[] } = { action: 'answer' }
