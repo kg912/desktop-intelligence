@@ -577,24 +577,38 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // ── settings:reloadModel ─────────────────────────────────────────
   // LM Studio path: uses lms CLI — unload --all → load <id> --context-length <N> → ps to confirm.
   // Ollama path: just persist settings — no server-side load step needed (Ollama lazy-loads).
+  // Both paths perform a live daemon handoff when the provider changes.
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_RELOAD,
     async (_, payload: ReloadModelPayload): Promise<ReloadResult> => {
       const { modelId, contextLength, provider } = payload
       console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength} provider=${provider ?? 'lmstudio'}`)
 
-      // ── Ollama: no CLI reload needed — just persist settings ──────
+      // Read previous provider BEFORE any writes so we can detect a switch
+      const { readSettings, writeSettings } = await import('../services/SettingsStore')
+      const previousProvider = readSettings().provider ?? 'lmstudio'
+
+      // ── Ollama: no CLI reload needed — just persist settings + daemon handoff ──
       if (provider === 'ollama') {
-        try {
-          const { writeSettings } = await import('../services/SettingsStore')
-          const patch: Record<string, unknown> = { contextLength, modelId, provider: 'ollama' }
-          if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
-          if (payload.topP            !== undefined) patch.topP            = payload.topP
-          if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
-          if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
-          if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
-          writeSettings(patch as Parameters<typeof writeSettings>[0])
-        } catch { /* non-fatal */ }
+        const patch: Record<string, unknown> = { contextLength, modelId, provider: 'ollama' }
+        if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
+        if (payload.topP            !== undefined) patch.topP            = payload.topP
+        if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
+        if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
+        if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
+        try { writeSettings(patch as Parameters<typeof writeSettings>[0]) } catch { /* non-fatal */ }
+
+        // If switching away from LM Studio, tear it down and start Ollama
+        if (previousProvider !== 'ollama') {
+          console.log('[Settings] Reload: shutting down LMSDaemonManager (switching to Ollama)…')
+          await lmsDaemonManager.shutdown()
+          console.log('[Settings] Reload: starting OllamaDaemonManager…')
+          ollamaDaemonManager.start().catch((err: Error) => {
+            console.error('[Settings] OllamaDaemon start error during reload:', err)
+          })
+          modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+        }
+
         return { success: true, confirmedCtx: contextLength }
       }
 
@@ -605,6 +619,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           success: false,
           error:   'lms CLI not found. Ensure LM Studio is installed with the lms command-line tool.',
         }
+      }
+
+      // If switching away from Ollama, tear it down before starting LM Studio
+      if (previousProvider === 'ollama') {
+        console.log('[Settings] Reload: shutting down OllamaDaemonManager (switching to LM Studio)…')
+        await ollamaDaemonManager.shutdown()
       }
 
       try {
@@ -642,7 +662,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         // ── Step 4: persist the preference for next app startup ────
         // LMSDaemonManager reads this and passes --context-length on `lms load`.
         try {
-          const { writeSettings } = await import('../services/SettingsStore')
           const patch: Record<string, unknown> = {
             contextLength: confirmedCtx ?? contextLength,
             modelId,
@@ -655,6 +674,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
           writeSettings(patch as Parameters<typeof writeSettings>[0])
         } catch { /* non-fatal */ }
+
+        modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
 
         console.log(
           `[Settings] ✅ Reload complete — requested=${contextLength} confirmed=${confirmedCtx ?? 'unknown'}`
@@ -792,8 +813,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   }))
 
   // ── settings:setProvider ────────────────────────────────────────
-  // Persists the provider choice to SettingsStore.
-  // ModelConnectionManager reads this on every poll; ChatService reads it per request.
+  // Persists the provider choice AND performs a live daemon handoff so the
+  // switch takes effect immediately without an app restart.
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SET_PROVIDER,
     async (_, provider: AIProvider): Promise<void> => {
@@ -801,9 +822,36 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         console.warn(`[Settings] Unknown provider "${String(provider)}" — ignoring`)
         return
       }
-      const { writeSettings } = await import('../services/SettingsStore')
+
+      const { writeSettings, readSettings } = await import('../services/SettingsStore')
+      const previousProvider = readSettings().provider ?? 'lmstudio'
+
+      // Persist immediately so ModelConnectionManager's next poll uses the right URL
       writeSettings({ provider })
-      console.log(`[Settings] Provider set to: ${provider}`)
+      console.log(`[Settings] Provider switching: ${previousProvider} → ${provider}`)
+
+      // Live daemon handoff
+      if (provider === 'ollama' && previousProvider !== 'ollama') {
+        // Tear down LM Studio, then start Ollama
+        console.log('[Settings] Shutting down LMSDaemonManager for provider switch…')
+        await lmsDaemonManager.shutdown()
+        console.log('[Settings] Starting OllamaDaemonManager for provider switch…')
+        ollamaDaemonManager.start().catch((err: Error) => {
+          console.error('[Settings] OllamaDaemon start error during provider switch:', err)
+        })
+      } else if (provider === 'lmstudio' && previousProvider !== 'lmstudio') {
+        // Tear down Ollama, then start LM Studio with the saved model
+        console.log('[Settings] Shutting down OllamaDaemonManager for provider switch…')
+        await ollamaDaemonManager.shutdown()
+        const { modelId } = readSettings()
+        console.log('[Settings] Starting LMSDaemonManager for provider switch…')
+        lmsDaemonManager.start(modelId ?? undefined).catch((err: Error) => {
+          console.error('[Settings] LMSDaemon start error during provider switch:', err)
+        })
+      }
+
+      // Force an immediate connection status re-check so the overlay updates
+      modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
     }
   )
 }

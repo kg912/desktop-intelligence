@@ -122,26 +122,32 @@ export function ModelSettingsPanel() {
     }
   }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, provider, setSelectedModel])
 
-  // When the user switches provider, immediately persist and re-fetch models
+  // When the user switches provider, persist immediately and perform a daemon
+  // handoff (handled in the main process), then re-fetch the model list.
+  // The 1500ms delay gives the daemon handoff time to initiate before we query
+  // the new backend — without it getAvailableModels() races the server start.
   const handleProviderSwitch = useCallback(async (next: AIProvider) => {
     if (next === provider) return
     setProviderState(next)
     try {
       await window.api.setProvider(next)
     } catch { /* non-fatal */ }
-    // Re-fetch models for the new provider
+
+    // Give the daemon handoff a moment to initiate before fetching models
+    await new Promise((r) => setTimeout(r, 1500))
+
     setLoading(true)
     try {
-      const [cfg, models] = await Promise.all([
-        window.api.getModelConfig(),
-        window.api.getAvailableModels(),
-      ])
-      const prov: AIProvider = next  // use the new value we just set
-      const ctx  = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
-      setFetchedCtx(ctx);     setDraftCtx(ctx)
-      setFetchedModel(cfg.modelId); setDraftModel(cfg.modelId)
-      setFetchedProvider(prov)
+      const models = await window.api.getAvailableModels()
       setAvailableModels(models)
+      // Reset draft model to first available or empty
+      if (models.length > 0) {
+        setDraftModel(models[0].id)
+      } else {
+        setDraftModel('')
+      }
+      // Update fetchedProvider so the "changed" flag doesn't immediately light up
+      setFetchedProvider(next)
     } catch { /* non-fatal */ } finally {
       setLoading(false)
     }
