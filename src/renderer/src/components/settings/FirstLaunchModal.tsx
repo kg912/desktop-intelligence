@@ -11,7 +11,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Cpu, RefreshCw, AlertCircle, ChevronDown } from 'lucide-react'
-import type { AvailableModel } from '../../../../shared/types'
+import type { AvailableModel, AIProvider } from '../../../../shared/types'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const PRESETS     = [4096, 8192, 16384, 32768, 65536, 131072]
@@ -31,6 +31,7 @@ interface FirstLaunchModalProps {
 
 // ── Component ──────────────────────────────────────────────────────────────
 export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
+  const [provider,    setProvider]    = useState<AIProvider>('lmstudio')
   const [models,      setModels]      = useState<AvailableModel[]>([])
   const [loadingList, setLoadingList] = useState(true)
   const [listError,   setListError]   = useState<string | null>(null)
@@ -39,10 +40,11 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
   const [saving,      setSaving]      = useState(false)
   const [saveError,   setSaveError]   = useState<string | null>(null)
 
-  // ── Fetch available models from LM Studio ───────────────────────
+  // ── Fetch available models from the active backend ──────────────
   const fetchModels = useCallback(() => {
     setLoadingList(true)
     setListError(null)
+    setSelectedId('')
     window.api.getAvailableModels()
       .then((list) => {
         setModels(list)
@@ -52,14 +54,16 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
           setSelectedId((loaded ?? list[0]).id)
         }
         if (list.length === 0) {
-          setListError('No models found. Make sure LM Studio is running and you have downloaded at least one model.')
+          const backend = provider === 'ollama' ? 'Ollama' : 'LM Studio'
+          setListError(`No models found. Make sure ${backend} is running and you have at least one model downloaded.`)
         }
       })
       .catch(() => {
-        setListError('Could not reach LM Studio. Make sure it is installed and running.')
+        const backend = provider === 'ollama' ? 'Ollama' : 'LM Studio'
+        setListError(`Could not reach ${backend}. Make sure it is installed and running.`)
       })
       .finally(() => setLoadingList(false))
-  }, [])
+  }, [provider])
 
   useEffect(() => { fetchModels() }, [fetchModels])
 
@@ -69,18 +73,23 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
     setSaving(true)
     setSaveError(null)
     try {
-      const res = await window.api.initializeApp({ modelId: selectedId, contextLength: ctxLength })
+      // Persist the provider choice first, then initialise with the model.
+      // APP_INITIALIZE also writes provider to SettingsStore via the cast payload.
+      await window.api.setProvider(provider)
+      const initPayload = { modelId: selectedId, contextLength: ctxLength, provider }
+      const res = await window.api.initializeApp(initPayload as Parameters<typeof window.api.initializeApp>[0])
       if (res.success) {
         onComplete(selectedId)
       } else {
-        setSaveError(res.error ?? 'Failed to load model. Check LM Studio logs.')
+        const backend = provider === 'ollama' ? 'Ollama' : 'LM Studio'
+        setSaveError(res.error ?? `Failed to connect to ${backend}. Check the logs.`)
       }
     } catch (err) {
       setSaveError((err as Error).message)
     } finally {
       setSaving(false)
     }
-  }, [selectedId, ctxLength, saving, onComplete])
+  }, [selectedId, ctxLength, provider, saving, onComplete])
 
   const canSave = !saving && !loadingList && selectedId.length > 0
 
@@ -128,6 +137,47 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
 
         {/* ── Body ── */}
         <div className="px-8 py-6 space-y-6">
+
+          {/* Provider segmented control */}
+          <div>
+            <p
+              className="text-[10px] font-semibold tracking-widest uppercase mb-2"
+              style={{ color: '#525252' }}
+            >
+              AI Provider
+            </p>
+            <div
+              className="flex rounded-lg p-0.5 gap-0.5"
+              style={{ background: '#111', border: '1px solid #2a2a2a' }}
+            >
+              {(['lmstudio', 'ollama'] as AIProvider[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => {
+                    setProvider(p)
+                    // Re-fetch models for the new provider after persisting choice
+                    void window.api.setProvider(p).catch(() => null)
+                  }}
+                  disabled={saving}
+                  className="flex-1 py-2 rounded-md text-xs font-medium transition-all duration-150 focus:outline-none disabled:opacity-40"
+                  style={provider === p
+                    ? {
+                        background:  'rgba(139,0,0,0.2)',
+                        border:      '1px solid rgba(185,28,28,0.4)',
+                        color:       '#f87171',
+                      }
+                    : {
+                        background:  'transparent',
+                        border:      '1px solid transparent',
+                        color:       '#525252',
+                      }
+                  }
+                >
+                  {p === 'lmstudio' ? 'LM Studio' : 'Ollama'}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Model selector */}
           <div>
@@ -322,7 +372,9 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
             {saving ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Loading model — this takes 30–60 seconds…
+                {provider === 'ollama'
+                  ? 'Connecting to Ollama…'
+                  : 'Loading model — this takes 30–60 seconds…'}
               </>
             ) : (
               'Save & Connect'

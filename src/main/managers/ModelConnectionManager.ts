@@ -7,8 +7,21 @@ import type {
   LMStudioModelsResponse
 } from '../../shared/types'
 
-const LM_STUDIO_BASE_URL = 'http://localhost:1234/v1'
-const MODELS_ENDPOINT    = `${LM_STUDIO_BASE_URL}/models`
+/**
+ * Returns the /v1/models health-check URL for the active provider.
+ * LM Studio uses port 1234; Ollama uses port 11434 with its OpenAI-compat layer.
+ * Both return the same { object: "list", data: [...] } shape.
+ */
+function getHealthUrl(): string {
+  try {
+    // Lazy import — avoids circular dep and keeps module loadable in tests
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { readSettings } = require('../services/SettingsStore') as { readSettings: () => { provider?: string } }
+    const { provider } = readSettings()
+    if (provider === 'ollama') return 'http://localhost:11434/v1/models'
+  } catch { /* fall through to default */ }
+  return 'http://localhost:1234/v1/models'
+}
 
 // Poll aggressively when offline, back off when connected
 const POLL_INTERVAL_OFFLINE_MS  = 3_000   // 3s — quick reconnect detection
@@ -91,7 +104,7 @@ export class ModelConnectionManager extends EventEmitter {
 
   private async poll(): Promise<void> {
     try {
-      const response = await axios.get<LMStudioModelsResponse>(MODELS_ENDPOINT, {
+      const response = await axios.get<LMStudioModelsResponse>(getHealthUrl(), {
         timeout: HEALTH_CHECK_TIMEOUT_MS,
         headers: { Accept: 'application/json' }
       })

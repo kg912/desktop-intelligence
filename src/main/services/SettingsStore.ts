@@ -15,6 +15,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
+import type { AIProvider } from '../../shared/types'
 
 export interface AppSettings {
   /** Context length (n_ctx) to use when loading the model. */
@@ -37,6 +38,8 @@ export interface AppSettings {
   repeatPenalty?: number
   /** Global system prompt prepended to every request. Default: '' */
   systemPrompt?: string
+  /** AI provider backend. Default: 'lmstudio' */
+  provider?: AIProvider
 }
 
 function settingsPath(): string {

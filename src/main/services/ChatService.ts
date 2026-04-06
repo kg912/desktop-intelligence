@@ -20,7 +20,16 @@ import { braveSearch, formatSearchResults, resolveBraveApiKey } from './BraveSea
 import { BASE_SYSTEM_PROMPT } from './SystemPromptService'
 import { countTokens } from './tokenUtils'
 
-const LMS_COMPLETIONS = 'http://localhost:1234/v1/chat/completions'
+/**
+ * Returns the /v1/chat/completions URL for the currently active provider.
+ * Both LM Studio and Ollama expose OpenAI-compatible inference at this path.
+ */
+function getChatEndpoint(): string {
+  const { provider } = readSettings()
+  return provider === 'ollama'
+    ? 'http://localhost:11434/v1/chat/completions'
+    : 'http://localhost:1234/v1/chat/completions'
+}
 
 // Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true).
 // __DEV_MODE__ is a compile-time constant injected by Rollup define — see globals.d.ts.
@@ -779,7 +788,7 @@ export class ChatService {
         if (DEBUG) {
           console.log('[DEBUG] Step 1 body:', JSON.stringify(step1Body, null, 2))
         }
-        const r1 = await net.fetch(LMS_COMPLETIONS, {
+        const r1 = await net.fetch(getChatEndpoint(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(step1Body),
@@ -863,7 +872,12 @@ export class ChatService {
           ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
           : { thinking: { type: 'disabled' } }
 
-        const { temperature, topP, maxOutputTokens, repeatPenalty } = readSettings()
+        const { temperature, topP, maxOutputTokens, repeatPenalty, provider, contextLength } = readSettings()
+        // Ollama uses `options.num_ctx` to set the context window;
+        // LM Studio ignores this field, so it is safe to include for both.
+        const ollamaOptions = provider === 'ollama' && contextLength
+          ? { options: { num_ctx: contextLength } }
+          : {}
         const streamBody = JSON.stringify({
           model: modelId,
           messages: currentMessages,
@@ -873,10 +887,11 @@ export class ChatService {
           repeat_penalty: repeatPenalty  ?? 1.1,
           stop: STOP_SEQUENCES,
           ...step2ThinkingField,
+          ...ollamaOptions,
           stream: true,
         })
 
-        const response = await net.fetch(LMS_COMPLETIONS, {
+        const response = await net.fetch(getChatEndpoint(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: streamBody,

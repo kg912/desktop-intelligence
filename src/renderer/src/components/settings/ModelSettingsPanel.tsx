@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, AlertCircle, CheckCircle2, ChevronRight, ChevronDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useModelStore } from '../../store/ModelStore'
-import type { AvailableModel } from '../../../../shared/types'
+import type { AvailableModel, AIProvider } from '../../../../shared/types'
 
 const PRESETS = [4096, 8192, 16384, 32768, 65536, 131072]
 const MIN_CTX = 4096
@@ -37,6 +37,9 @@ export function ModelSettingsPanel() {
   const [fetchedRepeatPenalty,setFetchedRepeatPenalty]= useState(1.1)
   const [fetchedSysPrompt,    setFetchedSysPrompt]    = useState('')
 
+  const [provider,            setProviderState]       = useState<AIProvider>('lmstudio')
+  const [fetchedProvider,     setFetchedProvider]     = useState<AIProvider>('lmstudio')
+
   const changed = fetchedCtx !== null && (
     draftCtx           !== fetchedCtx           ||
     draftModel         !== fetchedModel         ||
@@ -44,7 +47,8 @@ export function ModelSettingsPanel() {
     draftTopP          !== fetchedTopP          ||
     draftMaxTokens     !== fetchedMaxTokens     ||
     draftRepeatPenalty !== fetchedRepeatPenalty ||
-    draftSysPrompt     !== fetchedSysPrompt
+    draftSysPrompt     !== fetchedSysPrompt     ||
+    provider           !== fetchedProvider
   )
 
   useEffect(() => {
@@ -60,6 +64,7 @@ export function ModelSettingsPanel() {
         const mt   = cfg.maxOutputTokens ?? 16384
         const rp   = cfg.repeatPenalty   ?? 1.1
         const sp   = cfg.systemPrompt    ?? ''
+        const prov: AIProvider = cfg.provider ?? 'lmstudio'
         setFetchedCtx(ctx);     setDraftCtx(ctx)
         setFetchedModel(cfg.modelId); setDraftModel(cfg.modelId)
         setFetchedTemp(temp);   setDraftTemp(temp)
@@ -67,6 +72,7 @@ export function ModelSettingsPanel() {
         setFetchedMaxTokens(mt); setDraftMaxTokens(mt)
         setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
+        setFetchedProvider(prov); setProviderState(prov)
         setAvailableModels(models)
       })
       .catch(() => {
@@ -90,6 +96,7 @@ export function ModelSettingsPanel() {
         maxOutputTokens:  draftMaxTokens,
         repeatPenalty:    draftRepeatPenalty,
         systemPrompt:     draftSysPrompt,
+        provider,
       })
       if (res.success) {
         const actual = res.confirmedCtx ?? draftCtx
@@ -100,6 +107,7 @@ export function ModelSettingsPanel() {
         setFetchedMaxTokens(draftMaxTokens)
         setFetchedRepeatPenalty(draftRepeatPenalty)
         setFetchedSysPrompt(draftSysPrompt)
+        setFetchedProvider(provider)
         const msg = res.confirmedCtx && res.confirmedCtx !== draftCtx
           ? `Model reloaded. LM Studio reports ${fmtCtx(actual)} context (requested ${fmtCtx(draftCtx)}).`
           : `Model reloaded with ${fmtCtx(actual)} context.`
@@ -112,10 +120,75 @@ export function ModelSettingsPanel() {
     } finally {
       setReloading(false)
     }
-  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setSelectedModel])
+  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, provider, setSelectedModel])
+
+  // When the user switches provider, immediately persist and re-fetch models
+  const handleProviderSwitch = useCallback(async (next: AIProvider) => {
+    if (next === provider) return
+    setProviderState(next)
+    try {
+      await window.api.setProvider(next)
+    } catch { /* non-fatal */ }
+    // Re-fetch models for the new provider
+    setLoading(true)
+    try {
+      const [cfg, models] = await Promise.all([
+        window.api.getModelConfig(),
+        window.api.getAvailableModels(),
+      ])
+      const prov: AIProvider = next  // use the new value we just set
+      const ctx  = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
+      setFetchedCtx(ctx);     setDraftCtx(ctx)
+      setFetchedModel(cfg.modelId); setDraftModel(cfg.modelId)
+      setFetchedProvider(prov)
+      setAvailableModels(models)
+    } catch { /* non-fatal */ } finally {
+      setLoading(false)
+    }
+  }, [provider])
 
   return (
     <div className="space-y-6">
+      {/* Provider segmented control */}
+      <div>
+        <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted mb-2">
+          AI Provider
+        </p>
+        <div
+          className="flex rounded-lg p-0.5 gap-0.5"
+          style={{ background: '#111', border: '1px solid #2a2a2a' }}
+        >
+          {(['lmstudio', 'ollama'] as AIProvider[]).map((p) => (
+            <button
+              key={p}
+              onClick={() => { void handleProviderSwitch(p) }}
+              disabled={loading || reloading}
+              className="flex-1 py-2 rounded-md text-xs font-medium transition-all duration-150 focus:outline-none disabled:opacity-40"
+              style={provider === p
+                ? {
+                    background:  'rgba(139,0,0,0.25)',
+                    border:      '1px solid rgba(185,28,28,0.4)',
+                    color:       '#f87171',
+                    boxShadow:   '0 0 8px rgba(139,0,0,0.15)',
+                  }
+                : {
+                    background:  'transparent',
+                    border:      '1px solid transparent',
+                    color:       '#525252',
+                  }
+              }
+            >
+              {p === 'lmstudio' ? 'LM Studio' : 'Ollama'}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-content-muted mt-1.5 leading-relaxed">
+          {provider === 'ollama'
+            ? 'Ollama — models listed are available locally via `ollama pull`.'
+            : 'LM Studio — models must be downloaded and loaded via the LM Studio app.'}
+        </p>
+      </div>
+
       {/* Active model selector */}
       <div>
         <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted mb-2">

@@ -118,6 +118,9 @@ export interface WebSearchStatus {
 
 export type ThinkingMode = 'thinking' | 'fast'
 
+/** AI provider backend — LM Studio (default) or Ollama */
+export type AIProvider = 'lmstudio' | 'ollama'
+
 export interface ChatSendPayload {
   messages:       WireMessage[]
   systemPrompt?:  string
@@ -193,6 +196,8 @@ export const IPC_CHANNELS = {
   MCP_GET_ENV_KEY_STATUS: 'mcp:getEnvKeyStatus',
 
   PLOT_STORE:          'plot:store',
+
+  SETTINGS_SET_PROVIDER: 'settings:setProvider',
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -212,6 +217,7 @@ export interface ModelConfig {
   maxOutputTokens?: number
   repeatPenalty?:   number
   systemPrompt?:    string
+  provider?:        AIProvider
 }
 
 export interface ReloadModelPayload {
@@ -222,6 +228,7 @@ export interface ReloadModelPayload {
   maxOutputTokens?: number
   repeatPenalty?:   number
   systemPrompt?:    string
+  provider?:        AIProvider
 }
 
 export interface ReloadResult {

@@ -2,6 +2,7 @@ import { ipcMain, WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
 import { modelConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
+import { ollamaDaemonManager } from '../managers/OllamaDaemonManager'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 
@@ -31,6 +32,7 @@ import type {
   AvailableModel,
   AppInitPayload,
   StorePlotPayload,
+  AIProvider,
 } from '../../shared/types'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
@@ -191,16 +193,29 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   // ── Daemon ──────────────────────────────────────────────────
-  ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, (): DaemonState =>
-    lmsDaemonManager.getState()
-  )
+  ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const { provider } = readSettings()
+    return provider === 'ollama'
+      ? ollamaDaemonManager.getState()
+      : lmsDaemonManager.getState()
+  })
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const { provider } = readSettings()
+    if (provider === 'ollama') {
+      await ollamaDaemonManager.retry()
+      return ollamaDaemonManager.getState()
+    }
     await lmsDaemonManager.retry()
     return lmsDaemonManager.getState()
   })
 
   lmsDaemonManager.on('stateChange', (state: DaemonState) =>
+    send(IPC_CHANNELS.DAEMON_STATE_CHANGE, state)
+  )
+  ollamaDaemonManager.on('stateChange', (state: DaemonState) =>
     send(IPC_CHANNELS.DAEMON_STATE_CHANGE, state)
   )
 
@@ -516,6 +531,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
             maxOutputTokens:  s.maxOutputTokens  ?? 16384,
             repeatPenalty:    s.repeatPenalty    ?? 1.1,
             systemPrompt:     s.systemPrompt     ?? '',
+            provider:         s.provider         ?? 'lmstudio',
           }
         }
       } catch (err) {
@@ -559,13 +575,30 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   // ── settings:reloadModel ─────────────────────────────────────────
-  // Uses lms CLI: unload --all → load <id> --context-length <N> → ps to confirm.
+  // LM Studio path: uses lms CLI — unload --all → load <id> --context-length <N> → ps to confirm.
+  // Ollama path: just persist settings — no server-side load step needed (Ollama lazy-loads).
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_RELOAD,
     async (_, payload: ReloadModelPayload): Promise<ReloadResult> => {
-      const { modelId, contextLength } = payload
-      console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength}`)
+      const { modelId, contextLength, provider } = payload
+      console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength} provider=${provider ?? 'lmstudio'}`)
 
+      // ── Ollama: no CLI reload needed — just persist settings ──────
+      if (provider === 'ollama') {
+        try {
+          const { writeSettings } = await import('../services/SettingsStore')
+          const patch: Record<string, unknown> = { contextLength, modelId, provider: 'ollama' }
+          if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
+          if (payload.topP            !== undefined) patch.topP            = payload.topP
+          if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
+          if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
+          if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
+          writeSettings(patch as Parameters<typeof writeSettings>[0])
+        } catch { /* non-fatal */ }
+        return { success: true, confirmedCtx: contextLength }
+      }
+
+      // ── LM Studio: use lms CLI ────────────────────────────────────
       const lmsBin = await findLmsBinAsync()
       if (!lmsBin) {
         return {
@@ -613,6 +646,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           const patch: Record<string, unknown> = {
             contextLength: confirmedCtx ?? contextLength,
             modelId,
+            provider: 'lmstudio',
           }
           if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
           if (payload.topP            !== undefined) patch.topP            = payload.topP
@@ -644,11 +678,33 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   // ── settings:getAvailableModels ──────────────────────────────────
-  // Fetches the list of downloaded models from LM Studio's REST API.
-  // Returns [] when the server is not yet reachable.
+  // Fetches the list of downloaded models from the active backend.
+  // LM Studio: GET /api/v0/models — Returns [] when the server is not yet reachable.
+  // Ollama:    GET /api/tags — { models: [{ name, modified_at, size }] }
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_GET_AVAILABLE_MODELS,
     async (): Promise<AvailableModel[]> => {
+      const { readSettings } = await import('../services/SettingsStore')
+      const { provider } = readSettings()
+
+      if (provider === 'ollama') {
+        try {
+          const res  = await fetch('http://localhost:11434/api/tags')
+          const json = await res.json() as { models?: Array<{ name: string; modified_at?: string }> }
+          return (json.models ?? [])
+            .map((m) => {
+              const id = String(m.name ?? '')
+              const raw = id.split('/').pop()?.split(':')[0] ?? id
+              const displayName = raw.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+              return { id, displayName, state: 'not-loaded' }
+            })
+            .filter((m) => m.id.length > 0)
+        } catch {
+          return []
+        }
+      }
+
+      // LM Studio
       try {
         const res  = await fetch('http://localhost:1234/api/v0/models')
         const json = await res.json() as { data?: Record<string, unknown>[] }
@@ -669,16 +725,26 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── app:initialize ───────────────────────────────────────────────
   // Called by FirstLaunchModal after the user picks a model.
-  // Saves settings, then loads the model via `lms load`.
+  // Saves settings; for LM Studio also runs `lms load`.
+  // For Ollama, no server-side load step is needed (lazy-loaded at inference time).
   ipcMain.handle(
     IPC_CHANNELS.APP_INITIALIZE,
     async (_, payload: AppInitPayload): Promise<ReloadResult> => {
       const { modelId, contextLength } = payload
-      console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength}`)
+      // AppInitPayload may carry a provider field if the UI added it
+      const provider = (payload as AppInitPayload & { provider?: AIProvider }).provider ?? 'lmstudio'
+      console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength} provider=${provider}`)
 
       const { writeSettings } = await import('../services/SettingsStore')
-      writeSettings({ modelId, contextLength })
+      writeSettings({ modelId, contextLength, provider })
 
+      // ── Ollama: no CLI step needed ────────────────────────────────
+      if (provider === 'ollama') {
+        console.log('[App] Ollama provider — skipping lms load, model loads lazily on first inference.')
+        return { success: true, confirmedCtx: contextLength }
+      }
+
+      // ── LM Studio: run lms load ───────────────────────────────────
       const lmsBin = await findLmsBinAsync()
       if (!lmsBin) {
         return { success: false, error: 'lms CLI not found. Ensure LM Studio is installed with the lms command-line tool.' }
@@ -724,4 +790,20 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS, () => ({
     hasEnvKey: !!(process.env.BRAVE_SEARCH_API_KEY?.trim()),
   }))
+
+  // ── settings:setProvider ────────────────────────────────────────
+  // Persists the provider choice to SettingsStore.
+  // ModelConnectionManager reads this on every poll; ChatService reads it per request.
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_SET_PROVIDER,
+    async (_, provider: AIProvider): Promise<void> => {
+      if (provider !== 'lmstudio' && provider !== 'ollama') {
+        console.warn(`[Settings] Unknown provider "${String(provider)}" — ignoring`)
+        return
+      }
+      const { writeSettings } = await import('../services/SettingsStore')
+      writeSettings({ provider })
+      console.log(`[Settings] Provider set to: ${provider}`)
+    }
+  )
 }
