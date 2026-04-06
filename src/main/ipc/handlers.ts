@@ -603,10 +603,17 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           console.log('[Settings] Reload: shutting down LMSDaemonManager (switching to Ollama)…')
           await lmsDaemonManager.shutdown()
           console.log('[Settings] Reload: starting OllamaDaemonManager…')
-          ollamaDaemonManager.start().catch((err: Error) => {
-            console.error('[Settings] OllamaDaemon start error during reload:', err)
-          })
-          modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+          // Chain forcePoll() in .then()/.catch() so it fires only after the
+          // daemon has settled — not before Ollama has had time to start.
+          ollamaDaemonManager.start()
+            .then(() => {
+              console.log('[Settings] Reload: OllamaDaemon ready — triggering forcePoll')
+              modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+            })
+            .catch((err: Error) => {
+              console.error('[Settings] OllamaDaemon start error during reload:', err)
+              modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+            })
         }
 
         return { success: true, confirmedCtx: contextLength }
@@ -759,10 +766,36 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { writeSettings } = await import('../services/SettingsStore')
       writeSettings({ modelId, contextLength, provider })
 
-      // ── Ollama: no CLI step needed ────────────────────────────────
+      // ── Ollama: no CLI step needed — wait for server to be reachable ─
       if (provider === 'ollama') {
-        console.log('[App] Ollama provider — skipping lms load, model loads lazily on first inference.')
-        return { success: true, confirmedCtx: contextLength }
+        console.log('[App] Ollama provider — waiting for Ollama server to be reachable…')
+        // SETTINGS_SET_PROVIDER (called just before this) has already initiated
+        // ollamaDaemonManager.start() in the background. Poll the health endpoint
+        // for up to 20s so onComplete() fires after the connection is actually ready,
+        // not before — preventing "LM Studio Offline" flashes on first launch.
+        const OLLAMA_HEALTH = 'http://localhost:11434/v1/models'
+        const MAX_ATTEMPTS  = 40   // 40 × 500ms = 20s
+        const INTERVAL_MS   = 500
+        let ready = false
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+          try {
+            const r = await fetch(OLLAMA_HEALTH)
+            if (r.ok) { ready = true; break }
+          } catch { /* not up yet */ }
+          await new Promise((r) => setTimeout(r, INTERVAL_MS))
+        }
+        if (ready) {
+          console.log('[App] ✅ Ollama server is reachable — initialization complete')
+          // Trigger a final forcePoll so ConnectionStatus transitions to 'ready'
+          modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+          return { success: true, confirmedCtx: contextLength }
+        } else {
+          console.warn('[App] Ollama server did not become reachable within 20s')
+          return {
+            success: false,
+            error: 'Ollama server did not start in time. Make sure Ollama is installed. You can retry from Settings.',
+          }
+        }
       }
 
       // ── LM Studio: run lms load ───────────────────────────────────
@@ -830,28 +863,43 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       writeSettings({ provider })
       console.log(`[Settings] Provider switching: ${previousProvider} → ${provider}`)
 
-      // Live daemon handoff
+      // Live daemon handoff.
+      // forcePoll() is called inside .then()/.catch() of start() — NOT here —
+      // so the overlay refresh only fires once the daemon has actually settled
+      // (ready or failed). Firing forcePoll() before start() resolves would hit
+      // a server that isn't up yet, show the wrong label, and confuse the user.
       if (provider === 'ollama' && previousProvider !== 'ollama') {
         // Tear down LM Studio, then start Ollama
         console.log('[Settings] Shutting down LMSDaemonManager for provider switch…')
         await lmsDaemonManager.shutdown()
         console.log('[Settings] Starting OllamaDaemonManager for provider switch…')
-        ollamaDaemonManager.start().catch((err: Error) => {
-          console.error('[Settings] OllamaDaemon start error during provider switch:', err)
-        })
+        ollamaDaemonManager.start()
+          .then(() => {
+            console.log('[Settings] OllamaDaemon ready — triggering forcePoll')
+            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+          })
+          .catch((err: Error) => {
+            console.error('[Settings] OllamaDaemon start error during provider switch:', err)
+            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+          })
       } else if (provider === 'lmstudio' && previousProvider !== 'lmstudio') {
         // Tear down Ollama, then start LM Studio with the saved model
         console.log('[Settings] Shutting down OllamaDaemonManager for provider switch…')
         await ollamaDaemonManager.shutdown()
         const { modelId } = readSettings()
         console.log('[Settings] Starting LMSDaemonManager for provider switch…')
-        lmsDaemonManager.start(modelId ?? undefined).catch((err: Error) => {
-          console.error('[Settings] LMSDaemon start error during provider switch:', err)
-        })
+        lmsDaemonManager.start(modelId ?? undefined)
+          .then(() => {
+            console.log('[Settings] LMSDaemon ready — triggering forcePoll')
+            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+          })
+          .catch((err: Error) => {
+            console.error('[Settings] LMSDaemon start error during provider switch:', err)
+            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+          })
       }
-
-      // Force an immediate connection status re-check so the overlay updates
-      modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
+      // NOTE: no standalone forcePoll() here — the .then()/.catch() handles it
+      // once the daemon has actually settled.
     }
   )
 }

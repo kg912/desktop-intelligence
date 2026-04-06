@@ -102,7 +102,17 @@ export class ModelConnectionManager extends EventEmitter {
     // Reset failure streak — the user explicitly asked to recheck,
     // so treat this as the first attempt from a clean slate.
     this.consecutiveFailures = 0
-    this.transitionTo('connecting')
+
+    // Read current provider so the 'connecting' overlay shows the right label.
+    // Matches the require pattern already used in getHealthUrl() and start().
+    let currentProvider: AIProvider = 'lmstudio'
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { readSettings } = require('../services/SettingsStore') as { readSettings: () => { provider?: string } }
+      if (readSettings().provider === 'ollama') currentProvider = 'ollama'
+    } catch { /* use default */ }
+
+    this.transitionTo('connecting', null, null, currentProvider)
     await this.poll()
     return this.getState()
   }
