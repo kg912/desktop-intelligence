@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to run this manually from the "Actions" tab
 
 permissions:
   contents: write
@@ -11,7 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,25 +18,34 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.16.0' 
           cache: 'npm'
 
+      - name: Debug Environment Versions
+        run: |
+          echo "Checking Node version..."
+          node -v
+          echo "Checking NPM version..."
+          npm -v
+
       - name: Install dependencies
+        # We use 'npm ci' for speed and consistency. 
+        # If this fails, run 'npm install' locally and push the lockfile.
         run: npm ci
 
-      - name: Package app
+      - name: Package Electron App
         run: npm run package
         env:
-          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: 'true'
+          ELECTRON_BUILDER_UNRESOLVED_DEPENDENCIES: 'true'
 
-      - name: Upload DMG to latest release
+      - name: Upload DMG to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Latest Build
           body: |
             Automatically updated on every push to main.
-            Built from commit ${{ github.sha }} on ${{ github.event.head_commit.timestamp }}.
+            Built from commit ${{ github.sha }} at ${{ github.event.head_commit.timestamp }}
           prerelease: false
           make_latest: true
           files: dist/*.dmg
