@@ -235,6 +235,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     // BASE_SYSTEM_PROMPT and date injection are assembled by ChatService.buildMessages().
     // handlers.ts must NOT add them here — they would be duplicated in every request.
     const systemParts: string[] = []
+    // Prepend the global system prompt (saved in settings) as the first layer.
+    // Per-message systemPrompt (e.g. from the frontend) appends on top.
+    try {
+      const { readSettings } = await import('../services/SettingsStore')
+      const { systemPrompt: savedSysPrompt } = readSettings()
+      if (savedSysPrompt?.trim()) systemParts.unshift(savedSysPrompt.trim())
+    } catch { /* non-fatal */ }
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
 
     // ── 1. Routing guard: check if this chat has local documents ──
@@ -497,11 +504,19 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       // so this is the most reliable source — no lms ps parsing needed.
       try {
         const { readSettings } = await import('../services/SettingsStore')
-        const { contextLength: savedCtx, modelId: savedModelId } = readSettings()
-        if (savedCtx && savedCtx > 0) {
-          const modelId = savedModelId ?? DEFAULT_MODEL_ID
-          console.log(`[Settings] From SettingsStore: modelId="${modelId}" contextLength=${savedCtx}`)
-          return { modelId, contextLength: savedCtx }
+        const s = readSettings()
+        if (s.contextLength && s.contextLength > 0) {
+          const modelId = s.modelId ?? DEFAULT_MODEL_ID
+          console.log(`[Settings] From SettingsStore: modelId="${modelId}" contextLength=${s.contextLength}`)
+          return {
+            modelId,
+            contextLength:    s.contextLength,
+            temperature:      s.temperature      ?? 0.7,
+            topP:             s.topP             ?? 0.95,
+            maxOutputTokens:  s.maxOutputTokens  ?? 16384,
+            repeatPenalty:    s.repeatPenalty    ?? 1.1,
+            systemPrompt:     s.systemPrompt     ?? '',
+          }
         }
       } catch (err) {
         console.warn('[Settings] SettingsStore read failed:', (err as Error).message)
@@ -595,7 +610,16 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         // LMSDaemonManager reads this and passes --context-length on `lms load`.
         try {
           const { writeSettings } = await import('../services/SettingsStore')
-          writeSettings({ contextLength: confirmedCtx ?? contextLength, modelId })
+          const patch: Record<string, unknown> = {
+            contextLength: confirmedCtx ?? contextLength,
+            modelId,
+          }
+          if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
+          if (payload.topP            !== undefined) patch.topP            = payload.topP
+          if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
+          if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
+          if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
+          writeSettings(patch as Parameters<typeof writeSettings>[0])
         } catch { /* non-fatal */ }
 
         console.log(

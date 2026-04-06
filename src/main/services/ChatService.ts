@@ -863,11 +863,14 @@ export class ChatService {
           ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
           : { thinking: { type: 'disabled' } }
 
+        const { temperature, topP, maxOutputTokens, repeatPenalty } = readSettings()
         const streamBody = JSON.stringify({
           model: modelId,
           messages: currentMessages,
-          temperature: 0.7,
-          max_tokens: isThinking ? 32768 : 16384,
+          temperature:    temperature    ?? 0.7,
+          top_p:          topP           ?? 0.95,
+          max_tokens:     maxOutputTokens ?? 16384,
+          repeat_penalty: repeatPenalty  ?? 1.1,
           stop: STOP_SEQUENCES,
           ...step2ThinkingField,
           stream: true,

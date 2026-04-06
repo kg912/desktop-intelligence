@@ -27,6 +27,16 @@ export interface AppSettings {
   braveSearchApiKey?:  string
   /** Maximum number of mid-stream search rounds before forcing a final answer. Default: 4. */
   maxSearchLoops?: number
+  /** LM Studio generation temperature (0–2). Default: 0.7 */
+  temperature?: number
+  /** Nucleus sampling top-p (0–1). Default: 0.95 */
+  topP?: number
+  /** Max output tokens for Step 2 stream body. Default: 16384 */
+  maxOutputTokens?: number
+  /** Repetition penalty (1.0–1.5). Default: 1.1 */
+  repeatPenalty?: number
+  /** Global system prompt prepended to every request. Default: '' */
+  systemPrompt?: string
 }
 
 function settingsPath(): string {

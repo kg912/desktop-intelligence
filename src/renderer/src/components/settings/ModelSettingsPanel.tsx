@@ -16,17 +16,36 @@ function fmtCtx(n: number): string {
 export function ModelSettingsPanel() {
   const { setSelectedModel } = useModelStore()
 
-  const [fetchedCtx,      setFetchedCtx]      = useState<number | null>(null)
-  const [fetchedModel,    setFetchedModel]    = useState<string>('')
-  const [draftCtx,        setDraftCtx]        = useState<number>(32768)
-  const [draftModel,      setDraftModel]      = useState<string>('')
-  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([])
-  const [loading,         setLoading]         = useState(false)
-  const [reloading,       setReloading]       = useState(false)
-  const [result,          setResult]          = useState<{ ok: boolean; msg: string } | null>(null)
+  const [fetchedCtx,          setFetchedCtx]          = useState<number | null>(null)
+  const [fetchedModel,        setFetchedModel]        = useState<string>('')
+  const [draftCtx,            setDraftCtx]            = useState<number>(32768)
+  const [draftModel,          setDraftModel]          = useState<string>('')
+  const [availableModels,     setAvailableModels]     = useState<AvailableModel[]>([])
+  const [loading,             setLoading]             = useState(false)
+  const [reloading,           setReloading]           = useState(false)
+  const [result,              setResult]              = useState<{ ok: boolean; msg: string } | null>(null)
 
-  const changed = fetchedCtx !== null &&
-    (draftCtx !== fetchedCtx || draftModel !== fetchedModel)
+  const [draftTemp,           setDraftTemp]           = useState(0.7)
+  const [draftTopP,           setDraftTopP]           = useState(0.95)
+  const [draftMaxTokens,      setDraftMaxTokens]      = useState(16384)
+  const [draftRepeatPenalty,  setDraftRepeatPenalty]  = useState(1.1)
+  const [draftSysPrompt,      setDraftSysPrompt]      = useState('')
+
+  const [fetchedTemp,         setFetchedTemp]         = useState(0.7)
+  const [fetchedTopP,         setFetchedTopP]         = useState(0.95)
+  const [fetchedMaxTokens,    setFetchedMaxTokens]    = useState(16384)
+  const [fetchedRepeatPenalty,setFetchedRepeatPenalty]= useState(1.1)
+  const [fetchedSysPrompt,    setFetchedSysPrompt]    = useState('')
+
+  const changed = fetchedCtx !== null && (
+    draftCtx           !== fetchedCtx           ||
+    draftModel         !== fetchedModel         ||
+    draftTemp          !== fetchedTemp          ||
+    draftTopP          !== fetchedTopP          ||
+    draftMaxTokens     !== fetchedMaxTokens     ||
+    draftRepeatPenalty !== fetchedRepeatPenalty ||
+    draftSysPrompt     !== fetchedSysPrompt
+  )
 
   useEffect(() => {
     setLoading(true)
@@ -35,18 +54,24 @@ export function ModelSettingsPanel() {
       window.api.getAvailableModels(),
     ])
       .then(([cfg, models]) => {
-        const ctx = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
-        setFetchedCtx(ctx)
-        setFetchedModel(cfg.modelId)
-        setDraftCtx(ctx)
-        setDraftModel(cfg.modelId)
+        const ctx  = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
+        const temp = cfg.temperature     ?? 0.7
+        const tp   = cfg.topP            ?? 0.95
+        const mt   = cfg.maxOutputTokens ?? 16384
+        const rp   = cfg.repeatPenalty   ?? 1.1
+        const sp   = cfg.systemPrompt    ?? ''
+        setFetchedCtx(ctx);     setDraftCtx(ctx)
+        setFetchedModel(cfg.modelId); setDraftModel(cfg.modelId)
+        setFetchedTemp(temp);   setDraftTemp(temp)
+        setFetchedTopP(tp);     setDraftTopP(tp)
+        setFetchedMaxTokens(mt); setDraftMaxTokens(mt)
+        setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
+        setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
         setAvailableModels(models)
       })
       .catch(() => {
-        setFetchedCtx(32768)
-        setFetchedModel('unknown')
-        setDraftCtx(32768)
-        setDraftModel('unknown')
+        setFetchedCtx(32768);   setDraftCtx(32768)
+        setFetchedModel('unknown'); setDraftModel('unknown')
         setAvailableModels([])
       })
       .finally(() => setLoading(false))
@@ -57,13 +82,24 @@ export function ModelSettingsPanel() {
     setReloading(true)
     setResult(null)
     try {
-      const res = await window.api.reloadModel({ modelId: draftModel, contextLength: draftCtx })
+      const res = await window.api.reloadModel({
+        modelId:          draftModel,
+        contextLength:    draftCtx,
+        temperature:      draftTemp,
+        topP:             draftTopP,
+        maxOutputTokens:  draftMaxTokens,
+        repeatPenalty:    draftRepeatPenalty,
+        systemPrompt:     draftSysPrompt,
+      })
       if (res.success) {
         const actual = res.confirmedCtx ?? draftCtx
-        setFetchedCtx(actual)
-        setDraftCtx(actual)
-        setFetchedModel(draftModel)
-        setSelectedModel(draftModel)
+        setFetchedCtx(actual);        setDraftCtx(actual)
+        setFetchedModel(draftModel);  setSelectedModel(draftModel)
+        setFetchedTemp(draftTemp)
+        setFetchedTopP(draftTopP)
+        setFetchedMaxTokens(draftMaxTokens)
+        setFetchedRepeatPenalty(draftRepeatPenalty)
+        setFetchedSysPrompt(draftSysPrompt)
         const msg = res.confirmedCtx && res.confirmedCtx !== draftCtx
           ? `Model reloaded. LM Studio reports ${fmtCtx(actual)} context (requested ${fmtCtx(draftCtx)}).`
           : `Model reloaded with ${fmtCtx(actual)} context.`
@@ -76,7 +112,7 @@ export function ModelSettingsPanel() {
     } finally {
       setReloading(false)
     }
-  }, [changed, reloading, draftModel, draftCtx, setSelectedModel])
+  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setSelectedModel])
 
   return (
     <div className="space-y-6">
@@ -179,6 +215,129 @@ export function ModelSettingsPanel() {
               {fmtCtx(p)}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Generation Parameters */}
+      <div>
+        <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted mb-3">
+          Generation Parameters
+        </p>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+          {/* Temperature */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-content-secondary">Temperature</span>
+              <span className="text-xs text-content-secondary font-mono">{draftTemp.toFixed(2)}</span>
+            </div>
+            <input
+              type="range" min={0} max={2} step={0.05}
+              value={draftTemp}
+              disabled={loading || reloading}
+              onChange={(e) => setDraftTemp(Number(e.target.value))}
+              className="w-full accent-red-700 disabled:opacity-40"
+              style={{ cursor: loading || reloading ? 'not-allowed' : 'pointer' }}
+            />
+            <div className="flex justify-between mt-0.5">
+              <span className="text-[10px] text-content-muted">0</span>
+              <span className="text-[10px] text-content-muted">2</span>
+            </div>
+          </div>
+
+          {/* Top P */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-content-secondary">Top P</span>
+              <span className="text-xs text-content-secondary font-mono">{draftTopP.toFixed(2)}</span>
+            </div>
+            <input
+              type="range" min={0} max={1} step={0.01}
+              value={draftTopP}
+              disabled={loading || reloading}
+              onChange={(e) => setDraftTopP(Number(e.target.value))}
+              className="w-full accent-red-700 disabled:opacity-40"
+              style={{ cursor: loading || reloading ? 'not-allowed' : 'pointer' }}
+            />
+            <div className="flex justify-between mt-0.5">
+              <span className="text-[10px] text-content-muted">0</span>
+              <span className="text-[10px] text-content-muted">1</span>
+            </div>
+          </div>
+
+          {/* Max Output Tokens */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-content-secondary">Max Output Tokens</span>
+            </div>
+            <input
+              type="number" min={512} max={65536} step={512}
+              value={draftMaxTokens}
+              disabled={loading || reloading}
+              onChange={(e) => {
+                const v = Math.max(512, Math.min(65536, Number(e.target.value) || 512))
+                setDraftMaxTokens(v)
+              }}
+              className="w-full px-3 py-2 rounded-lg text-sm font-mono text-center focus:outline-none disabled:opacity-40 transition-colors duration-100"
+              style={{ background: '#111', color: '#f5f5f5', border: '1px solid #3a3a3a' }}
+            />
+            <div className="flex justify-between mt-0.5">
+              <span className="text-[10px] text-content-muted">512</span>
+              <span className="text-[10px] text-content-muted">65536</span>
+            </div>
+          </div>
+
+          {/* Repeat Penalty */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-content-secondary">Repeat Penalty</span>
+              <span className="text-xs text-content-secondary font-mono">{draftRepeatPenalty.toFixed(2)}</span>
+            </div>
+            <input
+              type="range" min={1.0} max={1.5} step={0.01}
+              value={draftRepeatPenalty}
+              disabled={loading || reloading}
+              onChange={(e) => setDraftRepeatPenalty(Number(e.target.value))}
+              className="w-full accent-red-700 disabled:opacity-40"
+              style={{ cursor: loading || reloading ? 'not-allowed' : 'pointer' }}
+            />
+            <div className="flex justify-between mt-0.5">
+              <span className="text-[10px] text-content-muted">1.0</span>
+              <span className="text-[10px] text-content-muted">1.5</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* System Prompt */}
+      <div>
+        <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted mb-2">
+          System Prompt
+        </p>
+        <div className="relative">
+          <textarea
+            value={draftSysPrompt}
+            disabled={loading || reloading}
+            placeholder="You are a helpful assistant…"
+            maxLength={6000}
+            onChange={(e) => {
+              const v = e.target.value.slice(0, 6000)
+              setDraftSysPrompt(v)
+            }}
+            className="w-full px-3 py-2.5 rounded-lg text-xs text-content-secondary leading-relaxed focus:outline-none disabled:opacity-40 resize-y transition-colors duration-100 placeholder:text-content-muted"
+            style={{
+              background:    '#111',
+              border:        '1px solid #3a3a3a',
+              minHeight:     '120px',
+              fontFamily:    'inherit',
+            }}
+          />
+          <span
+            className={`absolute bottom-2 right-2.5 text-[10px] pointer-events-none select-none ${
+              draftSysPrompt.length >= 6000 ? 'text-red-500' : 'text-content-muted'
+            }`}
+          >
+            {draftSysPrompt.length} / 6000
+          </span>
         </div>
       </div>
 

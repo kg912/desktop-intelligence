@@ -205,13 +205,23 @@ export interface LMStudioModelsResponse {
 
 // --- Settings: model config ---
 export interface ModelConfig {
-  modelId:       string   // e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"
-  contextLength: number   // current n_ctx
+  modelId:          string   // e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"
+  contextLength:    number   // current n_ctx
+  temperature?:     number
+  topP?:            number
+  maxOutputTokens?: number
+  repeatPenalty?:   number
+  systemPrompt?:    string
 }
 
 export interface ReloadModelPayload {
-  modelId:       string
-  contextLength: number
+  modelId:          string
+  contextLength:    number
+  temperature?:     number
+  topP?:            number
+  maxOutputTokens?: number
+  repeatPenalty?:   number
+  systemPrompt?:    string
 }
 
 export interface ReloadResult {
