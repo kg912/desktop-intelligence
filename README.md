@@ -2,7 +2,7 @@
 
 > **Local Inference. Zero Latency.**
 
-A native macOS desktop chat application that runs large language models entirely on your machine via [LM Studio](https://lmstudio.ai/). No cloud. No API keys. Full privacy.
+A native macOS desktop chat application that runs large language models entirely on your machine via [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/). No cloud. No API keys. Full privacy.
 
 ---
 
@@ -31,12 +31,17 @@ This project was built for **personal use and learning** on the author's own har
 
 ## What is this?
 
-Built for **Apple Silicon** (M-series), powered by [LM Studio](https://lmstudio.ai/). Works with **any model you have downloaded in LM Studio** — pick it from a dropdown on first launch. Fully offline — everything runs on your machine.
+Built for **Apple Silicon** (M-series). Supports two AI backends — pick whichever you prefer:
 
-Tested with `mlx-community/Qwen3.5-35B-A3B-6bit`, sustaining **~71 tokens/second** on an M5 Pro.
+- **[LM Studio](https://lmstudio.ai/)** — recommended for MLX models and maximum performance on Apple Silicon. Requires the `lms` CLI.
+- **[Ollama](https://ollama.com/)** — simpler setup, great model library, no CLI configuration needed.
 
-- 📋 **[Full Feature List →](FEATURES.md)** — chat, RAG, visualizations, diagrams, math rendering, thinking mode, and more
-- 🚀 **[Installation Guide →](INSTALLATION.md)** — install LM Studio, download a model, and get running in minutes
+Works with **any model you have downloaded** in either backend — pick it from a dropdown on first launch or switch at any time in Settings. Fully offline — everything runs on your machine.
+
+Tested with `mlx-community/Qwen3.5-35B-A3B-6bit` via LM Studio, sustaining **~71 tokens/second** on an M5 Pro. Gemma 4 (`google/gemma-4-26b-a4b`) is the current top pick for reasoning and vision.
+
+- 📋 **[Full Feature List →](FEATURES.md)** — chat, RAG, visualizations, diagrams, math rendering, thinking mode, web search, and more
+- 🚀 **[Installation Guide →](INSTALLATION.md)** — choose your backend (LM Studio or Ollama), download a model, and get running in minutes
 - 📝 **[Changelog →](CHANGELOG.md)** — what's new in each release
 
 ---
@@ -47,7 +52,7 @@ Tested with `mlx-community/Qwen3.5-35B-A3B-6bit`, sustaining **~71 tokens/second
 
 ![First-launch model selector](app_images/setup_screen_model_selector_form.png)
 
-On first launch, choose any model you have downloaded in LM Studio and set your initial context window. Your selection is saved and applied automatically on every subsequent launch.
+On first launch, choose your AI backend (LM Studio or Ollama), select any model you have downloaded, and set your initial context window. Your selection is saved and applied automatically on every subsequent launch.
 
 > ⚠️ **RAM note:** Large models (35B+) require 48 GB of unified memory or more. Loading a 35B model at 128K context can use 40–55 GB of RAM — other apps will be compressed. On 32 GB machines, stick to 7B–14B parameter models.
 
@@ -67,11 +72,11 @@ Full Markdown rendering with syntax-highlighted code blocks, tables, and task li
 
 Ask the model to plot anything — distributions, decision boundaries, neural network activations, time series. Charts render natively via a `python3` subprocess with `matplotlib`, styled to match the dark UI.
 
-### Settings — Model & Context Length
+### Settings — Model, Provider & Generation Parameters
 
-![Model settings — model selection and context length](app_images/settings_screen_model_selection_and_context_length.png)
+![Model settings — provider, model selection, context length and generation parameters](app_images/settings_screen_model_selection_and_context_length.png)
 
-Switch your active model or adjust the context window at runtime from the full-screen settings panel (⚙️). Your choices persist across restarts.
+Switch between **LM Studio and Ollama** backends, change your active model, adjust the context window, and tune generation parameters (Temperature, Top P, Max Output Tokens, Repeat Penalty) — all from the Settings panel (⚙️). Set a **custom system prompt** to give the model persistent instructions. All choices persist across restarts.
 
 ### Settings — Brave Search MCP
 
@@ -101,7 +106,7 @@ npm test
 npm run package
 ```
 
-The packaged app outputs to `dist/Desktop Intelligence-1.6.0-alpha-1-arm64.dmg`.
+The packaged app outputs to `dist/Desktop Intelligence-<version>-arm64.dmg`.
 
 ---
 
@@ -116,8 +121,8 @@ The packaged app outputs to `dist/Desktop Intelligence-1.6.0-alpha-1-arm64.dmg`.
 | Diagrams | Mermaid 11 (native SVG) |
 | Syntax highlighting | highlight.js |
 | Database | better-sqlite3 (SQLite) |
-| AI backend | LM Studio (`/v1/chat/completions`, OpenAI-compatible SSE) |
-| Visualizations | matplotlib via python3 subprocess |
+| AI backend | LM Studio or Ollama (`/v1/chat/completions`, OpenAI-compatible SSE) |
+| Visualizations | matplotlib via persistent python3 worker |
 | Web search | Brave Search API (optional MCP tool) |
 | PDF parsing | pdf-parse |
 | Packaging | electron-builder (macOS arm64 DMG) |
@@ -133,15 +138,16 @@ Layout / ChatArea         IPC handlers
 MessageBubble             ├── FileProcessorService  (PDF → SQLite)
 MarkdownRenderer          ├── RAGService            (SQLite full-text retrieval)
   ├── MermaidBlock        ├── ChatService           (SSE streaming → renderer)
-  └── MatplotlibBlock     ├── SystemPromptService   (base prompt injection)
+  └── MatplotlibBlock     ├── SystemPromptService   (base prompt + user system prompt)
 InputBar                  ├── DatabaseService       (chat history)
-ModelStore (Context)      └── SettingsStore         (context-length persistence)
+ModelStore (Context)      └── SettingsStore         (all settings persistence)
                           Managers
                           ├── ModelConnectionManager (health polling)
-                          └── LMSDaemonManager       (lms CLI lifecycle)
+                          ├── LMSDaemonManager       (lms CLI lifecycle)
+                          └── OllamaDaemonManager    (ollama CLI lifecycle)
 ```
 
-All heavy work (PDF parsing, database writes, Python rendering, LM Studio API calls) runs in the Electron main process. The renderer is purely presentational and communicates exclusively through typed IPC channels via `contextBridge`.
+All heavy work (PDF parsing, database writes, Python rendering, LM Studio/Ollama API calls) runs in the Electron main process. The renderer is purely presentational and communicates exclusively through typed IPC channels via `contextBridge`.
 
 ---
 
@@ -161,12 +167,12 @@ Key sentinel log lines:
 | `📄 PDF-PARSE EXTRACTED CHARACTERS:` | PDF text extraction succeeded |
 | `[RAG] 🧠 ingestDocument` | Document being written to SQLite |
 | `🔥 VECTOR DB RESULTS COUNT:` | RAG retrieval result count |
-| `🚀 FINAL LM STUDIO PAYLOAD:` | Full JSON sent to LM Studio |
+| `🚀 FINAL LM STUDIO PAYLOAD:` | Full JSON sent to LM Studio / Ollama |
 | `[Python] ✅ matplotlib render OK` | Chart rendered successfully |
-| `[Settings] ✅ Reload complete` | Model reloaded with new context length |
+| `[Settings] ✅ Reload complete` | Model reloaded with new settings |
 
 ---
 
-*v1.6.0-alpha-1 — 2026-04-01*
+*v1.7.4 — 2026-04-07*
 
 Built with [Claude Code](https://claude.ai/claude-code)

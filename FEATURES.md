@@ -132,14 +132,35 @@ LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergenc
 
 ## Settings Panel
 
-Click ⚙️ in the sidebar to open the full-screen settings panel. Three tabs:
+Click ⚙️ in the sidebar to open the full-screen settings panel. Two tabs:
 
 ### Model Tab
-- **Active model** — dropdown listing every model you have downloaded in LM Studio; switch at runtime
-- **Context Length** — slider with preset chips: **4K / 8K / 16K / 32K / 64K / 128K**; custom values via number input
-- **Reload Model** button — active only when model or context length differs from the current loaded value
-- Reload runs `lms unload --all` → `lms load <model> --context-length <N>` via the `lms` CLI (120-second timeout)
-- Your chosen model and context length are saved to `app-settings.json` in `app.getPath('userData')` and applied automatically on every subsequent launch
+
+**AI Provider**
+- Segmented control to switch between **LM Studio** and **Ollama** backends at runtime
+- Switching triggers a daemon handoff: the current backend is shut down and the new one started automatically
+- Available models in the dropdown update immediately to reflect the chosen backend
+
+**Active Model**
+- Dropdown listing every model you have downloaded in the selected backend; switch at runtime
+
+**Context Length**
+- Slider with preset chips: **4K / 8K / 16K / 32K / 64K / 128K**; custom values via number input
+
+**Generation Parameters**
+- **Temperature** — controls response randomness (0 = deterministic, 2 = very random; default 0.7)
+- **Top P** — nucleus sampling threshold (0–1; default 0.95)
+- **Max Output Tokens** — maximum tokens the model generates per response (512–65 536; default 16 384)
+- **Repeat Penalty** — penalises token repetition to reduce loops (1.0–1.5; default 1.1)
+
+**System Prompt**
+- Free-form text field (up to 6 000 characters) prepended to every conversation as a system message
+- Use it to give the model a persistent persona, formatting rules, or domain focus
+- Leave blank to use the app's built-in base prompt
+
+**Reload Model** button — active only when any setting differs from the current loaded value. Reloading takes 30–60 seconds; all chat history is preserved.
+
+All settings are saved to `app-settings.json` in `app.getPath('userData')` and applied automatically on every subsequent launch.
 
 ### Web Search Tab (MCP)
 - Toggle to enable/disable Brave Search
@@ -147,17 +168,14 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Three tabs:
 - Save button with unsaved-changes indicator and save confirmation feedback
 - Live key-status dot: green = active key, amber = no key configured
 
-### About Tab
-- App version and author
-- Link to the changelog
-
 ---
 
 ## Reliability & Safety
 
 ### Daemon Management
-- LM Studio server is auto-launched via the `lms` CLI on app startup
-- Pre-flight check: if LM Studio is already running, `lms server start` is skipped
+- **LM Studio** server is auto-launched via the `lms` CLI on app startup; pre-flight check skips launch if it's already running
+- **Ollama** server is managed via the `ollama` CLI on app startup; if already running it is used directly
+- Switching backends in Settings shuts down the current daemon and starts the new one automatically — no manual restarts needed
 - Exponential-backoff health polling; connection overlay only appears after **two consecutive** failures — a single timeout during GPU-intensive generation is silently absorbed
 
 ### Runaway Generation Protection
@@ -176,10 +194,11 @@ Requires a free [Brave Search API key](https://brave.com/search/api/) configured
 
 - Real-time web search via the **Brave Search API** — fetches live results for time-sensitive queries
 - A **smart trigger heuristic** limits search to queries that genuinely need live data: explicit keywords (`search`, `latest`, `current`, `today`), time-sensitive domains (stock prices, weather, scores, crypto), and proper nouns paired with a recency signal. Knowledge questions, coding help, and PDF chats skip search entirely.
+- **Model decides search scope** — the model determines how many searches to perform based on the complexity of the question. A multi-part question (e.g. "compare the latest iPhone and Galaxy S specs") can trigger multiple targeted searches in a single response; simple factual queries use one.
 - **Two-step request pattern**: a lightweight non-streaming Step 1 (150 token budget, thinking disabled) detects whether the model wants to search; if so, results are injected before streaming the final answer in Step 2
 - For Gemma 4, Step 1 is bypassed — the model reasons during Step 2 streaming and emits a tool call mid-stream if it decides to search, which the app intercepts and handles transparently
 - Format F pipe-delimited tool calls (`<|tool_call>...<tool_call|>`) from Gemma 4 are detected and executed; the raw XML never reaches the UI
-- A **raw tool call fallback parser** handles five additional formats models may emit instead of structured `tool_calls` (XML arg tags, key=value pairs, JSON objects, Qwen function tags, code fences)
+- A **raw tool call fallback parser** handles six additional formats models may emit instead of structured `tool_calls` (XML arg tags, key=value pairs, JSON objects, Qwen function tags, code fences, pipe-delimited)
 - **Search notification UI**: spinner while searching, collapsible pill showing query + up to 5 source links, error card on failure
 - Notifications **persist** — the "Searched the web" pill is saved to SQLite and restored when you re-open a conversation
 - PDF chats never trigger web search — when a document is attached, the RAG pipeline answers the question instead
@@ -207,10 +226,9 @@ Features that are designed but not yet implemented:
 
 - [ ] Multi-document RAG (multiple PDFs in the same chat)
 - [ ] Conversation export (PDF / Markdown)
-- [ ] System prompt customisation UI
-- [ ] Web search results with source citations
+- [ ] Web search results with inline source citations
 - [ ] Keyboard shortcuts (Cmd+K for new chat, etc.)
 
 ---
 
-*Last updated: 2026-04-05 — v1.6.0*
+*Last updated: 2026-04-07 — v1.7.4*
