@@ -16,7 +16,7 @@ import type { WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
 import type { GenerationStats, ChatSendPayload, WireMessage } from '../../shared/types'
 import { readSettings } from './SettingsStore'
-import { braveSearch, formatSearchResults, resolveBraveApiKey } from './BraveSearchService'
+import { braveSearch, formatSearchResults, augmentAndFormatResults, resolveBraveApiKey } from './BraveSearchService'
 import { BASE_SYSTEM_PROMPT } from './SystemPromptService'
 import { countTokens } from './tokenUtils'
 
@@ -603,8 +603,8 @@ async function executeSearchQueries(
       if (results.length > 0) {
         allResults.push(...results)
         const section = deduped.length > 1
-          ? `## Results for: "${query}"\n${formatSearchResults(results)}`
-          : formatSearchResults(results)
+          ? `## Results for: "${query}"\n${await augmentAndFormatResults(results)}`
+          : await augmentAndFormatResults(results)
         resultSections.push(section)
         console.log(`[MCP] ✅ Search "${query}" returned ${results.length} results`)
       }
