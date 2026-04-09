@@ -56,6 +56,8 @@ export const STOP_SEQUENCES = [
   '<|endoftext|>',
   'Final Answer: Your final answer here',
   'Your final answer here',
+  '<tool_call|>',   // Gemma 4 pipe-delimited tool call closer
+  '<|tool_call>',   // Gemma 4 pipe-delimited tool call opener
 ]
 
 /**
@@ -608,9 +610,13 @@ function stripLeadingThinkClose(content: string): string {
   // Do NOT trimStart() — that would eat "\n\n" chunks (paragraph/code-block
   // separators sent as whitespace-only deltas), merging all text together.
   // Handles both Qwen3 </think> and Gemma 4 <channel|> orphaned close tags.
+  // Also strips a complete leading <think>...</think> block — occurs when Gemma
+  // emits the full think block in the very first delta chunk (inline format,
+  // not via reasoning_content) which would otherwise render as visible text.
   return content
     .replace(/^<\/think>\s*/i, '')
     .replace(/^<channel\|>\s*/i, '')
+    .replace(/^<think>[\s\S]*?<\/think>\s*/i, '')  // strip complete leading think block
 }
 
 // Vision content parts (OpenAI-compatible multimodal format)
@@ -1150,16 +1156,16 @@ export class ChatService {
                 this.abort()
                 loopAborted = true
 
-                // Think-flash fix: send only the text that appeared BEFORE the
-                // <think> block to the renderer.  patchedCleaned (which contains
-                // the partial reasoning) is still used for currentMessages so the
-                // model sees its own prior reasoning in the LM Studio context.
-                const thinkStart = patchedCleaned.indexOf('<think>')
-                const retractedClean = thinkStart > 0
-                  ? patchedCleaned.slice(0, thinkStart).trim()
-                  : thinkStart === 0 ? '' : patchedCleaned
+                // Strip think blocks from the visible portion sent to renderer.
+                // When Gemma emits <think>...</think> inline (not via reasoning_content),
+                // the entire block must be removed before forwarding to the renderer —
+                // it should only appear in the thought accordion, not the message body.
+                // patchedCleaned (with the think block) is still used for currentMessages
+                // so the model retains its prior reasoning in LM Studio context.
+                const thinkStripPattern = /<think>[\s\S]*?<\/think>\s*/gi
+                const visibleCleaned = patchedCleaned.replace(thinkStripPattern, '').trim()
 
-                send(IPC_CHANNELS.CHAT_STREAM_RETRACT, retractedClean)
+                send(IPC_CHANNELS.CHAT_STREAM_RETRACT, visibleCleaned)
                 send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: midQuery })
 
                 let midStreamResult: string
