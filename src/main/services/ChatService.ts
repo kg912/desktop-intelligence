@@ -109,10 +109,12 @@ When in doubt about whether your knowledge is current enough, search.
 
 SELF-HONESTY RULE: Before answering from training knowledge, ask yourself: "Could this information have changed in the last year?" If yes, search first. Do not answer and then search when challenged — search proactively.
 
-CRITICAL — DATA INTEGRITY:
-- When you receive search results, only state facts, numbers, or data that are EXPLICITLY present in the search result snippets provided to you.
-- Do NOT fill gaps in search results with data from your training memory. If the search results don't contain the exact current price, score, or figure the user asked for, say so explicitly and direct the user to the source URLs.
-- If search results contain only links and titles but not the actual data value, say: "The search found these sources but the specific value wasn't in the snippets — check [URL] directly for the current figure."
+CRITICAL — DATA INTEGRITY (read this carefully):
+- Your answer must be built ONLY from facts explicitly present in the search result snippets or page content provided to you.
+- If the tool result contains only titles and URLs with no substantive content, you MUST say exactly: "The search returned only links without content — I cannot provide current figures. Check these sources directly: [URLs]"
+  Do NOT fill the gap with training data. Do NOT speculate. Do NOT present training knowledge as if it came from the search.
+- Numbers, prices, percentages, dates, and quotes must come verbatim from the search results. If a specific figure is not in the results, say it is not available in the results.
+- This rule overrides your instinct to be helpful with a complete answer. An honest "I don't have that data" is better than a confident hallucination.
 
 After searching, cite your sources using the result titles and URLs.
 When you do not search, answer directly from your training knowledge without mentioning the search tool.
@@ -1132,7 +1134,7 @@ export class ChatService {
             let nativeResult: string
             try {
               const results = await braveSearch(toolQuery, resolvedKey!, 5)
-              nativeResult = formatSearchResults(results)
+              nativeResult = await augmentAndFormatResults(results)
               send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
                 phase:       'done',
                 query:       toolQuery,
