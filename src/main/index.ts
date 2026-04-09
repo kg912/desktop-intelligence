@@ -10,7 +10,6 @@ import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
-import { ollamaDaemonManager } from './managers/OllamaDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
@@ -56,14 +55,7 @@ async function gracefulShutdown(): Promise<void> {
   modelConnectionManager.stop()
   pythonWorker.stop()
 
-  // Kill child processes and stop LM Studio server / Ollama server
-  const { readSettings } = await import('./services/SettingsStore')
-  const { provider } = readSettings()
-  if (provider === 'ollama') {
-    await ollamaDaemonManager.shutdown()
-  } else {
-    await lmsDaemonManager.shutdown()
-  }
+  await lmsDaemonManager.shutdown()
   console.log('[App] Shutdown complete.')
 }
 
@@ -154,16 +146,9 @@ app.whenReady().then(async () => {
   const { readSettings } = await import('./services/SettingsStore')
   const savedSettings = readSettings()
 
-  // Start the appropriate backend daemon based on the saved provider preference.
-  if (savedSettings.provider === 'ollama') {
-    ollamaDaemonManager.start().catch((err: Error) => {
-      console.error('[App] OllamaDaemon unhandled error:', err)
-    })
-  } else {
-    lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
-      console.error('[App] LMSDaemon unhandled error:', err)
-    })
-  }
+  lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
+    console.error('[App] LMSDaemon unhandled error:', err)
+  })
   modelConnectionManager.start()
 
   // Pre-warm the persistent Python worker so the first chart renders fast.

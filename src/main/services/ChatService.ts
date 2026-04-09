@@ -20,16 +20,8 @@ import { braveSearch, formatSearchResults, resolveBraveApiKey } from './BraveSea
 import { BASE_SYSTEM_PROMPT } from './SystemPromptService'
 import { countTokens } from './tokenUtils'
 
-/**
- * Returns the /v1/chat/completions URL for the currently active provider.
- * Both LM Studio and Ollama expose OpenAI-compatible inference at this path.
- */
-function getChatEndpoint(): string {
-  const { provider } = readSettings()
-  return provider === 'ollama'
-    ? 'http://localhost:11434/v1/chat/completions'
-    : 'http://localhost:1234/v1/chat/completions'
-}
+/** LM Studio OpenAI-compatible completions endpoint. Single source of truth. */
+const LMS_ENDPOINT = 'http://localhost:1234/v1/chat/completions'
 
 // Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true).
 // __DEV_MODE__ is a compile-time constant injected by Rollup define — see globals.d.ts.
@@ -130,10 +122,6 @@ When you have received web search results:
 - Your response to the user must start with the answer directly — never with "Step 1: Analyse…" or similar.
 - Keep your thinking block brief — the search results provide the key facts.
 
-TOOL CALL FORMAT: When you decide to search, use the structured tool_calls mechanism only. Do NOT:
-- Emit multiple queries as a JSON array
-- Wrap the tool call in a code block (\`\`\`brave_web_search ... \`\`\`)
-- Emit raw XML like <tool_call>...</tool_call>
 One search per response. If you need information on multiple topics, pick the most important one.
 `.trim()
 
@@ -394,6 +382,10 @@ function extractQueryFromCodeFenceToolCall(content: string): string | null {
   return null
 }
 
+// FALLBACK ONLY: handles models that ignore the tools array and
+// emit tool call syntax as raw text. With LM Studio native tool
+// calling active this path should rarely fire. Do not remove —
+// it guards against regressions on unknown models.
 /**
  * Mid-stream tool call detection logic.
  * Handles extracting tool queries from incomplete or incorrectly formatted tags during SSE stream decoding.
@@ -781,14 +773,19 @@ export class ChatService {
       && !payload.hasDocuments          // never search when RAG docs are present
       && messageNeedsSearch(userMessageText)
 
+    // Gemma 4 does not honour response_format (json_schema), so Step 1 always fails
+    // and wastes 8-15 seconds. Step 2 with tools: [...] handles search for Gemma via
+    // native delta.tool_calls. Qwen/other models get the fast Step 1 JSON pre-fetch.
+    const isGemmaModel = modelId.toLowerCase().includes('gemma')
+
     try {
       // ── Step 1: Non-streaming round for tool calls (only when shouldAttemptSearch) ──
-      if (shouldAttemptSearch) {
+      if (shouldAttemptSearch && !isGemmaModel) {
         // 4c — Step 1 payload diagnostic
         if (DEBUG) {
           console.log('[DEBUG] Step 1 body:', JSON.stringify(step1Body, null, 2))
         }
-        const r1 = await net.fetch(getChatEndpoint(), {
+        const r1 = await net.fetch(LMS_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(step1Body),
@@ -858,6 +855,10 @@ export class ChatService {
           }
         }
         // action === 'answer' → fall through to Step 2 streaming with no search injected
+      } else if (shouldAttemptSearch && isGemmaModel) {
+        // Gemma: Step 2 native tool_calls handles search.
+        // No Step 1 needed — skip entirely.
+        console.log('[Step1/Gemma] Skipped — native tool calling active')
       }
 
       // ── Step 2: Final streaming request ────────────────────────────
@@ -872,12 +873,7 @@ export class ChatService {
           ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
           : { thinking: { type: 'disabled' } }
 
-        const { temperature, topP, maxOutputTokens, repeatPenalty, provider, contextLength } = readSettings()
-        // Ollama uses `options.num_ctx` to set the context window;
-        // LM Studio ignores this field, so it is safe to include for both.
-        const ollamaOptions = provider === 'ollama' && contextLength
-          ? { options: { num_ctx: contextLength } }
-          : {}
+        const { temperature, topP, maxOutputTokens, repeatPenalty } = readSettings()
         const streamBody = JSON.stringify({
           model: modelId,
           messages: currentMessages,
@@ -887,11 +883,11 @@ export class ChatService {
           repeat_penalty: repeatPenalty  ?? 1.1,
           stop: STOP_SEQUENCES,
           ...step2ThinkingField,
-          ...ollamaOptions,
+          ...(braveEnabled ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: 'auto' } : {}),
           stream: true,
         })
 
-        const response = await net.fetch(getChatEndpoint(), {
+        const response = await net.fetch(LMS_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: streamBody,
@@ -913,7 +909,15 @@ export class ChatService {
         let streamBuffer = ''
         let toolCallIntercepted = false
         let reasoningOpen = false
-        let inPipeToolCall = false  // true while buffering an incomplete <|tool_call>...<tool_call|>
+
+        // Native tool call accumulator — receives chunks from delta.tool_calls[].
+        // LM Studio streams function name + arguments incrementally across multiple
+        // SSE events; we concat argsRaw and execute once the stream is done.
+        let pendingToolCall: {
+          id: string
+          name: string
+          argsRaw: string
+        } | null = null
 
         while (true) {
           if (loopAborted) break
@@ -933,7 +937,17 @@ export class ChatService {
             if (data === '[DONE]') break
 
             let parsed: {
-              choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string }>
+              choices?: Array<{
+                delta?: {
+                  content?: string
+                  reasoning_content?: string
+                  tool_calls?: Array<{
+                    id?: string
+                    function?: { name?: string; arguments?: string }
+                  }>
+                }
+                finish_reason?: string
+              }>
               usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
             }
             try { parsed = JSON.parse(data) } catch { continue }
@@ -946,6 +960,23 @@ export class ChatService {
 
             const deltaContent = parsed.choices?.[0]?.delta?.content ?? ''
             const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning_content ?? ''
+
+            // ── Native tool call accumulation ──────────────────────────────
+            // LM Studio streams function name + arguments across multiple delta events.
+            // Accumulate them here; the actual execution happens after the stream ends.
+            const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls
+            if (deltaToolCalls?.[0] && !toolCallIntercepted) {
+              const tc = deltaToolCalls[0]
+              if (!pendingToolCall) {
+                pendingToolCall = {
+                  id:      tc.id                ?? `call_${Date.now()}`,
+                  name:    tc.function?.name    ?? 'brave_web_search',
+                  argsRaw: tc.function?.arguments ?? '',
+                }
+              } else {
+                pendingToolCall.argsRaw += tc.function?.arguments ?? ''
+              }
+            }
 
             // LM Studio 0.4.9+ routes Gemma 4 thinking tokens into reasoning_content rather
             // than content. Wrap them in <think>...</think> so the existing parseThinkBlocks
@@ -1041,15 +1072,7 @@ export class ChatService {
               }
             }
 
-            // Track whether we are inside an incomplete <|tool_call>...<tool_call|> span.
-            // Once the opening tag appears, hold back from renderer until closing tag arrives
-            // and detectMidStreamToolCall can fire on the complete tag.
-            if (cleanedDelta.includes('<|tool_call>')) inPipeToolCall = true
-            if (inPipeToolCall && streamBuffer.includes('<tool_call|>')) inPipeToolCall = false
-
-            const chunkToSend = inPipeToolCall
-              ? ''
-              : cleanedDelta.replace(/<\|tool_response>/gi, '')
+            const chunkToSend = cleanedDelta.replace(/<\|tool_response>/gi, '')
 
             if (chunkToSend) {
               totalTokens += estimateTokens(chunkToSend)
@@ -1082,6 +1105,73 @@ export class ChatService {
                 }
               }
             }
+          }
+        }
+
+        // ── Native tool call handler (Section 2d) ────────────────────────────
+        // Fires after the SSE stream ends naturally when delta.tool_calls[] was used.
+        // The text-stream interception path above handles models that emit tool calls
+        // as raw text; this path handles the correct structured channel.
+        if (pendingToolCall && !toolCallIntercepted) {
+          let toolQuery = ''
+          try {
+            const tcArgs = JSON.parse(pendingToolCall.argsRaw)
+            toolQuery = typeof tcArgs.query === 'string'
+              ? tcArgs.query
+              : Array.isArray(tcArgs.queries) ? tcArgs.queries[0] ?? '' : ''
+          } catch {
+            // args incomplete or empty — model chose not to search
+          }
+
+          if (toolQuery) {
+            toolCallIntercepted = true
+            console.log(`[MCP] 🔍 Native tool call: "${toolQuery}"`)
+
+            send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'searching', query: toolQuery })
+
+            let nativeResult: string
+            try {
+              const results = await braveSearch(toolQuery, resolvedKey!, 5)
+              nativeResult = formatSearchResults(results)
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
+                phase:       'done',
+                query:       toolQuery,
+                resultCount: results.length,
+                results:     results.slice(0, 5).map(r => ({ title: r.title, url: r.url })),
+              })
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err)
+              nativeResult = `Web search failed: ${errMsg}. Answer from training knowledge.`
+              send(IPC_CHANNELS.WEB_SEARCH_STATUS, { phase: 'error', query: toolQuery, error: errMsg })
+            }
+
+            const toolCallId = pendingToolCall.id
+            currentMessages = [
+              ...currentMessages,
+              {
+                role:       'assistant',
+                content:    null as unknown as string,
+                tool_calls: [{
+                  id:       toolCallId,
+                  type:     'function',
+                  function: {
+                    name:      pendingToolCall.name,
+                    arguments: pendingToolCall.argsRaw,
+                  },
+                }],
+              } as { role: string; content: string },
+              {
+                role:         'tool',
+                tool_call_id: toolCallId,
+                content:      nativeResult,
+              } as { role: string; content: string },
+            ]
+
+            this.controller = new AbortController()
+            searchLoopCount++
+            toolCallRound = true
+            // Don't break — let the outer while loop continue for the
+            // follow-up response with search results injected.
           }
         }
 

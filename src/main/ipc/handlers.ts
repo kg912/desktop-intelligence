@@ -2,7 +2,6 @@ import { ipcMain, WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
 import { modelConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
-import { ollamaDaemonManager } from '../managers/OllamaDaemonManager'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 
@@ -32,7 +31,6 @@ import type {
   AvailableModel,
   AppInitPayload,
   StorePlotPayload,
-  AIProvider,
 } from '../../shared/types'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
@@ -193,29 +191,16 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   // ── Daemon ──────────────────────────────────────────────────
-  ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
-    const { readSettings } = await import('../services/SettingsStore')
-    const { provider } = readSettings()
-    return provider === 'ollama'
-      ? ollamaDaemonManager.getState()
-      : lmsDaemonManager.getState()
-  })
+  ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, (): DaemonState =>
+    lmsDaemonManager.getState()
+  )
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
-    const { readSettings } = await import('../services/SettingsStore')
-    const { provider } = readSettings()
-    if (provider === 'ollama') {
-      await ollamaDaemonManager.retry()
-      return ollamaDaemonManager.getState()
-    }
     await lmsDaemonManager.retry()
     return lmsDaemonManager.getState()
   })
 
   lmsDaemonManager.on('stateChange', (state: DaemonState) =>
-    send(IPC_CHANNELS.DAEMON_STATE_CHANGE, state)
-  )
-  ollamaDaemonManager.on('stateChange', (state: DaemonState) =>
     send(IPC_CHANNELS.DAEMON_STATE_CHANGE, state)
   )
 
@@ -531,7 +516,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
             maxOutputTokens:  s.maxOutputTokens  ?? 16384,
             repeatPenalty:    s.repeatPenalty    ?? 1.1,
             systemPrompt:     s.systemPrompt     ?? '',
-            provider:         s.provider         ?? 'lmstudio',
           }
         }
       } catch (err) {
@@ -575,49 +559,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   // ── settings:reloadModel ─────────────────────────────────────────
-  // LM Studio path: uses lms CLI — unload --all → load <id> --context-length <N> → ps to confirm.
-  // Ollama path: just persist settings — no server-side load step needed (Ollama lazy-loads).
-  // Both paths perform a live daemon handoff when the provider changes.
+  // Uses lms CLI: unload --all → load <id> --context-length <N> → ps to confirm.
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_RELOAD,
     async (_, payload: ReloadModelPayload): Promise<ReloadResult> => {
-      const { modelId, contextLength, provider } = payload
-      console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength} provider=${provider ?? 'lmstudio'}`)
+      const { modelId, contextLength } = payload
+      console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength}`)
 
-      // Read previous provider BEFORE any writes so we can detect a switch
-      const { readSettings, writeSettings } = await import('../services/SettingsStore')
-      const previousProvider = readSettings().provider ?? 'lmstudio'
-
-      // ── Ollama: no CLI reload needed — just persist settings + daemon handoff ──
-      if (provider === 'ollama') {
-        const patch: Record<string, unknown> = { contextLength, modelId, provider: 'ollama' }
-        if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
-        if (payload.topP            !== undefined) patch.topP            = payload.topP
-        if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
-        if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
-        if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
-        try { writeSettings(patch as Parameters<typeof writeSettings>[0]) } catch { /* non-fatal */ }
-
-        // If switching away from LM Studio, tear it down and start Ollama
-        if (previousProvider !== 'ollama') {
-          console.log('[Settings] Reload: shutting down LMSDaemonManager (switching to Ollama)…')
-          await lmsDaemonManager.shutdown()
-          console.log('[Settings] Reload: starting OllamaDaemonManager…')
-          // Chain forcePoll() in .then()/.catch() so it fires only after the
-          // daemon has settled — not before Ollama has had time to start.
-          ollamaDaemonManager.start()
-            .then(() => {
-              console.log('[Settings] Reload: OllamaDaemon ready — triggering forcePoll')
-              modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-            })
-            .catch((err: Error) => {
-              console.error('[Settings] OllamaDaemon start error during reload:', err)
-              modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-            })
-        }
-
-        return { success: true, confirmedCtx: contextLength }
-      }
+      const { readSettings: _rs, writeSettings } = await import('../services/SettingsStore')
 
       // ── LM Studio: use lms CLI ────────────────────────────────────
       const lmsBin = await findLmsBinAsync()
@@ -626,12 +575,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           success: false,
           error:   'lms CLI not found. Ensure LM Studio is installed with the lms command-line tool.',
         }
-      }
-
-      // If switching away from Ollama, tear it down before starting LM Studio
-      if (previousProvider === 'ollama') {
-        console.log('[Settings] Reload: shutting down OllamaDaemonManager (switching to LM Studio)…')
-        await ollamaDaemonManager.shutdown()
       }
 
       try {
@@ -672,7 +615,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           const patch: Record<string, unknown> = {
             contextLength: confirmedCtx ?? contextLength,
             modelId,
-            provider: 'lmstudio',
           }
           if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
           if (payload.topP            !== undefined) patch.topP            = payload.topP
@@ -706,40 +648,16 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   // ── settings:getAvailableModels ──────────────────────────────────
-  // Fetches the list of downloaded models from the active backend.
-  // LM Studio: GET /api/v0/models — Returns [] when the server is not yet reachable.
-  // Ollama:    GET /api/tags — { models: [{ name, modified_at, size }] }
+  // Fetches the list of downloaded models from LM Studio's /api/v0/models endpoint.
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_GET_AVAILABLE_MODELS,
     async (): Promise<AvailableModel[]> => {
-      const { readSettings } = await import('../services/SettingsStore')
-      const { provider } = readSettings()
-
-      if (provider === 'ollama') {
-        try {
-          const res  = await fetch('http://localhost:11434/api/tags')
-          const json = await res.json() as { models?: Array<{ name: string; modified_at?: string }> }
-          return (json.models ?? [])
-            .map((m) => {
-              const id = String(m.name ?? '')
-              const raw = id.split('/').pop()?.split(':')[0] ?? id
-              const displayName = raw.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-              return { id, displayName, state: 'not-loaded' }
-            })
-            .filter((m) => m.id.length > 0)
-        } catch {
-          return []
-        }
-      }
-
-      // LM Studio
       try {
         const res  = await fetch('http://localhost:1234/api/v0/models')
         const json = await res.json() as { data?: Record<string, unknown>[] }
         return (json.data ?? [])
           .map((m) => {
             const id = String(m.id ?? m.modelKey ?? m.identifier ?? '')
-            // Derive a friendly display name: take the last path segment, strip extension
             const raw = id.split('/').pop() ?? id
             const displayName = raw.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
             return { id, displayName, state: String(m.state ?? 'unknown') }
@@ -753,50 +671,15 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── app:initialize ───────────────────────────────────────────────
   // Called by FirstLaunchModal after the user picks a model.
-  // Saves settings; for LM Studio also runs `lms load`.
-  // For Ollama, no server-side load step is needed (lazy-loaded at inference time).
+  // Saves settings and runs `lms load` to load the model.
   ipcMain.handle(
     IPC_CHANNELS.APP_INITIALIZE,
     async (_, payload: AppInitPayload): Promise<ReloadResult> => {
       const { modelId, contextLength } = payload
-      // AppInitPayload may carry a provider field if the UI added it
-      const provider = (payload as AppInitPayload & { provider?: AIProvider }).provider ?? 'lmstudio'
-      console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength} provider=${provider}`)
+      console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength}`)
 
       const { writeSettings } = await import('../services/SettingsStore')
-      writeSettings({ modelId, contextLength, provider })
-
-      // ── Ollama: no CLI step needed — wait for server to be reachable ─
-      if (provider === 'ollama') {
-        console.log('[App] Ollama provider — waiting for Ollama server to be reachable…')
-        // SETTINGS_SET_PROVIDER (called just before this) has already initiated
-        // ollamaDaemonManager.start() in the background. Poll the health endpoint
-        // for up to 20s so onComplete() fires after the connection is actually ready,
-        // not before — preventing "LM Studio Offline" flashes on first launch.
-        const OLLAMA_HEALTH = 'http://localhost:11434/v1/models'
-        const MAX_ATTEMPTS  = 40   // 40 × 500ms = 20s
-        const INTERVAL_MS   = 500
-        let ready = false
-        for (let i = 0; i < MAX_ATTEMPTS; i++) {
-          try {
-            const r = await fetch(OLLAMA_HEALTH)
-            if (r.ok) { ready = true; break }
-          } catch { /* not up yet */ }
-          await new Promise((r) => setTimeout(r, INTERVAL_MS))
-        }
-        if (ready) {
-          console.log('[App] ✅ Ollama server is reachable — initialization complete')
-          // Trigger a final forcePoll so ConnectionStatus transitions to 'ready'
-          modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-          return { success: true, confirmedCtx: contextLength }
-        } else {
-          console.warn('[App] Ollama server did not become reachable within 20s')
-          return {
-            success: false,
-            error: 'Ollama server did not start in time. Make sure Ollama is installed. You can retry from Settings.',
-          }
-        }
-      }
+      writeSettings({ modelId, contextLength })
 
       // ── LM Studio: run lms load ───────────────────────────────────
       const lmsBin = await findLmsBinAsync()
@@ -845,61 +728,4 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     hasEnvKey: !!(process.env.BRAVE_SEARCH_API_KEY?.trim()),
   }))
 
-  // ── settings:setProvider ────────────────────────────────────────
-  // Persists the provider choice AND performs a live daemon handoff so the
-  // switch takes effect immediately without an app restart.
-  ipcMain.handle(
-    IPC_CHANNELS.SETTINGS_SET_PROVIDER,
-    async (_, provider: AIProvider): Promise<void> => {
-      if (provider !== 'lmstudio' && provider !== 'ollama') {
-        console.warn(`[Settings] Unknown provider "${String(provider)}" — ignoring`)
-        return
-      }
-
-      const { writeSettings, readSettings } = await import('../services/SettingsStore')
-      const previousProvider = readSettings().provider ?? 'lmstudio'
-
-      // Persist immediately so ModelConnectionManager's next poll uses the right URL
-      writeSettings({ provider })
-      console.log(`[Settings] Provider switching: ${previousProvider} → ${provider}`)
-
-      // Live daemon handoff.
-      // forcePoll() is called inside .then()/.catch() of start() — NOT here —
-      // so the overlay refresh only fires once the daemon has actually settled
-      // (ready or failed). Firing forcePoll() before start() resolves would hit
-      // a server that isn't up yet, show the wrong label, and confuse the user.
-      if (provider === 'ollama' && previousProvider !== 'ollama') {
-        // Tear down LM Studio, then start Ollama
-        console.log('[Settings] Shutting down LMSDaemonManager for provider switch…')
-        await lmsDaemonManager.shutdown()
-        console.log('[Settings] Starting OllamaDaemonManager for provider switch…')
-        ollamaDaemonManager.start()
-          .then(() => {
-            console.log('[Settings] OllamaDaemon ready — triggering forcePoll')
-            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-          })
-          .catch((err: Error) => {
-            console.error('[Settings] OllamaDaemon start error during provider switch:', err)
-            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-          })
-      } else if (provider === 'lmstudio' && previousProvider !== 'lmstudio') {
-        // Tear down Ollama, then start LM Studio with the saved model
-        console.log('[Settings] Shutting down OllamaDaemonManager for provider switch…')
-        await ollamaDaemonManager.shutdown()
-        const { modelId } = readSettings()
-        console.log('[Settings] Starting LMSDaemonManager for provider switch…')
-        lmsDaemonManager.start(modelId ?? undefined)
-          .then(() => {
-            console.log('[Settings] LMSDaemon ready — triggering forcePoll')
-            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-          })
-          .catch((err: Error) => {
-            console.error('[Settings] LMSDaemon start error during provider switch:', err)
-            modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
-          })
-      }
-      // NOTE: no standalone forcePoll() here — the .then()/.catch() handles it
-      // once the daemon has actually settled.
-    }
-  )
 }

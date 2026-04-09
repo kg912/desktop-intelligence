@@ -19,7 +19,6 @@ import type {
   ReloadResult,
   AvailableModel,
   AppInitPayload,
-  AIProvider,
 } from '../shared/types'
 
 const api = {
@@ -118,10 +117,6 @@ const api = {
 
   initializeApp: (payload: AppInitPayload): Promise<ReloadResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_INITIALIZE, payload),
-
-  // ── Provider selection ───────────────────────────────────────────
-  setProvider: (provider: AIProvider): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_PROVIDER, provider),
 
   // ── MCP / Tool settings ──────────────────────────────────────────
   mcpGetSettings: (): Promise<{ braveEnabled: boolean; braveApiKey: string; maxSearchLoops: number }> =>

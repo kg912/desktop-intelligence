@@ -5,22 +5,10 @@ import type {
   ModelInfo,
   ModelStatus,
   LMStudioModelsResponse,
-  AIProvider
 } from '../../shared/types'
-import { readSettings } from '../services/SettingsStore'
 
-/**
- * Returns the /v1/models health-check URL for the active provider.
- * LM Studio uses port 1234; Ollama uses port 11434 with its OpenAI-compat layer.
- * Both return the same { object: "list", data: [...] } shape.
- * readSettings() is synchronous (readFileSync) — safe to call on every poll tick.
- */
-function getHealthUrl(): string {
-  const { provider } = readSettings()
-  return provider === 'ollama'
-    ? 'http://localhost:11434/v1/models'
-    : 'http://localhost:1234/v1/models'
-}
+/** LM Studio health-check endpoint. Only supported inference runtime. */
+const LMS_HEALTH_URL = 'http://localhost:1234/v1/models'
 
 // Poll aggressively when offline, back off when connected
 const POLL_INTERVAL_OFFLINE_MS  = 3_000   // 3s — quick reconnect detection
@@ -42,7 +30,6 @@ export class ModelConnectionManager extends EventEmitter {
     lastChecked:    null,
     error:          null,
     pollIntervalMs: POLL_INTERVAL_OFFLINE_MS,
-    provider:       'lmstudio'
   }
 
   private pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -71,9 +58,7 @@ export class ModelConnectionManager extends EventEmitter {
   start(): void {
     if (this.isPolling) return
     this.isPolling = true
-    // Use the saved provider so the 'connecting' state carries the right label
-    const initialProvider: AIProvider = readSettings().provider === 'ollama' ? 'ollama' : 'lmstudio'
-    this.transitionTo('connecting', null, null, initialProvider)
+    this.transitionTo('connecting')
     // Immediate first poll, then schedule recurring
     this.poll()
   }
@@ -96,9 +81,7 @@ export class ModelConnectionManager extends EventEmitter {
     // so treat this as the first attempt from a clean slate.
     this.consecutiveFailures = 0
 
-    // Read current provider so the 'connecting' overlay shows the right label.
-    const currentProvider: AIProvider = readSettings().provider === 'ollama' ? 'ollama' : 'lmstudio'
-    this.transitionTo('connecting', null, null, currentProvider)
+    this.transitionTo('connecting')
     await this.poll()
     return this.getState()
   }
@@ -108,13 +91,8 @@ export class ModelConnectionManager extends EventEmitter {
   // ----------------------------------------------------------------
 
   private async poll(): Promise<void> {
-    // Read current provider for URL routing and user-facing error messages.
-    // readSettings() is synchronous — safe to call on every poll tick.
-    const currentProvider: AIProvider = readSettings().provider === 'ollama' ? 'ollama' : 'lmstudio'
-    const backendName = currentProvider === 'ollama' ? 'Ollama' : 'LM Studio'
-
     try {
-      const response = await axios.get<LMStudioModelsResponse>(getHealthUrl(), {
+      const response = await axios.get<LMStudioModelsResponse>(LMS_HEALTH_URL, {
         timeout: HEALTH_CHECK_TIMEOUT_MS,
         headers: { Accept: 'application/json' }
       })
@@ -125,27 +103,22 @@ export class ModelConnectionManager extends EventEmitter {
       const models = response.data?.data ?? []
 
       if (models.length === 0) {
-        // Backend is up but no model is loaded — genuine offline condition
-        // (user action required), show immediately regardless of failure counter.
-        const noModelMsg = currentProvider === 'ollama'
-          ? 'Ollama is running but no model responded. Ensure a model is available via `ollama pull`.'
-          : 'LM Studio is running but no model is loaded. Load a model in LM Studio to continue.'
-        this.transitionTo('offline', null, noModelMsg, currentProvider)
+        this.transitionTo('offline', null,
+          'LM Studio is running but no model is loaded. Load a model in LM Studio to continue.')
       } else {
-        // Pick the first available model
         const modelInfo: ModelInfo = models[0]
-        this.transitionTo('ready', modelInfo, null, currentProvider)
+        this.transitionTo('ready', modelInfo)
       }
     } catch (err) {
       const error = err as AxiosError
-      let message = `Cannot reach ${backendName}.`
+      let message = 'Cannot reach LM Studio.'
 
       if (error.code === 'ECONNREFUSED') {
-        message = `${backendName} server is not running.`
+        message = 'LM Studio server is not running.'
       } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
-        message = `Connection to ${backendName} timed out.`
+        message = 'Connection to LM Studio timed out.'
       } else if (error.response) {
-        message = `${backendName} responded with error ${error.response.status}.`
+        message = `LM Studio responded with error ${error.response.status}.`
       }
 
       this.consecutiveFailures++
@@ -153,13 +126,9 @@ export class ModelConnectionManager extends EventEmitter {
         `[ModelConnection] Poll failed (${this.consecutiveFailures}/${FAILURES_BEFORE_OFFLINE}): ${message}`
       )
 
-      // Only show the offline overlay after N consecutive failures.
-      // A single timeout while the backend is busy generating (e.g. PDF analysis)
-      // is a false positive — silently absorb it and wait for the next poll.
       if (this.consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
-        this.transitionTo('offline', null, message, currentProvider)
+        this.transitionTo('offline', null, message)
       }
-      // else: stay in current state (likely 'ready') until the threshold is hit
     } finally {
       this.scheduleNextPoll()
     }
@@ -181,7 +150,6 @@ export class ModelConnectionManager extends EventEmitter {
     status: ModelStatus,
     modelInfo: ModelInfo | null = null,
     error: string | null = null,
-    provider: AIProvider = 'lmstudio'
   ): void {
     const previousStatus  = this.state.status
     const newModelInfo    = status === 'ready' ? modelInfo : null
@@ -192,7 +160,6 @@ export class ModelConnectionManager extends EventEmitter {
     if (
       status       === previousStatus &&
       newError     === this.state.error &&
-      provider     === this.state.provider &&
       (newModelInfo?.id ?? null) === (this.state.modelInfo?.id ?? null)
     ) {
       // Still update lastChecked so getState() is fresh
@@ -206,7 +173,6 @@ export class ModelConnectionManager extends EventEmitter {
       lastChecked:    Date.now(),
       error:          newError,
       pollIntervalMs: this.state.pollIntervalMs,
-      provider
     }
 
     this.emit('statusChange', this.getState(), previousStatus)

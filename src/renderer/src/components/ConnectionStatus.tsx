@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Wifi, WifiOff, RefreshCw, AlertCircle } from 'lucide-react'
-import type { ModelStatus, AIProvider } from '../../../shared/types'
+import type { ModelStatus } from '../../../shared/types'
 
 // ----------------------------------------------------------------
 // Phase variants for Framer Motion
@@ -47,10 +47,7 @@ function LoadingView() {
   )
 }
 
-function ConnectingView({ provider }: { provider: AIProvider }) {
-  const backendName = provider === 'ollama' ? 'Ollama' : 'LM Studio'
-  const backendPort = provider === 'ollama' ? 'localhost:11434' : 'localhost:1234'
-
+function ConnectingView() {
   return (
     <div className="flex flex-col items-center gap-6">
       {/* Pulsing red orb */}
@@ -71,9 +68,9 @@ function ConnectingView({ provider }: { provider: AIProvider }) {
         </div>
       </div>
       <div className="text-center">
-        <h2 className="text-lg font-semibold text-content-primary">Connecting to {backendName}</h2>
+        <h2 className="text-lg font-semibold text-content-primary">Connecting to LM Studio</h2>
         <p className="text-sm text-content-tertiary mt-1">
-          Polling <span className="font-mono text-content-secondary">{backendPort}</span>
+          Polling <span className="font-mono text-content-secondary">localhost:1234</span>
         </p>
         <motion.div
           className="flex gap-1 justify-center mt-3"
@@ -97,16 +94,11 @@ function ConnectingView({ provider }: { provider: AIProvider }) {
 
 function OfflineView({
   error,
-  provider,
   onRetry
 }: {
-  error:     string | null
-  provider:  AIProvider
-  onRetry:   () => void
+  error:   string | null
+  onRetry: () => void
 }) {
-  const isOllama    = provider === 'ollama'
-  const backendName = isOllama ? 'Ollama' : 'LM Studio'
-
   return (
     <div className="flex flex-col items-center gap-6">
       <motion.div
@@ -119,7 +111,7 @@ function OfflineView({
       </motion.div>
 
       <div className="text-center max-w-xs">
-        <h2 className="text-lg font-semibold text-content-primary">{backendName} Offline</h2>
+        <h2 className="text-lg font-semibold text-content-primary">LM Studio Offline</h2>
         {error && (
           <p className="text-sm text-content-tertiary mt-2 leading-relaxed">{error}</p>
         )}
@@ -128,20 +120,12 @@ function OfflineView({
             <AlertCircle className="w-3 h-3 text-accent-500" />
             Quick fix
           </p>
-          {isOllama ? (
-            <ol className="text-xs text-content-tertiary space-y-1 list-decimal list-inside">
-              <li>Open Terminal</li>
-              <li>Run <span className="font-mono text-content-secondary">ollama serve</span></li>
-              <li>Or install Ollama from <span className="font-mono text-content-secondary">ollama.com</span></li>
-            </ol>
-          ) : (
-            <ol className="text-xs text-content-tertiary space-y-1 list-decimal list-inside">
-              <li>Open LM Studio</li>
-              <li>Go to <span className="font-mono text-content-secondary">Local Server</span> tab</li>
-              <li>Click <span className="font-mono text-content-secondary">Start Server</span></li>
-              <li>Load your model in the Local Server tab</li>
-            </ol>
-          )}
+          <ol className="text-xs text-content-tertiary space-y-1 list-decimal list-inside">
+            <li>Open LM Studio</li>
+            <li>Go to <span className="font-mono text-content-secondary">Local Server</span> tab</li>
+            <li>Click <span className="font-mono text-content-secondary">Start Server</span></li>
+            <li>Load your model in the Local Server tab</li>
+          </ol>
         </div>
       </div>
 
@@ -181,23 +165,9 @@ export function ConnectionStatus({
   error,
   onRetry
 }: ConnectionStatusProps) {
-  // Track the active provider so the overlay shows provider-specific UI.
-  // We subscribe to the same IPC events as useModelConnection so that
-  // provider switches update the overlay without an app restart.
-  const [provider, setProvider] = useState<AIProvider>('lmstudio')
-
-  useEffect(() => {
-    // Get current state (handles page reloads / late mount)
-    window.api.getModelStatus()
-      .then((s) => { if (s.provider) setProvider(s.provider) })
-      .catch(() => { /* non-fatal — stays 'lmstudio' */ })
-
-    // Subscribe to live provider changes
-    const unsubscribe = window.api.onModelStatusChange((s) => {
-      if (s.provider) setProvider(s.provider)
-    })
-    return unsubscribe
-  }, [])
+  // Keep useEffect to satisfy hook rules — but no provider tracking needed.
+  // LM Studio is the only supported inference runtime.
+  useEffect(() => { /* nothing */ }, [])
 
   const isVisible = status !== 'ready'
 
@@ -236,8 +206,8 @@ export function ConnectionStatus({
               style={{ boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03)' }}
             >
               {status === 'loading'    && <LoadingView />}
-              {status === 'connecting' && <ConnectingView provider={provider} />}
-              {status === 'offline'    && <OfflineView error={error} provider={provider} onRetry={onRetry} />}
+              {status === 'connecting' && <ConnectingView />}
+              {status === 'offline'    && <OfflineView error={error} onRetry={onRetry} />}
             </motion.div>
           </AnimatePresence>
 
