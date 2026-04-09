@@ -119,10 +119,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.APP_INITIALIZE, payload),
 
   // ── MCP / Tool settings ──────────────────────────────────────────
-  mcpGetSettings: (): Promise<{ braveEnabled: boolean; braveApiKey: string; maxSearchLoops: number }> =>
+  mcpGetSettings: (): Promise<{ braveEnabled: boolean; braveApiKey: string; maxSearchLoops: number; keepSearchResultsInContext: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_SETTINGS),
 
-  mcpSaveSettings: (patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number }): Promise<void> =>
+  mcpSaveSettings: (patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number; keepSearchResultsInContext?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_SAVE_SETTINGS, patch),
 
   mcpGetEnvKeyStatus: (): Promise<{ hasEnvKey: boolean }> =>

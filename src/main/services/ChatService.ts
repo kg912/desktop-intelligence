@@ -1336,7 +1336,11 @@ export class ChatService {
 
     const processedMsgs = allMsgs.map((m, i) => {
       if (m.role === 'tool' && i < lastUserIdx) {
-        return { ...m, content: '[Previous Search Results for query]' }
+        if (!appSettings.keepSearchResultsInContext) {
+          return { ...m, content: '[Previous Search Results for query]' }
+        }
+        // keepSearchResultsInContext is ON — preserve full content
+        return m
       }
 
       // Topic-anchoring fix: truncate assistant messages from previous search turns.

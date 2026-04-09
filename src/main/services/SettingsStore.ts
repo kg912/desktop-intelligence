@@ -27,6 +27,8 @@ export interface AppSettings {
   braveSearchApiKey?:  string
   /** Maximum number of mid-stream search rounds before forcing a final answer. Default: 4. */
   maxSearchLoops?: number
+  /** When true, previous tool (search result) messages are kept verbatim in context. Default: false. */
+  keepSearchResultsInContext?: boolean
   /** LM Studio generation temperature (0–2). Default: 0.7 */
   temperature?: number
   /** Nucleus sampling top-p (0–1). Default: 0.95 */

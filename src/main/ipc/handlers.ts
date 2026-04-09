@@ -705,21 +705,23 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     return {
-      braveEnabled:   s.braveSearchEnabled ?? false,
-      braveApiKey:    s.braveSearchApiKey  ?? '',
-      maxSearchLoops: s.maxSearchLoops     ?? 4,
+      braveEnabled:                s.braveSearchEnabled         ?? false,
+      braveApiKey:                 s.braveSearchApiKey          ?? '',
+      maxSearchLoops:              s.maxSearchLoops             ?? 4,
+      keepSearchResultsInContext:  s.keepSearchResultsInContext ?? false,
     }
   })
 
   ipcMain.handle(
     IPC_CHANNELS.MCP_SAVE_SETTINGS,
-    async (_, patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number }) => {
+    async (_, patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number; keepSearchResultsInContext?: boolean }) => {
       const { writeSettings } = await import('../services/SettingsStore')
       // Only include defined fields — spreading undefined would erase existing keys
       const cleanPatch: Record<string, unknown> = {}
-      if (patch.braveEnabled    !== undefined) cleanPatch.braveSearchEnabled = patch.braveEnabled
-      if (patch.braveApiKey     !== undefined) cleanPatch.braveSearchApiKey  = patch.braveApiKey
-      if (patch.maxSearchLoops  !== undefined) cleanPatch.maxSearchLoops     = patch.maxSearchLoops
+      if (patch.braveEnabled                 !== undefined) cleanPatch.braveSearchEnabled        = patch.braveEnabled
+      if (patch.braveApiKey                  !== undefined) cleanPatch.braveSearchApiKey         = patch.braveApiKey
+      if (patch.maxSearchLoops               !== undefined) cleanPatch.maxSearchLoops            = patch.maxSearchLoops
+      if (patch.keepSearchResultsInContext   !== undefined) cleanPatch.keepSearchResultsInContext = patch.keepSearchResultsInContext
       writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
     }
   )

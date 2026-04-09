@@ -21,9 +21,9 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export function MCPSettingsPanel() {
   // Persisted values — what's actually saved
-  const [saved, setSaved] = useState({ braveEnabled: false, braveApiKey: '', maxSearchLoops: 4 })
+  const [saved, setSaved] = useState({ braveEnabled: false, braveApiKey: '', maxSearchLoops: 4, keepSearchResultsInContext: false })
   // Draft values — what the user is currently editing
-  const [draft, setDraft] = useState({ braveEnabled: false, braveApiKey: '', maxSearchLoops: 4 })
+  const [draft, setDraft] = useState({ braveEnabled: false, braveApiKey: '', maxSearchLoops: 4, keepSearchResultsInContext: false })
 
   const [showKey, setShowKey] = useState(false)
   const [saving,  setSaving]  = useState(false)
@@ -32,8 +32,8 @@ export function MCPSettingsPanel() {
   useEffect(() => {
     window.api.mcpGetSettings()
       .then(s => {
-        setSaved({ braveEnabled: s.braveEnabled, braveApiKey: s.braveApiKey, maxSearchLoops: s.maxSearchLoops ?? 4 })
-        setDraft({ braveEnabled: s.braveEnabled, braveApiKey: s.braveApiKey, maxSearchLoops: s.maxSearchLoops ?? 4 })
+        setSaved({ braveEnabled: s.braveEnabled, braveApiKey: s.braveApiKey, maxSearchLoops: s.maxSearchLoops ?? 4, keepSearchResultsInContext: s.keepSearchResultsInContext ?? false })
+        setDraft({ braveEnabled: s.braveEnabled, braveApiKey: s.braveApiKey, maxSearchLoops: s.maxSearchLoops ?? 4, keepSearchResultsInContext: s.keepSearchResultsInContext ?? false })
       })
       .catch(console.error)
   }, [])
@@ -41,19 +41,22 @@ export function MCPSettingsPanel() {
   const isDirty = draft.braveEnabled !== saved.braveEnabled
     || draft.braveApiKey !== saved.braveApiKey
     || draft.maxSearchLoops !== saved.maxSearchLoops
+    || draft.keepSearchResultsInContext !== saved.keepSearchResultsInContext
 
   const handleToggle = (v: boolean) => setDraft(d => ({ ...d, braveEnabled: v }))
   const handleKeyChange = (v: string) => setDraft(d => ({ ...d, braveApiKey: v }))
   const handleLoopsChange = (v: number) => setDraft(d => ({ ...d, maxSearchLoops: v }))
+  const handleKeepResultsChange = (v: boolean) => setDraft(d => ({ ...d, keepSearchResultsInContext: v }))
 
   const handleSave = async () => {
     setSaving(true)
     setSaveMsg(null)
     try {
       await window.api.mcpSaveSettings({
-        braveEnabled:   draft.braveEnabled,
-        braveApiKey:    draft.braveApiKey,
-        maxSearchLoops: draft.maxSearchLoops,
+        braveEnabled:               draft.braveEnabled,
+        braveApiKey:                draft.braveApiKey,
+        maxSearchLoops:             draft.maxSearchLoops,
+        keepSearchResultsInContext: draft.keepSearchResultsInContext,
       })
       setSaved({ ...draft })
       setSaveMsg('saved')
@@ -187,6 +190,29 @@ export function MCPSettingsPanel() {
               )}
             </div>
 
+            {/* Prior search results in context */}
+            <div className="space-y-2 pt-2 border-t border-surface-border/30">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <label className="text-xs font-medium text-content-secondary">
+                    Prior search results in context
+                  </label>
+                  <p className="text-xs text-content-muted leading-relaxed">
+                    When on, previous search results are kept in the model's
+                    context window. Useful for multi-turn research where earlier
+                    results are still relevant — at the cost of more tokens per
+                    request.
+                  </p>
+                </div>
+                <div className="ml-4 shrink-0">
+                  <Toggle
+                    checked={draft.keepSearchResultsInContext}
+                    onChange={handleKeepResultsChange}
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Save button */}
             <div className="flex items-center justify-between pt-1">
               {saveMsg === 'saved' && (
@@ -218,7 +244,7 @@ export function MCPSettingsPanel() {
         <h2 className="text-xs font-semibold uppercase tracking-widest text-content-muted mb-3">Compatible Models</h2>
         <p className="text-xs text-content-muted leading-relaxed">
           Tool calling works with models trained for function calling. Confirmed working:
-          Qwen3.5-35B-A3B-6bit, GLM-4.7-Flash. The app detects tool call responses
+          Qwen3.5-35B-A3B-6bit, GLM-4.7-Flash, Gemma 4 26B A4B. The app detects tool call responses
           automatically — no manual configuration needed per model.
         </p>
       </div>
