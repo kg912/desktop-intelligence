@@ -134,6 +134,7 @@ TOOL CALL FORMAT: When you decide to search, use the structured tool_calls mecha
 - Emit multiple queries as a JSON array
 - Wrap the tool call in a code block (\`\`\`brave_web_search ... \`\`\`)
 - Emit raw XML like <tool_call>...</tool_call>
+- Emit [TOOL_REQUEST]...[END_TOOL_REQUEST] style markup
 One search per response. If you need information on multiple topics, pick the most important one.
 `.trim()
 
@@ -245,6 +246,68 @@ async function streamContentInChunks(
 }
 
 /**
+ * Extracts and parses the first valid JSON object from a raw string.
+ *
+ * Gemma 4 ignores response_format.json_schema and appends tool-call noise after
+ * valid JSON, e.g.:
+ *   {"action":"search","queries":["..."]}<tool_call|>}<eos>}}}}
+ *
+ * A bare JSON.parse() fails on this. This helper tries three strategies in order:
+ *  1. JSON.parse(raw) directly — fast path for clean responses.
+ *  2. Walk the string tracking brace depth to find the first balanced {...} block,
+ *     then JSON.parse that substring — recovers from trailing noise.
+ *  3. Regex scan for "action":"search" or "action":"answer" — last resort when
+ *     JSON is truncated (max_tokens hit mid-string); at least recovers the
+ *     action field so search is not silently skipped.
+ *
+ * Returns a parsed object with at least an `action` field, or null.
+ * Exported for unit testing.
+ */
+export function extractFirstValidJSON(raw: string): { action: string; queries?: string[] } | null {
+  if (!raw.trim()) return null
+
+  // Strategy 1 — clean JSON (common for non-Gemma models)
+  try {
+    return JSON.parse(raw) as { action: string; queries?: string[] }
+  } catch { /* fall through */ }
+
+  // Strategy 2 — find first balanced {...} block, ignoring trailing noise
+  let depth = 0
+  let start = -1
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '{') {
+      if (depth === 0) start = i
+      depth++
+    } else if (raw[i] === '}') {
+      depth--
+      if (depth === 0 && start !== -1) {
+        const candidate = raw.slice(start, i + 1)
+        try {
+          return JSON.parse(candidate) as { action: string; queries?: string[] }
+        } catch { /* keep scanning */ }
+      }
+    }
+  }
+
+  // Strategy 3 — regex fallback when JSON is truncated at max_tokens boundary
+  if (/"action"\s*:\s*"search"/.test(raw)) {
+    const queries: string[] = []
+    const queriesMatch = raw.match(/"queries"\s*:\s*\[([\s\S]*?)(?:\]|$)/)
+    if (queriesMatch) {
+      const inner = queriesMatch[1]
+      const qStrings = inner.match(/"([^"]+)"/g)
+      if (qStrings) queries.push(...qStrings.map(s => s.slice(1, -1)))
+    }
+    return { action: 'search', queries }
+  }
+  if (/"action"\s*:\s*"answer"/.test(raw)) {
+    return { action: 'answer' }
+  }
+
+  return null
+}
+
+/**
  * Attempts to parse a raw tool call from content text.
  * Fallback for models that emit tool calls as text rather than structured tool_calls.
  *
@@ -260,7 +323,23 @@ async function streamContentInChunks(
  *
  * Returns null if no recognisable tool call is found.
  */
-function parseRawToolCall(content: string): { name: string; args: Record<string, string> } | null {
+export function parseRawToolCall(content: string): { name: string; args: Record<string, string> } | null {
+  // Format G: [TOOL_REQUEST] {"name": "...", "arguments": {...}} [END_TOOL_REQUEST]
+  // Observed in Gemma 4 and similar models. Checked first since the tag is unambiguous.
+  const toolRequestMatch = content.match(/\[TOOL_REQUEST\]([\s\S]*?)\[END_TOOL_REQUEST\]/i)
+  if (toolRequestMatch) {
+    try {
+      const parsed = JSON.parse(toolRequestMatch[1].trim()) as { name?: string; arguments?: Record<string, unknown> }
+      if (parsed?.name && parsed?.arguments) {
+        const args: Record<string, string> = {}
+        for (const [k, v] of Object.entries(parsed.arguments as Record<string, unknown>)) {
+          args[k] = String(v)
+        }
+        if (args['query']) return { name: parsed.name, args }
+      }
+    } catch { /* fall through */ }
+  }
+
   // Format F: pipe-delimited format used by Gemma 4 and similar models
   // <|tool_call>call:brave_web_search{queries:["...","..."]}<tool_call|>
   const pipeMatch = content.match(/<\|tool_call>([\s\S]*?)<tool_call\|>/)
@@ -399,7 +478,7 @@ function extractQueryFromCodeFenceToolCall(content: string): string | null {
  * Handles extracting tool queries from incomplete or incorrectly formatted tags during SSE stream decoding.
  * Returns the detected query and the cleaned buffer to retract.
  */
-function detectMidStreamToolCall(buffer: string): { query: string; cleanedBuffer: string } | null {
+export function detectMidStreamToolCall(buffer: string): { query: string; cleanedBuffer: string } | null {
   // Case 1: Closed <tool_call> tag (e.g. standard fallback)
   if (buffer.includes('</tool_call>')) {
     const raw = parseRawToolCall(buffer)
@@ -455,6 +534,36 @@ function detectMidStreamToolCall(buffer: string): { query: string; cleanedBuffer
         return {
           query: q,
           cleanedBuffer: buffer.replace(/<\|tool_call>[\s\S]*$/i, '').trim(),
+        }
+      }
+    }
+  }
+
+  // Case 7: Closed [TOOL_REQUEST]...[END_TOOL_REQUEST] format (Gemma 4)
+  if (buffer.includes('[END_TOOL_REQUEST]')) {
+    const raw = parseRawToolCall(buffer)
+    const q = raw?.args?.['query']
+    if (q) {
+      return {
+        query: q,
+        cleanedBuffer: buffer.replace(/\[TOOL_REQUEST\][\s\S]*?\[END_TOOL_REQUEST\]/gi, '').trim(),
+      }
+    }
+  }
+
+  // Case 8: Unclosed [TOOL_REQUEST] — stream ended before [END_TOOL_REQUEST]
+  const unclosedToolRequestMatch = buffer.match(/\[TOOL_REQUEST\]([\s\S]+)$/i)
+  if (unclosedToolRequestMatch) {
+    const inner = unclosedToolRequestMatch[1].trim()
+    // Looks like complete JSON if it ends with } (object closed)
+    if (inner.endsWith('}') || /\}\s*$/.test(inner)) {
+      const fakeClosed = buffer + '[END_TOOL_REQUEST]'
+      const raw = parseRawToolCall(fakeClosed)
+      const q = raw?.args?.['query']
+      if (q) {
+        return {
+          query: q,
+          cleanedBuffer: buffer.replace(/\[TOOL_REQUEST\][\s\S]*$/i, '').trim(),
         }
       }
     }
@@ -689,9 +798,17 @@ export class ChatService {
 
     // ── Step 1 body — structured JSON decision ────────────────────────
     // Instead of open-ended tool_calls, we force a schema-constrained JSON
-    // response. LM Studio honours response_format for Gemma 4 (confirmed).
+    // response. LM Studio honours response_format for Qwen/GLM models.
     // The model must respond with exactly {"action":"search","queries":[...]}
     // or {"action":"answer"} — no free-form output, no runaway tool call loops.
+    //
+    // Safety note re: <|think|> system prompt token for Gemma 4:
+    // The decision system message below is a plain string literal — it never
+    // contains <|think|>. The step1Messages derivation (above) strips <|think|>
+    // from builtMessages[0] (the main system prompt). Only user messages from
+    // step1Messages are included in step1Body. So the Step 1 payload is always
+    // free of the Gemma thinking activation token, regardless of thinkingMode.
+    // Gemma models skip this block entirely via the isGemmaModel fast path below.
     const step1Body = {
       model:       modelId,
       messages:    [
@@ -723,7 +840,7 @@ export class ChatService {
           ),
       ],
       temperature: 0.1,
-      max_tokens:  250,  // enough for 3 full query strings with JSON overhead (~200 tokens worst case)
+      max_tokens:  400,  // 250 was too tight for Gemma 4: its think block eats tokens before JSON starts
       stream:      false,
       thinking:    { type: 'disabled' },
       ...(braveEnabled ? {
@@ -781,83 +898,117 @@ export class ChatService {
       && !payload.hasDocuments          // never search when RAG docs are present
       && messageNeedsSearch(userMessageText)
 
+    // Detect Gemma models once — used in both the Gemma fast path (Step 1 bypass)
+    // and the Gemma thinking cap (Step 2 budget override).
+    const isGemmaModel = modelId.toLowerCase().includes('gemma')
+
     try {
       // ── Step 1: Non-streaming round for tool calls (only when shouldAttemptSearch) ──
       if (shouldAttemptSearch) {
-        // 4c — Step 1 payload diagnostic
-        if (DEBUG) {
-          console.log('[DEBUG] Step 1 body:', JSON.stringify(step1Body, null, 2))
-        }
-        const r1 = await net.fetch(getChatEndpoint(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(step1Body),
-          signal,
-        } as RequestInit)
+        if (isGemmaModel) {
+          // ── Gemma fast path ──────────────────────────────────────────────────────
+          // Gemma 4 cannot reliably produce structured JSON decisions in Step 1:
+          //  - It ignores response_format.json_schema and appends tool-call noise
+          //  - It burns 8–15s of thinking tokens before producing any output
+          // Skip Step 1 entirely and use the user message text directly as the
+          // search query — saves 8–15 seconds per search turn with no quality loss.
+          const rawUserText = userMessageText.replace(/^\/(think|no_think)\n/i, '').trim()
+          const gemmaDirectQuery = rawUserText.length > 120
+            ? rawUserText.slice(0, 120).replace(/\s+\S*$/, '').trim()
+            : rawUserText
+          console.log(`[ChatService] Gemma fast path — using direct query: "${gemmaDirectQuery}"`)
+          const searchResultText = await executeSearchQueries([gemmaDirectQuery], resolvedKey!, send, gemmaDirectQuery)
+          const syntheticId = `call_${Date.now()}`
+          currentMessages = [
+            ...currentMessages,
+            {
+              role:       'assistant',
+              content:    null as unknown as string,
+              tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: gemmaDirectQuery }) } }],
+            } as { role: string; content: string },
+            { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
+          ]
+          toolCallRound = true
+        } else {
+          // ── Non-Gemma path: Step 1 JSON decision round ───────────────────────────
+          // Qwen, GLM, and other models that honour response_format.json_schema.
 
-        if (!r1.ok) throw new Error(`LM Studio ${r1.status}: ${await r1.text()}`)
-
-        const r1data = await r1.json() as {
-          choices?: Array<{
-            finish_reason?: string
-            message?: {
-              content?: string | null
-              reasoning_content?: string | null
-              tool_calls?: Array<{
-                id: string
-                type: string
-                function: { name: string; arguments: string }
-              }>
-            }
-          }>
-        }
-
-        // 4d — Step 1 response diagnostic
-        if (DEBUG) {
-          console.log('[DEBUG] Step 1 response:', JSON.stringify(r1data, null, 2))
-        }
-
-        const choice = r1data.choices?.[0]
-        // Qwen 3.5 puts the decision in reasoning_content when /think is active,
-        // leaving content empty. Fall back to reasoning_content if content is blank.
-        const rawDecision = (choice?.message?.content ?? '').trim() ||
-          ((choice?.message as Record<string, unknown>)?.reasoning_content as string ?? '').trim()
-
-        // Parse the structured JSON decision from response_format
-        let decision: { action: string; queries?: string[] } = { action: 'answer' }
-        try {
-          decision = JSON.parse(rawDecision)
-        } catch {
-          // response_format not honoured or malformed — treat as no-search
-          console.warn('[Step1] Failed to parse decision JSON, falling through to Step 2:', rawDecision.slice(0, 100))
-        }
-
-        console.log('[Step1] Decision:', JSON.stringify(decision))
-
-        if (decision.action === 'search') {
-          const queries = (decision.queries ?? [])
-            .map((q: string) => q.trim())
-            .filter((q: string) => q.length > 0)
-            .slice(0, 3)
-
-          if (queries.length > 0) {
-            const primaryQuery = queries[0]
-            const searchResultText = await executeSearchQueries(queries, resolvedKey!, send, primaryQuery)
-
-            const syntheticId = `call_${Date.now()}`
-            currentMessages = [
-              ...currentMessages,
-              {
-                role:       'assistant',
-                content:    null as unknown as string,
-                tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: primaryQuery }) } }],
-              } as { role: string; content: string },
-              { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
-            ]
-            toolCallRound = true
+          // 4c — Step 1 payload diagnostic
+          if (DEBUG) {
+            console.log('[DEBUG] Step 1 body:', JSON.stringify(step1Body, null, 2))
           }
+          const r1 = await net.fetch(getChatEndpoint(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(step1Body),
+            signal,
+          } as RequestInit)
+
+          if (!r1.ok) throw new Error(`LM Studio ${r1.status}: ${await r1.text()}`)
+
+          const r1data = await r1.json() as {
+            choices?: Array<{
+              finish_reason?: string
+              message?: {
+                content?: string | null
+                reasoning_content?: string | null
+                tool_calls?: Array<{
+                  id: string
+                  type: string
+                  function: { name: string; arguments: string }
+                }>
+              }
+            }>
+          }
+
+          // 4d — Step 1 response diagnostic
+          if (DEBUG) {
+            console.log('[DEBUG] Step 1 response:', JSON.stringify(r1data, null, 2))
+          }
+
+          const choice = r1data.choices?.[0]
+          // Qwen 3.5 puts the decision in reasoning_content when /think is active,
+          // leaving content empty. Fall back to reasoning_content if content is blank.
+          const rawDecision = (choice?.message?.content ?? '').trim() ||
+            ((choice?.message as Record<string, unknown>)?.reasoning_content as string ?? '').trim()
+
+          // Parse the structured JSON decision using the robust extractor.
+          // extractFirstValidJSON handles trailing noise and truncated responses,
+          // falling through gracefully to { action: 'answer' } on failure.
+          const parsedDecision = extractFirstValidJSON(rawDecision)
+          const decision: { action: string; queries?: string[] } = parsedDecision ?? { action: 'answer' }
+          if (!parsedDecision) {
+            // response_format not honoured or malformed — treat as no-search
+            console.warn('[Step1] Failed to parse decision JSON, falling through to Step 2:', rawDecision.slice(0, 100))
+          }
+
+          console.log('[Step1] Decision:', JSON.stringify(decision))
+
+          if (decision.action === 'search') {
+            const queries = (decision.queries ?? [])
+              .map((q: string) => q.trim())
+              .filter((q: string) => q.length > 0)
+              .slice(0, 3)
+
+            if (queries.length > 0) {
+              const primaryQuery = queries[0]
+              const searchResultText = await executeSearchQueries(queries, resolvedKey!, send, primaryQuery)
+
+              const syntheticId = `call_${Date.now()}`
+              currentMessages = [
+                ...currentMessages,
+                {
+                  role:       'assistant',
+                  content:    null as unknown as string,
+                  tool_calls: [{ id: syntheticId, type: 'function', function: { name: 'brave_web_search', arguments: JSON.stringify({ query: primaryQuery }) } }],
+                } as { role: string; content: string },
+                { role: 'tool', tool_call_id: syntheticId, content: searchResultText } as { role: string; content: string },
+              ]
+              toolCallRound = true
+            }
+          }
+          // action === 'answer' → fall through to Step 2 streaming with no search injected
         }
-        // action === 'answer' → fall through to Step 2 streaming with no search injected
       }
 
       // ── Step 2: Final streaming request ────────────────────────────
@@ -868,9 +1019,14 @@ export class ChatService {
       // budget (4000) — the model has real facts and shouldn't speculate at length.
       // Without a search round, allow the full 8000 for deep reasoning.
       while (searchLoopCount < MAX_SEARCH_LOOPS) {
+        // Gemma ignores thinking:{type:'disabled'} — the <|think|> system prompt token
+        // activates thinking regardless. Cap the budget so fast-mode Gemma doesn't burn
+        // 3000+ tokens on reasoning spirals before producing an answer.
         const step2ThinkingField = isThinking
           ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 4000 : 8000 } }
-          : { thinking: { type: 'disabled' } }
+          : isGemmaModel
+            ? { thinking: { type: 'enabled', budget_tokens: toolCallRound ? 1024 : 2048 } }
+            : { thinking: { type: 'disabled' } }
 
         const { temperature, topP, maxOutputTokens, repeatPenalty, provider, contextLength } = readSettings()
         // Ollama uses `options.num_ctx` to set the context window;

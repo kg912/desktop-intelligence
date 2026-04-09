@@ -15,7 +15,14 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks } from '../ChatService'
+import {
+  applyThinkingPrefix,
+  STOP_SEQUENCES,
+  stubMatplotlibBlocks,
+  extractFirstValidJSON,
+  parseRawToolCall,
+  detectMidStreamToolCall,
+} from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
 type Msg = { role: string; content: string | ContentPart[] }
@@ -268,5 +275,126 @@ describe('applyThinkingPrefix — Gemma bypass', () => {
     const msgs = [textMsg('user', 'explain SVMs')]
     const result = applyThinkingPrefix(msgs, 'thinking', 'mlx-community/Qwen3.5-35B-A3B-6bit')
     expect(result[0].content).toBe('/think\nexplain SVMs')
+  })
+})
+
+// ── Suite: extractFirstValidJSON ──────────────────────────────────────────────
+
+describe('extractFirstValidJSON', () => {
+  it('parses clean JSON directly (fast path)', () => {
+    const raw = '{"action":"search","queries":["latest news 2026"]}'
+    const result = extractFirstValidJSON(raw)
+    expect(result).toEqual({ action: 'search', queries: ['latest news 2026'] })
+  })
+
+  it('parses JSON with trailing noise (Gemma 4 tool-call suffix)', () => {
+    const raw = '{"action":"search","queries":["US Iran relations 2026"]}<tool_call|>}<eos>}}}}'
+    const result = extractFirstValidJSON(raw)
+    expect(result).not.toBeNull()
+    expect(result!.action).toBe('search')
+    expect(result!.queries).toEqual(['US Iran relations 2026'])
+  })
+
+  it('recovers action from truncated JSON via regex (max_tokens hit mid-string)', () => {
+    // Simulates a response truncated at 250 tokens, leaving JSON incomplete
+    const raw = '{"action":"search","queries":["latest news US Iran relations 2026", "current status of US Iran relat'
+    const result = extractFirstValidJSON(raw)
+    expect(result).not.toBeNull()
+    expect(result!.action).toBe('search')
+    // queries may be partial — at minimum the action field is recovered
+  })
+
+  it('returns { action: "answer" } for a clean answer decision', () => {
+    const raw = '{"action":"answer"}'
+    const result = extractFirstValidJSON(raw)
+    expect(result).toEqual({ action: 'answer' })
+  })
+
+  it('returns null for an empty string', () => {
+    expect(extractFirstValidJSON('')).toBeNull()
+    expect(extractFirstValidJSON('   ')).toBeNull()
+  })
+
+  it('returns null for completely unparseable garbage', () => {
+    expect(extractFirstValidJSON('hello world no json here')).toBeNull()
+  })
+
+  it('recovers action:answer from regex when JSON is truncated after action field', () => {
+    const raw = '{"action":"answer","extra_garbage'
+    const result = extractFirstValidJSON(raw)
+    expect(result).not.toBeNull()
+    expect(result!.action).toBe('answer')
+  })
+})
+
+// ── Suite: parseRawToolCall — Format G ───────────────────────────────────────
+
+describe('parseRawToolCall — Format G [TOOL_REQUEST]...[END_TOOL_REQUEST]', () => {
+  it('parses a well-formed [TOOL_REQUEST] block', () => {
+    const content = '[TOOL_REQUEST] {"name": "brave_web_search", "arguments": {"query":"is Israel respecting the US-Iran ceasefire April 2026"}} [END_TOOL_REQUEST]'
+    const result = parseRawToolCall(content)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args['query']).toBe('is Israel respecting the US-Iran ceasefire April 2026')
+  })
+
+  it('is case-insensitive for the [TOOL_REQUEST] tags', () => {
+    const content = '[tool_request] {"name": "brave_web_search", "arguments": {"query":"test query"}} [end_tool_request]'
+    const result = parseRawToolCall(content)
+    expect(result).not.toBeNull()
+    expect(result!.args['query']).toBe('test query')
+  })
+
+  it('handles extra whitespace inside the tags', () => {
+    const content = '[TOOL_REQUEST]\n{"name": "brave_web_search", "arguments": {"query":"breaking news"}}\n[END_TOOL_REQUEST]'
+    const result = parseRawToolCall(content)
+    expect(result).not.toBeNull()
+    expect(result!.args['query']).toBe('breaking news')
+  })
+
+  it('returns null for [TOOL_REQUEST] block with no query argument', () => {
+    const content = '[TOOL_REQUEST] {"name": "brave_web_search", "arguments": {"count": 5}} [END_TOOL_REQUEST]'
+    const result = parseRawToolCall(content)
+    expect(result).toBeNull()
+  })
+
+  it('returns null for malformed JSON inside [TOOL_REQUEST]', () => {
+    const content = '[TOOL_REQUEST] not-json-at-all [END_TOOL_REQUEST]'
+    const result = parseRawToolCall(content)
+    expect(result).toBeNull()
+  })
+})
+
+// ── Suite: detectMidStreamToolCall — Format G ─────────────────────────────────
+
+describe('detectMidStreamToolCall — Format G [TOOL_REQUEST]...[END_TOOL_REQUEST]', () => {
+  it('Case 7: detects a closed [TOOL_REQUEST]...[END_TOOL_REQUEST] in the buffer', () => {
+    const buffer = 'Let me search for that. [TOOL_REQUEST] {"name": "brave_web_search", "arguments": {"query":"current NVIDIA stock price"}} [END_TOOL_REQUEST]'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('current NVIDIA stock price')
+    expect(result!.cleanedBuffer).toBe('Let me search for that.')
+  })
+
+  it('Case 7: cleanedBuffer strips the [TOOL_REQUEST] block leaving surrounding text', () => {
+    const buffer = '[TOOL_REQUEST] {"name": "brave_web_search", "arguments": {"query":"weather today NYC"}} [END_TOOL_REQUEST]'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.cleanedBuffer).toBe('')
+  })
+
+  it('Case 8: detects an unclosed [TOOL_REQUEST] with complete JSON (stream cut off)', () => {
+    const buffer = '[TOOL_REQUEST] {"name": "brave_web_search", "arguments": {"query":"latest Apple earnings 2026"}}'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('latest Apple earnings 2026')
+    expect(result!.cleanedBuffer).toBe('')
+  })
+
+  it('Case 8: does NOT fire for an unclosed [TOOL_REQUEST] with incomplete JSON', () => {
+    // JSON body not yet closed — should wait for more chunks
+    const buffer = '[TOOL_REQUEST] {"name": "brave_web_search", "arguments": {"query":"partial'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).toBeNull()
   })
 })
