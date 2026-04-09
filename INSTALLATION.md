@@ -2,14 +2,7 @@
 
 This guide walks you through setting up **Desktop Intelligence** from scratch on an Apple Silicon Mac.
 
-Desktop Intelligence supports two AI backends. **Choose one:**
-
-| Backend | Best for | Setup effort |
-|---------|----------|--------------|
-| **LM Studio** | MLX models, maximum performance on Apple Silicon | Moderate — requires `lms` CLI |
-| **Ollama** | Simplicity, broad model library | Easy — install and run |
-
-You can switch backends at any time from Settings — you don't need to commit at install time.
+Desktop Intelligence uses **LM Studio** as its AI backend.
 
 ---
 
@@ -35,9 +28,7 @@ You can switch backends at any time from Settings — you don't need to commit a
 
 ---
 
-## Step 1 — Install Your AI Backend
-
-### Option A — LM Studio (Recommended for MLX models)
+## Step 1 — Install LM Studio
 
 1. Go to **[lmstudio.ai](https://lmstudio.ai/)** and download the macOS installer
 2. Open the downloaded `.dmg` and drag LM Studio to your Applications folder
@@ -61,84 +52,45 @@ If `lms` is not found, add it to your shell PATH:
 export PATH="$HOME/.lmstudio/bin:$PATH"
 ```
 
-### Option B — Ollama
-
-1. Go to **[ollama.com](https://ollama.com/)** and download the macOS app
-2. Open the downloaded `.dmg` and drag Ollama to your Applications folder
-3. Launch Ollama — it runs as a menu bar app and starts a local server on `http://localhost:11434`
-
-Verify it works:
-```bash
-ollama --version
-```
-
-That's it — no CLI configuration required.
-
 ---
 
 ## Step 2 — Download a Model
 
-You'll choose which model to use on first launch. Download it in your chosen backend before opening Desktop Intelligence.
+You'll choose which model to use on first launch. Download it in LM Studio before opening Desktop Intelligence.
 
 ### Recommended Models
 
 **Top pick (48 GB+ machines):**
-- `google/gemma-4-26b-a4b` — Gemma 4's 26B MoE with only 4B parameters active. Exceptional reasoning, vision support, fast inference. Available in LM Studio (GGUF) or Ollama.
+- `google/gemma-4-26b-a4b` — Gemma 4's 26B MoE with only 4B parameters active. Exceptional reasoning, vision support, fast inference. Available as GGUF directly in LM Studio — no MLX conversion needed.
 
 **Also excellent (48 GB+ recommended):**
-- `mlx-community/Qwen3.5-35B-A3B-6bit` — 35B MoE optimised for Apple Silicon via MLX. Outstanding thinking mode. ~71 tok/s on M5 Pro. LM Studio only.
+- `mlx-community/Qwen3.5-35B-A3B-6bit` — 35B MoE optimised for Apple Silicon via MLX. Outstanding thinking mode. ~71 tok/s on M5 Pro.
 
 **Good options for 32 GB Macs:**
-- Any Qwen3 14B MLX model — LM Studio
-- Any DeepSeek-R1 distilled 7B–14B — LM Studio or Ollama
-- `llama3.2:latest` — quick Ollama download, good all-rounder
+- Any Qwen3 14B MLX model
+- Any DeepSeek-R1 distilled 7B–14B
 
-### If you chose LM Studio
-
-**Option A — via UI (Recommended)**
+**Download via UI:**
 
 1. Open LM Studio
 2. Click the **Search** tab (magnifying glass icon, left sidebar)
 3. Search for your chosen model and click **Download**
 
-**Option B — via CLI**
+**Or via CLI:**
 
 ```bash
 lms get mlx-community/Qwen3.5-35B-A3B-6bit
 ```
 
-### If you chose Ollama
-
-```bash
-# Pull any model from the Ollama library
-ollama pull gemma3:27b
-# or
-ollama pull llama3.2
-```
-
-Browse available models at [ollama.com/library](https://ollama.com/library).
-
 ---
 
-## Step 3 — Verify Your Backend
-
-### If you chose LM Studio
+## Step 3 — Verify LM Studio Setup
 
 Desktop Intelligence manages the LM Studio server automatically — you don't need to start it manually. To confirm your setup is correct:
 
 1. Open LM Studio and go to the **Local Server** tab (looks like `<->`)
 2. Verify the server port is `1234` (the default — leave it as-is)
 3. You can optionally pre-load your model here to confirm it downloads correctly
-
-### If you chose Ollama
-
-Ollama starts automatically as a menu bar app. Verify it's running:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-You should see a JSON list of your downloaded models. Desktop Intelligence manages Ollama from this point on.
 
 ---
 
@@ -181,15 +133,14 @@ npm run package
 
    ![First-launch model selector](app_images/setup_screen_model_selector_form.png)
 
-   - **AI Provider** — select **LM Studio** or **Ollama** (whichever you installed in Step 1)
-   - **Active Model** dropdown — lists every model you have downloaded in your chosen backend. Select the one you want to use.
+   - **Active Model** dropdown — lists every model you have downloaded in LM Studio. Select the one you want to use.
    - **Context Length** slider — controls how much conversation history the model can see. Default is 32K tokens, which is comfortable for most use. See Step 6 for guidance on higher values.
    - Click **Save & Connect**
 
    > ⚠️ **RAM warning:** Large models (35B+) at high context lengths consume significant unified memory. A 35B model at 128K context can use 40–55 GB of RAM. On 32 GB machines, use a 7B–14B model and keep context at 32K or below.
 
-3. The app will start the backend server and load your chosen model — this takes **30–60 seconds** on first load
-4. On subsequent launches, your saved provider, model, and context length are applied automatically — you go straight to the connection overlay, then into the app
+3. The app will start the LM Studio server and load your chosen model — this takes **30–60 seconds** on first load
+4. On subsequent launches, your saved model and context length are applied automatically — you go straight to the connection overlay, then into the app
 5. Once the overlay clears, you're ready to chat
 
 ---
@@ -252,15 +203,8 @@ Once enabled, the app will automatically perform a search before answering time-
 
 ### App shows "Connecting…" and never loads
 
-**If using LM Studio:**
 - Confirm `lms` CLI is available: `lms --version`
 - Check the LM Studio local server is on port 1234 (default)
-
-**If using Ollama:**
-- Confirm Ollama is running: `curl http://localhost:11434/api/tags`
-- If it's not running, open the Ollama app from your Applications folder
-
-**Either backend:**
 - Open Terminal and run the app directly to see diagnostic logs:
   ```bash
   /Applications/"Desktop Intelligence.app"/Contents/MacOS/"Desktop Intelligence"
@@ -296,4 +240,4 @@ To update to a new version, simply replace the app in your Applications folder w
 
 ---
 
-*Last updated: 2026-04-07 — v1.7.4*
+*Last updated: 2026-04-10 — v1.8.4*

@@ -109,11 +109,12 @@ export interface ProcessedAttachment {
 // --- Web Search ---
 
 export interface WebSearchStatus {
-  phase:       'searching' | 'done' | 'error'
-  query:       string
-  resultCount?: number
-  results?:    Array<{ title: string; url: string }>
-  error?:      string
+  phase:             'searching' | 'done' | 'error'
+  query:             string
+  resultCount?:      number
+  results?:          Array<{ title: string; url: string }>
+  formattedContent?: string   // full augmented text for wire message context
+  error?:            string
 }
 
 export type ThinkingMode = 'thinking' | 'fast'

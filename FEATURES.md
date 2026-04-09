@@ -136,13 +136,8 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Two tabs:
 
 ### Model Tab
 
-**AI Provider**
-- Segmented control to switch between **LM Studio** and **Ollama** backends at runtime
-- Switching triggers a daemon handoff: the current backend is shut down and the new one started automatically
-- Available models in the dropdown update immediately to reflect the chosen backend
-
 **Active Model**
-- Dropdown listing every model you have downloaded in the selected backend; switch at runtime
+- Dropdown listing every model you have downloaded in LM Studio; switch at runtime
 
 **Context Length**
 - Slider with preset chips: **4K / 8K / 16K / 32K / 64K / 128K**; custom values via number input
@@ -174,8 +169,6 @@ All settings are saved to `app-settings.json` in `app.getPath('userData')` and a
 
 ### Daemon Management
 - **LM Studio** server is auto-launched via the `lms` CLI on app startup; pre-flight check skips launch if it's already running
-- **Ollama** server is managed via the `ollama` CLI on app startup; if already running it is used directly
-- Switching backends in Settings shuts down the current daemon and starts the new one automatically — no manual restarts needed
 - Exponential-backoff health polling; connection overlay only appears after **two consecutive** failures — a single timeout during GPU-intensive generation is silently absorbed
 
 ### Runaway Generation Protection
@@ -216,7 +209,7 @@ Requires a free [Brave Search API key](https://brave.com/search/api/) configured
 - Smooth **Framer Motion** animations on modals and overlays
 - System font stack — no external font requests
 - Thin dark webkit-styled scrollbars throughout
-- **Fully offline** — no telemetry, no analytics, no external network requests (except optional DuckDuckGo search)
+- **Fully offline** — no telemetry, no analytics, no external network requests (except optional Brave Search)
 
 ---
 
@@ -231,4 +224,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-*Last updated: 2026-04-07 — v1.7.4*
+*Last updated: 2026-04-10 — v1.8.4*

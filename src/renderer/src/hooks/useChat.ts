@@ -227,7 +227,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           const idx = prev.findIndex((m) => m.id === assistantMsgId)
           if (idx === -1) return prev
           const updated = [...prev]
-          updated[idx] = { ...updated[idx], toolCall: { query: finalToolCall.query, results: finalToolCall.results ?? [] } }
+          updated[idx] = { ...updated[idx], toolCall: { query: finalToolCall.query, results: finalToolCall.results ?? [], formattedContent: finalToolCall.formattedContent ?? '' } }
           return updated
         })
       } else if (finalToolCall?.phase === 'error') {
@@ -246,7 +246,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       // Persist assistant message to SQLite (fire-and-forget, works in both envs)
       if (activeChatId && assistantMsgId && assistantContent) {
         const toolCallToSave = finalToolCall?.phase === 'done'
-          ? JSON.stringify({ query: finalToolCall.query, results: finalToolCall.results ?? [] })
+          ? JSON.stringify({ query: finalToolCall.query, results: finalToolCall.results ?? [], formattedContent: finalToolCall.formattedContent ?? '' })
           : null
         window.api
           .saveMessage(activeChatId, assistantMsgId, 'assistant', assistantContent, undefined, toolCallToSave)
@@ -285,9 +285,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         patchAssistant({ isSearching: true, liveToolCall: { phase: 'searching', query: s.query } })
       } else if (s.phase === 'done') {
         setIsSearching(false)
-        liveToolCallRef.current = { phase: 'done', query: s.query, results: s.results ?? [] }
-        setLiveToolCall({ phase: 'done', query: s.query, results: s.results ?? [] })
-        patchAssistant({ isSearching: false, liveToolCall: { phase: 'done', query: s.query, results: s.results ?? [] } })
+        liveToolCallRef.current = { phase: 'done', query: s.query, results: s.results ?? [], formattedContent: s.formattedContent ?? '' }
+        setLiveToolCall({ phase: 'done', query: s.query, results: s.results ?? [], formattedContent: s.formattedContent ?? '' })
+        patchAssistant({ isSearching: false, liveToolCall: { phase: 'done', query: s.query, results: s.results ?? [], formattedContent: s.formattedContent ?? '' } })
       } else {
         // Buffer error — store in ref but don't surface to UI yet.
         // CHAT_STREAM_END will decide whether to show it based on response content.
@@ -444,7 +444,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         if (m.toolCall) {
           const isLastToolCall = i === lastToolCallIndex
           const resultsStr = isLastToolCall
-            ? JSON.stringify(m.toolCall.results?.slice(0, 3) || [])
+            ? (m.toolCall.formattedContent || JSON.stringify(m.toolCall.results?.slice(0, 3) || []))
             : `[Previous search: ${m.toolCall.query}]`
           const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(7)}`
 

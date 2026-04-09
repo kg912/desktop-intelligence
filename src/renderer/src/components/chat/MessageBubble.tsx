@@ -36,8 +36,8 @@ export interface Message {
   error:       string | null
   /** Files attached to this message — shown as pills above the bubble */
   attachments?: MessageAttachment[]
-  toolCall?: { query: string; results: Array<{ title: string; url: string }> } | null
-  liveToolCall?: { phase: 'searching' | 'done' | 'error'; query: string; results?: Array<{ title: string; url: string }>; error?: string } | null
+  toolCall?: { query: string; results: Array<{ title: string; url: string }>; formattedContent?: string } | null
+  liveToolCall?: { phase: 'searching' | 'done' | 'error'; query: string; results?: Array<{ title: string; url: string }>; formattedContent?: string; error?: string } | null
 }
 
 // ── Animation variant ────────────────────────────────────────────

@@ -628,14 +628,16 @@ async function executeSearchQueries(
     return true
   })
 
+  const formattedContent = resultSections.join('\n\n')
   sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-    phase: 'done',
-    query: primaryQuery,
-    resultCount: uniqueResults.length,
-    results: uniqueResults.slice(0, 5).map(r => ({ title: r.title, url: r.url })),
+    phase:            'done',
+    query:            primaryQuery,
+    resultCount:      uniqueResults.length,
+    results:          uniqueResults.slice(0, 5).map(r => ({ title: r.title, url: r.url })),
+    formattedContent,
   })
 
-  return resultSections.join('\n\n')
+  return formattedContent
 }
 
 export class ChatService {
@@ -1042,12 +1044,13 @@ export class ChatService {
                 let midStreamResult: string
                 try {
                   const results = await braveSearch(midQuery, resolvedKey!, 5)
-                  midStreamResult = formatSearchResults(results)
+                  midStreamResult = await augmentAndFormatResults(results)
                   send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                    phase: 'done',
-                    query: midQuery,
-                    resultCount: results.length,
-                    results: results.map(r => ({ title: r.title, url: r.url })),
+                    phase:            'done',
+                    query:            midQuery,
+                    resultCount:      results.length,
+                    results:          results.map(r => ({ title: r.title, url: r.url })),
+                    formattedContent: midStreamResult,
                   })
                 } catch (err) {
                   const errMsg = err instanceof Error ? err.message : String(err)
@@ -1136,10 +1139,11 @@ export class ChatService {
               const results = await braveSearch(toolQuery, resolvedKey!, 5)
               nativeResult = await augmentAndFormatResults(results)
               send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase:       'done',
-                query:       toolQuery,
-                resultCount: results.length,
-                results:     results.slice(0, 5).map(r => ({ title: r.title, url: r.url })),
+                phase:            'done',
+                query:            toolQuery,
+                resultCount:      results.length,
+                results:          results.slice(0, 5).map(r => ({ title: r.title, url: r.url })),
+                formattedContent: nativeResult,
               })
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err)
