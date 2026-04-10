@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "1.8.4",
+  "version": "1.9.0",
   "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@xenova/transformers": "^2.17.2",
-    "axios": "^1.7.2",
+    "axios": "1.13.6",
     "better-sqlite3": "^12.8.0",
     "clsx": "^2.1.1",
     "duck-duck-scrape": "^2.2.7",
@@ -66,6 +66,9 @@
     "typescript": "^5.5.2",
     "vite": "^5.3.3",
     "vitest": "^4.1.1"
+  },
+  "overrides": {
+    "axios": "1.13.6"
   },
   "build": {
     "appId": "com.local.desktopintelligence",

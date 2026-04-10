@@ -18,6 +18,41 @@ import { spawn, execSync, ChildProcessWithoutNullStreams } from 'child_process'
 import * as path from 'path'
 import { app } from 'electron'
 
+/**
+ * Validates LLM-generated Python code before execution in the worker.
+ * Blocks patterns that could allow arbitrary file system access, network calls,
+ * or shell command execution outside the intended matplotlib/numpy/scipy sandbox.
+ * Throws an Error if any banned pattern is detected.
+ */
+function validatePythonCode(code: string): void {
+  const BANNED: Array<[RegExp, string]> = [
+    [/\bimport\s+os\b/,              'os module'],
+    [/\bimport\s+subprocess\b/,      'subprocess module'],
+    [/\bimport\s+socket\b/,          'socket module'],
+    [/\bimport\s+shutil\b/,          'shutil module'],
+    [/\bimport\s+pathlib\b/,         'pathlib module'],
+    [/\bfrom\s+os\b/,                'os module (from-import)'],
+    [/\bfrom\s+subprocess\b/,        'subprocess module (from-import)'],
+    [/\b__import__\s*\(/,            '__import__ builtin'],
+    [/\beval\s*\(/,                  'eval()'],
+    [/\bexec\s*\(/,                  'exec()'],
+    [/\bopen\s*\(/,                  'open() file access'],
+    [/\bos\s*\.\s*(system|popen|execv|execve|execl|execle|execlp|spawnl|fork|kill|remove|unlink|rmdir)\b/,
+                                     'os shell/fs call'],
+    [/\b__builtins__\b/,             '__builtins__ access'],
+    [/\bcompile\s*\(/,               'compile()'],
+  ]
+
+  for (const [pattern, label] of BANNED) {
+    if (pattern.test(code)) {
+      throw new Error(
+        `[PythonWorker] Code execution blocked — disallowed pattern: ${label}. ` +
+        `Only numpy, matplotlib, scipy.stats, and yfinance are permitted.`
+      )
+    }
+  }
+}
+
 const WORKER_TIMEOUT_MS = 30_000
 const READY_TIMEOUT_MS  = 15_000
 
@@ -211,6 +246,14 @@ export class PythonWorkerService {
    * Falls back to one-shot spawn only if the worker is not yet ready.
    */
   async render(userCode: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> {
+    try {
+      validatePythonCode(userCode)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(msg)
+      return { success: false, error: msg }
+    }
+
     if (!this.ready || !this.proc) {
       console.warn('[PythonWorker] Worker not ready — falling back to one-shot spawn')
       return this.fallbackRender(userCode)
@@ -265,6 +308,14 @@ export class PythonWorkerService {
 
   /** One-shot fallback — minimal preamble, same stdout-based base64 output. */
   private async fallbackRender(userCode: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> {
+    try {
+      validatePythonCode(userCode)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(msg)
+      return { success: false, error: msg }
+    }
+
     const { spawn: spawnFn } = await import('child_process')
     const PREAMBLE = `import sys, io, base64, matplotlib
 matplotlib.use('Agg')

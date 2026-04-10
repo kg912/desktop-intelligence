@@ -27,6 +27,27 @@ import { readFileSync } from 'fs'
 import { extname }      from 'path'
 import type { AttachmentFilePayload, ProcessedAttachment } from '../../shared/types'
 
+/**
+ * Sanitizes untrusted document text before RAG ingest and prompt injection.
+ * Strips common prompt-injection patterns that could cause the LLM to follow
+ * instructions embedded in user-supplied files (PDFs, text files).
+ * Best-effort defence layer — not a cryptographic guarantee.
+ */
+function sanitizeDocumentText(text: string): string {
+  return text
+    .replace(/ignore\s+(all\s+)?(previous|prior|above|system)\s+(instructions?|prompts?|context|rules?)/gi, '[CONTENT FILTERED]')
+    .replace(/disregard\s+(all\s+)?(previous|prior|above|system)\s+(instructions?|prompts?|context|rules?)/gi, '[CONTENT FILTERED]')
+    .replace(/forget\s+(all\s+)?(previous|prior|above|system)\s+(instructions?|prompts?|context|rules?)/gi, '[CONTENT FILTERED]')
+    .replace(/new\s+(instructions?|directive|system\s+prompt|task|role|persona)/gi, '[CONTENT FILTERED]')
+    .replace(/you\s+are\s+now\s+(a\s+)?(different|new|another)/gi, '[CONTENT FILTERED]')
+    .replace(/<\/?system>/gi, '[CONTENT FILTERED]')
+    .replace(/\[INST\]|\[\/INST\]/gi, '[CONTENT FILTERED]')
+    .replace(/<>|<\/SYS>/gi, '[CONTENT FILTERED]')
+    .replace(/<\|im_start\|>|<\|im_end\|>/gi, '[CONTENT FILTERED]')
+    .replace(/developer\s+mode\s+(enabled|on|active)/gi, '[CONTENT FILTERED]')
+    .replace(/jailbreak/gi, '[CONTENT FILTERED]')
+}
+
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
 
 // ── Public API ────────────────────────────────────────────────────
@@ -93,6 +114,12 @@ export async function processFile(
     console.log(`📄 TEXT FILE READ CHARACTERS: ${rawText?.length ?? 0}`)
   }
 
+  // Sanitize before ingest — prevents prompt injection via uploaded documents
+  const sanitizedText = sanitizeDocumentText(rawText)
+  if (sanitizedText !== rawText) {
+    console.warn(`[FileProcessor] ⚠️  Prompt injection patterns removed from "${fileName}"`)
+  }
+
   // ── RAG ingest — AWAITED (not fire-and-forget) ───────────────
   // We must await the full chunk→embed→store pipeline before returning.
   // The IPC caller fires chat:send immediately after this resolves, and
@@ -105,7 +132,7 @@ export async function processFile(
   const ingestStart = Date.now()
   try {
     const { ingestDocument } = await import('./RAGService')
-    await ingestDocument(fileName, rawText, payload.chatId)
+    await ingestDocument(fileName, sanitizedText, payload.chatId)
     console.log(`[FileProcessor] ✅ Ingest complete in ${Date.now() - ingestStart} ms`)
   } catch (err) {
     // Log and continue — the message can still be sent without RAG context
@@ -117,8 +144,8 @@ export async function processFile(
   // propagation.  The first 12 000 chars cover most lecture notes / papers;
   // additional content is always available via the RAG retrieval path.
   const MAX_INJECT_CHARS = 12_000
-  const injectContent = rawText && rawText.trim().length > 0
-    ? `[Document: ${fileName}]\n${rawText.slice(0, MAX_INJECT_CHARS)}${rawText.length > MAX_INJECT_CHARS ? '\n…' : ''}`
+  const injectContent = sanitizedText && sanitizedText.trim().length > 0
+    ? `[Document: ${fileName}]\n${sanitizedText.slice(0, MAX_INJECT_CHARS)}${sanitizedText.length > MAX_INJECT_CHARS ? '\n…' : ''}`
     : null
 
   console.log(`[FileProcessor] 📤 inject chars=${injectContent?.length ?? 0} for "${fileName}"`)
