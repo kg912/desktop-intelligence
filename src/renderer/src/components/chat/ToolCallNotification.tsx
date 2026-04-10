@@ -65,10 +65,13 @@ export function ToolCallNotification({ phase, query, results = [], error: errorM
             {results.slice(0, 5).map((r, i) => (
               <div key={i} className="flex items-start gap-2">
                 <span className="text-xs text-content-tertiary shrink-0 w-4 mt-px">{i + 1}.</span>
-                <div className="min-w-0">
-                  <p className="text-xs text-content-secondary truncate leading-relaxed">{r.title}</p>
-                  <p className="text-xs text-content-tertiary truncate">{r.url}</p>
-                </div>
+                <button
+                  className="min-w-0 text-left group"
+                  onClick={() => window.api.openExternal(r.url).catch(console.error)}
+                >
+                  <p className="text-xs text-content-secondary truncate leading-relaxed group-hover:text-accent-400 transition-colors">{r.title}</p>
+                  <p className="text-xs text-content-tertiary truncate group-hover:text-accent-600 transition-colors">{r.url}</p>
+                </button>
               </div>
             ))}
           </div>

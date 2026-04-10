@@ -961,13 +961,14 @@ function buildComponents(): Components {
     // Suppress the default <pre> wrapper — CodeBlock renders its own
     pre: ({ children }) => <>{children}</>,
 
-    // Open links in default OS browser (handled by Electron shell)
+    // Open links in default OS browser via Electron shell.openExternal
     a: ({ href, children }) => (
       <a
         href={href}
+        className="text-accent-400 underline underline-offset-2 hover:text-accent-300 cursor-pointer transition-colors"
         onClick={(e) => {
           e.preventDefault()
-          console.log('External link:', href)
+          if (href) window.api.openExternal(href).catch(console.error)
         }}
       >
         {children}

@@ -2,7 +2,7 @@
  * Preload — contextBridge surface exposed as window.api
  * Every method typed; no raw ipcRenderer exposed.
  */
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, shell } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import type {
   ConnectionState,
@@ -127,6 +127,9 @@ const api = {
 
   mcpGetEnvKeyStatus: (): Promise<{ hasEnvKey: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS),
+
+  // ── Shell utilities ──────────────────────────────────────────
+  openExternal: (url: string): Promise<void> => shell.openExternal(url),
 
   // ── RAG (Phase 5 stubs) ──────────────────────────────────────
   ingestFile: (filePath: string): Promise<void> =>
