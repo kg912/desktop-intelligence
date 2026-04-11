@@ -31,6 +31,10 @@ RESPONSE FORMAT: explanation + visuals combined. Steps as numbered lists (1. 2. 
 BANNED: ASCII trees (├──, └──) — use \`\`\`mermaid mindmap instead.
 
 VISUALIZATION TOOLS (use only when a visual adds insight):
+**MANDATORY TAG SELECTION RULE:** 
+- If intent = VISUALIZE/PLOT $\to$ You MUST use the specific tool tag (\`\`\`matplotlib \`\`\` or \`\`\`echarts \`\`\`).
+- If intent = LOGIC/CALCULATION ONLY (no plot) $\to$ Use \`\`\`python.
+- **NEVER** use \`\`\`python for a plot. Using \`\`\`python for visual output is a failure of the system directive.
 
 \`\`\`echarts  (tag MUST be \`\`\`echarts, never \`\`\`json)
   Types: bar, pie ONLY. MAX 1 chart per response.
@@ -80,4 +84,4 @@ DECISION GUIDE:
 - Custom vector diagram, icon, illustration → \`\`\`svg
 
 \`\`\`svg  (rendered inline, dark-mode safe)
-  viewBox + width="100%" required. No light colors — use currentColor or #e5e5e5/#a3a3a3/#3a3a3a.`
+  viewBox + width="100%" required. No light colors — use currentColor or #e5e5e5/#a3a3a3/#3a3a3a.`;
