@@ -12,42 +12,56 @@
  *     single scalar value; add Zustand or Jotai later if the store grows.
  */
 
-import { createContext, useContext, useState } from 'react'
-import type { ReactNode } from 'react'
-import type { ThinkingMode } from '../../../shared/types'
+import { createContext, useContext, useState } from "react";
+import type { ReactNode, SetStateAction } from "react";
+import type { ThinkingMode } from "../../../shared/types";
 
 // ── Types ────────────────────────────────────────────────────────
 interface ModelStoreValue {
   /** The currently selected LM Studio model identifier */
-  selectedModel:    string
+  selectedModel: string;
   /** Swap the active model — consumed by a future Model Switcher UI */
-  setSelectedModel: (modelId: string) => void
+  setSelectedModel: (modelId: string) => void;
   /** Whether the model reasons before answering (Section 5 of CLAUDE.md) */
-  thinkingMode:     ThinkingMode
+  thinkingMode: ThinkingMode;
   /** Toggle between thinking and fast mode */
-  setThinkingMode:  (mode: ThinkingMode) => void
+  setThinkingMode: (mode: ThinkingMode) => void;
   /** Context window utilisation from the last completed response; null before first response */
-  contextUsage:     { used: number; total: number } | null
+  contextUsage: { used: number; total: number } | null;
   /** Update context utilisation — called from useChat after each stream-end */
-  setContextUsage:  (usage: { used: number; total: number } | null) => void
+  setContextUsage: React.Dispatch<
+    React.SetStateAction<{ used: number; total: number }>
+  >;
 }
 
 // ── Context ──────────────────────────────────────────────────────
-const ModelStoreContext = createContext<ModelStoreValue | null>(null)
+const ModelStoreContext = createContext<ModelStoreValue | null>(null);
 
 // ── Provider ─────────────────────────────────────────────────────
 export function ModelStoreProvider({ children }: { children: ReactNode }) {
   // Intentionally empty string — App.tsx populates this via setSelectedModel
   // once it has read the saved modelId from SettingsStore (IPC round-trip).
-  const [selectedModel,  setSelectedModel]  = useState<string>('')
-  const [thinkingMode,   setThinkingMode]   = useState<ThinkingMode>('fast')
-  const [contextUsage,   setContextUsage]   = useState<{ used: number; total: number } | null>(null)
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("fast");
+  const [contextUsage, setContextUsage] = useState<{
+    used: number;
+    total: number;
+  } | null>(null);
 
   return (
-    <ModelStoreContext.Provider value={{ selectedModel, setSelectedModel, thinkingMode, setThinkingMode, contextUsage, setContextUsage }}>
+    <ModelStoreContext.Provider
+      value={{
+        selectedModel,
+        setSelectedModel,
+        thinkingMode,
+        setThinkingMode,
+        contextUsage,
+        setContextUsage,
+      }}
+    >
       {children}
     </ModelStoreContext.Provider>
-  )
+  );
 }
 
 // ── Hook ─────────────────────────────────────────────────────────
@@ -56,9 +70,9 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
  * Must be called from within a <ModelStoreProvider> subtree.
  */
 export function useModelStore(): ModelStoreValue {
-  const ctx = useContext(ModelStoreContext)
+  const ctx = useContext(ModelStoreContext);
   if (!ctx) {
-    throw new Error('useModelStore must be used within <ModelStoreProvider>')
+    throw new Error("useModelStore must be used within <ModelStoreProvider>");
   }
-  return ctx
+  return ctx;
 }
