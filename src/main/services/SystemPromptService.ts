@@ -76,4 +76,8 @@ DECISION GUIDE:
 - Simple numeric comparison, pie chart → \`\`\`echarts
 - Software architecture, API flow, state machine → \`\`\`mermaid
 - Taxonomy, concept map, topic tree → \`\`\`mermaid mindmap
-- Pure math → LaTeX. Simple list or table → Markdown table. Prose → prose.`
+- Pure math → LaTeX. Simple list or table → Markdown table. Prose → prose.
+- Custom vector diagram, icon, illustration → \`\`\`svg
+
+\`\`\`svg  (rendered inline, dark-mode safe)
+  viewBox + width="100%" required. No light colors — use currentColor or #e5e5e5/#a3a3a3/#3a3a3a.`

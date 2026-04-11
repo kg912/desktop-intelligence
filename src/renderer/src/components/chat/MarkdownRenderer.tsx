@@ -30,7 +30,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
-import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2, LineChart } from 'lucide-react'
+import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2, LineChart, Shapes } from 'lucide-react'
 import hljs from 'highlight.js'
 import mermaid from 'mermaid'
 import ReactECharts from 'echarts-for-react'
@@ -162,10 +162,12 @@ function makeResponsiveSvg(svg: string): string {
 interface DiagramCardProps {
   code:      string
   isError?:  boolean
+  icon?:     React.ReactNode
+  label?:    string
   children:  React.ReactNode
 }
 
-function DiagramCard({ code, isError = false, children }: DiagramCardProps) {
+function DiagramCard({ code, isError = false, icon, label, children }: DiagramCardProps) {
   const border = isError ? 'border-accent-900/30' : 'border-surface-border/60'
   return (
     <div
@@ -177,9 +179,9 @@ function DiagramCard({ code, isError = false, children }: DiagramCardProps) {
         style={{ background: '#111' }}
       >
         <div className="flex items-center gap-2">
-          <GitBranch className={`w-3.5 h-3.5 ${isError ? 'text-accent-800' : 'text-content-muted'}`} />
+          {icon ?? <GitBranch className={`w-3.5 h-3.5 ${isError ? 'text-accent-800' : 'text-content-muted'}`} />}
           <span className={`text-[11px] font-mono font-medium tracking-wide uppercase ${isError ? 'text-accent-800' : 'text-content-tertiary'}`}>
-            {isError ? 'Diagram (parse error)' : 'Diagram'}
+            {isError ? `${label ?? 'Diagram'} (parse error)` : (label ?? 'Diagram')}
           </span>
         </div>
         <CopyButton text={code} />
@@ -684,6 +686,78 @@ function EchartsBlock({ code }: EchartsBlockProps) {
 }
 
 // ----------------------------------------------------------------
+// SVG render block
+//
+// Renders raw SVG markup from ```svg fenced code blocks directly into
+// the chat. Uses dangerouslySetInnerHTML — safe here because the only
+// source is the local LLM (same trust level as the Mermaid path which
+// also uses dangerouslySetInnerHTML on line ~299).
+//
+// Streaming behaviour: same debounce pattern as MermaidBlock.
+//   isStreaming=true  → 600ms debounce (waits for ``` close)
+//   isStreaming=false → renders immediately
+// The rendered SVG is stored in state so partial SVG mid-stream never
+// flashes corrupted markup — we only commit once the code stabilises.
+//
+// Layout: reuses DiagramCard shell (header bar + copy button) with a
+// dedicated "SVG" label and the Shapes icon from lucide-react.
+// ----------------------------------------------------------------
+
+interface SvgBlockProps {
+  code: string
+}
+
+function SvgBlock({ code }: SvgBlockProps) {
+  const isStreaming = useContext(StreamingCtx)
+  const [renderedSvg, setRenderedSvg] = useState<string | null>(null)
+  const lastRenderedCode = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (code === lastRenderedCode.current) return
+
+    const delay = isStreaming ? 600 : 0
+    let cancelled = false
+
+    const timer = setTimeout(() => {
+      if (cancelled) return
+      // Basic structural validation — must contain an opening <svg tag
+      if (!code.trim().toLowerCase().includes('<svg')) {
+        setRenderedSvg(null)
+        return
+      }
+      lastRenderedCode.current = code
+      setRenderedSvg(code)
+    }, delay)
+
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [code, isStreaming])
+
+  if (!renderedSvg) {
+    return (
+      <div
+        className="my-4 rounded-xl border border-surface-border/60 px-4 py-6 flex justify-center"
+        style={{ background: '#141414' }}
+      >
+        <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
+      </div>
+    )
+  }
+
+  return (
+    <DiagramCard
+      code={code}
+      icon={<Shapes className="w-3.5 h-3.5 text-content-muted" />}
+      label="SVG"
+    >
+      <div
+        className="p-4 diagram-block"
+        dangerouslySetInnerHTML={{ __html: renderedSvg }}
+      />
+    </DiagramCard>
+  )
+}
+
+// ----------------------------------------------------------------
 // Copy button
 // ----------------------------------------------------------------
 function CopyButton({ text }: { text: string }) {
@@ -885,6 +959,11 @@ function CodeBlock({ className, children }: CodeProps) {
   // ── Matplotlib chart ──
   if (kind === 'matplotlib') {
     return <MatplotlibBlock code={rawCode} />
+  }
+
+  // ── SVG diagram ──
+  if (kind === 'svg') {
+    return <SvgBlock code={rawCode} />
   }
 
   // ── ECharts interactive plot ──

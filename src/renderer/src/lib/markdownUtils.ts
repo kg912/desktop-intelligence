@@ -226,7 +226,7 @@ export function escapeCurrencyDollars(md: string): string {
  *  - 'matplotlib' → Python matplotlib script; executed server-side, result shown as PNG image
  *  - 'code'       → everything else; syntax-highlight with highlight.js
  */
-export type CodeBlockKind = 'inline' | 'mermaid' | 'echarts' | 'matplotlib' | 'code'
+export type CodeBlockKind = 'inline' | 'mermaid' | 'echarts' | 'matplotlib' | 'svg' | 'code'
 
 /**
  * classifyCodeBlock
@@ -244,6 +244,7 @@ export function classifyCodeBlock(lang: string | undefined): CodeBlockKind {
   if (lower === 'mermaid') return 'mermaid'
   if (lower === 'echarts' || lower === 'plot') return 'echarts'
   if (lower === 'matplotlib') return 'matplotlib'
+  if (lower === 'svg') return 'svg'
   return 'code'
 }
 
