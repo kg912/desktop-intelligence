@@ -231,10 +231,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           .getModelConfig()
           .then((config) => {
             setContextUsage((prevState) => {
-              const prevUsage = prevState.used || 0;
+              const prevUsage = prevState?.used || 0;
 
               return {
-                used: prevUsage + stats.promptTokens!,
+                used: prevUsage + (stats?.promptTokens || 0),
                 total: config.contextLength,
               };
             });
