@@ -179,6 +179,22 @@
   font-size: 10px;
 }
 
+/* Headings in user bubble: suppress the large top margin from prose-chat */
+.prose-chat.prose-user h1,
+.prose-chat.prose-user h2,
+.prose-chat.prose-user h3,
+.prose-chat.prose-user h4,
+.prose-chat.prose-user h5,
+.prose-chat.prose-user h6 {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+}
+
+/* First element in bubble never has top margin */
+.prose-chat.prose-user > :first-child {
+  margin-top: 0 !important;
+}
+
 /* Thinking cursor blink */
 @keyframes blink {
   0%, 100% { opacity: 1; }

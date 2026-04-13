@@ -323,14 +323,24 @@ export function prepareUserContent(raw: string): string {
   if (!raw) return raw
   const lines = raw.split('\n')
   let inFence = false
-  return lines.map((line) => {
-    // Detect fence open/close: line is (optional whitespace) + ``` + anything
+  const out: string[] = []
+  for (const line of lines) {
     if (/^\s*`{3,}/.test(line)) {
+      if (!inFence) {
+        // Opening fence: inject a blank line before it so CommonMark
+        // recognises it as a block-level fence, not a paragraph continuation.
+        out.push('')
+      }
       inFence = !inFence
-      return line  // fence delimiter line — never modify
+      out.push(line)  // fence delimiter — never add trailing spaces
+      continue
     }
-    if (inFence) return line  // inside fence — never modify
-    // Outside fence: ensure hard line break
-    return line.endsWith('  ') ? line : line + '  '
-  }).join('\n')
+    if (inFence) {
+      out.push(line)  // inside fence — never modify
+      continue
+    }
+    // Outside fence: append two spaces for CommonMark hard line break
+    out.push(line.endsWith('  ') ? line : line + '  ')
+  }
+  return out.join('\n')
 }

@@ -761,16 +761,52 @@ describe('prepareUserContent', () => {
     expect(result).toBe('a  \nb  \nc  ')
   })
 
-  it('does not modify fence delimiter lines or body lines inside a fenced code block', () => {
+  it('injects blank line before opening fence so CommonMark recognises the block', () => {
+    // Standalone code block: blank line is prepended before the opening ```
     const input = '```ts\nconst x = 1;\nconst y = 2;\n```'
-    const result = prepareUserContent(input)
-    expect(result).toBe('```ts\nconst x = 1;\nconst y = 2;\n```')
+    const lines = prepareUserContent(input).split('\n')
+    const fenceIdx = lines.findIndex((l) => l.startsWith('```ts'))
+    expect(lines[fenceIdx - 1]).toBe('')  // blank line immediately before opener
   })
 
-  it('adds trailing spaces only to non-fence lines in mixed content', () => {
+  it('does not modify fence body lines (no trailing spaces added inside fence)', () => {
+    const input = '```ts\nconst x = 1;\n```'
+    const lines = prepareUserContent(input).split('\n')
+    const bodyLine = lines.find((l) => l.includes('const x'))
+    expect(bodyLine).toBe('const x = 1;')  // unchanged — no trailing spaces
+  })
+
+  it('does not modify the closing fence line', () => {
+    const input = '```ts\ncode\n```'
+    const lines = prepareUserContent(input).split('\n')
+    const closingFence = lines[lines.length - 1]
+    expect(closingFence).toBe('```')  // unchanged — no trailing spaces
+  })
+
+  it('adds trailing spaces to text after a closing fence', () => {
+    const input = '```\ncode\n```\nworld'
+    const lines = prepareUserContent(input).split('\n')
+    const afterFence = lines[lines.length - 1]
+    expect(afterFence).toBe('world  ')
+  })
+
+  it('prepends blank line before fence even when no text precedes it (standalone block)', () => {
+    const result = prepareUserContent('```ts\ncode\n```')
+    expect(result.startsWith('\n```')).toBe(true)
+  })
+
+  it('injects blank line before opening fence after paragraph text', () => {
+    const input = 'hello\n```ts\nconst x = 1;\n```'
+    const lines = prepareUserContent(input).split('\n')
+    const fenceIdx = lines.findIndex((l) => l.startsWith('```ts'))
+    expect(lines[fenceIdx - 1]).toBe('')  // blank line between text and fence
+  })
+
+  it('adds trailing spaces to non-fence lines in mixed content', () => {
     const input = 'hello\n```\ncode\n```\nworld'
     const result = prepareUserContent(input)
-    expect(result).toBe('hello  \n```\ncode\n```\nworld  ')
+    // hello and world get trailing spaces; fence lines and code body do not
+    expect(result).toBe('hello  \n\n```\ncode\n```\nworld  ')
   })
 
   it('does not double-space lines already ending with two spaces', () => {
