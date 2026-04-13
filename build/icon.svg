@@ -1,0 +1,69 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="sphereCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff2222" stop-opacity="0.8" />
+      <stop offset="35%" stop-color="#880000" stop-opacity="0.6" />
+      <stop offset="75%" stop-color="#1e0000" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#0a0000" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="rimGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="70%" stop-color="#cc0000" stop-opacity="0" />
+      <stop offset="88%" stop-color="#ff3333" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#ff5555" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#666" />
+      <stop offset="50%" stop-color="#282828" />
+      <stop offset="100%" stop-color="#555" />
+    </linearGradient>
+    <linearGradient id="ringSheen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.20" />
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.04" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="iconClip">
+      <rect x="0" y="0" width="512" height="512" rx="80" />
+    </clipPath>
+    <clipPath id="sphereClip">
+      <circle cx="256" cy="256" r="204" />
+    </clipPath>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="80" fill="#0a0a0a" />
+  <circle cx="256" cy="256" r="215" fill="none" stroke="url(#ringGrad)" stroke-width="22" />
+  <path d="M 100 160 A 215 215 0 0 1 412 160" fill="none" stroke="url(#ringSheen)" stroke-width="14" stroke-linecap="round" />
+  <circle cx="256" cy="256" r="204" fill="none" stroke="#000000" stroke-width="6" stroke-opacity="0.6" />
+  <circle cx="256" cy="256" r="226" fill="none" stroke="#cc2222" stroke-width="2" stroke-opacity="0.12" />
+  <circle cx="256" cy="256" r="204" fill="url(#sphereCore)" />
+  <circle cx="256" cy="256" r="204" fill="url(#rimGlow)" />
+  <circle cx="256" cy="256" r="204" fill="#06030f" fill-opacity="0.25" />
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#440000" stroke-width="3" stroke-opacity="0.5" />
+  <path d="M 130 120 A 204 204 0 0 1 390 110" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.18" stroke-linecap="round" />
+  <g filter="url(#glow)">
+    <g stroke="#ff4d4d" stroke-width="2.5" opacity="0.9">
+      <line x1="256" y1="142" x2="382" y2="220" />
+      <line x1="256" y1="142" x2="130" y2="220" />
+      <line x1="382" y1="220" x2="256" y2="382" />
+      <line x1="130" y1="220" x2="256" y2="382" />
+      <line x1="256" y1="142" x2="256" y2="382" />
+      <line x1="382" y1="220" x2="256" y2="292" />
+      <line x1="130" y1="220" x2="256" y2="292" />
+    </g>
+    <g fill="#ffcccc">
+      <circle cx="256" cy="142" r="7" />
+      <circle cx="382" cy="220" r="7" />
+      <circle cx="130" cy="220" r="7" />
+      <circle cx="256" cy="382" r="7" />
+      <circle cx="256" cy="292" r="5.5" />
+    </g>
+  </g>
+  <rect x="0" y="0" width="512" height="512" rx="80" fill="#ffffff" fill-opacity="0.03" clip-path="url(#iconClip)" />
+  <rect x="2" y="2" width="508" height="508" rx="79" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.08" clip-path="url(#iconClip)" />
+  <rect x="8" y="8" width="496" height="496" rx="75" fill="none" stroke="#000000" stroke-width="4" stroke-opacity="0.25" clip-path="url(#iconClip)" />
+</svg>

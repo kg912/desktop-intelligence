@@ -98,7 +98,14 @@
         ]
       }
     ],
+    "linux": {
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "icon": "build/icon.ico"
+    },
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
