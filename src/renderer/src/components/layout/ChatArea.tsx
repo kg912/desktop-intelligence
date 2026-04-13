@@ -213,7 +213,7 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
             <EmptyState onSuggest={onSuggest ?? (() => {})} />
           </motion.div>
         ) : (
-          <div key="messages" className="max-w-3xl mx-auto px-6 py-8">
+          <div key="messages" className="max-w-[55rem] mx-auto px-6 py-8">
             <ChatIdCtx.Provider value={activeChatId}>
               <div className="space-y-6">
                 <AnimatePresence initial={false}>
