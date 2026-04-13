@@ -42,7 +42,7 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   // Intentionally empty string — App.tsx populates this via setSelectedModel
   // once it has read the saved modelId from SettingsStore (IPC round-trip).
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("fast");
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("thinking");
   const [contextUsage, setContextUsage] = useState<{
     used: number;
     total: number;

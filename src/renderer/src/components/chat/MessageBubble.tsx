@@ -66,16 +66,18 @@ function UserBubble({ content, attachments }: { content: string; attachments?: M
             ))}
           </div>
         )}
-        <div
-          className="px-4 py-3 rounded-2xl rounded-tr-sm selectable
-                     text-[0.9375rem] leading-relaxed text-content-primary"
-          style={{
-            background: 'rgba(127,29,29,0.22)',
-            border: '1px solid rgba(127,29,29,0.35)',
-          }}
-        >
-          <MarkdownRenderer content={content} variant="user" />
-        </div>
+        {content.trim() && (
+          <div
+            className="px-4 py-3 rounded-2xl rounded-tr-sm selectable
+                       text-[0.9375rem] leading-relaxed text-content-primary"
+            style={{
+              background: 'rgba(127,29,29,0.22)',
+              border: '1px solid rgba(127,29,29,0.35)',
+            }}
+          >
+            <MarkdownRenderer content={content} variant="user" />
+          </div>
+        )}
       </div>
       <div className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-DEFAULT border border-surface-border
                       flex items-center justify-center mt-1">
