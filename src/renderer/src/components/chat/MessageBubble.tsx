@@ -6,7 +6,8 @@
  */
 
 import { motion } from 'framer-motion'
-import { Sparkles, User, Globe, Paperclip } from 'lucide-react'
+import { User, Globe, Paperclip } from 'lucide-react'
+import avatarAssistant from '../../assets/avatar-assistant.png'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
 import { ToolCallNotification } from './ToolCallNotification'
@@ -103,23 +104,12 @@ function AssistantBubble({
     <div className="flex gap-3">
       {/* AI avatar */}
       <div className="flex-shrink-0 mt-1">
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 100%)',
-            border: '1px solid rgba(127,29,29,0.4)',
-            boxShadow: isThinking || isStreaming
-              ? '0 0 10px rgba(220,38,38,0.3)'
-              : 'none'
-          }}
-        >
-          <Sparkles
-            className={cn(
-              'w-3.5 h-3.5',
-              isThinking || isStreaming ? 'text-accent-400' : 'text-accent-700'
-            )}
-          />
-        </div>
+        <img
+          src={avatarAssistant}
+          alt=""
+          className="w-7 h-7 rounded-full"
+          draggable={false}
+        />
       </div>
 
       {/* Content */}

@@ -1,7 +1,7 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Sparkles } from 'lucide-react'
 import { MessageBubble } from '../chat/MessageBubble'
+import logoWelcome from '../../assets/logo-welcome.png'
 import type { Message } from '../chat/MessageBubble'
 
 // ----------------------------------------------------------------
@@ -19,15 +19,12 @@ function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
     <div className="flex flex-col items-center justify-center h-full px-8 select-none">
       {/* Hero — CSS fade-in, no Framer Motion initial:0 */}
       <div className="mb-8 flex flex-col items-center gap-4 animate-fade-in">
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 100%)',
-            boxShadow: '0 0 32px rgba(139,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04)'
-          }}
-        >
-          <Sparkles className="w-6 h-6 text-accent-500" />
-        </div>
+        <img
+          src={logoWelcome}
+          alt="Desktop Intelligence"
+          className="w-14 h-14"
+          draggable={false}
+        />
         <div className="text-center">
           <h1 className="text-xl font-semibold text-content-primary tracking-tight">
             Desktop Intelligence
