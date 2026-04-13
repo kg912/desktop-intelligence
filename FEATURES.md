@@ -26,6 +26,19 @@ All models above support Thinking mode. Gemma 4 and Qwen3 are the primary tested
 - Smooth auto-scroll follows live output; pauses when you scroll up; resumes when you scroll to the bottom or send a new message
 - Stream can be aborted mid-generation (stop button)
 
+### Rich Text Formatting in User Bubbles
+
+User messages are now rendered as rich text — not displayed as raw markdown strings.
+
+![Rich text formatting demo](app_images/rich_text_formatting_demo.png)
+
+- Headings, **bold**, _italic_, ~~strikethrough~~, blockquotes, and task lists all render correctly inside user message bubbles
+- Fenced code blocks (with or without a language tag) display as styled code cards rather than raw ` ``` ` text
+- Inline `code` spans render with monospace highlighting
+- Tables and horizontal rules are supported
+- A dedicated `prose-user` CSS modifier applies tighter line-height and paragraph spacing so rendered user messages match the visual density of the original plain-text style
+- The wire payload sent to the model is always the original raw text — the model never sees HTML
+
 ### Markdown Rendering
 - Full CommonMark + GFM support: headings, bold/italic/strikethrough, blockquotes, task lists, tables, horizontal rules
 - Inline code and fenced code blocks with language labels
@@ -224,4 +237,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-*Last updated: 2026-04-10 — v1.8.4*
+*Last updated: 2026-04-13 — v2.0.0-beta-1*

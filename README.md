@@ -55,6 +55,12 @@ On first launch, select any model you have downloaded in LM Studio and set your 
 
 ---
 
+### Rich Text Formatting — User & Assistant Bubbles
+
+![Rich text formatting in chat — Markdown and MathJax](app_images/rich_text_formatting_demo.png)
+
+**User messages are now fully rendered** — Markdown headings, bold/italic, code blocks, lists, and tables display correctly in user bubbles, not as raw text. Assistant responses support the same full Markdown suite alongside LaTeX math, Mermaid diagrams, and syntax-highlighted code.
+
 ### Markdown, Code & Math
 
 ![Markdown and math rendering](app_images/markdown_demo.png)
@@ -169,6 +175,6 @@ Key sentinel log lines:
 
 ---
 
-*v1.8.4 — 2026-04-10*
+*v2.0.0-beta-1 — 2026-04-13*
 
 Built with [Claude Code](https://claude.ai/claude-code)

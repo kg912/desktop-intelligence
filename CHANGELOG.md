@@ -4,6 +4,152 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [2.0.0-beta-1] — 2026-04-13
+
+### Highlights
+
+- **Rich text in user bubbles** — user messages are now fully rendered as Markdown (headings, bold, code blocks, tables, math) instead of displayed as raw text. Wire payload to the model is unchanged.
+- **Wider chat column** — the message area is widened from `max-w-3xl` (48 rem) to `max-w-[55rem]` (880 px), giving assistant responses and code blocks significantly more room.
+- **Custom brand assets** — the generic Sparkles placeholder on the welcome screen and assistant avatar are replaced with purpose-built brand images (`logo-welcome.png`, `avatar-assistant.png`).
+
+---
+
+### New Features
+
+#### Rich Text Formatting in User Bubbles (alpha-1 → alpha-3)
+
+User messages now render as rich text, not raw strings.
+
+![Rich text formatting demo](app_images/rich_text_formatting_demo.png)
+
+- A new `variant="user"` prop on `MarkdownRenderer` skips think-block parsing, currency escaping, and the blinking cursor, and wraps content in a dedicated `.prose-chat.prose-user` CSS class
+- `UserBubble` in `MessageBubble.tsx` now renders via `<MarkdownRenderer content={content} variant="user" />` instead of a plain text node
+- `.prose-chat.prose-user` applies tighter paragraph spacing (`margin-bottom: 0.35em`), font-size `0.9375rem`, and line-height `1.6` to match the visual density of the original plain-text style
+- Fenced code blocks collapsed to inline `<code>` spans — root cause was `remark-breaks` rewriting newlines before the parser saw the fence. Fixed by removing `remark-breaks` and replacing it with a `prepareUserContent()` pure function that appends two trailing spaces to non-fence lines for CommonMark hard line breaks, leaving fence content untouched
+- Fenced blocks additionally required a blank line before the opening fence — `prepareUserContent()` injects one when the preceding line is non-empty text
+- `h1`–`h6` top-margin overrides in `globals.css` remove the large gap above headings inside user bubbles
+- Wire payload to the model is always the original raw markdown — the model never receives HTML
+
+#### Inline Detection Fix for Code Blocks (alpha-4)
+
+Fenced vs inline code detection was relying on the `inline` prop from `react-markdown`, which proved unreliable across versions. Replaced with a trailing-newline heuristic: remark always appends `\n` to fenced block children and never to inline spans. `isBlock = raw.endsWith('\n') || /language-\w+/.test(className)` correctly distinguishes the two in all cases. Also restores plain ` ``` ` fences rendering as block cards rather than inline `<code>` elements.
+
+---
+
+### Improvements
+
+#### Wider Chat Column (alpha-5)
+The central message column is widened from `max-w-3xl` (48 rem / 768 px) to `max-w-[55rem]` (880 px). Both user and assistant bubbles benefit since they share the same container. Code blocks, tables, and wide charts no longer wrap prematurely.
+
+#### Custom Brand Assets (alpha-6)
+The Sparkles icon placeholder is replaced with:
+- **Welcome screen** — `logo-welcome.png`, a purpose-built brand image shown on the empty-state chat screen
+- **Assistant avatar** — `avatar-assistant.png`, shown to the left of every assistant message bubble
+
+---
+
+## [1.9.2] — 2026-04-11
+
+### New Feature: Inline SVG Rendering
+
+````svg code blocks are now rendered as live inline SVG in the chat window.
+
+- `classifyCodeBlock()` in `markdownUtils.ts` extended to return `'svg'` for `svg`-tagged fences
+- New `SvgBlock` component: 600ms streaming debounce, structural validation (must contain `<svg`), renders via `dangerouslySetInnerHTML` inside a `DiagramCard` with Shapes icon and "SVG" label, spinner while debouncing
+- `DiagramCard` extended with optional `icon` and `label` props for reuse across Mermaid, SVG, and future diagram types
+- System prompt updated to teach the model `viewBox` / `width` / dark-colour rules for custom vector diagrams
+
+---
+
+## [1.9.1] — 2026-04-10
+
+### New Feature: Clickable Links
+
+All links in the app now open in the default OS browser.
+
+- `shell.openExternal(url)` exposed via `contextBridge` in `preload/index.ts`
+- Markdown `<a>` components in `MarkdownRenderer` call `window.api.openExternal(href)` instead of a no-op `onClick`
+- Links styled with `text-accent-400 underline hover:text-accent-300`
+- Source URLs in `ToolCallNotification` converted from plain `<div>` rows to `<button>` elements that call `openExternal`
+
+---
+
+## [1.9.0] — 2026-04-10
+
+### Security Audit Fixes
+
+- **axios pinned to 1.13.6** with an `overrides` block in `package.json` — guards against MAL-2026-2306 supply chain attack; semver range `^1.7.2` could resolve to compromised versions `1.14.1`/`0.30.4` on fresh install
+- **`sanitizeDocumentText()`** added to `FileProcessorService` — strips prompt-injection patterns (`ignore/disregard/forget previous instructions`, `[INST]`, `<|im_start|>`, `jailbreak`, etc.) from PDF and text files before RAG ingest
+- **`validatePythonCode()`** added to `PythonWorkerService` — rejects LLM-generated code containing `os`, `subprocess`, `socket`, `shutil`, `pathlib`, `eval()`, `exec()`, `open()`, `__import__`, `__builtins__`, `compile()` before it reaches the worker
+- **`SECURITY RULES` sentinel block** added to `BASE_SYSTEM_PROMPT` — instructs the model to treat `[Document: ...]` blocks as untrusted data, refuse persona changes from file content, and surface suspicious document instructions to the user
+
+---
+
+## [1.8.4] — 2026-04-10
+
+### Improvements
+
+- **Full page-fetch augmentation** — all three search paths (Step 1 direct-answer, mid-stream interception, native tool call) now use `augmentAndFormatResults()`. The model sees actual page body text for results with thin snippets, not just title + URL pairs.
+- **Stronger DATA INTEGRITY rules** in `WEB_SEARCH_SYSTEM_ADDENDUM` — explicitly bans gap-filling with training data, mandates verbatim figures or honest "not available", prescribes exact phrasing for search-limited results.
+- `formattedContent` threaded through the full IPC/state pipeline so the model receives the augmented page text on follow-up turns rather than bare JSON.
+
+---
+
+## [1.8.3] — 2026-04-10
+
+See CLAUDE.md change log entries #92–#93 for detailed technical notes.
+
+---
+
+## [1.8.2] — 2026-04-10
+
+### New Feature: Page-Fetch Augmentation for Search Results
+
+- `augmentAndFormatResults()` in `BraveSearchService` identifies results with thin snippets (< 80 chars), fetches the live page via `Electron.net.fetch` (5s timeout), and substitutes the page body text (stripped of nav/scripts/ads, capped at 3 000 chars)
+- Social media and paywall domains skipped automatically (`FETCH_SKIP_DOMAINS`)
+- Augmentation runs in parallel via `Promise.allSettled` for speed
+
+---
+
+## [1.8.1] — 2026-04-10
+
+### New Setting: "Prior search results in context" toggle
+
+- When **on**: full search result text is kept in LM Studio context on follow-up turns
+- When **off** (default): results stubbed to `[Previous Search Results for <query>]` to save tokens
+- Toggle in Settings → Web Search, persisted to `app-settings.json`
+
+---
+
+## [1.8.0] — 2026-04-10
+
+### Native Tool Calling via LM Studio `delta.tool_calls[]`
+
+Step 2 stream body now includes `tools: [BRAVE_SEARCH_TOOL]` and `tool_choice: 'auto'`. The SSE loop accumulates streamed `delta.tool_calls[]` chunks into a `pendingToolCall` accumulator; post-loop the search executes and the tool result is injected before the final answer is streamed.
+
+### Ollama Provider Removed
+
+Ollama support added in v1.7.0 is removed. All provider-selection UI, daemon management, and IPC plumbing specific to Ollama is stripped. The app targets LM Studio exclusively.
+
+---
+
+## [1.7.x] — 2026-04-06
+
+Ollama provider support (added and removed within the 1.7.x series). See CLAUDE.md entries #85–#89 for technical details. Not relevant to end users.
+
+---
+
+## [1.6.7] — 2026-04-06
+
+### New Feature: Generation Parameters & Custom System Prompt in Settings
+
+- **Temperature**, **Top P**, **Max Output Tokens**, and **Repeat Penalty** sliders added to the Model Settings panel
+- **System Prompt** textarea (up to 6 000 characters) prepended to every conversation
+- All five parameters persisted to `app-settings.json` and applied to every LM Studio request
+- Step 2 stream body reads all generation params from `readSettings()` instead of hardcoded values
+
+---
+
 ## [1.6.6] — 2026-04-06
 
 ### Bug Fix: Qwen 3.5 Step 1 decision lands in reasoning_content when thinking mode is on
@@ -352,7 +498,3 @@ Initial scaffold. Core Electron + React + Vite + TypeScript application with:
 ---
 
 *For a detailed technical change log, see [CLAUDE.md](CLAUDE.md) Section 0.*
-
-### Core Agentic Logic Updates
-*   **Resolved `<think>` Tag UI Bleed:** Addressed an edge-case regression during mid-stream tool execution where a partially generated unclosed `<think>` tag would persist in the message UI state, forcing the `MarkdownRenderer` to apply Case 3 retrieval and resulting in duplicated text. The orchestration loop now proactively closes mismatched `think` tags before dispatching `CHAT_STREAM_RETRACT`.
-*   **Persistent Tool-Call Context Memory:** Resolved a model "amnesia" hallucination issue across multi-turn prompts (e.g., repeating searches for stale context) by injecting a dynamically generated `[System Note: ...]` detailing the parsed query and results of prior inline tool calls into the internal `.content` tracker. Ensures model retains explicit awareness of its prior functional executions while preserving frontend isolation.

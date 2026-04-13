@@ -240,4 +240,4 @@ To update to a new version, simply replace the app in your Applications folder w
 
 ---
 
-*Last updated: 2026-04-10 — v1.8.4*
+*Last updated: 2026-04-13 — v2.0.0-beta-1*
