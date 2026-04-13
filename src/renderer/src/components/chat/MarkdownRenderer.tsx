@@ -941,14 +941,19 @@ interface CodeProps extends ComponentPropsWithoutRef<'code'> {
   children?:  React.ReactNode
 }
 
-function CodeBlock({ className, children }: CodeProps) {
+function CodeBlock({ className, children, inline }: CodeProps) {
   const rawCode = String(children ?? '').replace(/\n$/, '')
   const match   = /language-(\w+)/.exec(className ?? '')
   const lang    = match?.[1]
   const kind    = classifyCodeBlock(lang)
 
   // ── Inline code ──
-  if (kind === 'inline') {
+  // react-markdown sets inline=true for `backtick` spans inside paragraphs.
+  // Fenced code blocks (``` ... ```) always receive inline=undefined, even
+  // when no language tag is given — classifyCodeBlock would return 'inline'
+  // for those too, so we gate on the inline prop rather than kind to avoid
+  // rendering plain ``` fences as inline <code> spans.
+  if (inline) {
     return <code className={className}>{children}</code>
   }
 
@@ -1006,7 +1011,7 @@ function CodeBlock({ className, children }: CodeProps) {
         <div className="flex items-center gap-2">
           <Terminal className="w-3.5 h-3.5 text-content-muted" />
           <span className="text-[11px] font-mono font-medium text-content-tertiary tracking-wide uppercase">
-            {lang}
+            {lang ?? 'code'}
           </span>
         </div>
         <CopyButton text={rawCode} />
@@ -1016,7 +1021,7 @@ function CodeBlock({ className, children }: CodeProps) {
       <div className="overflow-x-auto">
         <pre className="p-4 m-0 text-[13px] leading-relaxed font-mono">
           <code
-            className={`hljs language-${lang}`}
+            className={lang ? `hljs language-${lang}` : 'hljs'}
             dangerouslySetInnerHTML={{ __html: highlighted }}
           />
         </pre>
