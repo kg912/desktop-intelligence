@@ -178,9 +178,10 @@ export const mockApi: ElectronAPI = {
   },
   abortChat: () => {},
 
-  onChatStreamChunk: (cb) => chunkBus.subscribe(cb),
-  onChatStreamEnd:   (cb) => endBus.subscribe(cb),
-  onChatError:       (cb) => errorBus.subscribe(cb),
+  onChatStreamChunk:   (cb) => chunkBus.subscribe(cb),
+  onChatStreamEnd:     (cb) => endBus.subscribe(cb),
+  onChatError:         (cb) => errorBus.subscribe(cb),
+  onChatStreamRetract: () => () => {},
 
   // ── File processing (mock — no real FS access in browser) ────
   processFile: async (_payload: AttachmentFilePayload): Promise<ProcessedAttachment> => {
@@ -207,6 +208,34 @@ export const mockApi: ElectronAPI = {
     success: false as const,
     error: 'matplotlib rendering requires the Electron runtime — not available in browser preview.',
   }),
+
+  // ── Plot RAG stub ─────────────────────────────────────────────
+  storePlot: async () => ({ id: `mock-plot-${Date.now()}` }),
+
+  // ── Model settings ────────────────────────────────────────────
+  getModelConfig: async () => ({
+    modelId:       'qwen3-demo',
+    contextLength: 32768,
+  }),
+  reloadModel: async () => ({ success: true as const }),
+
+  // ── First-launch / onboarding ─────────────────────────────────
+  isFirstLaunch:     async () => false,
+  getAvailableModels: async () => [],
+  initializeApp:     async () => ({ success: true as const }),
+
+  // ── MCP / Brave Search stubs ──────────────────────────────────
+  mcpGetSettings: async () => ({
+    braveEnabled:              false,
+    braveApiKey:               '',
+    maxSearchLoops:            4,
+    keepSearchResultsInContext: false,
+  }),
+  mcpSaveSettings:   async () => {},
+  mcpGetEnvKeyStatus: async () => ({ hasEnvKey: false }),
+
+  // ── Shell utilities ───────────────────────────────────────────
+  openExternal: async (url: string) => { console.log('[mock] openExternal:', url) },
 
   // ── Chat History (in-memory mock) ─────────────────────────────
   getChats: async (): Promise<Chat[]> => [...mockChats],
