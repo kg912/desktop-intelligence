@@ -302,3 +302,35 @@ export function isValidMermaidSyntax(code: string): boolean {
   if (!firstLine) return false
   return MERMAID_START_KEYWORDS.some((kw) => firstLine.startsWith(kw.toLowerCase()))
 }
+
+// ----------------------------------------------------------------
+// User content preprocessor
+// ----------------------------------------------------------------
+
+/**
+ * prepareUserContent
+ *
+ * Transforms a raw textarea string before it reaches ReactMarkdown in the
+ * user bubble.  Single newlines typed via Shift+Enter are converted to
+ * CommonMark hard line breaks (two trailing spaces before \n) so they
+ * render as <br> instead of collapsing into a single paragraph.
+ *
+ * Fenced code blocks (``` … ```) are detected and their content is left
+ * completely untouched — remark parses fences AFTER hard-break processing,
+ * so modifying fence lines would break code block detection.
+ */
+export function prepareUserContent(raw: string): string {
+  if (!raw) return raw
+  const lines = raw.split('\n')
+  let inFence = false
+  return lines.map((line) => {
+    // Detect fence open/close: line is (optional whitespace) + ``` + anything
+    if (/^\s*`{3,}/.test(line)) {
+      inFence = !inFence
+      return line  // fence delimiter line — never modify
+    }
+    if (inFence) return line  // inside fence — never modify
+    // Outside fence: ensure hard line break
+    return line.endsWith('  ') ? line : line + '  '
+  }).join('\n')
+}

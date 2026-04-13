@@ -47,6 +47,7 @@ import {
   isValidMermaidSyntax,
   MERMAID_START_KEYWORDS,
   escapeCurrencyDollars,
+  prepareUserContent,
 } from '../markdownUtils'
 
 // ── Suite: parseThinkBlocks ───────────────────────────────────────────────────
@@ -749,5 +750,35 @@ describe('parseThinkBlocks — reasoning_content reconstruction', () => {
     expect(result.thought).toBe('')
     expect(result.answer).toBe('No think block at all')
     expect(result.isThinking).toBe(false)
+  })
+})
+
+// ── Suite: prepareUserContent ─────────────────────────────────────────────────
+
+describe('prepareUserContent', () => {
+  it('appends two trailing spaces to each line of plain multi-line text', () => {
+    const result = prepareUserContent('a\nb\nc')
+    expect(result).toBe('a  \nb  \nc  ')
+  })
+
+  it('does not modify fence delimiter lines or body lines inside a fenced code block', () => {
+    const input = '```ts\nconst x = 1;\nconst y = 2;\n```'
+    const result = prepareUserContent(input)
+    expect(result).toBe('```ts\nconst x = 1;\nconst y = 2;\n```')
+  })
+
+  it('adds trailing spaces only to non-fence lines in mixed content', () => {
+    const input = 'hello\n```\ncode\n```\nworld'
+    const result = prepareUserContent(input)
+    expect(result).toBe('hello  \n```\ncode\n```\nworld  ')
+  })
+
+  it('does not double-space lines already ending with two spaces', () => {
+    const result = prepareUserContent('line one  \nline two')
+    expect(result).toBe('line one  \nline two  ')
+  })
+
+  it('returns empty string for empty input', () => {
+    expect(prepareUserContent('')).toBe('')
   })
 })

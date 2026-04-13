@@ -40,6 +40,7 @@ import {
   classifyCodeBlock,
   isValidMermaidSyntax,
   escapeCurrencyDollars,
+  prepareUserContent,
 } from '../../lib/markdownUtils'
 import { ChatIdCtx } from '../layout/ChatArea'
 
@@ -1111,9 +1112,14 @@ interface MarkdownRendererProps {
 }
 
 export function MarkdownRenderer({ content, isStreaming = false, variant = 'assistant' }: MarkdownRendererProps) {
-  // ── User variant — no think parsing, no escaping, no cursor ──────────────
+  // ── Hooks that must run unconditionally (before any early return) ─────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const userComponents = useMemo(() => buildComponents(), [])
+  // Prepend hard line breaks to non-fence lines so Shift+Enter newlines render
+  // as <br> in the user bubble. Must be computed unconditionally.
+  const prepared = useMemo(() => prepareUserContent(content), [content])
+
+  // ── User variant — no think parsing, no escaping, no cursor ──────────────
   if (variant === 'user') {
     return (
       <StreamingCtx.Provider value={false}>
@@ -1123,7 +1129,7 @@ export function MarkdownRenderer({ content, isStreaming = false, variant = 'assi
             rehypePlugins={[rehypeKatex]}
             components={userComponents}
           >
-            {content}
+            {prepared}
           </ReactMarkdown>
         </div>
       </StreamingCtx.Provider>

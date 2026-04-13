@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "2.0.0-alpha-1",
+  "version": "2.0.0-alpha-2",
   "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
   "main": "out/main/index.js",
   "author": "Karan Grover",
