@@ -73,7 +73,7 @@ function UserBubble({ content, attachments }: { content: string; attachments?: M
             border: '1px solid rgba(127,29,29,0.35)',
           }}
         >
-          {content}
+          <MarkdownRenderer content={content} variant="user" />
         </div>
       </div>
       <div className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-DEFAULT border border-surface-border

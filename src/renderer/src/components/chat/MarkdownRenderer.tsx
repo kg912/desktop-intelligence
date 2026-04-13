@@ -1107,9 +1107,30 @@ function buildComponents(): Components {
 interface MarkdownRendererProps {
   content:     string
   isStreaming?: boolean
+  variant?:    'assistant' | 'user'   // default: 'assistant'
 }
 
-export function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, isStreaming = false, variant = 'assistant' }: MarkdownRendererProps) {
+  // ── User variant — no think parsing, no escaping, no cursor ──────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const userComponents = useMemo(() => buildComponents(), [])
+  if (variant === 'user') {
+    return (
+      <StreamingCtx.Provider value={false}>
+        <div className="prose-chat prose-user selectable">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeKatex]}
+            components={userComponents}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
+      </StreamingCtx.Provider>
+    )
+  }
+
+  // ── Assistant variant — existing logic unchanged ──────────────────────────
   // Memoised so the O(n) string scans only run when content actually changes,
   // not on every re-render during streaming (which can fire 10–50× per second).
   const { thought, answer: rawAnswer, isThinking } = useMemo(

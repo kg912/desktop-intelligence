@@ -162,6 +162,23 @@
   border-radius: 4px;
 }
 
+/* User bubble markdown — tighter spacing to match previous raw-text look */
+.prose-chat.prose-user p {
+  margin-top: 0;
+  margin-bottom: 0.35em;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.prose-chat.prose-user p:last-child {
+  margin-bottom: 0;
+}
+
+/* Code blocks inside user bubbles: slightly smaller header */
+.prose-chat.prose-user .group .text-\[11px\] {
+  font-size: 10px;
+}
+
 /* Thinking cursor blink */
 @keyframes blink {
   0%, 100% { opacity: 1; }
