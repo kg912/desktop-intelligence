@@ -941,19 +941,21 @@ interface CodeProps extends ComponentPropsWithoutRef<'code'> {
   children?:  React.ReactNode
 }
 
-function CodeBlock({ className, children, inline }: CodeProps) {
-  const rawCode = String(children ?? '').replace(/\n$/, '')
+function CodeBlock({ className, children }: CodeProps) {
+  // react-markdown's markdown parser always appends a trailing '\n' to the
+  // content of fenced code blocks (even single-line ones) but never to
+  // inline backtick spans. This is the most reliable way to distinguish
+  // the two — more reliable than the `inline` prop which is not consistently
+  // passed across react-markdown versions.
+  const raw     = String(children ?? '')
+  const isBlock = raw.endsWith('\n') || /language-\w+/.test(className ?? '')
+  const rawCode = raw.replace(/\n$/, '')
   const match   = /language-(\w+)/.exec(className ?? '')
   const lang    = match?.[1]
   const kind    = classifyCodeBlock(lang)
 
   // ── Inline code ──
-  // react-markdown sets inline=true for `backtick` spans inside paragraphs.
-  // Fenced code blocks (``` ... ```) always receive inline=undefined, even
-  // when no language tag is given — classifyCodeBlock would return 'inline'
-  // for those too, so we gate on the inline prop rather than kind to avoid
-  // rendering plain ``` fences as inline <code> spans.
-  if (inline) {
+  if (!isBlock) {
     return <code className={className}>{children}</code>
   }
 
