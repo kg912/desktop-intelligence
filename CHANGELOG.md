@@ -4,6 +4,57 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [2.0.0-beta-7] — 2026-04-14
+
+### Improvements
+
+#### TopBar Horizontal Padding (beta-7)
+Added symmetrical `px-8` horizontal padding to the TopBar so the model name and Compact button have breathing room from the window edges instead of sitting flush against them.
+
+#### Full GPU Offload Toggle (beta-6)
+
+A **Full GPU Offload** pill toggle in Settings → Model passes `--gpu max` to every `lms load` call, routing all model weights to the GPU for maximum throughput at the cost of higher VRAM usage.
+
+- Toggle persisted in `app-settings.json` and applied at every model load (startup + reload)
+- `LMSDaemonManager.runLoadModel()` reads the setting and appends `--gpu max --context-length <N>` when enabled
+- DEV_MODE builds log the exact `lms load` command to the console
+
+#### Context Compaction (beta-4 → beta-5)
+
+A **Compact** button in the top bar summarises the current conversation and replaces all messages with a single dense summary — freeing context window space without losing the thread of the conversation.
+
+![Context bar showing the Compact button enabled](app_images/context_compacting_option.png)
+
+The Compact button appears alongside the context utilisation bar and becomes active once the conversation has consumed at least 5 000 tokens.
+
+![Compaction in progress — blocking overlay with progress bar](app_images/context_compacting_running.png)
+
+While compacting, a blocking overlay prevents further input. The model produces a structured summary of the conversation; the existing messages are replaced atomically in SQLite.
+
+![Toast message after compaction — shows tokens before and after](app_images/context_compacting_finished_toast_message.png)
+
+A toast pill at the bottom of the screen confirms how many tokens were freed (e.g. "42,150 → 1,840 tokens"). The context bar resets and the conversation can continue from the summary.
+
+**Implementation details:**
+- `CHAT_COMPACT` IPC channel added to `shared/types.ts` with `CompactPayload` / `CompactResult` types
+- `DatabaseService.replaceMessagesWithSummary()` runs an atomic transaction: DELETE non-system messages → INSERT summary row → UPDATE `chats.updated_at`
+- Token counts measured with `countTokens()` (tiktoken with char-ratio fallback) before and after
+- `CompactProgressOverlay` and `CompactToast` are new Framer Motion–animated components in `ChatArea`
+- `ModelStore` gains `isCompacting` and `compactToast` state; InputBar is disabled while compacting
+- Bug fix (beta-5): Compact button was inside a `drag-region` div; added `no-drag` directly to the `<button>` element so Electron does not swallow click events
+
+#### FTS5-Powered Hybrid RAG Retrieval (beta-3)
+
+The RAG pipeline is upgraded from brute-force full-document context injection to BM25-ranked chunk retrieval via SQLite FTS5.
+
+- Document text is split into 1 800-char chunks with 200-char overlap at ingest time; all chunks stored in a new `document_chunks` FTS5 virtual table
+- Retrieval uses `FTS5 MATCH ... ORDER BY rank` (BM25) so the most semantically relevant chunks surface first
+- Fallback to chronological full-document retrieval when the query is empty or FTS5 returns fewer than one result
+- Context block headers: `[Document: filename | Chunk N]` for traceability
+- Bug fix: `sanitizeFts5Query` now uses plain unquoted tokens instead of double-quoted tokens — double-quoting required exact token match, causing "backprop" to miss back-propagation; plain tokens use FTS5's default case-insensitive prefix matching
+
+---
+
 ## [2.0.0-beta-1] — 2026-04-13
 
 ### Highlights

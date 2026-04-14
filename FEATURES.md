@@ -77,6 +77,22 @@ User messages are now rendered as rich text — not displayed as raw markdown st
 - Hover over the bar to see exact token counts: e.g. "Used: 12,450 / 65,536 tokens (19%)"
 - Updates after every completed response; resets when you start a new chat
 
+### Context Compaction
+
+When the context bar fills up, the **Compact** button lets you summarise the conversation and free context window space without losing the thread.
+
+![Context bar with Compact button active](app_images/context_compacting_option.png)
+
+The Compact button appears next to the context bar once the session has consumed at least 5 000 tokens. Click it to start compaction.
+
+![Compaction progress overlay](app_images/context_compacting_running.png)
+
+A full-screen blocking overlay with an animated progress bar prevents further input while the model generates a structured summary of the conversation. The existing messages are replaced atomically in SQLite — no partial state on interruption.
+
+![Toast confirming compaction and showing tokens freed](app_images/context_compacting_finished_toast_message.png)
+
+A toast pill confirms how many tokens were freed (e.g. "42,150 → 1,840 tokens"). The context bar resets and the conversation continues from the summary — the model retains the full substance of what was discussed without carrying the full verbatim history.
+
 ---
 
 ## Document Q&A (RAG)
@@ -166,6 +182,8 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Two tabs:
 - Use it to give the model a persistent persona, formatting rules, or domain focus
 - Leave blank to use the app's built-in base prompt
 
+**Full GPU Offload** (pill toggle) — passes `--gpu max` to every `lms load` call, routing all model weights to the GPU for maximum throughput. Disabled by default; enable on machines where VRAM headroom allows it.
+
 **Reload Model** button — active only when any setting differs from the current loaded value. Reloading takes 30–60 seconds; all chat history is preserved.
 
 All settings are saved to `app-settings.json` in `app.getPath('userData')` and applied automatically on every subsequent launch.
@@ -237,4 +255,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-*Last updated: 2026-04-13 — v2.0.0-beta-1*
+*Last updated: 2026-04-14 — v2.0.0-beta-7*

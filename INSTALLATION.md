@@ -224,7 +224,8 @@ Once enabled, the app will automatically perform a search before answering time-
 
 ### "Context window exceeded" error in chat
 
-- Open settings (⚙️) and reduce the context length, or start a new chat
+- Use the **Compact** button in the top bar to summarise the conversation and free context space without losing the thread — the button activates once 5 000+ tokens are in use
+- Alternatively, open settings (⚙️) and increase the context length, or start a new chat
 - Long conversations accumulate history — the sliding window trims the oldest messages but very long thinking-mode sessions can still overflow
 
 ### PDF attachment doesn't seem to work
@@ -240,4 +241,4 @@ To update to a new version, simply replace the app in your Applications folder w
 
 ---
 
-*Last updated: 2026-04-13 — v2.0.0-beta-1*
+*Last updated: 2026-04-14 — v2.0.0-beta-7*

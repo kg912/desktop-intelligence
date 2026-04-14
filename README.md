@@ -89,6 +89,20 @@ Enable real-time web search by pasting your [Brave Search API key](https://brave
 
 ![Brave Search in chat — live web results surfaced inline](app_images/brave_search_mcp_chat_demo.png)
 
+### Context Compaction
+
+![Context bar with Compact button enabled](app_images/context_compacting_option.png)
+
+When the context bar approaches its limit, the **Compact** button lets you summarise the conversation and free context window space. The model produces a structured summary; all prior messages are replaced atomically in SQLite.
+
+![Compaction running — blocking overlay with progress bar](app_images/context_compacting_running.png)
+
+A full-screen overlay blocks input while the summary is being generated, then the chat reloads from the condensed history.
+
+![Toast message after compaction showing tokens before and after](app_images/context_compacting_finished_toast_message.png)
+
+A toast pill confirms how many tokens were freed. The context bar resets and the conversation continues from the summary — no loss of context substance, just less verbatim history.
+
 ---
 
 ## Quick Start (Development)
@@ -175,6 +189,6 @@ Key sentinel log lines:
 
 ---
 
-*v2.0.0-beta-1 — 2026-04-13*
+*v2.0.0-beta-7 — 2026-04-14*
 
 Built with [Claude Code](https://claude.ai/claude-code)
