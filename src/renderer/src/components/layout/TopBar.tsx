@@ -59,7 +59,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
 
   return (
     <div className="drag-region flex-shrink-0 flex items-center justify-between
-                    px-4 h-[52px] border-b border-surface-border/50 relative">
+                    px-8 h-[52px] border-b border-surface-border/50 relative">
 
       {/* Left: model name — left-aligned */}
       <div className="no-drag flex items-center gap-1.5">
