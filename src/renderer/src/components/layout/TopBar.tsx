@@ -4,14 +4,29 @@ import { Zap } from 'lucide-react'
 import { useModelStore } from '../../store/ModelStore'
 
 /**
- * TopBar — centre model name + right-side context utilisation indicator.
+ * TopBar — centre model name + right-side context utilisation indicator + Compact button.
  *
  * The context bar is invisible until the first completed response populates
  * contextUsage in ModelStore. After that it stays visible and updates on
  * every subsequent response. Cleared when the user starts a new chat.
+ *
+ * The Compact button appears alongside the context bar and is disabled
+ * until contextUsage.used >= 5000 tokens.
  */
-export function TopBar() {
-  const { selectedModel, contextUsage } = useModelStore()
+
+interface TopBarProps {
+  activeChatId:      string | null
+  onCompactComplete: () => void
+}
+
+export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
+  const {
+    selectedModel,
+    contextUsage,
+    isCompacting,
+    setIsCompacting,
+    setCompactToast,
+  } = useModelStore()
   const [showTooltip, setShowTooltip] = useState(false)
 
   const pct = contextUsage
@@ -24,6 +39,23 @@ export function TopBar() {
     : pct >= 70
     ? 'bg-amber-700/60'
     : 'bg-accent-800/60'
+
+  const canCompact = !!contextUsage && contextUsage.used >= 5000 && !isCompacting
+
+  async function handleCompact() {
+    if (!activeChatId || !contextUsage || contextUsage.used < 5000 || isCompacting) return
+    setIsCompacting(true)
+    try {
+      const result = await window.api.compactChat({ chatId: activeChatId, model: selectedModel })
+      setCompactToast({ tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter })
+      onCompactComplete()
+      setTimeout(() => setCompactToast(null), 5000)
+    } catch (err) {
+      console.error('[Compact] failed:', err)
+    } finally {
+      setIsCompacting(false)
+    }
+  }
 
   return (
     <div className="drag-region flex-shrink-0 flex items-center justify-between
@@ -46,56 +78,73 @@ export function TopBar() {
         </motion.div>
       </div>
 
-      {/* Right: context utilisation bar (hidden until first response) */}
-      <div className="no-drag w-36 flex items-center justify-end">
+      {/* Right: context utilisation bar + Compact button */}
+      <div className="no-drag w-36 flex items-center justify-end gap-2">
         {contextUsage && (
-          <div
-            className="relative cursor-default"
-            style={{ padding: '12px 4px', margin: '-12px -4px' }}
-            onMouseEnter={() => setShowTooltip(true)}
-            onMouseLeave={() => setShowTooltip(false)}
-          >
-            {/* Progress bar track */}
-            <div className="w-32 h-1.5 rounded-full bg-surface-border/40 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${barColour}`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
+          <>
+            {/* Compact button */}
+            <button
+              onClick={handleCompact}
+              disabled={!canCompact}
+              className={
+                canCompact
+                  ? 'bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
+                  : 'bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50 cursor-not-allowed'
+              }
+              title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
+            >
+              Compact
+            </button>
 
-            {/* Tooltip */}
-            {showTooltip && (
-              <div className="absolute right-0 top-5 z-50 min-w-[210px]
-                              rounded-xl border border-surface-border
-                              bg-surface-elevated/95 backdrop-blur-sm
-                              px-3.5 py-2.5 shadow-xl">
-                <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
-                  Context Utilization
-                </p>
-                {/* Mini bar inside tooltip */}
-                <div className="w-full h-1 rounded-full bg-surface-border/40 overflow-hidden mb-2">
-                  <div
-                    className={`h-full rounded-full ${barColour}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-content-secondary whitespace-nowrap">
-                  Used:{' '}
-                  <span className="text-content-primary font-medium">
-                    {contextUsage.used.toLocaleString()}
-                  </span>{' '}
-                  tokens ({pct}%)
-                </p>
-                <p className="text-[11px] text-content-secondary whitespace-nowrap">
-                  Length:{' '}
-                  <span className="text-content-primary font-medium">
-                    {contextUsage.total.toLocaleString()}
-                  </span>{' '}
-                  tokens (Max)
-                </p>
+            {/* Progress bar with tooltip */}
+            <div
+              className="relative cursor-default"
+              style={{ padding: '12px 4px', margin: '-12px -4px' }}
+              onMouseEnter={() => setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+            >
+              {/* Progress bar track */}
+              <div className="w-32 h-1.5 rounded-full bg-surface-border/40 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${barColour}`}
+                  style={{ width: `${pct}%` }}
+                />
               </div>
-            )}
-          </div>
+
+              {/* Tooltip */}
+              {showTooltip && (
+                <div className="absolute right-0 top-5 z-50 min-w-[210px]
+                                rounded-xl border border-surface-border
+                                bg-surface-elevated/95 backdrop-blur-sm
+                                px-3.5 py-2.5 shadow-xl">
+                  <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
+                    Context Utilization
+                  </p>
+                  {/* Mini bar inside tooltip */}
+                  <div className="w-full h-1 rounded-full bg-surface-border/40 overflow-hidden mb-2">
+                    <div
+                      className={`h-full rounded-full ${barColour}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-content-secondary whitespace-nowrap">
+                    Used:{' '}
+                    <span className="text-content-primary font-medium">
+                      {contextUsage.used.toLocaleString()}
+                    </span>{' '}
+                    tokens ({pct}%)
+                  </p>
+                  <p className="text-[11px] text-content-secondary whitespace-nowrap">
+                    Length:{' '}
+                    <span className="text-content-primary font-medium">
+                      {contextUsage.total.toLocaleString()}
+                    </span>{' '}
+                    tokens (Max)
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>

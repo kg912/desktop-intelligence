@@ -19,6 +19,8 @@ import type {
   ReloadResult,
   AvailableModel,
   AppInitPayload,
+  CompactPayload,
+  CompactResult,
 } from '../shared/types'
 
 const api = {
@@ -127,6 +129,10 @@ const api = {
 
   mcpGetEnvKeyStatus: (): Promise<{ hasEnvKey: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS),
+
+  // ── Context compaction ───────────────────────────────────────
+  compactChat: (payload: CompactPayload): Promise<CompactResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, payload),
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),

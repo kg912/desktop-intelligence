@@ -195,6 +195,9 @@ export const IPC_CHANNELS = {
 
   PLOT_STORE:          'plot:store',
 
+  CHAT_COMPACT:          'chat:compact',
+  CHAT_COMPACT_PROGRESS: 'chat:compactProgress',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -249,6 +252,18 @@ export interface AvailableModel {
 export interface AppInitPayload {
   modelId:       string
   contextLength: number
+}
+
+// --- Context Compaction ---
+
+export interface CompactPayload {
+  chatId: string
+  model:  string
+}
+
+export interface CompactResult {
+  tokensBefore: number
+  tokensAfter:  number
 }
 
 /** Payload for persisting a rendered matplotlib chart (Image RAG) */

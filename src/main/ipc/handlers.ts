@@ -14,6 +14,7 @@ import {
   getChatMessages,
   saveMessage,
   deleteChatById,
+  replaceMessagesWithSummary,
 } from '../services/DatabaseService'
 import { retrieveContext } from '../services/RAGService'
 import type {
@@ -31,6 +32,8 @@ import type {
   AvailableModel,
   AppInitPayload,
   StorePlotPayload,
+  CompactPayload,
+  CompactResult,
 } from '../../shared/types'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
@@ -729,5 +732,78 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS, () => ({
     hasEnvKey: !!(process.env.BRAVE_SEARCH_API_KEY?.trim()),
   }))
+
+  // ── chat:compact — manual context compaction ─────────────────────
+  // Summarises the current chat via a local LM Studio call, replaces
+  // all non-system messages with a single dense assistant summary row,
+  // and returns the before/after token delta.
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_COMPACT,
+    async (_, payload: CompactPayload): Promise<CompactResult> => {
+      const COMPACT_PROMPT =
+        `You are a context compaction assistant. Below is a conversation history between a user and an AI assistant.\n` +
+        `Produce a dense, structured summary written in first person from the assistant's perspective (e.g. "The user and I discussed..."). Preserve ALL of the following without omission:\n\n` +
+        `Every factual claim, decision, or conclusion reached\n` +
+        `All code discussed, file names, function names, error messages\n` +
+        `The user's stated goals, preferences, and constraints\n` +
+        `Any unresolved questions or next steps\n\n` +
+        `This summary will REPLACE the full conversation history. The assistant reading it must be able to continue the conversation seamlessly. Be thorough — do not omit technical details. Do not add preamble or postamble.\n` +
+        `CONVERSATION TO SUMMARISE:\n`
+
+      const { countTokens } = await import('../services/tokenUtils')
+      const { net } = await import('electron')
+
+      // 1. Load all non-system messages
+      const allMessages = getChatMessages(payload.chatId)
+      const messages    = allMessages.filter((m) => m.role !== 'system')
+
+      // 2. Count tokens before
+      const transcript    = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
+      const tokensBefore  = countTokens(transcript)
+
+      console.log(`[Compact] chatId=${payload.chatId} — ${messages.length} messages, ~${tokensBefore} tokens`)
+
+      // 3. Build summarisation payload — one user message with the full transcript
+      const requestBody = {
+        model:      payload.model,
+        stream:     false,
+        max_tokens: 2048,
+        messages:   [
+          {
+            role:    'user',
+            content: COMPACT_PROMPT + transcript,
+          },
+        ],
+      }
+
+      // 4. Call LM Studio (non-streaming)
+      const resp = await net.fetch('http://localhost:1234/v1/chat/completions', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(requestBody),
+      })
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => resp.statusText)
+        throw new Error(`LM Studio returned ${resp.status}: ${errText}`)
+      }
+
+      const json        = await resp.json() as { choices?: Array<{ message?: { content?: string } }> }
+      const summaryContent = json.choices?.[0]?.message?.content?.trim()
+      if (!summaryContent) {
+        throw new Error('LM Studio returned an empty summary')
+      }
+
+      // 5. Replace DB messages with the summary
+      replaceMessagesWithSummary(payload.chatId, summaryContent)
+
+      // 6. Count tokens after
+      const tokensAfter = countTokens(summaryContent)
+
+      console.log(`[Compact] ✅ Done — ${tokensBefore} → ${tokensAfter} tokens`)
+
+      return { tokensBefore, tokensAfter }
+    }
+  )
 
 }

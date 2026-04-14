@@ -32,6 +32,12 @@ interface ModelStoreValue {
   setContextUsage: React.Dispatch<
     React.SetStateAction<{ used: number; total: number }>
   >;
+  /** True while a manual context compaction is in progress */
+  isCompacting: boolean;
+  setIsCompacting: (v: boolean) => void;
+  /** Toast shown after compaction completes; null when hidden */
+  compactToast: { tokensBefore: number; tokensAfter: number } | null;
+  setCompactToast: (v: { tokensBefore: number; tokensAfter: number } | null) => void;
 }
 
 // ── Context ──────────────────────────────────────────────────────
@@ -47,6 +53,8 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
     used: number;
     total: number;
   } | null>(null);
+  const [isCompacting,  setIsCompacting]  = useState<boolean>(false);
+  const [compactToast,  setCompactToast]  = useState<{ tokensBefore: number; tokensAfter: number } | null>(null);
 
   return (
     <ModelStoreContext.Provider
@@ -57,6 +65,10 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
         setThinkingMode,
         contextUsage,
         setContextUsage,
+        isCompacting,
+        setIsCompacting,
+        compactToast,
+        setCompactToast,
       }}
     >
       {children}

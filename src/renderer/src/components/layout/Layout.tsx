@@ -14,7 +14,7 @@ import type { Chat, ProcessedAttachment, StoredMessage } from '../../../../share
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode } = useModelStore()
+  const { setThinkingMode, setContextUsage, isCompacting } = useModelStore()
   const [sidebarCollapsed,  setSidebarCollapsed]  = useState(false)
   const [settingsOpen,      setSettingsOpen]      = useState(false)
   const chatAreaRef = useRef<ChatAreaHandle>(null)
@@ -257,6 +257,30 @@ export function Layout() {
     sendMessage(text)
   }, [sendMessage])
 
+  // After compaction: reload messages from DB and clear context usage
+  const handleCompactComplete = useCallback(async () => {
+    if (!activeChatId) return
+    try {
+      const stored = await window.api.getChatMessages(activeChatId)
+      const rehydrated = stored.map((wm) => ({
+        id:          uuid(),
+        role:        wm.role as 'user' | 'assistant',
+        content:     wm.content,
+        attachments: wm.attachmentsJson ? JSON.parse(wm.attachmentsJson) : undefined,
+        toolCall:    wm.toolCallJson    ? JSON.parse(wm.toolCallJson)    : undefined,
+        stats:       null,
+        isThinking:  false,
+        isStreaming:  false,
+        isSearching:  false,
+        error:       null,
+      }))
+      loadMessages(rehydrated)
+      setContextUsage(null)
+    } catch (err) {
+      console.warn('[Compact] reload messages failed:', err)
+    }
+  }, [activeChatId, loadMessages, setContextUsage])
+
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
       {settingsOpen ? (
@@ -302,7 +326,7 @@ export function Layout() {
               )}
             </AnimatePresence>
 
-            <TopBar />
+            <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} />
 
             <ChatArea
               ref={chatAreaRef}
@@ -313,7 +337,7 @@ export function Layout() {
             />
 
             <InputBar
-              isStreaming={isStreaming}
+              isStreaming={isStreaming || isCompacting}
               onSend={handleSend}
               onAbort={abort}
               attachments={attachments}

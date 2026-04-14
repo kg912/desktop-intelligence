@@ -195,6 +195,26 @@ export function saveMessage(
     .run(now, chatId)
 }
 
+/**
+ * Replaces all non-system messages for a chat with a single summary assistant message.
+ * Used by the manual context compaction feature.
+ */
+export function replaceMessagesWithSummary(chatId: string, summaryContent: string): void {
+  const { v4: uuid } = require('uuid') as typeof import('uuid')
+  const db  = getDB()
+  const now = Date.now()
+
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM chat_messages WHERE chat_id = ? AND role != 'system'`).run(chatId)
+    db.prepare(
+      `INSERT INTO chat_messages (id, chat_id, role, content, created_at, attachments_json, toolcall_json)
+       VALUES (?, ?, 'assistant', ?, ?, NULL, NULL)`
+    ).run(uuid(), chatId, summaryContent, now)
+    db.prepare(`UPDATE chats SET updated_at = ? WHERE id = ?`).run(now, chatId)
+  })
+  tx()
+}
+
 export function deleteChatById(chatId: string): void {
   // Delete plot PNG files from disk before removing the DB row.
   // The plot_store FK has ON DELETE CASCADE so rows auto-delete,
