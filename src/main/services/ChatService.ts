@@ -135,6 +135,15 @@ When you have received web search results:
 - Keep your thinking block brief — the search results provide the key facts.
 
 SEARCH EFFICIENCY & BUDGET: Prioritize finding the most direct and efficient path to a comprehensive answer. Use the minimum number of searches necessary; do not perform redundant or unnecessary calls. You are granted an absolute hard limit of 5 search calls per response for deep investigations. Once you have sufficient, verifiable data to satisfy the user's intent, terminate searching immediately and proceed to your answer.
+
+HEURISTIC SEARCH STRATEGY:
+ 1. ENTITY PAIRING: If the user query contains [Company/Entity] + [Technical Term/Noun], 
+     do not assume the noun is a general concept. Prioritize searching for "[Entity] [Noun] product launch", 
+     "[Entity] [Noun] announcement", or "[Entity] [Noun] news".
+ 2. DISAMBIGUATION: If a term has dual meanings (e.g., "Ising" as a physics model vs. a brand), 
+     your first query MUST attempt to disambiguate by including the entity name in the search string.
+ 3. SEMANTIC PROBING: If a search returns results that seem disconnected from the user's 
+     intent, pivot your second query from "Definition" to "Recent News/Releases" regarding that term.
 `.trim();
 
 const WEB_SEARCH_DISABLED_ADDENDUM = `
