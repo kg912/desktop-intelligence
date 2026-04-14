@@ -61,11 +61,8 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
     <div className="drag-region flex-shrink-0 flex items-center justify-between
                     px-4 h-[52px] border-b border-surface-border/50 relative">
 
-      {/* Left spacer — mirrors right side width to keep model name centred */}
-      <div className="w-36" />
-
-      {/* Centre: model name */}
-      <div className="no-drag flex items-center gap-2">
+      {/* Left: model name — left-aligned */}
+      <div className="no-drag flex items-center gap-1.5">
         <motion.div
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
@@ -78,32 +75,17 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
         </motion.div>
       </div>
 
-      {/* Right: context utilisation bar + Compact button */}
-      <div className="no-drag w-36 flex items-center justify-end gap-2">
+      {/* Right: context bar then Compact button */}
+      <div className="no-drag flex items-center gap-3">
         {contextUsage && (
           <>
-            {/* Compact button */}
-            <button
-              onClick={handleCompact}
-              disabled={!canCompact}
-              className={
-                canCompact
-                  ? 'bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
-                  : 'bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50 cursor-not-allowed'
-              }
-              title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
-            >
-              Compact
-            </button>
-
-            {/* Progress bar with tooltip */}
+            {/* Progress bar with tooltip — bar comes first */}
             <div
               className="relative cursor-default"
               style={{ padding: '12px 4px', margin: '-12px -4px' }}
               onMouseEnter={() => setShowTooltip(true)}
               onMouseLeave={() => setShowTooltip(false)}
             >
-              {/* Progress bar track */}
               <div className="w-32 h-1.5 rounded-full bg-surface-border/40 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${barColour}`}
@@ -111,7 +93,6 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
                 />
               </div>
 
-              {/* Tooltip */}
               {showTooltip && (
                 <div className="absolute right-0 top-5 z-50 min-w-[210px]
                                 rounded-xl border border-surface-border
@@ -120,7 +101,6 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
                   <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
                     Context Utilization
                   </p>
-                  {/* Mini bar inside tooltip */}
                   <div className="w-full h-1 rounded-full bg-surface-border/40 overflow-hidden mb-2">
                     <div
                       className={`h-full rounded-full ${barColour}`}
@@ -144,6 +124,20 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
                 </div>
               )}
             </div>
+
+            {/* Compact button — no-drag applied directly so Electron pointer events work */}
+            <button
+              onClick={handleCompact}
+              disabled={!canCompact}
+              className={
+                canCompact
+                  ? 'no-drag cursor-pointer bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
+                  : 'no-drag cursor-not-allowed bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50'
+              }
+              title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
+            >
+              Compact
+            </button>
           </>
         )}
       </div>
