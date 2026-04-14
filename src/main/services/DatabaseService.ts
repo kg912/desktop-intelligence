@@ -101,6 +101,30 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE chat_messages ADD COLUMN toolcall_json TEXT`)
   } catch { /* column already exists */ }
 
+  // Phase 28: FTS5-powered chunk table for hybrid "needle in a haystack" retrieval.
+  // Replaces the brute-force full-document context injection with BM25-ranked keyword
+  // search across overlapping 1800-char chunks.  documents.content is kept for backward
+  // compatibility but new ingests write to document_chunks only.
+  // Columns:
+  //   doc_id      — FK to documents.id (not indexed — metadata only)
+  //   chat_id     — owning chat session (not indexed — used for WHERE filter)
+  //   doc_name    — filename for display (not indexed — avoids JOIN on retrieval)
+  //   content     — the chunk text (INDEXED — the only FTS5-searchable column)
+  //   chunk_index — position within the document (not indexed — for ordering)
+  try {
+    _db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks USING fts5(
+        doc_id      UNINDEXED,
+        chat_id     UNINDEXED,
+        doc_name    UNINDEXED,
+        content,
+        chunk_index UNINDEXED
+      )
+    `)
+  } catch (err) {
+    console.error('[DB] FTS5 table creation failed — FTS5 may not be compiled into this SQLite build:', err)
+  }
+
   return _db
 }
 

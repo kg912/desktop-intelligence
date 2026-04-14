@@ -1,18 +1,18 @@
 /**
- * RAGService unit tests
+ * RAGService unit tests — Phase 28: FTS5-Powered Hybrid Retrieval
  *
- * These tests protect the entire ingest → storage → retrieval pipeline.
- * They run against a real in-memory SQLite database (no mocked DB calls)
+ * These tests run against a real in-memory SQLite database (no mocked DB calls)
  * so they exercise the actual SQL — every schema assumption is verified.
  *
  * Critical invariants guarded here:
- *   1. Documents are stored with the correct chat_id.
- *   2. Retrieval is strictly isolated to the requested chat_id.
- *   3. Empty / whitespace-only documents are never stored.
- *   4. Total context is capped at MAX_CONTEXT_CHARS (12 000).
- *   5. Documents with empty content are excluded from retrieval.
- *   6. Multiple documents in the same chat are all returned.
- *   7. The [Document: name] header format is preserved exactly.
+ *   1.  Documents are stored with the correct chat_id.
+ *   2.  Retrieval is strictly isolated to the requested chat_id.
+ *   3.  Empty / whitespace-only documents are never stored.
+ *   4.  Total context is capped at MAX_CONTEXT_CHARS (12 000).
+ *   5.  Multiple documents in the same chat are all returned.
+ *   6.  Each chunk is labelled with [Document: name | Chunk N] header.
+ *   7.  FTS5 keyword search returns the most relevant chunks.
+ *   8.  Chronological fallback is used when query has no matches.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -23,6 +23,7 @@ const testDb = new Database(':memory:')
 testDb.pragma('journal_mode = WAL')
 testDb.pragma('foreign_keys = ON')
 
+// documents table (keep content column for backward-compat with direct SQL inserts below)
 testDb.exec(`
   CREATE TABLE IF NOT EXISTS documents (
     id      TEXT    PRIMARY KEY,
@@ -34,26 +35,50 @@ testDb.exec(`
   )
 `)
 
-// Replace the real DatabaseService with the in-memory fixture.
-// This must be declared before any import of RAGService.
-vi.mock('../DatabaseService', () => ({ getDB: () => testDb }))
+// Phase 28: FTS5 virtual table — content is the only indexed column
+testDb.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks USING fts5(
+    doc_id      UNINDEXED,
+    chat_id     UNINDEXED,
+    doc_name    UNINDEXED,
+    content,
+    chunk_index UNINDEXED
+  )
+`)
 
-// uuid is a real package — works fine in Node without mocking.
-// Only mock electron (not imported by RAGService, but guard in case of
-// indirect imports from DatabaseService if the mock ever leaks).
+// Replace the real DatabaseService with the in-memory fixture.
+vi.mock('../DatabaseService', () => ({ getDB: () => testDb }))
 vi.mock('electron', () => ({ app: { getPath: vi.fn(() => '/tmp') } }))
 
 import { ingestDocument, retrieveContext } from '../RAGService'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Count rows in the documents (metadata) table. */
 function countDocs(): number {
   return (testDb.prepare('SELECT COUNT(*) AS n FROM documents').get() as { n: number }).n
 }
 
-function getDoc(chatId: string): { name: string; content: string; chat_id: string | null } | undefined {
+/** Count rows in the FTS5 chunks table for a given chatId. */
+function countChunks(chatId: string): number {
+  return (
+    testDb
+      .prepare('SELECT COUNT(*) AS n FROM document_chunks WHERE chat_id = ?')
+      .get(chatId) as { n: number }
+  ).n
+}
+
+/** Fetch all chunks for a chatId ordered by chunk_index. */
+function getChunks(chatId: string): Array<{ doc_name: string; content: string; chunk_index: number }> {
   return testDb
-    .prepare('SELECT name, content, chat_id FROM documents WHERE chat_id = ?')
+    .prepare('SELECT doc_name, content, chunk_index FROM document_chunks WHERE chat_id = ? ORDER BY chunk_index ASC')
+    .all(chatId) as any[]
+}
+
+/** Fetch document metadata from the documents table. */
+function getDoc(chatId: string): { name: string; chat_id: string | null } | undefined {
+  return testDb
+    .prepare('SELECT name, chat_id FROM documents WHERE chat_id = ?')
     .get(chatId) as any
 }
 
@@ -62,25 +87,37 @@ function getDoc(chatId: string): { name: string; content: string; chat_id: strin
 describe('ingestDocument', () => {
   beforeEach(() => {
     testDb.prepare('DELETE FROM documents').run()
+    testDb.prepare('DELETE FROM document_chunks').run()
   })
 
-  it('stores document text in the content column', async () => {
+  it('stores at least one chunk in document_chunks for the given chatId', async () => {
     await ingestDocument('lecture.pdf', 'The quick brown fox', 'chat-1')
-    const row = getDoc('chat-1')
-    expect(row).toBeDefined()
-    expect(row!.content).toBe('The quick brown fox')
+    expect(countChunks('chat-1')).toBeGreaterThanOrEqual(1)
   })
 
-  it('stores the file name correctly', async () => {
+  it('chunk content contains the original document text', async () => {
+    await ingestDocument('lecture.pdf', 'The quick brown fox', 'chat-1')
+    const chunks = getChunks('chat-1')
+    expect(chunks[0].content).toBe('The quick brown fox')
+  })
+
+  it('stores the file name as doc_name on each chunk', async () => {
+    await ingestDocument('report.pdf', 'some content', 'chat-1')
+    const chunks = getChunks('chat-1')
+    expect(chunks[0].doc_name).toBe('report.pdf')
+  })
+
+  it('stores the file name correctly in the documents metadata table', async () => {
     await ingestDocument('report.pdf', 'some content', 'chat-1')
     const row = getDoc('chat-1')
     expect(row!.name).toBe('report.pdf')
   })
 
-  it('tags the document with the provided chatId', async () => {
+  it('tags the document and its chunks with the provided chatId', async () => {
     await ingestDocument('a.pdf', 'content', 'chat-abc')
     const row = getDoc('chat-abc')
     expect(row!.chat_id).toBe('chat-abc')
+    expect(countChunks('chat-abc')).toBeGreaterThanOrEqual(1)
   })
 
   it('stores document with null chat_id when chatId is omitted', async () => {
@@ -95,30 +132,46 @@ describe('ingestDocument', () => {
   it('skips empty rawText — nothing written to DB', async () => {
     await ingestDocument('empty.pdf', '', 'chat-1')
     expect(countDocs()).toBe(0)
+    expect(countChunks('chat-1')).toBe(0)
   })
 
   it('skips whitespace-only rawText', async () => {
     await ingestDocument('spaces.pdf', '   \n\t  \n   ', 'chat-1')
     expect(countDocs()).toBe(0)
+    expect(countChunks('chat-1')).toBe(0)
   })
 
-  it('replaces a previous document with the same name in the same chat (INSERT OR REPLACE)', async () => {
-    // Two calls — the second should update, not duplicate.
-    // (The table uses id as PK so new uuid → two rows unless de-duped at the
-    //  application layer.  The current impl uses INSERT OR REPLACE by id, so
-    //  two calls DO create two rows.  This test documents that behaviour and
-    //  will catch any regression if the de-dup strategy changes.)
+  it('two calls for the same file create two separate metadata rows and two sets of chunks', async () => {
     await ingestDocument('doc.pdf', 'version 1', 'chat-1')
     await ingestDocument('doc.pdf', 'version 2', 'chat-1')
-    // Both rows are present; retrieval should return both
-    const count = countDocs()
-    expect(count).toBeGreaterThanOrEqual(1)
+    // Each call generates a new UUID doc_id — two rows in documents, two chunk sets
+    expect(countDocs()).toBeGreaterThanOrEqual(1)
+    expect(countChunks('chat-1')).toBeGreaterThanOrEqual(2)
   })
 
   it('stores multiple distinct documents without interference', async () => {
     await ingestDocument('a.pdf', 'content A', 'chat-1')
     await ingestDocument('b.pdf', 'content B', 'chat-1')
     expect(countDocs()).toBe(2)
+    expect(countChunks('chat-1')).toBeGreaterThanOrEqual(2)
+  })
+
+  it('large document is split into multiple chunks', async () => {
+    const largeText = 'word '.repeat(1_000)  // 5 000 chars → at least 3 chunks at 1800/200 overlap
+    await ingestDocument('large.pdf', largeText, 'chat-1')
+    expect(countChunks('chat-1')).toBeGreaterThanOrEqual(3)
+  })
+
+  it('consecutive chunks share an overlap region (~200 chars)', async () => {
+    // Create text > 2 chunks: 3 600 chars ensures at least chunk 0 and chunk 1
+    const text = 'A'.repeat(1_800) + 'B'.repeat(1_800)
+    await ingestDocument('overlap.pdf', text, 'chat-1')
+    const chunks = getChunks('chat-1')
+    expect(chunks.length).toBeGreaterThanOrEqual(2)
+    // The overlap region: end of chunk[0] and start of chunk[1] should share chars
+    const endOf0   = chunks[0].content.slice(-200)
+    const startOf1 = chunks[1].content.slice(0, 200)
+    expect(endOf0).toBe(startOf1)
   })
 })
 
@@ -127,6 +180,7 @@ describe('ingestDocument', () => {
 describe('retrieveContext', () => {
   beforeEach(() => {
     testDb.prepare('DELETE FROM documents').run()
+    testDb.prepare('DELETE FROM document_chunks').run()
   })
 
   // ── Guard against missing chatId ──────────────────────────────────────────
@@ -142,22 +196,22 @@ describe('retrieveContext', () => {
 
   // ── Core retrieval ────────────────────────────────────────────────────────
 
-  it('returns document content for the correct chatId', async () => {
+  it('returns document content for the correct chatId (chronological fallback)', async () => {
     await ingestDocument('notes.pdf', 'ML lecture notes content here', 'chat-1')
     const ctx = await retrieveContext('query', 'chat-1')
     expect(ctx).toContain('ML lecture notes content here')
   })
 
-  it('wraps each document with the [Document: name] header', async () => {
+  it('wraps each chunk with the [Document: name | Chunk N] header', async () => {
     await ingestDocument('sheet.pdf', 'content', 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
-    expect(ctx).toContain('[Document: sheet.pdf]')
+    expect(ctx).toMatch(/\[Document: sheet\.pdf \| Chunk \d+\]/)
   })
 
   it('header and content appear together in the correct order', async () => {
     await ingestDocument('hw.pdf', 'homework text', 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
-    const headerPos  = ctx.indexOf('[Document: hw.pdf]')
+    const headerPos  = ctx.indexOf('[Document: hw.pdf')
     const contentPos = ctx.indexOf('homework text')
     expect(headerPos).toBeGreaterThanOrEqual(0)
     expect(contentPos).toBeGreaterThan(headerPos)
@@ -194,16 +248,38 @@ describe('retrieveContext', () => {
     const ctx = await retrieveContext('q', 'chat-1')
     expect(ctx).toContain('alpha content')
     expect(ctx).toContain('beta content')
-    expect(ctx).toContain('[Document: first.pdf]')
-    expect(ctx).toContain('[Document: second.pdf]')
+    expect(ctx).toContain('[Document: first.pdf')
+    expect(ctx).toContain('[Document: second.pdf')
   })
 
-  it('separates multiple documents with double newlines', async () => {
+  it('separates multiple document chunks with double newlines', async () => {
     await ingestDocument('doc1.pdf', 'content1', 'chat-1')
     await ingestDocument('doc2.pdf', 'content2', 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
     // The two document blocks must be separated
     expect(ctx).toMatch(/content1[\s\S]+content2/)
+  })
+
+  // ── FTS5 keyword search ───────────────────────────────────────────────────
+
+  it('FTS5 primary path: returns the chunk matching the query keyword', async () => {
+    // Insert two documents — only one contains the search term
+    await ingestDocument('irrelevant.pdf', 'This document talks about cooking recipes and baking techniques.', 'chat-1')
+    await ingestDocument('target.pdf',     'The backpropagation algorithm computes gradients via chain rule.', 'chat-1')
+    const ctx = await retrieveContext('backpropagation gradients', 'chat-1')
+    expect(ctx).toContain('backpropagation')
+    // The cooking document should not dominate
+    expect(ctx).toContain('[Document: target.pdf')
+  })
+
+  it('FTS5 finds needle-in-haystack: detail buried deep in a document', async () => {
+    // 5 000 chars of filler + rare term + 5 000 chars of filler
+    const preamble = 'general information about something '.repeat(140)  // ~5 040 chars
+    const needle   = 'The secret passphrase is XYZZY-9001.'
+    const postamble = 'more general content follows here '.repeat(140)  // ~4 760 chars
+    await ingestDocument('haystack.pdf', preamble + needle + postamble, 'chat-1')
+    const ctx = await retrieveContext('XYZZY-9001', 'chat-1')
+    expect(ctx).toContain('XYZZY-9001')
   })
 
   // ── Context truncation ────────────────────────────────────────────────────
@@ -212,7 +288,7 @@ describe('retrieveContext', () => {
     const bigText = 'x'.repeat(20_000)
     await ingestDocument('huge.pdf', bigText, 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
-    // Allow small overhead for the [Document: ...] header
+    // Allow small overhead for the [Document: ...] headers
     expect(ctx.length).toBeLessThanOrEqual(12_200)
   })
 
@@ -225,7 +301,7 @@ describe('retrieveContext', () => {
     expect(ctx.length).toBeLessThanOrEqual(12_200)
   })
 
-  it('appends ellipsis (…) when a document is truncated', async () => {
+  it('appends ellipsis (…) when a chunk is truncated', async () => {
     const bigText = 'z'.repeat(20_000)
     await ingestDocument('long.pdf', bigText, 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
@@ -234,8 +310,8 @@ describe('retrieveContext', () => {
 
   // ── Edge cases ────────────────────────────────────────────────────────────
 
-  it('excludes rows with empty content (SQL filter: content != "")', async () => {
-    // Insert a row directly with empty content to simulate a corrupted state
+  it('returns empty string when a document metadata row exists but has no chunks', async () => {
+    // Insert a raw document row directly (no corresponding chunks in document_chunks)
     testDb
       .prepare("INSERT INTO documents VALUES ('id1', 'ghost.pdf', '', ?, 'chat-1', '')")
       .run(Date.now())
@@ -244,13 +320,25 @@ describe('retrieveContext', () => {
     expect(ctx).not.toContain('ghost.pdf')
   })
 
-  it('does not return null-chatId documents when a specific chatId is requested', async () => {
-    // Insert orphan doc (no chatId) directly
+  it('does not return chunks belonging to null-chatId when a specific chatId is requested', async () => {
+    // Orphan document (no chatId) — insert directly into documents only (no chunks)
     testDb
       .prepare("INSERT INTO documents VALUES ('id2', 'orphan.pdf', '', ?, NULL, 'global content')")
       .run(Date.now())
     const ctx = await retrieveContext('q', 'chat-1')
     expect(ctx).toBe('')
     expect(ctx).not.toContain('global content')
+  })
+
+  it('handles empty query string gracefully (uses chronological fallback)', async () => {
+    await ingestDocument('notes.pdf', 'Introduction to Neural Networks', 'chat-1')
+    const ctx = await retrieveContext('', 'chat-1')
+    expect(ctx).toContain('Introduction to Neural Networks')
+  })
+
+  it('chunk_index starts at 1 in the formatted header', async () => {
+    await ingestDocument('test.pdf', 'sample content', 'chat-1')
+    const ctx = await retrieveContext('q', 'chat-1')
+    expect(ctx).toContain('Chunk 1')
   })
 })
