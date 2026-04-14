@@ -39,6 +39,8 @@ export interface AppSettings {
   repeatPenalty?: number
   /** Global system prompt prepended to every request. Default: '' */
   systemPrompt?: string
+  /** When true, `--gpu max` is passed to every `lms load` call. Default: false */
+  gpuOffload?: boolean
 }
 
 function settingsPath(): string {

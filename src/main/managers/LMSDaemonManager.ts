@@ -166,19 +166,33 @@ export class LMSDaemonManager extends EventEmitter {
   }
 
   private async runLoadModel(modelId: string): Promise<void> {
-    // Read the user's persisted context-length preference and apply it.
-    // Falls back to lms / LM Studio default when no preference is saved.
+    // Read the user's persisted preferences and apply them.
+    // Falls back to lms / LM Studio defaults when no preference is saved.
     let contextArgs: string[] = []
+    let gpuArgs: string[]     = []
     try {
       const { readSettings } = await import('../services/SettingsStore')
-      const { contextLength } = readSettings()
+      const { contextLength, gpuOffload } = readSettings()
       if (contextLength && contextLength > 0) {
         contextArgs = ['--context-length', String(contextLength)]
         console.log(`[LMSDaemon] Applying saved context length: ${contextLength}`)
       }
-    } catch { /* non-fatal — proceed with lms default */ }
+      if (gpuOffload) {
+        gpuArgs = ['--gpu', 'max']
+        console.log('[LMSDaemon] GPU offload enabled — adding --gpu max')
+      }
+    } catch { /* non-fatal — proceed with lms defaults */ }
 
-    return this.runCommand('loading-model', 'load', [modelId, ...contextArgs], LOAD_TIMEOUT_MS)
+    const loadArgs = [modelId, ...gpuArgs, ...contextArgs]
+
+    // DEV-mode debug log — shows the exact command that will be spawned
+    if (process.env.DEV_MODE === 'true') {
+      console.log(
+        `[DEBUG][LMSDaemon] lms load command: ${this.lmsBin} load ${loadArgs.join(' ')}`
+      )
+    }
+
+    return this.runCommand('loading-model', 'load', loadArgs, LOAD_TIMEOUT_MS)
   }
 
   /**

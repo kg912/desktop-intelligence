@@ -217,6 +217,8 @@ export interface ModelConfig {
   maxOutputTokens?: number
   repeatPenalty?:   number
   systemPrompt?:    string
+  /** When true, --gpu max is passed to every lms load call */
+  gpuOffload?:      boolean
 }
 
 export interface ReloadModelPayload {
@@ -227,6 +229,8 @@ export interface ReloadModelPayload {
   maxOutputTokens?: number
   repeatPenalty?:   number
   systemPrompt?:    string
+  /** When true, --gpu max is passed to lms load */
+  gpuOffload?:      boolean
 }
 
 export interface ReloadResult {

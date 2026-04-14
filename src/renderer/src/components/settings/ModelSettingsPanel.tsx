@@ -30,12 +30,14 @@ export function ModelSettingsPanel() {
   const [draftMaxTokens,      setDraftMaxTokens]      = useState(16384)
   const [draftRepeatPenalty,  setDraftRepeatPenalty]  = useState(1.1)
   const [draftSysPrompt,      setDraftSysPrompt]      = useState('')
+  const [draftGpuOffload,     setDraftGpuOffload]     = useState(false)
 
   const [fetchedTemp,         setFetchedTemp]         = useState(0.7)
   const [fetchedTopP,         setFetchedTopP]         = useState(0.95)
   const [fetchedMaxTokens,    setFetchedMaxTokens]    = useState(16384)
   const [fetchedRepeatPenalty,setFetchedRepeatPenalty]= useState(1.1)
   const [fetchedSysPrompt,    setFetchedSysPrompt]    = useState('')
+  const [fetchedGpuOffload,   setFetchedGpuOffload]   = useState(false)
 
   const changed = fetchedCtx !== null && (
     draftCtx           !== fetchedCtx           ||
@@ -44,7 +46,8 @@ export function ModelSettingsPanel() {
     draftTopP          !== fetchedTopP          ||
     draftMaxTokens     !== fetchedMaxTokens     ||
     draftRepeatPenalty !== fetchedRepeatPenalty ||
-    draftSysPrompt     !== fetchedSysPrompt
+    draftSysPrompt     !== fetchedSysPrompt     ||
+    draftGpuOffload    !== fetchedGpuOffload
   )
 
   useEffect(() => {
@@ -60,6 +63,7 @@ export function ModelSettingsPanel() {
         const mt   = cfg.maxOutputTokens ?? 16384
         const rp   = cfg.repeatPenalty   ?? 1.1
         const sp   = cfg.systemPrompt    ?? ''
+        const gpu  = cfg.gpuOffload      ?? false
         setFetchedCtx(ctx);     setDraftCtx(ctx)
         setFetchedModel(cfg.modelId); setDraftModel(cfg.modelId)
         setFetchedTemp(temp);   setDraftTemp(temp)
@@ -67,6 +71,7 @@ export function ModelSettingsPanel() {
         setFetchedMaxTokens(mt); setDraftMaxTokens(mt)
         setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
+        setFetchedGpuOffload(gpu); setDraftGpuOffload(gpu)
         setAvailableModels(models)
       })
       .catch(() => {
@@ -90,6 +95,7 @@ export function ModelSettingsPanel() {
         maxOutputTokens:  draftMaxTokens,
         repeatPenalty:    draftRepeatPenalty,
         systemPrompt:     draftSysPrompt,
+        gpuOffload:       draftGpuOffload,
       })
       if (res.success) {
         const actual = res.confirmedCtx ?? draftCtx
@@ -100,6 +106,7 @@ export function ModelSettingsPanel() {
         setFetchedMaxTokens(draftMaxTokens)
         setFetchedRepeatPenalty(draftRepeatPenalty)
         setFetchedSysPrompt(draftSysPrompt)
+        setFetchedGpuOffload(draftGpuOffload)
         const msg = res.confirmedCtx && res.confirmedCtx !== draftCtx
           ? `Model reloaded. LM Studio reports ${fmtCtx(actual)} context (requested ${fmtCtx(draftCtx)}).`
           : `Model reloaded with ${fmtCtx(actual)} context.`
@@ -112,7 +119,7 @@ export function ModelSettingsPanel() {
     } finally {
       setReloading(false)
     }
-  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setSelectedModel])
+  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, setSelectedModel])
 
   return (
     <div className="space-y-6">
@@ -181,7 +188,31 @@ export function ModelSettingsPanel() {
             style={{ background: '#111', color: '#f5f5f5', border: '1px solid #3a3a3a' }}
           />
           <span className="text-xs text-content-muted">tokens</span>
-          <span className="text-xs text-content-tertiary ml-auto">≈ {fmtCtx(draftCtx)} context</span>
+
+          {/* Right side: GPU Offload toggle + context label */}
+          <div className="ml-auto flex items-center gap-4">
+            {/* GPU Offload pill toggle */}
+            <label className="flex items-center gap-2 cursor-pointer select-none" title="Offload all model layers to GPU for maximum throughput (--gpu max)">
+              <span className="text-[10px] text-content-muted tracking-wide whitespace-nowrap">GPU Offload</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={draftGpuOffload}
+                onClick={() => setDraftGpuOffload((v) => !v)}
+                disabled={loading || reloading}
+                className={`relative inline-flex w-7 h-4 rounded-full transition-colors duration-150 focus:outline-none disabled:opacity-40 flex-shrink-0 ${
+                  draftGpuOffload ? 'bg-accent-700' : 'bg-surface-border'
+                }`}
+              >
+                <span
+                  className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform duration-150 ${
+                    draftGpuOffload ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </label>
+            <span className="text-xs text-content-tertiary whitespace-nowrap">≈ {fmtCtx(draftCtx)} context</span>
+          </div>
         </div>
         <input
           type="range"

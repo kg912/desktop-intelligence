@@ -519,6 +519,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
             maxOutputTokens:  s.maxOutputTokens  ?? 16384,
             repeatPenalty:    s.repeatPenalty    ?? 1.1,
             systemPrompt:     s.systemPrompt     ?? '',
+            gpuOffload:       s.gpuOffload       ?? false,
           }
         }
       } catch (err) {
@@ -566,8 +567,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_RELOAD,
     async (_, payload: ReloadModelPayload): Promise<ReloadResult> => {
-      const { modelId, contextLength } = payload
-      console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength}`)
+      const { modelId, contextLength, gpuOffload } = payload
+      console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength} gpuOffload=${gpuOffload ?? false}`)
 
       const { readSettings: _rs, writeSettings } = await import('../services/SettingsStore')
 
@@ -594,11 +595,19 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
         await new Promise((r) => setTimeout(r, 1_500))
 
-        // ── Step 2: load with requested context length ───────────
+        // ── Step 2: load with requested context length (+ GPU offload flag) ─
         // lms accepts both the full HuggingFace path and the short key.
-        // Passing `--context-length` sets n_ctx for this load.
-        console.log(`[Settings] Running: lms load "${modelId}" --context-length ${contextLength}`)
-        await runLmsArgs(lmsBin, ['load', modelId, '--context-length', String(contextLength)], 120_000)
+        // --gpu max offloads all layers to GPU for maximum throughput.
+        const loadArgs = [
+          modelId,
+          ...(gpuOffload ? ['--gpu', 'max'] : []),
+          '--context-length', String(contextLength),
+        ]
+        if (process.env.DEV_MODE === 'true') {
+          console.log(`[DEBUG][Settings] lms load command: ${lmsBin} load ${loadArgs.join(' ')}`)
+        }
+        console.log(`[Settings] Running: lms load ${loadArgs.join(' ')}`)
+        await runLmsArgs(lmsBin, ['load', ...loadArgs], 120_000)
         console.log('[Settings] lms load completed')
 
         // ── Step 3: verify with lms ps ──────────────────────────
@@ -613,7 +622,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         }
 
         // ── Step 4: persist the preference for next app startup ────
-        // LMSDaemonManager reads this and passes --context-length on `lms load`.
+        // LMSDaemonManager reads this and passes the same flags on next `lms load`.
         try {
           const patch: Record<string, unknown> = {
             contextLength: confirmedCtx ?? contextLength,
@@ -624,13 +633,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
           if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
           if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
+          if (payload.gpuOffload      !== undefined) patch.gpuOffload      = payload.gpuOffload
           writeSettings(patch as Parameters<typeof writeSettings>[0])
         } catch { /* non-fatal */ }
 
         modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
 
         console.log(
-          `[Settings] ✅ Reload complete — requested=${contextLength} confirmed=${confirmedCtx ?? 'unknown'}`
+          `[Settings] ✅ Reload complete — requested=${contextLength} confirmed=${confirmedCtx ?? 'unknown'} gpuOffload=${gpuOffload ?? false}`
         )
         return { success: true, confirmedCtx }
       } catch (err) {
@@ -681,8 +691,11 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { modelId, contextLength } = payload
       console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength}`)
 
-      const { writeSettings } = await import('../services/SettingsStore')
+      const { readSettings: readInitSettings, writeSettings } = await import('../services/SettingsStore')
       writeSettings({ modelId, contextLength })
+
+      // Read back gpuOffload from saved settings (set before first-launch in edge cases)
+      const { gpuOffload: initGpuOffload } = readInitSettings()
 
       // ── LM Studio: run lms load ───────────────────────────────────
       const lmsBin = await findLmsBinAsync()
@@ -691,8 +704,16 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
 
       try {
-        console.log(`[App] Running: lms load "${modelId}" --context-length ${contextLength}`)
-        await runLmsArgs(lmsBin, ['load', modelId, '--context-length', String(contextLength)], 120_000)
+        const initLoadArgs = [
+          modelId,
+          ...(initGpuOffload ? ['--gpu', 'max'] : []),
+          '--context-length', String(contextLength),
+        ]
+        if (process.env.DEV_MODE === 'true') {
+          console.log(`[DEBUG][App] lms load command: ${lmsBin} load ${initLoadArgs.join(' ')}`)
+        }
+        console.log(`[App] Running: lms load ${initLoadArgs.join(' ')}`)
+        await runLmsArgs(lmsBin, ['load', ...initLoadArgs], 120_000)
         console.log('[App] ✅ Model loaded successfully')
         return { success: true, confirmedCtx: contextLength }
       } catch (err) {
