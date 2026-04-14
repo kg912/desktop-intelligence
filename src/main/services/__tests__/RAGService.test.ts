@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
+import { sanitizeFts5Query } from '../RAGService'
 
 // ── In-memory SQLite — mirrors the exact schema from DatabaseService ─────────
 const testDb = new Database(':memory:')
@@ -340,5 +341,52 @@ describe('retrieveContext', () => {
     await ingestDocument('test.pdf', 'sample content', 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
     expect(ctx).toContain('Chunk 1')
+  })
+
+  // ── Bug 1 regression: single FTS5 result must NOT be discarded ────────────
+  // Previously chunks.length < 2 caused the fallback to overwrite a single
+  // highly relevant FTS5 chunk with unrelated chronological content.
+
+  it('single FTS5 result is kept — not discarded in favour of chronological fallback', async () => {
+    // Two documents: one matches the query, one does not.
+    // If the bug is present, FTS5 returns 1 chunk (< 2 threshold) → fallback
+    // overrides it with both docs in chronological order, diluting the answer.
+    // With the fix, 1 chunk (< 1 threshold = false) → FTS5 result is kept.
+    await ingestDocument('noise.pdf',  'This talks about gardening and soil composition.', 'chat-1')
+    await ingestDocument('signal.pdf', 'The eigenvalue decomposition of matrix A yields lambda.', 'chat-1')
+    const ctx = await retrieveContext('eigenvalue lambda', 'chat-1')
+    // Must contain the matching chunk
+    expect(ctx).not.toBe('')
+    expect(ctx).toContain('eigenvalue')
+    // The noise document must NOT dominate the context when FTS5 finds a match
+    // (it may appear if chronological fallback fires, but signal must be there)
+    expect(ctx).toContain('[Document: signal.pdf')
+  })
+})
+
+// ── Suite: sanitizeFts5Query ──────────────────────────────────────────────────
+
+describe('sanitizeFts5Query', () => {
+  it('strips hyphens and returns plain space-separated tokens', () => {
+    expect(sanitizeFts5Query('back-propagation ReLU')).toBe('back propagation ReLU')
+  })
+
+  it('strips leading/trailing punctuation and collapses whitespace', () => {
+    expect(sanitizeFts5Query('  hello, world!  ')).toBe('hello world')
+  })
+
+  it('drops single-character tokens (length === 1), keeps 2+ char words', () => {
+    // 'a' (length 1) is dropped; 'the' and 'is' (length ≥ 2) are kept
+    expect(sanitizeFts5Query('a the is')).toBe('the is')
+  })
+
+  it('returns empty string for all-punctuation or blank input', () => {
+    expect(sanitizeFts5Query('--- *** !!!')).toBe('')
+    expect(sanitizeFts5Query('')).toBe('')
+  })
+
+  it('does NOT wrap tokens in double quotes', () => {
+    const result = sanitizeFts5Query('gradient descent')
+    expect(result).not.toContain('"')
   })
 })

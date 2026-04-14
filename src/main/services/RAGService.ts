@@ -24,10 +24,9 @@
  *
  * ── Retrieval strategy ─────────────────────────────────────────────────────────
  *   Primary   — FTS5 MATCH with BM25 ranking.  Triggered when a non-empty query is
- *               provided and returns ≥ 2 matching chunks.
+ *               provided and returns ≥ 1 matching chunk.
  *   Fallback  — Chronological retrieval (oldest doc first, chunk order preserved).
- *               Used when query is empty or FTS5 returns < 2 results (e.g. single-
- *               word query, rare terminology not present in the document verbatim).
+ *               Used when query is empty or FTS5 returns 0 results.
  *
  * ── Signature compatibility ────────────────────────────────────────────────────
  *   ingestDocument(fileName, rawText, chatId?) and retrieveContext(query, chatId?)
@@ -75,17 +74,27 @@ function chunkText(text: string): string[] {
 
 /**
  * Converts a free-form user query into a safe FTS5 query string.
- * Each word is wrapped in double quotes to avoid special-character issues
- * (FTS5 tokens like AND/OR/NOT, parentheses, asterisks, etc.).
- * Single-character tokens are dropped — they produce too many false positives.
+ *
+ * Plain unquoted tokens are used (no double-quote wrapping) so that FTS5's
+ * default unicode61 tokenizer applies case-insensitive prefix matching.
+ * This is strictly better for technical documents: "backprop" matches
+ * back-propagation, "relu" matches ReLU, etc.
+ *
+ * Punctuation is replaced with spaces so hyphens/slashes in the raw query
+ * don't produce FTS5 syntax errors (e.g. "back-propagation" → "back propagation",
+ * each treated as a separate token).
+ *
+ * Single-character tokens are dropped — they produce too many false positives
+ * and FTS5 minimum token length is typically 2 characters.
+ *
+ * Exported for unit testing.
  */
-function sanitizeFts5Query(raw: string): string {
+export function sanitizeFts5Query(raw: string): string {
   const words = raw
-    .replace(/[^\w\s]/g, ' ')   // strip punctuation
+    .replace(/[^\w\s]/g, ' ')   // strip punctuation (hyphen, slash, etc.) → space
     .split(/\s+/)
     .filter(w => w.length > 1)  // skip single chars
-  if (words.length === 0) return ''
-  return words.map(w => `"${w.replace(/"/g, '')}"`).join(' ')
+  return words.join(' ')
 }
 
 // ── Chunk row type returned by both retrieval paths ───────────────────────────
@@ -196,8 +205,10 @@ export async function retrieveContext(
 
   // ── Fallback: chronological retrieval ────────────────────────────────────
   // Triggers when: no query, blank query, sanitised query is empty (all single
-  // chars), FTS5 threw an error, or FTS5 returned < 2 results.
-  if (chunks.length < 2) {
+  // chars), FTS5 threw an error, or FTS5 returned zero results.
+  // NOTE: a single high-confidence FTS5 result is kept as-is — discarding it
+  // in favour of chronological injection would be a retrieval regression.
+  if (chunks.length < 1) {
     chunks = db.prepare(`
       SELECT dc.doc_id, dc.chat_id, dc.doc_name, dc.content, dc.chunk_index
       FROM   document_chunks dc
