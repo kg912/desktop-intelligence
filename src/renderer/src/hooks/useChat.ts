@@ -225,18 +225,18 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       setIsStreaming(false);
       setIsSearching(false);
 
-      // Update context utilisation bar if the server sent a prompt_tokens figure
+      // Update context utilisation bar if the server sent a prompt_tokens figure.
+      // Use promptTokens directly as the current context size — it already includes
+      // every message sent in this request.  The previous additive accumulation
+      // (prevUsage + promptTokens) was wrong: after a compact reset it added to 0,
+      // and in non-compact sessions it double-counted prompt bytes across turns.
       if (stats.promptTokens) {
         window.api
           .getModelConfig()
           .then((config) => {
-            setContextUsage((prevState) => {
-              const prevUsage = prevState?.used || 0;
-
-              return {
-                used: prevUsage + (stats?.promptTokens || 0),
-                total: config.contextLength,
-              };
+            setContextUsage({
+              used:  stats.promptTokens!,
+              total: config.contextLength,
             });
           })
           .catch(() => {

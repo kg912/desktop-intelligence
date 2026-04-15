@@ -268,6 +268,7 @@ export interface CompactPayload {
 export interface CompactResult {
   tokensBefore: number
   tokensAfter:  number
+  hasDocuments: boolean
 }
 
 /** Payload for persisting a rendered matplotlib chart (Image RAG) */

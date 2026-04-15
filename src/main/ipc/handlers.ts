@@ -14,7 +14,7 @@ import {
   getChatMessages,
   saveMessage,
   deleteChatById,
-  replaceMessagesWithSummary,
+  setCompactedSummary,
 } from '../services/DatabaseService'
 import { retrieveContext } from '../services/RAGService'
 import type {
@@ -815,15 +815,25 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         throw new Error('LM Studio returned an empty summary')
       }
 
-      // 5. Replace DB messages with the summary
-      replaceMessagesWithSummary(payload.chatId, summaryContent)
+      // 5. Store summary in chats.compacted_summary (does NOT delete message rows).
+      // The UI keeps showing the full history; only the LM Studio wire payload changes.
+      setCompactedSummary(payload.chatId, summaryContent)
 
       // 6. Count tokens after
       const tokensAfter = countTokens(summaryContent)
 
-      console.log(`[Compact] ✅ Done — ${tokensBefore} → ${tokensAfter} tokens`)
+      // 7. Detect whether this chat has attached documents (RAG context re-injects regardless)
+      let hasDocuments = false
+      try {
+        const docRow = getDB()
+          .prepare('SELECT COUNT(*) AS n FROM documents WHERE chat_id = ?')
+          .get(payload.chatId) as { n: number }
+        hasDocuments = docRow.n > 0
+      } catch { /* non-fatal */ }
 
-      return { tokensBefore, tokensAfter }
+      console.log(`[Compact] ✅ Done — ${tokensBefore} → ${tokensAfter} tokens hasDocuments=${hasDocuments}`)
+
+      return { tokensBefore, tokensAfter, hasDocuments }
     }
   )
 

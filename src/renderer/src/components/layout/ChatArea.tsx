@@ -214,6 +214,7 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
           <CompactToast
             tokensBefore={compactToast.tokensBefore}
             tokensAfter={compactToast.tokensAfter}
+            hasDocuments={compactToast.hasDocuments}
           />
         )}
       </AnimatePresence>

@@ -28,6 +28,7 @@ import {
 } from "./BraveSearchService";
 import { BASE_SYSTEM_PROMPT } from "./SystemPromptService";
 import { countTokens } from "./tokenUtils";
+import { getCompactedSummary, clearCompactedSummary } from "./DatabaseService";
 
 /** LM Studio OpenAI-compatible completions endpoint. Single source of truth. */
 const LMS_ENDPOINT = "http://localhost:1234/v1/chat/completions";
@@ -1645,6 +1646,37 @@ export class ChatService {
 
     if (systemParts.length > 0) {
       msgs.push({ role: "system", content: systemParts.join("\n\n") });
+    }
+
+    // ── Compacted summary injection ───────────────────────────────
+    // When the user has run "Compact", a summary row is stored in
+    // chats.compacted_summary.  On the FIRST request after compaction we
+    // replace the full message history with just [summary + last user msg]
+    // so LM Studio receives a lean context.  We then immediately clear the
+    // summary so subsequent messages resume using the full real history.
+    // The visible UI messages are NOT touched — this only affects the wire payload.
+    if (payload.chatId) {
+      const compactedSummary = getCompactedSummary(payload.chatId);
+      if (compactedSummary) {
+        clearCompactedSummary(payload.chatId);
+        // Keep only the current user message (always the last in the array)
+        const lastUserMsg = [...payload.messages]
+          .reverse()
+          .find((m) => (m.role as string) === "user");
+        const compactedMsgs: typeof payload.messages = [
+          { role: "assistant", content: compactedSummary } as typeof payload.messages[0],
+          ...(lastUserMsg ? [lastUserMsg] : []),
+        ];
+        // Splice directly into msgs (system already pushed) and return early
+        for (const m of compactedMsgs) {
+          msgs.push({ role: m.role, content: m.content as string });
+        }
+        console.log(
+          `[ChatService] 🗜 Using compacted summary (${compactedSummary.length} chars) ` +
+          `for chatId=${payload.chatId} — cleared for next request`,
+        );
+        return msgs;
+      }
     }
 
     // ── Token-budget trim ─────────────────────────────────────────

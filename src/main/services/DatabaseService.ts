@@ -101,6 +101,13 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE chat_messages ADD COLUMN toolcall_json TEXT`)
   } catch { /* column already exists */ }
 
+  // Context compaction: stores the summary text without touching message rows.
+  // When set, ChatService injects this as the full history on the next request,
+  // then clears it so subsequent messages use the real history again.
+  try {
+    _db.exec(`ALTER TABLE chats ADD COLUMN compacted_summary TEXT`)
+  } catch { /* column already exists */ }
+
   // Phase 28: FTS5-powered chunk table for hybrid "needle in a haystack" retrieval.
   // Replaces the brute-force full-document context injection with BM25-ranked keyword
   // search across overlapping 1800-char chunks.  documents.content is kept for backward
@@ -195,24 +202,30 @@ export function saveMessage(
     .run(now, chatId)
 }
 
-/**
- * Replaces all non-system messages for a chat with a single summary assistant message.
- * Used by the manual context compaction feature.
- */
-export function replaceMessagesWithSummary(chatId: string, summaryContent: string): void {
-  const { v4: uuid } = require('uuid') as typeof import('uuid')
-  const db  = getDB()
-  const now = Date.now()
+// ── Context Compaction helpers ───────────────────────────────────
+// The summary is stored in chats.compacted_summary rather than replacing
+// message rows.  This preserves the visible conversation history in the UI;
+// only the wire payload sent to LM Studio on the NEXT request is affected.
+// ChatService reads the summary, injects it as the full history, then calls
+// clearCompactedSummary so subsequent messages resume using real history.
 
-  const tx = db.transaction(() => {
-    db.prepare(`DELETE FROM chat_messages WHERE chat_id = ? AND role != 'system'`).run(chatId)
-    db.prepare(
-      `INSERT INTO chat_messages (id, chat_id, role, content, created_at, attachments_json, toolcall_json)
-       VALUES (?, ?, 'assistant', ?, ?, NULL, NULL)`
-    ).run(uuid(), chatId, summaryContent, now)
-    db.prepare(`UPDATE chats SET updated_at = ? WHERE id = ?`).run(now, chatId)
-  })
-  tx()
+export function setCompactedSummary(chatId: string, summary: string): void {
+  getDB()
+    .prepare(`UPDATE chats SET compacted_summary = ?, updated_at = ? WHERE id = ?`)
+    .run(summary, Date.now(), chatId)
+}
+
+export function getCompactedSummary(chatId: string): string | null {
+  const row = getDB()
+    .prepare(`SELECT compacted_summary FROM chats WHERE id = ?`)
+    .get(chatId) as { compacted_summary: string | null } | undefined
+  return row?.compacted_summary ?? null
+}
+
+export function clearCompactedSummary(chatId: string): void {
+  getDB()
+    .prepare(`UPDATE chats SET compacted_summary = NULL WHERE id = ?`)
+    .run(chatId)
 }
 
 export function deleteChatById(chatId: string): void {

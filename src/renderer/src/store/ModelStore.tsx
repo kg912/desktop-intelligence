@@ -36,8 +36,8 @@ interface ModelStoreValue {
   isCompacting: boolean;
   setIsCompacting: (v: boolean) => void;
   /** Toast shown after compaction completes; null when hidden */
-  compactToast: { tokensBefore: number; tokensAfter: number } | null;
-  setCompactToast: (v: { tokensBefore: number; tokensAfter: number } | null) => void;
+  compactToast: { tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null;
+  setCompactToast: (v: { tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null) => void;
 }
 
 // ── Context ──────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
     total: number;
   } | null>(null);
   const [isCompacting,  setIsCompacting]  = useState<boolean>(false);
-  const [compactToast,  setCompactToast]  = useState<{ tokensBefore: number; tokensAfter: number } | null>(null);
+  const [compactToast,  setCompactToast]  = useState<{ tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null>(null);
 
   return (
     <ModelStoreContext.Provider

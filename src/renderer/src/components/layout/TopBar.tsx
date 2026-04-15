@@ -45,9 +45,21 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   async function handleCompact() {
     if (!activeChatId || !contextUsage || contextUsage.used < 5000 || isCompacting) return
     setIsCompacting(true)
+    const startTime = Date.now()
     try {
       const result = await window.api.compactChat({ chatId: activeChatId, model: selectedModel })
-      setCompactToast({ tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter })
+      // Enforce a minimum 1200ms display time so the overlay is always visible.
+      // Without this, a fast LM Studio call on a short conversation completes
+      // before AnimatePresence has painted the overlay, and it flashes off instantly.
+      const elapsed = Date.now() - startTime
+      if (elapsed < 1200) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 1200 - elapsed))
+      }
+      setCompactToast({
+        tokensBefore: result.tokensBefore,
+        tokensAfter:  result.tokensAfter,
+        hasDocuments: result.hasDocuments,
+      })
       onCompactComplete()
       setTimeout(() => setCompactToast(null), 5000)
     } catch (err) {
