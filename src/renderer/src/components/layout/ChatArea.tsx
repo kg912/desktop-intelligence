@@ -69,6 +69,7 @@ interface ChatAreaProps {
   isStreaming?: boolean
   activeChatId: string | null
   onSuggest?:   (text: string) => void
+  isCompacting: boolean
 }
 
 export const ChatIdCtx = createContext<string | null>(null)
@@ -79,8 +80,8 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, ref) {
-  const { isCompacting, compactToast } = useModelStore()
+function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest, isCompacting }, ref) {
+  const { compactToast } = useModelStore()
   const bottomRef          = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 

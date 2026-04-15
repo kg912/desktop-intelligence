@@ -87,38 +87,40 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
         </motion.div>
       </div>
 
-      {/* Right: context bar then Compact button */}
+      {/* Right: context bar then Compact button — always visible for consistent UI */}
       <div className="no-drag flex items-center gap-3">
-        {contextUsage && (
-          <>
-            {/* Progress bar with tooltip — bar comes first */}
+        {/* Progress bar with tooltip — bar comes first */}
+        <div
+          className="relative cursor-default"
+          style={{ padding: '12px 4px', margin: '-12px -4px' }}
+          onMouseEnter={() => setShowTooltip(true)}
+          onMouseLeave={() => setShowTooltip(false)}
+        >
+          <div className="w-32 h-1.5 rounded-full bg-surface-border/40 overflow-hidden">
             <div
-              className="relative cursor-default"
-              style={{ padding: '12px 4px', margin: '-12px -4px' }}
-              onMouseEnter={() => setShowTooltip(true)}
-              onMouseLeave={() => setShowTooltip(false)}
-            >
-              <div className="w-32 h-1.5 rounded-full bg-surface-border/40 overflow-hidden">
+              className={`h-full rounded-full transition-all duration-500 ${
+                contextUsage ? barColour : 'bg-accent-800/30'
+              }`}
+              style={{ width: contextUsage ? `${pct}%` : '0%' }}
+            />
+          </div>
+
+          {showTooltip && (
+            <div className="absolute right-0 top-5 z-50 min-w-[210px]
+                            rounded-xl border border-surface-border
+                            bg-surface-elevated/95 backdrop-blur-sm
+                            px-3.5 py-2.5 shadow-xl">
+              <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
+                Context Utilization
+              </p>
+              <div className="w-full h-1 rounded-full bg-surface-border/40 overflow-hidden mb-2">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${barColour}`}
-                  style={{ width: `${pct}%` }}
+                  className={`h-full rounded-full ${contextUsage ? barColour : 'bg-accent-800/30'}`}
+                  style={{ width: contextUsage ? `${pct}%` : '0%' }}
                 />
               </div>
-
-              {showTooltip && (
-                <div className="absolute right-0 top-5 z-50 min-w-[210px]
-                                rounded-xl border border-surface-border
-                                bg-surface-elevated/95 backdrop-blur-sm
-                                px-3.5 py-2.5 shadow-xl">
-                  <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
-                    Context Utilization
-                  </p>
-                  <div className="w-full h-1 rounded-full bg-surface-border/40 overflow-hidden mb-2">
-                    <div
-                      className={`h-full rounded-full ${barColour}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
+              {contextUsage ? (
+                <>
                   <p className="text-[11px] text-content-secondary whitespace-nowrap">
                     Used:{' '}
                     <span className="text-content-primary font-medium">
@@ -133,25 +135,29 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
                     </span>{' '}
                     tokens (Max)
                   </p>
-                </div>
+                </>
+              ) : (
+                <p className="text-[11px] text-content-tertiary whitespace-nowrap">
+                  Context not yet available
+                </p>
               )}
             </div>
+          )}
+        </div>
 
-            {/* Compact button — no-drag applied directly so Electron pointer events work */}
-            <button
-              onClick={handleCompact}
-              disabled={!canCompact}
-              className={
-                canCompact
-                  ? 'no-drag cursor-pointer bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
-                  : 'no-drag cursor-not-allowed bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50'
-              }
-              title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
-            >
-              Compact
-            </button>
-          </>
-        )}
+        {/* Compact button — no-drag applied directly so Electron pointer events work */}
+        <button
+          onClick={handleCompact}
+          disabled={!canCompact}
+          className={
+            canCompact
+              ? 'no-drag cursor-pointer bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
+              : 'no-drag cursor-not-allowed bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50'
+          }
+          title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
+        >
+          Compact
+        </button>
       </div>
     </div>
   )

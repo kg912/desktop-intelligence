@@ -317,6 +317,7 @@ export function Layout() {
               isStreaming={isStreaming}
               activeChatId={activeChatId}
               onSuggest={handleSuggest}
+              isCompacting={isCompacting}
             />
 
             <InputBar
