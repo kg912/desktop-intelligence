@@ -858,11 +858,19 @@ export class ChatService {
     // the system message. Gemma 4 activates thinking via this system prompt token,
     // which overrides thinking:disabled in the payload and causes 30-50s silent waits.
     // builtMessages (with <|think|> intact) is still used for currentMessages → Step 2.
-    const step1Messages = builtMessages.map((m, i) =>
-      i === 0 && m.role === "system" && typeof m.content === "string"
-        ? { ...m, content: (m.content as string).replace(/^<\|think\|>\n/, "") }
-        : m,
-    );
+    const step1Messages = builtMessages
+      .filter((m) =>
+        !(
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content === "<|channel>thought\n"
+        )
+      )
+      .map((m, i) =>
+        i === 0 && m.role === "system" && typeof m.content === "string"
+          ? { ...m, content: (m.content as string).replace(/^<\|think\|>\n/, "") }
+          : m,
+      );
 
     const isThinking = payload.thinkingMode === "thinking";
 
@@ -1160,6 +1168,9 @@ export class ChatService {
         let streamBuffer = "";
         let toolCallIntercepted = false;
         let reasoningOpen = false;
+        // true while inside a Gemma 4 MLX native <|channel>thought…<channel|> block;
+        // prevents the Source A→C </think> injection from firing for mid-thought chunks.
+        let inChannelThought = false;
 
         // Native tool call accumulator — receives chunks from delta.tool_calls[].
         // LM Studio streams function name + arguments incrementally across multiple
@@ -1221,6 +1232,10 @@ export class ChatService {
             const deltaReasoning =
               parsed.choices?.[0]?.delta?.reasoning_content ?? "";
 
+            // ── Native channel token normalisation constants ───────────────
+            const CHAN_OPEN  = "<|channel>thought\n";
+            const CHAN_CLOSE = "<channel|>";
+
             // ── Native tool call accumulation ──────────────────────────────
             // LM Studio streams function name + arguments across multiple delta events.
             // Accumulate them here; the actual execution happens after the stream ends.
@@ -1242,15 +1257,47 @@ export class ChatService {
             // than content. Wrap them in <think>...</think> so the existing parseThinkBlocks
             // pipeline handles them identically to Qwen3 — no other code needs to change.
             // Qwen3/GLM never emit reasoning_content, so this branch never fires for them.
+            // Route thinking tokens from all three sources into <think>…</think> so
+            // parseThinkBlocks handles every model identically downstream.
+            //
+            // Sources:
+            //  A) reasoning_content delta   — Gemma GGUF, Qwen MLX (LM Studio 0.4.9+)
+            //  B) Native Gemma channel tags — Gemma 4 MLX emits these inline in content
+            //       when activated via assistant prefill: <|channel>thought\n…<channel|>
+            //  C) Plain content             — Qwen3/GLM and all non-thinking models
             let delta = "";
             if (deltaReasoning) {
-              delta = reasoningOpen
-                ? deltaReasoning
-                : "<think>" + deltaReasoning;
+              // Source A: reasoning_content
+              delta = reasoningOpen ? deltaReasoning : "<think>" + deltaReasoning;
               reasoningOpen = true;
             } else if (deltaContent) {
-              delta = reasoningOpen ? "</think>" + deltaContent : deltaContent;
-              reasoningOpen = false;
+              let chunk = deltaContent;
+
+              // Source B: rewrite native Gemma channel tokens before anything else.
+              // A single SSE chunk can contain the open tag, close tag, both, or neither.
+              if (chunk.includes(CHAN_OPEN)) {
+                chunk = chunk.replace(CHAN_OPEN, "<think>");
+                reasoningOpen = true;
+                inChannelThought = true;
+              }
+              if (chunk.includes(CHAN_CLOSE)) {
+                chunk = chunk.replace(CHAN_CLOSE, "</think>");
+                reasoningOpen = false;
+                inChannelThought = false;
+              }
+
+              // Source A→C transition: reasoning_content stopped, content resumed.
+              // reasoningOpen is still true from the last deltaReasoning chunk — inject
+              // </think> before the first answer token.
+              // Guard: inChannelThought prevents this from firing for Source B
+              // mid-thought chunks where reasoningOpen is true but we're still inside
+              // the channel block and have not yet seen CHAN_CLOSE.
+              if (reasoningOpen && !inChannelThought && !chunk.includes("</think>")) {
+                chunk = "</think>" + chunk;
+                reasoningOpen = false;
+              }
+
+              delta = chunk;
             }
 
             if (!delta) continue;
@@ -1814,6 +1861,23 @@ export class ChatService {
         if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id;
         msgs.push(wireMsg as { role: string; content: string | ContentPart[] });
       }
+    }
+
+    // Gemma MLX thinking activation via assistant prefill.
+    // The <|think|> system prompt prefix activates thinking on GGUF builds but
+    // is ignored by the MLX runtime — replies are instant with no reasoning.
+    // Prefilling the assistant turn with the native thought channel opener forces
+    // the MLX sampler to continue generating inside the thought block before it
+    // can produce an answer.
+    // Guard: model ID must contain both "gemma" AND "mlx" — GGUF variants do not
+    // contain "mlx" in their LM Studio model ID and must not receive this prefill
+    // since they already activate thinking via reasoning_content correctly.
+    if (
+      payload.thinkingMode === "thinking" &&
+      payload.model?.toLowerCase().includes("gemma") &&
+      payload.model?.toLowerCase().includes("mlx")
+    ) {
+      msgs.push({ role: "assistant", content: "<|channel>thought\n" });
     }
 
     return msgs;

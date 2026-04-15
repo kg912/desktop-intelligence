@@ -270,3 +270,98 @@ describe('applyThinkingPrefix — Gemma bypass', () => {
     expect(result[0].content).toBe('/think\nexplain SVMs')
   })
 })
+
+// ── Suite: delta routing — Gemma 4 MLX native channel tokens ─────────────────
+//
+// These tests simulate the delta routing state machine inline (no network call
+// needed) using the same logic as the replacement block in ChatService.send().
+
+describe('delta routing — Gemma 4 MLX native channel tokens', () => {
+  const CHAN_OPEN  = "<|channel>thought\n";
+  const CHAN_CLOSE = "<channel|>";
+
+  /**
+   * Apply one iteration of the delta routing logic.
+   * Returns [delta, reasoningOpen, inChannelThought].
+   */
+  function routeDelta(
+    deltaReasoning: string,
+    deltaContent: string,
+    reasoningOpenIn: boolean,
+    inChannelThoughtIn: boolean = false,
+  ): [string, boolean, boolean] {
+    let reasoningOpen = reasoningOpenIn;
+    let inChannelThought = inChannelThoughtIn;
+    let delta = "";
+
+    if (deltaReasoning) {
+      delta = reasoningOpen ? deltaReasoning : "<think>" + deltaReasoning;
+      reasoningOpen = true;
+    } else if (deltaContent) {
+      let chunk = deltaContent;
+
+      if (chunk.includes(CHAN_OPEN)) {
+        chunk = chunk.replace(CHAN_OPEN, "<think>");
+        reasoningOpen = true;
+        inChannelThought = true;
+      }
+      if (chunk.includes(CHAN_CLOSE)) {
+        chunk = chunk.replace(CHAN_CLOSE, "</think>");
+        reasoningOpen = false;
+        inChannelThought = false;
+      }
+
+      // Source A→C transition only — not for Source B mid-thought chunks.
+      if (reasoningOpen && !inChannelThought && !chunk.includes("</think>")) {
+        chunk = "</think>" + chunk;
+        reasoningOpen = false;
+      }
+
+      delta = chunk;
+    }
+
+    return [delta, reasoningOpen, inChannelThought];
+  }
+
+  it('1. opening chunk — emits <think> and sets reasoningOpen=true', () => {
+    const [delta, open, inChan] = routeDelta("", "<|channel>thought\nfirst thought", false, false);
+    expect(delta).toBe("<think>first thought");
+    expect(open).toBe(true);
+    expect(inChan).toBe(true);
+  });
+
+  it('2. mid-thought chunk — passes through unchanged, reasoningOpen stays true', () => {
+    // inChannelThought=true simulates state after the opening chunk was processed
+    const [delta, open, inChan] = routeDelta("", "continuing thought", true, true);
+    expect(delta).toBe("continuing thought");
+    expect(open).toBe(true);
+    expect(inChan).toBe(true);
+  });
+
+  it('3. closing chunk — emits </think> and sets reasoningOpen=false', () => {
+    const [delta, open, inChan] = routeDelta("", "last thought<channel|>answer here", true, true);
+    expect(delta).toBe("last thought</think>answer here");
+    expect(open).toBe(false);
+    expect(inChan).toBe(false);
+  });
+
+  it('4. pure answer chunk — passes through unchanged, reasoningOpen stays false', () => {
+    const [delta, open, inChan] = routeDelta("", "pure answer", false, false);
+    expect(delta).toBe("pure answer");
+    expect(open).toBe(false);
+    expect(inChan).toBe(false);
+  });
+
+  it('5. Source A→C transition — reasoning_content stop injects </think> on next content chunk', () => {
+    // Iteration 1: reasoning_content fires → reasoningOpen = true, inChannelThought stays false
+    const [, openAfterA, inChanAfterA] = routeDelta("reasoning text", "", false, false);
+    expect(openAfterA).toBe(true);
+    expect(inChanAfterA).toBe(false);
+
+    // Iteration 2: deltaContent arrives with no channel tags → </think> prepended
+    // (inChannelThought is false → Source A→C check fires)
+    const [delta2, openAfterC] = routeDelta("", "answer", openAfterA, inChanAfterA);
+    expect(delta2).toBe("</think>answer");
+    expect(openAfterC).toBe(false);
+  });
+})
