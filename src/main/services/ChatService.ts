@@ -833,10 +833,12 @@ export class ChatService {
     modelId: string,
     wc: WebContents,
   ): Promise<void> {
+    let promptTokenCount = 0;
     // Cancel any in-flight request before starting a new one
     this.abort();
     this.controller = new AbortController();
     const { signal } = this.controller;
+
 
     // ── Read MCP settings ──────────────────────────────────────────
     const appSettings = readSettings();
@@ -1119,6 +1121,7 @@ export class ChatService {
       // budget (4000) — the model has real facts and shouldn't speculate at length.
       // Without a search round, allow the full 8000 for deep reasoning.
       while (searchLoopCount < MAX_SEARCH_LOOPS) {
+        promptTokenCount = countTokens(JSON.stringify(currentMessages));
         const step2ThinkingField = isThinking
           ? {
               thinking: {
@@ -1127,6 +1130,7 @@ export class ChatService {
               },
             }
           : { thinking: { type: "disabled" } };
+
 
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
@@ -1224,8 +1228,9 @@ export class ChatService {
 
             // Capture the server-authoritative token count when LM Studio sends it.
             // This overwrites the running estimate with the real figure from the final chunk.
+            // DEPRECATED: server prompt_tokens are inconsistent; using self-measured promptTokenCount.
             if (parsed.usage?.prompt_tokens) {
-              totalTokens = parsed.usage.prompt_tokens;
+              // totalTokens = parsed.usage.prompt_tokens;
             }
 
             const deltaContent = parsed.choices?.[0]?.delta?.content ?? "";
@@ -1559,12 +1564,14 @@ export class ChatService {
         firstTokenAt,
         totalTokens,
         true,
+        promptTokenCount,
       );
       send(IPC_CHANNELS.CHAT_STREAM_END, stats);
       return;
     } finally {
       this.controller = null;
     }
+
 
     // Search-limit guard: if the while loop was exhausted by MAX_SEARCH_LOOPS and
     // no tokens were streamed, the model kept attempting searches without producing
@@ -1578,7 +1585,7 @@ export class ChatService {
         "The search tool was called multiple times without producing an answer. " +
           "Try rephrasing your question or disabling web search in Settings → MCP & Tools.",
       );
-      const stats = this.buildStats(startTime, firstTokenAt, 0, true);
+      const stats = this.buildStats(startTime, firstTokenAt, 0, true, promptTokenCount);
       send(IPC_CHANNELS.CHAT_STREAM_END, stats);
       return;
     }
@@ -1594,7 +1601,7 @@ export class ChatService {
       );
     }
 
-    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false);
+    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokenCount);
     send(IPC_CHANNELS.CHAT_STREAM_END, stats);
   }
 
@@ -1888,6 +1895,7 @@ export class ChatService {
     firstTokenAt: number | null,
     totalTokens: number,
     aborted: boolean,
+    promptTokenCount: number,
   ): GenerationStats {
     const totalMs = Date.now() - startTime;
     const ttft = firstTokenAt !== null ? firstTokenAt - startTime : totalMs;
@@ -1898,7 +1906,7 @@ export class ChatService {
       tokensPerSec: Math.round((totalTokens / elapsed) * 10) / 10,
       totalMs,
       totalTokens,
-      promptTokens: totalTokens, // server figure when available (usage.prompt_tokens overwrites estimate)
+      promptTokens: promptTokenCount, // self-measured context size before Step 2 fetch
       aborted,
     };
   }

@@ -138,7 +138,7 @@ export interface GenerationStats {
   tokensPerSec:  number   // tokens / sec
   totalMs:       number   // total wall time
   totalTokens:   number   // estimated output tokens
-  promptTokens?: number   // server-reported prompt+output token count from usage field
+  promptTokens?: number   // self-measured context size (countTokens of full messages payload before Step 2 fetch)
   aborted?:      boolean
 }
 
