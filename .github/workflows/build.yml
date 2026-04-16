@@ -37,6 +37,10 @@ jobs:
           ELECTRON_BUILDER_UNRESOLVED_DEPENDENCIES: "true"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get DMG filename
+        id: dmg_name
+        run: echo "filename=$(ls dist/*.dmg | head -n 1 | xargs basename)" >> $GITHUB_OUTPUT
+
       - name: Upload DMG to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -45,6 +49,25 @@ jobs:
           body: |
             Automatically updated on every push to main.
             Built from commit ${{ github.sha }} at ${{ github.event.head_commit.timestamp }}
+
+            ---
+
+            ## ⚠️ First Launch — macOS Will Block This App
+
+            This build is not code-signed. There is no Apple Developer certificate. This is intentional — it's a personal project, not a commercial release.
+
+            When you try to open it, macOS will say **"Desktop Intelligence is damaged and can't be opened."** It is not damaged. macOS says this about any app downloaded from the internet that hasn't been approved by Apple's paid developer program.
+
+            **To fix it, open Terminal (press `⌘ Space`, type `Terminal`, hit Enter) and run:**
+
+
+            xattr -cr "/Applications/Desktop Intelligence.app"
+
+
+            Then double-click the app as normal. You only need to do this once — it just tells macOS you trust it.
+
+            > If you're not comfortable running that command, this app is probably not for you — see the hardware requirements and disclaimer in the README.
           prerelease: false
           make_latest: true
           files: dist/*.dmg
+          overwrite_files: true
