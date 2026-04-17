@@ -953,7 +953,8 @@ export class ChatService {
 
     const startTime = Date.now();
     let firstTokenAt: number | null = null;
-    let totalTokens = 0;
+    let totalTokens = 0;      // completion tokens (for TPS calculation)
+    let promptTokens = 0;     // cumulative prompt size from server usage field
     let buffer = "";
     let searchLoopCount = 0;
     const MAX_SEARCH_LOOPS = appSettings.maxSearchLoops ?? 4;
@@ -1229,10 +1230,14 @@ export class ChatService {
               continue;
             }
 
-            // Capture the server-authoritative token count when LM Studio sends it.
-            // This overwrites the running estimate with the real figure from the final chunk.
-            if (parsed.usage?.prompt_tokens) {
-              totalTokens = parsed.usage.prompt_tokens;
+            // Capture server-authoritative token counts when LM Studio sends them
+            // (typically on the final chunk alongside finish_reason).
+            // prompt_tokens = total context sent in this request (all messages + system).
+            // completion_tokens = tokens generated in this response.
+            // These are kept SEPARATE from totalTokens which drives TPS calculation.
+            if (parsed.usage) {
+              if (parsed.usage.prompt_tokens)     promptTokens = parsed.usage.prompt_tokens;
+              if (parsed.usage.completion_tokens) totalTokens  = parsed.usage.completion_tokens;
             }
 
             const deltaContent = parsed.choices?.[0]?.delta?.content ?? "";
@@ -1567,6 +1572,7 @@ export class ChatService {
         firstTokenAt,
         totalTokens,
         true,
+        promptTokens,
       );
       send(IPC_CHANNELS.CHAT_STREAM_END, stats);
       return;
@@ -1586,7 +1592,7 @@ export class ChatService {
         "The search tool was called multiple times without producing an answer. " +
           "Try rephrasing your question or disabling web search in Settings → MCP & Tools.",
       );
-      const stats = this.buildStats(startTime, firstTokenAt, 0, true);
+      const stats = this.buildStats(startTime, firstTokenAt, 0, true, promptTokens);
       send(IPC_CHANNELS.CHAT_STREAM_END, stats);
       return;
     }
@@ -1602,7 +1608,7 @@ export class ChatService {
       );
     }
 
-    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false);
+    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokens);
     send(IPC_CHANNELS.CHAT_STREAM_END, stats);
   }
 
@@ -1896,6 +1902,7 @@ export class ChatService {
     firstTokenAt: number | null,
     totalTokens: number,
     aborted: boolean,
+    promptTokens = 0,
   ): GenerationStats {
     const totalMs = Date.now() - startTime;
     const ttft = firstTokenAt !== null ? firstTokenAt - startTime : totalMs;
@@ -1906,7 +1913,10 @@ export class ChatService {
       tokensPerSec: Math.round((totalTokens / elapsed) * 10) / 10,
       totalMs,
       totalTokens,
-      promptTokens: totalTokens, // server figure when available (usage.prompt_tokens overwrites estimate)
+      // promptTokens is the server-reported cumulative prompt size (all messages sent).
+      // This is what the context bar displays. Falls back to 0 if the model/build
+      // doesn't emit usage (some GGUF variants) — bar simply holds its last value.
+      promptTokens: promptTokens || undefined,
       aborted,
     };
   }

@@ -26,8 +26,8 @@ interface ModelStoreValue {
   thinkingMode: ThinkingMode;
   /** Toggle between thinking and fast mode */
   setThinkingMode: (mode: ThinkingMode) => void;
-  /** Context window utilisation from the last completed response; null before first response */
-  contextUsage: { used: number; total: number } | null;
+  /** Context window utilisation; starts at {used:0, total:0} until model config is loaded */
+  contextUsage: { used: number; total: number };
   /** Update context utilisation — called from useChat after each stream-end */
   setContextUsage: React.Dispatch<
     React.SetStateAction<{ used: number; total: number }>
@@ -52,7 +52,7 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   const [contextUsage, setContextUsage] = useState<{
     used: number;
     total: number;
-  } | null>(null);
+  }>({ used: 0, total: 0 });
   const [isCompacting,  setIsCompacting]  = useState<boolean>(false);
   const [compactToast,  setCompactToast]  = useState<{ tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null>(null);
 

@@ -10,6 +10,7 @@ import { InputBar } from './InputBar'
 import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
 import { useModelStore } from '../../store/ModelStore'
+import { CompactProgressOverlay } from '../chat/CompactProgressOverlay'
 import type { Chat, ProcessedAttachment, StoredMessage } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
@@ -261,7 +262,7 @@ export function Layout() {
   // Message history in the UI is intentionally preserved — the compacted summary
   // lives in chats.compacted_summary and only affects the LM Studio wire payload.
   const handleCompactComplete = useCallback(() => {
-    setContextUsage(null)
+    setContextUsage({ used: 0, total: 0 })
   }, [setContextUsage])
 
   return (
@@ -307,6 +308,11 @@ export function Layout() {
                   </p>
                 </motion.div>
               )}
+            </AnimatePresence>
+
+            {/* Compaction blocking overlay — sits over the entire main column */}
+            <AnimatePresence>
+              {isCompacting && <CompactProgressOverlay />}
             </AnimatePresence>
 
             <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} />

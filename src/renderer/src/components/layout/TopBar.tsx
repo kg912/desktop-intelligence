@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Zap } from 'lucide-react'
 import { useModelStore } from '../../store/ModelStore'
@@ -29,7 +29,17 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   } = useModelStore()
   const [showTooltip, setShowTooltip] = useState(false)
 
-  const pct = contextUsage
+  // Seed the context bar total from model config on mount so the bar
+  // is visible immediately (showing 0 / contextLength) before any message is sent.
+  useEffect(() => {
+    window.api.getModelConfig()
+      .then((config) => {
+        setContextUsage((prev) => ({ used: prev.used, total: config.contextLength }))
+      })
+      .catch(() => { /* non-fatal — bar stays at 0/0 until first response */ })
+  }, [])
+
+  const pct = contextUsage.total > 0
     ? Math.min(100, Math.round((contextUsage.used / contextUsage.total) * 100))
     : 0
 
@@ -40,7 +50,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
     ? 'bg-amber-700/60'
     : 'bg-accent-800/60'
 
-  const canCompact = !!contextUsage && contextUsage.used >= 5000 && !isCompacting
+  const canCompact = contextUsage.used >= 5000 && !isCompacting
 
   async function handleCompact() {
     if (!activeChatId || !contextUsage || contextUsage.used < 5000 || isCompacting) return
@@ -87,11 +97,9 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
         </motion.div>
       </div>
 
-      {/* Right: context bar then Compact button */}
+      {/* Right: context bar then Compact button — always visible */}
       <div className="no-drag flex items-center gap-3">
-        {contextUsage && (
-          <>
-            {/* Progress bar with tooltip — bar comes first */}
+          {/* Progress bar with tooltip — bar comes first */}
             <div
               className="relative cursor-default"
               style={{ padding: '12px 4px', margin: '-12px -4px' }}
@@ -129,7 +137,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
                   <p className="text-[11px] text-content-secondary whitespace-nowrap">
                     Length:{' '}
                     <span className="text-content-primary font-medium">
-                      {contextUsage.total.toLocaleString()}
+                      {contextUsage.total > 0 ? contextUsage.total.toLocaleString() : '—'}
                     </span>{' '}
                     tokens (Max)
                   </p>
@@ -137,7 +145,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
               )}
             </div>
 
-            {/* Compact button — no-drag applied directly so Electron pointer events work */}
+            {/* Compact button */}
             <button
               onClick={handleCompact}
               disabled={!canCompact}
@@ -150,8 +158,6 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
             >
               Compact
             </button>
-          </>
-        )}
       </div>
     </div>
   )

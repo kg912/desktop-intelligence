@@ -1,7 +1,6 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MessageBubble } from '../chat/MessageBubble'
-import { CompactProgressOverlay } from '../chat/CompactProgressOverlay'
 import { CompactToast } from '../chat/CompactToast'
 import { useModelStore } from '../../store/ModelStore'
 import logoWelcome from '../../assets/logo-welcome.png'
@@ -80,7 +79,7 @@ export interface ChatAreaHandle {
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
 function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, ref) {
-  const { isCompacting, compactToast } = useModelStore()
+  const { compactToast } = useModelStore()
   const bottomRef          = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -203,11 +202,6 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto relative no-drag"
     >
-      {/* Compaction blocking overlay */}
-      <AnimatePresence>
-        {isCompacting && <CompactProgressOverlay />}
-      </AnimatePresence>
-
       {/* Compaction result toast */}
       <AnimatePresence>
         {compactToast && (

@@ -637,7 +637,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     setIsStreaming(false);
     setIsSearching(false);
     setLiveToolCall(null);
-    setContextUsage(null); // reset context bar on new chat
+    setContextUsage({ used: 0, total: 0 }); // reset context bar on new chat
     assistantIdRef.current = null;
     streamingContentRef.current = "";
     liveToolCallRef.current = null;
