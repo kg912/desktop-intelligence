@@ -977,6 +977,10 @@ export class ChatService {
     // the model should reason less (the data provides the facts).
     let toolCallRound = false;
 
+    // Accumulates the full raw stream output across all search loops.
+    // Used after the loop to compute answerTokens (stripped of thinking blocks).
+    let lastStreamBuffer = "";
+
     // Heuristic: only attempt the non-streaming tool-call round when the user message
     // plausibly requires real-time data. Conversational / knowledge questions skip it
     // entirely, saving one LM Studio round-trip per message.
@@ -1559,6 +1563,7 @@ export class ChatService {
             );
             console.log("[DEBUG]", streamBuffer.slice(0, 500));
           }
+          lastStreamBuffer = streamBuffer;
           break;
         }
       }
@@ -1619,7 +1624,15 @@ export class ChatService {
       if (DEBUG) console.log(`[DEV][ChatService] usage not emitted — computed promptTokens from wire payload: ${promptTokens}`);
     }
 
-    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokens);
+    // answerTokens = the completion content that will actually appear in the next
+    // request's context — i.e. totalTokens minus the thinking block, which
+    // stripThinkBlocks removes before sending history to LM Studio.
+    // lastStreamBuffer holds the final loop's full raw stream output (think + answer).
+    const strippedAnswer = this.stripThinkBlocks(lastStreamBuffer);
+    const answerTokens = countTokens(strippedAnswer);
+    if (DEBUG) console.log(`[DEV][ChatService] answerTokens (stripped): ${answerTokens} / totalTokens: ${totalTokens}`);
+
+    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokens, answerTokens);
     send(IPC_CHANNELS.CHAT_STREAM_END, stats);
   }
 
@@ -1914,6 +1927,7 @@ export class ChatService {
     totalTokens: number,
     aborted: boolean,
     promptTokens = 0,
+    answerTokens = 0,
   ): GenerationStats {
     const totalMs = Date.now() - startTime;
     const ttft = firstTokenAt !== null ? firstTokenAt - startTime : totalMs;
@@ -1924,10 +1938,8 @@ export class ChatService {
       tokensPerSec: Math.round((totalTokens / elapsed) * 10) / 10,
       totalMs,
       totalTokens,
-      // promptTokens is the server-reported cumulative prompt size (all messages sent).
-      // This is what the context bar displays. Falls back to 0 if the model/build
-      // doesn't emit usage (some GGUF variants) — bar simply holds its last value.
       promptTokens: promptTokens || undefined,
+      answerTokens: answerTokens || undefined,
       aborted,
     };
   }

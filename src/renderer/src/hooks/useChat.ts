@@ -235,9 +235,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         window.api
           .getModelConfig()
           .then((config) => {
-            if (DEBUG) console.log('[DEV][useChat] setContextUsage ->', stats.promptTokens, '/', config.contextLength);
+            if (DEBUG) console.log('[DEV][useChat] setContextUsage ->', stats.promptTokens, '+', stats.answerTokens ?? stats.totalTokens, '/', config.contextLength);
             setContextUsage({
-              used:  stats.promptTokens!,
+              used:  stats.promptTokens! + (stats.answerTokens ?? stats.totalTokens ?? 0),
               total: config.contextLength,
             });
           })

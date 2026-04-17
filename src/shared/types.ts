@@ -139,6 +139,7 @@ export interface GenerationStats {
   totalMs:       number   // total wall time
   totalTokens:   number   // estimated output tokens
   promptTokens?: number   // server-reported prompt+output token count from usage field
+  answerTokens?: number   // completion tokens excluding the think block (what goes into context next turn)
   aborted?:      boolean
 }
 
