@@ -1137,7 +1137,7 @@ export class ChatService {
           top_p: topP ?? 0.95,
           max_tokens: maxOutputTokens ?? 16384,
           repeat_penalty: repeatPenalty ?? 1.1,
-          stop: STOP_SEQUENCES,
+          stop: isGemmaModel ? [] : STOP_SEQUENCES,
           ...step2ThinkingField,
           ...(braveEnabled
             ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: "auto" }
