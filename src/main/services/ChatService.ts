@@ -1608,6 +1608,17 @@ export class ChatService {
       );
     }
 
+    // Fallback: if LM Studio didn't emit a usage field (common with Gemma GGUF),
+    // count tokens in the wire payload we actually sent. This gives the context bar
+    // an accurate prompt-size figure without relying on the server to report it.
+    if (promptTokens === 0) {
+      promptTokens = currentMessages.reduce((sum, m) => {
+        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        return sum + countTokens(text) + 4; // +4 per-message role overhead
+      }, 0);
+      if (DEBUG) console.log(`[DEV][ChatService] usage not emitted — computed promptTokens from wire payload: ${promptTokens}`);
+    }
+
     const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokens);
     send(IPC_CHANNELS.CHAT_STREAM_END, stats);
   }

@@ -25,6 +25,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   const {
     selectedModel,
     contextUsage,
+    setContextUsage,
     isCompacting,
     setIsCompacting,
     setCompactToast,
