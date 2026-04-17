@@ -1122,11 +1122,18 @@ export class ChatService {
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
 
+        // budget_tokens caps the thinking portion only — must leave room for the answer.
+        // Setting it equal to max_tokens leaves zero budget for the actual response,
+        // causing LM Studio to terminate the stream before the model writes an answer.
+        // Reserve 25% of max_tokens for the answer (minimum 2048), thinking gets 75%.
+        const effectiveMax = maxOutputTokens ?? 16384;
+        const thinkingBudget = Math.max(1024, Math.floor(effectiveMax * 0.75));
+
         const step2ThinkingField = isThinking
           ? {
               thinking: {
                 type: "enabled",
-                budget_tokens: maxOutputTokens ?? 16384,
+                budget_tokens: thinkingBudget,
               },
             }
           : { thinking: { type: "disabled" } };

@@ -177,7 +177,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         thinkStartedAt.current !== null &&
         streamingContentRef.current.includes("<think>") &&
         !streamingContentRef.current.includes("</think>") &&
-        Date.now() - thinkStartedAt.current > 45_000
+        Date.now() - thinkStartedAt.current > 180_000
       ) {
         console.warn("[useChat] ⏱ Think block timeout — forcing stream end");
         window.api.abortChat();
