@@ -3,6 +3,8 @@ import { motion } from 'framer-motion'
 import { Zap } from 'lucide-react'
 import { useModelStore } from '../../store/ModelStore'
 
+const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
+
 /**
  * TopBar — centre model name + right-side context utilisation indicator + Compact button.
  *
@@ -34,9 +36,12 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   useEffect(() => {
     window.api.getModelConfig()
       .then((config) => {
+        if (DEBUG) console.log('[DEV][TopBar] getModelConfig result:', JSON.stringify(config))
         setContextUsage((prev) => ({ used: prev.used, total: config.contextLength }))
       })
-      .catch(() => { /* non-fatal — bar stays at 0/0 until first response */ })
+      .catch((err) => {
+        if (DEBUG) console.log('[DEV][TopBar] getModelConfig failed:', err)
+      })
   }, [])
 
   const pct = contextUsage.total > 0

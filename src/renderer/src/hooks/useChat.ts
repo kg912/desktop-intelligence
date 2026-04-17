@@ -202,6 +202,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           "| first200:",
           assistantContent.slice(0, 200),
         );
+        console.log("[DEV][useChat] stream-end stats:", JSON.stringify(stats));
       }
 
       // Clear in-flight refs before any async work
@@ -234,6 +235,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         window.api
           .getModelConfig()
           .then((config) => {
+            if (DEBUG) console.log('[DEV][useChat] setContextUsage ->', stats.promptTokens, '/', config.contextLength);
             setContextUsage({
               used:  stats.promptTokens!,
               total: config.contextLength,
@@ -242,6 +244,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           .catch(() => {
             /* non-fatal — bar simply stays at previous value */
           });
+      } else if (DEBUG) {
+        console.log('[DEV][useChat] promptTokens missing/falsy — skipping setContextUsage. stats:', JSON.stringify(stats));
       }
 
       // Persist toolCall or decide whether to surface a buffered error
