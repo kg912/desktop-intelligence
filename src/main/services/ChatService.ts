@@ -1119,17 +1119,17 @@ export class ChatService {
       // budget (4000) — the model has real facts and shouldn't speculate at length.
       // Without a search round, allow the full 8000 for deep reasoning.
       while (searchLoopCount < MAX_SEARCH_LOOPS) {
+        const { temperature, topP, maxOutputTokens, repeatPenalty } =
+          readSettings();
+
         const step2ThinkingField = isThinking
           ? {
               thinking: {
                 type: "enabled",
-                budget_tokens: toolCallRound ? 4000 : 8000,
+                budget_tokens: maxOutputTokens ?? 16384,
               },
             }
           : { thinking: { type: "disabled" } };
-
-        const { temperature, topP, maxOutputTokens, repeatPenalty } =
-          readSettings();
         const streamBody = JSON.stringify({
           model: modelId,
           messages: currentMessages,
@@ -1430,6 +1430,7 @@ export class ChatService {
               lineBuffer = lineBuffer.slice(newlineIdx + 1);
 
               if (
+                !reasoningOpen &&
                 completedLine.length > 0 &&
                 completedLine.length <= REPETITION_MAX_LEN
               ) {
