@@ -1437,7 +1437,12 @@ export class ChatService {
 
             if (chunkToSend) {
               totalTokens += estimateTokens(chunkToSend);
-              send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
+              // Do NOT forward chunks while a native tool call is being accumulated.
+              // pendingToolCall is set on the first delta.tool_calls event; once set,
+              // the model is deciding to search — not producing an answer.
+              if (!pendingToolCall) {
+                send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
+              }
               lineBuffer += chunkToSend;
             }
             const newlineIdx = lineBuffer.indexOf("\n");
@@ -1475,6 +1480,11 @@ export class ChatService {
         // The text-stream interception path above handles models that emit tool calls
         // as raw text; this path handles the correct structured channel.
         if (pendingToolCall && !toolCallIntercepted) {
+          // Retract any chunks that leaked to the renderer before the first
+          // delta.tool_calls event arrived (pendingToolCall was null for those
+          // early tokens, so Change 1 could not gate them).
+          send(IPC_CHANNELS.CHAT_STREAM_RETRACT, "");
+
           let toolQuery = "";
           try {
             const tcArgs = JSON.parse(pendingToolCall.argsRaw);
