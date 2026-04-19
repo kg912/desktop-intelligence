@@ -78,8 +78,10 @@ export function Layout() {
         content:     wm.content,
         // Restore attachment pills from serialised metadata (null → undefined)
         attachments: wm.attachmentsJson ? JSON.parse(wm.attachmentsJson) : undefined,
-        // Restore web-search notification (null → undefined)
+        // Restore web-search notification (null → undefined, legacy path)
         toolCall:    wm.toolCallJson    ? JSON.parse(wm.toolCallJson)    : undefined,
+        // Restore v2.1 block list (null → undefined — falls back to legacy path)
+        blocks:      wm.blocksJson      ? JSON.parse(wm.blocksJson)      : undefined,
         stats:       null,
         isThinking:  false,
         isStreaming:  false,

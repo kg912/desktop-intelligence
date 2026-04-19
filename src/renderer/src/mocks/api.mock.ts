@@ -11,7 +11,6 @@ import type {
   GenerationStats,
   AttachmentFilePayload,
   ProcessedAttachment,
-  WebSearchStatus,
   Chat,
   StoredMessage,
 } from '../../../shared/types'
@@ -178,10 +177,12 @@ export const mockApi: ElectronAPI = {
   },
   abortChat: () => {},
 
-  onChatStreamChunk:   (cb) => chunkBus.subscribe(cb),
-  onChatStreamEnd:     (cb) => endBus.subscribe(cb),
-  onChatError:         (cb) => errorBus.subscribe(cb),
-  onChatStreamRetract: () => () => {},
+  onChatStreamChunk:     (cb) => chunkBus.subscribe(cb),
+  onChatStreamEnd:       (cb) => endBus.subscribe(cb),
+  onChatError:           (cb) => errorBus.subscribe(cb),
+  onChatStreamToolStart: () => () => {},
+  onChatStreamToolDone:  () => () => {},
+  onChatStreamToolError: () => () => {},
 
   // ── File processing (mock — no real FS access in browser) ────
   processFile: async (_payload: AttachmentFilePayload): Promise<ProcessedAttachment> => {
@@ -196,8 +197,6 @@ export const mockApi: ElectronAPI = {
         : `[System: The user has attached a document named ${_payload.fileName}. It has been parsed and stored.]`,
     }
   },
-
-  onWebSearchStatus: (_cb: (s: WebSearchStatus) => void): (() => void) => () => {},
 
   // ── RAG stubs ─────────────────────────────────────────────────
   ingestFile:        async () => {},
@@ -261,13 +260,17 @@ export const mockApi: ElectronAPI = {
     _id: string,
     role: string,
     content: string,
-    attachmentsJson?: string | null
+    attachmentsJson?: string | null,
+    _toolCallJson?: string | null,
+    _blocksJson?: string | null
   ): Promise<void> => {
     if (!mockMessages[chatId]) mockMessages[chatId] = []
     mockMessages[chatId].push({
       role:            role as 'user' | 'assistant' | 'system',
       content,
       attachmentsJson: attachmentsJson ?? null,
+      toolCallJson:    null,
+      blocksJson:      null,
     })
     // Bump updatedAt
     const chat = mockChats.find((c) => c.id === chatId)

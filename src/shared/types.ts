@@ -79,6 +79,8 @@ export interface StoredMessage extends WireMessage {
   attachmentsJson: string | null
   /** JSON-encoded { query, results } for web-search notifications, or null */
   toolCallJson:    string | null
+  /** JSON-encoded MessageBlock[] for the v2.1 append-only block architecture, or null */
+  blocksJson:      string | null
 }
 
 // --- File Attachments ---
@@ -116,6 +118,30 @@ export interface WebSearchStatus {
   formattedContent?: string   // full augmented text for wire message context
   error?:            string
 }
+
+// --- Message Blocks (v2.1.0 append-only architecture) ---
+
+export type MessageBlock =
+  | {
+      id:               string
+      type:             'search'
+      query:            string
+      results?:         Array<{ title: string; url: string }>
+      formattedContent?: string
+      phase:            'searching' | 'done' | 'error'
+      error?:           string
+    }
+  | {
+      id:      string
+      type:    'thinking'
+      content: string
+    }
+  | {
+      id:          string
+      type:        'answer'
+      content:     string
+      isStreaming: boolean
+    }
 
 export type ThinkingMode = 'thinking' | 'fast'
 
@@ -160,12 +186,14 @@ export const IPC_CHANNELS = {
   DAEMON_STATE_CHANGE: 'daemon:stateChange',
   DAEMON_RETRY:        'daemon:retry',
 
-  CHAT_SEND:           'chat:send',
-  CHAT_STREAM_CHUNK:   'chat:streamChunk',
-  CHAT_STREAM_END:     'chat:streamEnd',
-  CHAT_STREAM_RETRACT: 'chat:streamRetract',
-  CHAT_ABORT:          'chat:abort',
-  CHAT_ERROR:          'chat:error',
+  CHAT_SEND:              'chat:send',
+  CHAT_STREAM_CHUNK:      'chat:streamChunk',
+  CHAT_STREAM_END:        'chat:streamEnd',
+  CHAT_STREAM_TOOL_START: 'chat:streamToolStart',
+  CHAT_STREAM_TOOL_DONE:  'chat:streamToolDone',
+  CHAT_STREAM_TOOL_ERROR: 'chat:streamToolError',
+  CHAT_ABORT:             'chat:abort',
+  CHAT_ERROR:             'chat:error',
 
   RAG_INGEST_FILE:     'rag:ingestFile',
   RAG_INGEST_PROGRESS: 'rag:ingestProgress',

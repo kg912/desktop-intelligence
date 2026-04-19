@@ -762,10 +762,7 @@ async function executeSearchQueries(
   const deduped = [
     ...new Set(queries.map((q) => q.trim()).filter((q) => q.length > 0)),
   ].slice(0, 3);
-  sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-    phase: "searching",
-    query: primaryQuery,
-  });
+  sendFn(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: primaryQuery });
 
   const allResults: Array<{ title: string; url: string; description: string }> =
     [];
@@ -791,8 +788,7 @@ async function executeSearchQueries(
   }
 
   if (allResults.length === 0) {
-    sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-      phase: "error",
+    sendFn(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
       query: primaryQuery,
       error: "All searches returned no results",
     });
@@ -808,10 +804,8 @@ async function executeSearchQueries(
   });
 
   const formattedContent = resultSections.join("\n\n");
-  sendFn(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-    phase: "done",
+  sendFn(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
     query: primaryQuery,
-    resultCount: uniqueResults.length,
     results: uniqueResults
       .slice(0, 5)
       .map((r) => ({ title: r.title, url: r.url })),
@@ -1358,33 +1352,17 @@ export class ChatService {
                 this.abort();
                 loopAborted = true;
 
-                // Think-flash fix: send only the text that appeared BEFORE the
-                // <think> block to the renderer.  patchedCleaned (which contains
-                // the partial reasoning) is still used for currentMessages so the
-                // model sees its own prior reasoning in the LM Studio context.
-                const thinkStart = patchedCleaned.indexOf("<think>");
-                const retractedClean =
-                  thinkStart > 0
-                    ? patchedCleaned.slice(0, thinkStart).trim()
-                    : thinkStart === 0
-                      ? ""
-                      : patchedCleaned;
-
-                send(IPC_CHANNELS.CHAT_STREAM_RETRACT, retractedClean);
-                send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                  phase: "searching",
-                  query: midQuery,
-                });
+                // Notify renderer to start a new search block (no retract needed —
+                // block architecture is append-only).
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: midQuery });
 
                 let midStreamResult: string;
                 try {
                   const results = await braveSearch(midQuery, resolvedKey!, 5);
                   midStreamResult = await augmentAndFormatResults(results);
-                  send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                    phase: "done",
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                     query: midQuery,
-                    resultCount: results.length,
-                    results: results.map((r) => ({
+                    results: results.slice(0, 5).map((r) => ({
                       title: r.title,
                       url: r.url,
                     })),
@@ -1394,8 +1372,7 @@ export class ChatService {
                   const errMsg =
                     err instanceof Error ? err.message : String(err);
                   midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`;
-                  send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                    phase: "error",
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
                     query: midQuery,
                     error: errMsg,
                   });
@@ -1480,11 +1457,6 @@ export class ChatService {
         // The text-stream interception path above handles models that emit tool calls
         // as raw text; this path handles the correct structured channel.
         if (pendingToolCall && !toolCallIntercepted) {
-          // Retract any chunks that leaked to the renderer before the first
-          // delta.tool_calls event arrived (pendingToolCall was null for those
-          // early tokens, so Change 1 could not gate them).
-          send(IPC_CHANNELS.CHAT_STREAM_RETRACT, "");
-
           let toolQuery = "";
           try {
             const tcArgs = JSON.parse(pendingToolCall.argsRaw);
@@ -1502,19 +1474,15 @@ export class ChatService {
             toolCallIntercepted = true;
             console.log(`[MCP] 🔍 Native tool call: "${toolQuery}"`);
 
-            send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-              phase: "searching",
-              query: toolQuery,
-            });
+            // Append a search block (no retract needed — block architecture is append-only)
+            send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: toolQuery });
 
             let nativeResult: string;
             try {
               const results = await braveSearch(toolQuery, resolvedKey!, 5);
               nativeResult = await augmentAndFormatResults(results);
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase: "done",
+              send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                 query: toolQuery,
-                resultCount: results.length,
                 results: results
                   .slice(0, 5)
                   .map((r) => ({ title: r.title, url: r.url })),
@@ -1523,8 +1491,7 @@ export class ChatService {
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);
               nativeResult = `Web search failed: ${errMsg}. Answer from training knowledge.`;
-              send(IPC_CHANNELS.WEB_SEARCH_STATUS, {
-                phase: "error",
+              send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
                 query: toolQuery,
                 error: errMsg,
               });

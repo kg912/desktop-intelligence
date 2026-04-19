@@ -108,6 +108,12 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE chats ADD COLUMN compacted_summary TEXT`)
   } catch { /* column already exists */ }
 
+  // v2.1.0: MessageBlock JSON for the append-only block streaming architecture.
+  // Nullable — old messages without blocks use the legacy toolCallJson + content fallback.
+  try {
+    _db.exec(`ALTER TABLE chat_messages ADD COLUMN blocks TEXT`)
+  } catch { /* column already exists */ }
+
   // Phase 28: FTS5-powered chunk table for hybrid "needle in a haystack" retrieval.
   // Replaces the brute-force full-document context injection with BM25-ranked keyword
   // search across overlapping 1800-char chunks.  documents.content is kept for backward
@@ -160,19 +166,21 @@ export function createChat(id: string, title: string): Chat {
 export function getChatMessages(chatId: string): StoredMessage[] {
   const rows = getDB()
     .prepare(
-      'SELECT role, content, attachments_json, toolcall_json FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC'
+      'SELECT role, content, attachments_json, toolcall_json, blocks FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC'
     )
     .all(chatId) as Array<{
       role:             'user' | 'assistant' | 'system'
       content:          string
       attachments_json: string | null
       toolcall_json:    string | null
+      blocks:           string | null
     }>
   return rows.map((r) => ({
     role:            r.role,
     content:         r.content,
     attachmentsJson: r.attachments_json,
     toolCallJson:    r.toolcall_json,
+    blocksJson:      r.blocks,
   }))
 }
 
@@ -187,16 +195,17 @@ export function saveMessage(
   role:            string,
   content:         string,
   attachmentsJson: string | null = null,
-  toolCallJson:    string | null = null
+  toolCallJson:    string | null = null,
+  blocksJson:      string | null = null
 ): void {
   const now = Date.now()
   getDB()
     .prepare(
       `INSERT OR IGNORE INTO chat_messages
-         (id, chat_id, role, content, created_at, attachments_json, toolcall_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+         (id, chat_id, role, content, created_at, attachments_json, toolcall_json, blocks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, chatId, role, content, now, attachmentsJson, toolCallJson)
+    .run(id, chatId, role, content, now, attachmentsJson, toolCallJson, blocksJson)
   getDB()
     .prepare('UPDATE chats SET updated_at = ? WHERE id = ?')
     .run(now, chatId)

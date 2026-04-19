@@ -442,8 +442,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(
     IPC_CHANNELS.DB_SAVE_MESSAGE,
-    (_, chatId: string, id: string, role: string, content: string, attachmentsJson?: string, toolCallJson?: string): void =>
-      saveMessage(chatId, id, role, content, attachmentsJson ?? null, toolCallJson ?? null)
+    (_, chatId: string, id: string, role: string, content: string, attachmentsJson?: string, toolCallJson?: string, blocksJson?: string): void =>
+      saveMessage(chatId, id, role, content, attachmentsJson ?? null, toolCallJson ?? null, blocksJson ?? null)
   )
 
   // ── Settings: model config via lms CLI ─────────────────────────

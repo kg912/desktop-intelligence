@@ -11,7 +11,6 @@ import type {
   GenerationStats,
   AttachmentFilePayload,
   ProcessedAttachment,
-  WebSearchStatus,
   Chat,
   StoredMessage,
   ModelConfig,
@@ -68,10 +67,22 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_END, h)
   },
 
-  onChatStreamRetract: (cb: (cleanContent: string) => void): (() => void) => {
-    const h = (_: Electron.IpcRendererEvent, c: string): void => cb(c)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_RETRACT, h)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_RETRACT, h)
+  onChatStreamToolStart: (cb: (payload: { query: string }) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { query: string }): void => cb(p)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_TOOL_START, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_TOOL_START, h)
+  },
+
+  onChatStreamToolDone: (cb: (payload: { query: string; results: Array<{ title: string; url: string }>; formattedContent: string }) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { query: string; results: Array<{ title: string; url: string }>; formattedContent: string }): void => cb(p)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, h)
+  },
+
+  onChatStreamToolError: (cb: (payload: { query: string; error: string }) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { query: string; error: string }): void => cb(p)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, h)
   },
 
   onChatError: (cb: (msg: string) => void): (() => void) => {
@@ -83,12 +94,6 @@ const api = {
   // ── File processing ──────────────────────────────────────────
   processFile: (payload: AttachmentFilePayload): Promise<ProcessedAttachment> =>
     ipcRenderer.invoke(IPC_CHANNELS.FILE_PROCESS, payload),
-
-  onWebSearchStatus: (cb: (s: WebSearchStatus) => void): (() => void) => {
-    const h = (_: Electron.IpcRendererEvent, s: WebSearchStatus): void => cb(s)
-    ipcRenderer.on(IPC_CHANNELS.WEB_SEARCH_STATUS, h)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.WEB_SEARCH_STATUS, h)
-  },
 
   // ── Matplotlib rendering ─────────────────────────────────────
   renderMatplotlib: (code: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> =>
@@ -161,14 +166,15 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.DB_DELETE_CHAT, chatId),
 
   saveMessage: (
-    chatId:          string,
-    id:              string,
-    role:            string,
-    content:         string,
+    chatId:           string,
+    id:               string,
+    role:             string,
+    content:          string,
     attachmentsJson?: string | null,
-    toolCallJson?:   string | null
+    toolCallJson?:    string | null,
+    blocksJson?:      string | null
   ): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_MESSAGE, chatId, id, role, content, attachmentsJson, toolCallJson),
+    ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_MESSAGE, chatId, id, role, content, attachmentsJson, toolCallJson, blocksJson),
 }
 
 contextBridge.exposeInMainWorld('api', api)
