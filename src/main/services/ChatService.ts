@@ -613,6 +613,13 @@ export class ChatService {
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
 
+        // Reset repetition detector for each new streaming request —
+        // </think> appears as a completed line at the end of every thinking
+        // block, so its count accumulates across search loops and incorrectly
+        // triggers an abort on the 3rd loop iteration.
+        lastLine = "";
+        consecutiveCount = 0;
+
         // budget_tokens caps the thinking portion only — must leave room for the answer.
         // Setting it equal to max_tokens leaves zero budget for the actual response,
         // causing LM Studio to terminate the stream before the model writes an answer.
