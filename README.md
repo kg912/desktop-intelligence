@@ -75,6 +75,8 @@ Full Markdown rendering with syntax-highlighted code blocks, tables, and task li
 
 Ask the model to plot anything — distributions, decision boundaries, neural network activations, time series. Charts render natively via a `python3` subprocess with `matplotlib`, styled to match the dark UI.
 
+![Charts and visualizations 2](app_images/charts-demo-2.png)
+
 ### Settings — Model & Generation Parameters
 
 ![Model settings — model selection, context length and generation parameters](app_images/settings_screen_model_selection_and_context_length.png)
