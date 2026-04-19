@@ -7,8 +7,10 @@
  *    enables or suppresses the model's reasoning chain.  This is a pure
  *    function so tests require no mocks.
  *
- * 2. STOP_SEQUENCES — the four values that prevent the Qwen runaway loop.
- *    If any value is accidentally removed, generation can loop infinitely.
+ * 2. STOP_SEQUENCES — the EOS tokens that prevent generation past the end-of-turn
+ *    marker. Plain-text runaway-loop phrases were intentionally removed (too broad;
+ *    the repetition detector handles actual loops). If the EOS tokens are removed,
+ *    the model may emit junk tokens past the natural stop point.
  *
  * The actual LM Studio HTTP call is NOT tested here (it would require
  * network mocks and is covered by integration / manual DMG testing).
@@ -162,6 +164,10 @@ describe('applyThinkingPrefix — multimodal messages', () => {
 })
 
 // ── Suite: STOP_SEQUENCES ─────────────────────────────────────────────────────
+//
+// Guards the EOS tokens that prevent generation past the natural end-of-turn
+// marker. Plain-text runaway-loop phrases were removed — they were too broad
+// and the repetition detector handles actual loops independently.
 
 describe('STOP_SEQUENCES', () => {
   it('is a non-empty array', () => {
@@ -177,12 +183,9 @@ describe('STOP_SEQUENCES', () => {
     expect(STOP_SEQUENCES).toContain('<|endoftext|>')
   })
 
-  it('contains the full runaway-loop trigger phrase', () => {
-    expect(STOP_SEQUENCES).toContain('Final Answer: Your final answer here')
-  })
-
-  it('contains the short runaway-loop trigger phrase', () => {
-    expect(STOP_SEQUENCES).toContain('Your final answer here')
+  it('does NOT contain plain-text runaway-loop phrases (removed — too broad, repetition detector handles loops)', () => {
+    expect(STOP_SEQUENCES).not.toContain('Final Answer: Your final answer here')
+    expect(STOP_SEQUENCES).not.toContain('Your final answer here')
   })
 
   it('has no duplicate entries', () => {

@@ -41,22 +41,14 @@ const DEBUG = __DEV_MODE__;
 // The DEFAULT_MODEL_ID fallback lives in shared/types.ts.
 
 /**
- * Stop sequences (Section 5.4 of CLAUDE.md — ALWAYS send these).
- *
- * These guard against the Qwen runaway loop:
- *   After 5-8 messages the model emits "Final Answer: Your final answer here"
- *   infinitely.  Root cause: thinking block not properly closed → model emits
- *   the post-thinking response skeleton on repeat.
- *
- * "<|im_end|>" and "<|endoftext|>" are the official Qwen chat-template EOS
- * tokens that LM Studio / MLX may emit at stream end.  Including them
- * prevents the server from sending tokens past the natural end-of-turn marker.
+ * Stop sequences — official EOS tokens for Qwen/MLX chat templates.
+ * LM Studio may not always inject these automatically; including them
+ * prevents tokens being generated past the natural end-of-turn marker.
+ * The repetition detector handles actual runaway loops independently.
  */
 export const STOP_SEQUENCES = [
   "<|im_end|>",
   "<|endoftext|>",
-  "Final Answer: Your final answer here",
-  "Your final answer here",
 ];
 
 /**
@@ -453,15 +445,13 @@ function detectMidStreamToolCall(
 
 /**
  * Strips a leading orphaned </think> tag from content.
- * Happens when LM Studio processes the think block internally (non-streaming
- * Step 1 round) but the closing tag leaks into message.content.
  * Safe to apply to every chunk — only removes a tag at the very start.
+ * Handles both Qwen3 </think> and Gemma 4 <channel|> orphaned close tags.
  */
 function stripLeadingThinkClose(content: string): string {
   // Only strip the closing tag and its immediately following whitespace.
   // Do NOT trimStart() — that would eat "\n\n" chunks (paragraph/code-block
   // separators sent as whitespace-only deltas), merging all text together.
-  // Handles both Qwen3 </think> and Gemma 4 <channel|> orphaned close tags.
   return content.replace(/^<\/think>\s*/i, "").replace(/^<channel\|>\s*/i, "");
 }
 
@@ -646,7 +636,6 @@ export class ChatService {
           max_tokens: maxOutputTokens ?? 16384,
           repeat_penalty: repeatPenalty ?? 1.1,
           stop: STOP_SEQUENCES,
-
           ...step2ThinkingField,
           ...(braveEnabled
             ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: "auto" }
@@ -681,14 +670,14 @@ export class ChatService {
         // prevents the Source A→C </think> injection from firing for mid-thought chunks.
         let inChannelThought = false;
 
-        // Native tool call accumulator — receives chunks from delta.tool_calls[].
-        // LM Studio streams function name + arguments incrementally across multiple
-        // SSE events; we concat argsRaw and execute once the stream is done.
-        let pendingToolCall: {
+        // Native tool call accumulator — keyed by index since models like Qwen
+        // can emit multiple parallel tool calls (index 0, 1, 2...) in a single
+        // response. Each slot accumulates its own id, name, and args independently.
+        const pendingToolCalls: Map<number, {
           id: string;
           name: string;
           argsRaw: string;
-        } | null = null;
+        }> = new Map();
 
         while (true) {
           if (loopAborted) break;
@@ -750,19 +739,22 @@ export class ChatService {
             const CHAN_CLOSE = "<channel|>";
 
             // ── Native tool call accumulation ──────────────────────────────
-            // LM Studio streams function name + arguments across multiple delta events.
-            // Accumulate them here; the actual execution happens after the stream ends.
+            // LM Studio streams function name + arguments across multiple delta events,
+            // potentially across multiple parallel tool call indices in the same response.
             const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-            if (deltaToolCalls?.[0] && !toolCallIntercepted) {
-              const tc = deltaToolCalls[0];
-              if (!pendingToolCall) {
-                pendingToolCall = {
-                  id: tc.id ?? `call_${Date.now()}`,
-                  name: tc.function?.name ?? "brave_web_search",
-                  argsRaw: tc.function?.arguments ?? "",
-                };
-              } else {
-                pendingToolCall.argsRaw += tc.function?.arguments ?? "";
+            if (deltaToolCalls && deltaToolCalls.length > 0 && !toolCallIntercepted) {
+              for (const tc of deltaToolCalls) {
+                const idx = (tc as { index?: number }).index ?? 0;
+                const existing = pendingToolCalls.get(idx);
+                if (!existing) {
+                  pendingToolCalls.set(idx, {
+                    id: tc.id ?? `call_${Date.now()}_${idx}`,
+                    name: tc.function?.name ?? "brave_web_search",
+                    argsRaw: tc.function?.arguments ?? "",
+                  });
+                } else {
+                  existing.argsRaw += tc.function?.arguments ?? "";
+                }
               }
             }
 
@@ -917,9 +909,9 @@ export class ChatService {
             if (chunkToSend) {
               totalTokens += estimateTokens(chunkToSend);
               // Do NOT forward chunks while a native tool call is being accumulated.
-              // pendingToolCall is set on the first delta.tool_calls event; once set,
-              // the model is deciding to search — not producing an answer.
-              if (!pendingToolCall) {
+              // pendingToolCalls is non-empty once the first delta.tool_calls event fires;
+              // while it has entries the model is deciding to search, not producing an answer.
+              if (!pendingToolCalls.size) {
                 send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
               }
               lineBuffer += chunkToSend;
@@ -954,79 +946,84 @@ export class ChatService {
           }
         }
 
-        // ── Native tool call handler (Section 2d) ────────────────────────────
+        // ── Native tool call handler ─────────────────────────────────────────────
         // Fires after the SSE stream ends naturally when delta.tool_calls[] was used.
-        // The text-stream interception path above handles models that emit tool calls
-        // as raw text; this path handles the correct structured channel.
-        if (pendingToolCall && !toolCallIntercepted) {
-          let toolQuery = "";
-          try {
-            const tcArgs = JSON.parse(pendingToolCall.argsRaw);
-            toolQuery =
-              typeof tcArgs.query === "string"
-                ? tcArgs.query
-                : Array.isArray(tcArgs.queries)
-                  ? (tcArgs.queries[0] ?? "")
-                  : "";
-          } catch {
-            // args incomplete or empty — model chose not to search
+        // Handles multiple parallel tool calls (Qwen emits index 0, 1, ... for each
+        // query it wants to run simultaneously). Executes them sequentially, merges
+        // results, and injects a valid assistant→tool[] pair into the wire payload.
+        if (pendingToolCalls.size > 0 && !toolCallIntercepted) {
+          // Collect unique queries in index order, drop exact duplicates
+          const queries: Array<{ id: string; name: string; query: string; argsRaw: string }> = [];
+          const seenQueries = new Set<string>();
+          for (const [, tc] of [...pendingToolCalls.entries()].sort(([a], [b]) => a - b)) {
+            let query = "";
+            try {
+              const tcArgs = JSON.parse(tc.argsRaw);
+              query = typeof tcArgs.query === "string" ? tcArgs.query
+                : Array.isArray(tcArgs.queries) ? (tcArgs.queries[0] ?? "") : "";
+            } catch { /* malformed args — skip */ }
+            if (query && !seenQueries.has(query)) {
+              seenQueries.add(query);
+              queries.push({ id: tc.id, name: tc.name, query, argsRaw: tc.argsRaw });
+            }
           }
 
-          if (toolQuery) {
+          if (queries.length > 0) {
             toolCallIntercepted = true;
-            console.log(`[MCP] 🔍 Native tool call: "${toolQuery}"`);
+            const primaryQuery = queries[0].query;
+            console.log(`[MCP] \uD83D\uDD0D Native tool call(s): ${queries.map(q => `"${q.query}"`).join(", ")}`);
 
-            // Append a search block (no retract needed — block architecture is append-only)
-            send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: toolQuery });
-
-            let nativeResult: string;
-            try {
-              const results = await braveSearch(toolQuery, resolvedKey!, 5);
-              nativeResult = await augmentAndFormatResults(results);
-              send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                query: toolQuery,
-                results: results
-                  .slice(0, 5)
-                  .map((r) => ({ title: r.title, url: r.url })),
-                formattedContent: nativeResult,
-              });
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              nativeResult = `Web search failed: ${errMsg}. Answer from training knowledge.`;
-              send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
-                query: toolQuery,
-                error: errMsg,
-              });
-            }
-
-            const toolCallId = pendingToolCall.id;
+            // Build the assistant message with all tool_calls declared up front —
+            // required by the OpenAI wire format before any role:tool messages.
+            const assistantToolCalls = queries.map(q => ({
+              id: q.id,
+              type: "function" as const,
+              function: { name: q.name, arguments: q.argsRaw },
+            }));
             currentMessages = [
               ...currentMessages,
               {
                 role: "assistant",
                 content: null as unknown as string,
-                tool_calls: [
-                  {
-                    id: toolCallId,
-                    type: "function",
-                    function: {
-                      name: pendingToolCall.name,
-                      arguments: pendingToolCall.argsRaw,
-                    },
-                  },
-                ],
-              } as { role: string; content: string },
-              {
-                role: "tool",
-                tool_call_id: toolCallId,
-                content: nativeResult,
+                tool_calls: assistantToolCalls,
               } as { role: string; content: string },
             ];
 
+            // Execute each query, emitting its own search pill in the UI
+            const allResultLinks: Array<{ title: string; url: string }> = [];
+            const resultSections: string[] = [];
+            for (const { id, query } of queries) {
+              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query });
+              try {
+                const results = await braveSearch(query, resolvedKey!, 5);
+                const formatted = await augmentAndFormatResults(results);
+                const section = queries.length > 1
+                  ? `## Results for: "${query}"\n${formatted}`
+                  : formatted;
+                resultSections.push(section);
+                const links = results.slice(0, 3).map(r => ({ title: r.title, url: r.url }));
+                allResultLinks.push(...links);
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                  query,
+                  results: links,
+                  formattedContent: section,
+                });
+                currentMessages = [
+                  ...currentMessages,
+                  { role: "tool", tool_call_id: id, content: section } as { role: string; content: string },
+                ];
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query, error: errMsg });
+                currentMessages = [
+                  ...currentMessages,
+                  { role: "tool", tool_call_id: id, content: `Search failed: ${errMsg}. Use training knowledge.` } as { role: string; content: string },
+                ];
+              }
+            }
+
             this.controller = new AbortController();
             searchLoopCount++;
-            // Don't break — let the outer while loop continue for the
-            // follow-up response with search results injected.
           }
         }
 
