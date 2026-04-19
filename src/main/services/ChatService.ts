@@ -22,7 +22,6 @@ import type {
 import { readSettings } from "./SettingsStore";
 import {
   braveSearch,
-  formatSearchResults,
   augmentAndFormatResults,
   resolveBraveApiKey,
 } from "./BraveSearchService";
@@ -157,202 +156,6 @@ If the user asks you to search the web or asks about current events or recent in
 
 Never pretend to have searched when you have not.
 `.trim();
-
-/**
- * Returns true if the user message plausibly requires real-time web search.
- * Used to skip the non-streaming tool-call detection round for clearly
- * non-search queries, saving one LM Studio round-trip per message.
- *
- * Intentionally permissive — false positives (unnecessary Step 1 round) are
- * acceptable. False negatives (missing a search) produce hallucinations and
- * break the ToolCallNotification UI because the model then hallucinates
- * tool-call syntax as raw text that leaks into the markdown renderer.
- */
-function messageNeedsSearch(userMessage: string): boolean {
-  const msg = userMessage.toLowerCase();
-
-  // Explicit search intent from the user
-  const explicitTriggers = [
-    "search",
-    "look up",
-    "look it up",
-    "find online",
-    "check online",
-    "what's the latest",
-    "what is the latest",
-    "current",
-    "right now",
-    "today",
-    "tonight",
-    "this week",
-    "this month",
-    "recent",
-    "recently",
-    "latest",
-    "breaking",
-    "news",
-    "update",
-    "updated",
-    "what is",
-    "who is",
-    "tell me about",
-    "explain what",
-    "have you heard of",
-    "do you know about",
-    "what do you know about",
-    "courses",
-    "course",
-    "best course",
-    "recommend",
-    "recommendation",
-    "where can i",
-    "how do i get",
-    "how can i learn",
-    "where to learn",
-    "available now",
-    "sign up",
-    "enrol",
-    "enroll",
-    "certification",
-    "certificate",
-    "bootcamp",
-    "tutorial",
-    "tutorials",
-    "learn online",
-  ];
-  if (explicitTriggers.some((t) => msg.includes(t))) return true;
-
-  // Time-sensitive / real-time data signals
-  const timeSensitive = [
-    "price",
-    "stock",
-    "market",
-    "weather",
-    "forecast",
-    "score",
-    "result",
-    "standings",
-    "live",
-    "happening",
-    "schedule",
-    "release date",
-    "available",
-    "in stock",
-    "shipping",
-    "election",
-    "vote",
-    "poll",
-    "earnings",
-    "revenue",
-    "gdp",
-    "inflation",
-    "rate",
-    "bitcoin",
-    "crypto",
-    "launched",
-    "announced",
-    "released",
-    "dropped",
-    "just came out",
-  ];
-  if (timeSensitive.some((t) => msg.includes(t))) return true;
-
-  if (/who (is|are|was|were) (the )?(current|new|latest|now)/.test(msg))
-    return true;
-  if (/what (is|are) (the )?(current|latest|new)/.test(msg)) return true;
-
-  // Unknown proper nouns — capitalised non-common words in short queries may be
-  // named entities the model doesn't know (papers, products, companies, people).
-  // No recency-signal gate: "What is Dhurandhar" should always trigger search.
-  const COMMON_CAPS = new Set([
-    "The",
-    "This",
-    "That",
-    "What",
-    "When",
-    "Where",
-    "Why",
-    "How",
-    "Who",
-    "Can",
-    "Could",
-    "Would",
-    "Should",
-    "Does",
-    "Did",
-    "Has",
-    "Have",
-    "Will",
-    "Is",
-    "Are",
-    "Was",
-    "Were",
-    "Do",
-    "And",
-    "But",
-    "Or",
-    "So",
-    "If",
-    "I",
-    "My",
-    "We",
-    "You",
-    "It",
-    "He",
-    "She",
-    "They",
-  ]);
-  const words = userMessage.trim().split(/\s+/);
-  const properNouns = words.filter(
-    (w, i) => i > 0 && /^[A-Z][a-zA-Z]{2,}/.test(w) && !COMMON_CAPS.has(w),
-  );
-
-  if (words.length <= 3 && properNouns.length === 0) return false;
-
-  // Short query (≤8 words) containing a named proper noun → likely a definition search
-  if (properNouns.length >= 1 && words.length <= 8) return true;
-  // "What/who is X" or "tell me about X" with a proper noun in longer queries
-  if (
-    /^(what|who|tell me about|explain|describe)\s+(is|are|was|were|the)\s+/i.test(
-      msg,
-    ) &&
-    properNouns.length >= 1
-  )
-    return true;
-
-  return false;
-}
-
-/**
- * Sends `content` as a series of small chunks with a short delay between them.
- *
- * Purpose: when Step 1 (non-streaming) returns a direct answer without using a
- * tool call, the entire response would normally be sent as ONE chunk followed
- * immediately by CHAT_STREAM_END.  React batches those two state updates into a
- * single paint, so `isStreaming` never renders as `true` and the typewriter
- * cursor blink never appears.
- *
- * Sending in ~80-char chunks at ~16 ms intervals approximates a natural typing
- * speed (~100 tok/s) and ensures at least several render cycles with
- * `isStreaming=true`, restoring the animation.
- */
-async function streamContentInChunks(
-  content: string,
-  sendFn: (channel: string, data: unknown) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const CHUNK_SIZE = 80;
-  const DELAY_MS = 16;
-  const cleanedContent = stripLeadingThinkClose(content);
-  for (let i = 0; i < cleanedContent.length; i += CHUNK_SIZE) {
-    if (signal.aborted) break;
-    sendFn(
-      IPC_CHANNELS.CHAT_STREAM_CHUNK,
-      cleanedContent.slice(i, i + CHUNK_SIZE),
-    );
-    await new Promise<void>((resolve) => setTimeout(resolve, DELAY_MS));
-  }
-}
 
 /**
  * Attempts to parse a raw tool call from content text.
@@ -749,72 +552,6 @@ export function applyThinkingPrefix(
   return result;
 }
 
-// ── executeSearchQueries ──────────────────────────────────────────────────────
-// Runs one or more search queries sequentially, merges results, and returns a
-// formatted context string for injection into Step 2. Sends WEB_SEARCH_STATUS
-// IPC events so the renderer can show the search spinner and result pill.
-async function executeSearchQueries(
-  queries: string[],
-  apiKey: string,
-  sendFn: (channel: string, data: unknown) => void,
-  primaryQuery: string,
-): Promise<string> {
-  const deduped = [
-    ...new Set(queries.map((q) => q.trim()).filter((q) => q.length > 0)),
-  ].slice(0, 3);
-  sendFn(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: primaryQuery });
-
-  const allResults: Array<{ title: string; url: string; description: string }> =
-    [];
-  const resultSections: string[] = [];
-
-  for (const query of deduped) {
-    try {
-      const results = await braveSearch(query, apiKey, 5);
-      if (results.length > 0) {
-        allResults.push(...results);
-        const section =
-          deduped.length > 1
-            ? `## Results for: "${query}"\n${await augmentAndFormatResults(results)}`
-            : await augmentAndFormatResults(results);
-        resultSections.push(section);
-        console.log(
-          `[MCP] ✅ Search "${query}" returned ${results.length} results`,
-        );
-      }
-    } catch (err) {
-      console.error(`[MCP] ❌ Search failed for "${query}":`, err);
-    }
-  }
-
-  if (allResults.length === 0) {
-    sendFn(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
-      query: primaryQuery,
-      error: "All searches returned no results",
-    });
-    return "Web search returned no results. Answer from your training knowledge instead.";
-  }
-
-  // Dedup URLs, keep top 5 for the notification pill
-  const seen = new Set<string>();
-  const uniqueResults = allResults.filter((r) => {
-    if (seen.has(r.url)) return false;
-    seen.add(r.url);
-    return true;
-  });
-
-  const formattedContent = resultSections.join("\n\n");
-  sendFn(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-    query: primaryQuery,
-    results: uniqueResults
-      .slice(0, 5)
-      .map((r) => ({ title: r.title, url: r.url })),
-    formattedContent,
-  });
-
-  return formattedContent;
-}
-
 export class ChatService {
   private controller: AbortController | null = null;
 
@@ -848,102 +585,7 @@ export class ChatService {
       JSON.stringify(builtMessages, null, 2),
     );
 
-    // For Step 1 (non-streaming tool detection), strip the <|think|> prefix from
-    // the system message. Gemma 4 activates thinking via this system prompt token,
-    // which overrides thinking:disabled in the payload and causes 30-50s silent waits.
-    // builtMessages (with <|think|> intact) is still used for currentMessages → Step 2.
-    const step1Messages = builtMessages
-      .filter((m) =>
-        !(
-          m.role === "assistant" &&
-          typeof m.content === "string" &&
-          m.content === "<|channel>thought\n"
-        )
-      )
-      .map((m, i) =>
-        i === 0 && m.role === "system" && typeof m.content === "string"
-          ? { ...m, content: (m.content as string).replace(/^<\|think\|>\n/, "") }
-          : m,
-      );
-
     const isThinking = payload.thinkingMode === "thinking";
-
-    const now = new Date();
-    const dateStr = now.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-
-    // ── Step 1 body — structured JSON decision ────────────────────────
-    // Instead of open-ended tool_calls, we force a schema-constrained JSON
-    // response. LM Studio honours response_format for Gemma 4 (confirmed).
-    // The model must respond with exactly {"action":"search","queries":[...]}
-    // or {"action":"answer"} — no free-form output, no runaway tool call loops.
-    const step1Body = {
-      model: modelId,
-      messages: [
-        // Prepend a terse decision-only system message so the model understands
-        // it must output JSON, not a full answer.
-        {
-          role: "system",
-          content:
-            "You are a search decision agent. Respond ONLY with valid JSON.\n" +
-            'Use {"action":"search","queries":["..."]} when ANY part of the query needs current data:\n' +
-            "- Current events, news, prices, scores, weather\n" +
-            "- Courses, tools, products, or resources available RIGHT NOW\n" +
-            "- Recommendations for things to buy, enrol in, or use today\n" +
-            "- Anything where the answer could have changed in the last 6 months\n" +
-            'Use {"action":"answer"} ONLY when the entire query is about stable knowledge:\n' +
-            "- Definitions, concepts, theory, history, math, code logic\n" +
-            "IMPORTANT: If ANY part of the query is actionable or time-sensitive, choose search." +
-            `\nToday is ${dateStr}. Always include the current year in time-sensitive search queries.`,
-        },
-        // Include only the last user message — stripped of any /think or /no_think prefix
-        // since thinking mode is irrelevant in Step 1 and the prefix causes Qwen to put
-        // its JSON decision in reasoning_content instead of content.
-        ...step1Messages
-          .filter((m) => m.role === "user")
-          .slice(-1)
-          .map((m) =>
-            typeof m.content === "string"
-              ? {
-                  ...m,
-                  content: m.content.replace(/^\/(think|no_think)\n/i, ""),
-                }
-              : m,
-          ),
-      ],
-      temperature: 0.1,
-      max_tokens: 250, // enough for 3 full query strings with JSON overhead (~200 tokens worst case)
-      stream: false,
-      thinking: { type: "disabled" },
-      ...(braveEnabled
-        ? {
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "search_decision",
-                strict: true,
-                schema: {
-                  type: "object",
-                  properties: {
-                    action: { type: "string", enum: ["search", "answer"] },
-                    queries: {
-                      type: "array",
-                      items: { type: "string" },
-                      maxItems: 3,
-                    },
-                  },
-                  required: ["action"],
-                  additionalProperties: false,
-                },
-              },
-            },
-          }
-        : {}),
-    };
 
     const startTime = Date.now();
     let firstTokenAt: number | null = null;
@@ -966,157 +608,17 @@ export class ChatService {
     };
 
     let currentMessages = [...builtMessages];
-    // Tracks whether a tool-call round completed (search result was injected).
-    // Used to tune the Step 2 thinking budget: when search data is available
-    // the model should reason less (the data provides the facts).
-    let toolCallRound = false;
 
     // Accumulates the full raw stream output across all search loops.
     // Used after the loop to compute answerTokens (stripped of thinking blocks).
     let lastStreamBuffer = "";
 
-    // Heuristic: only attempt the non-streaming tool-call round when the user message
-    // plausibly requires real-time data. Conversational / knowledge questions skip it
-    // entirely, saving one LM Studio round-trip per message.
-    const userMessageText = (() => {
-      const last = payload.messages.at(-1);
-      if (!last) return "";
-      return typeof last.content === "string" ? last.content : "";
-    })();
-    const shouldAttemptSearch =
-      braveEnabled &&
-      !payload.hasDocuments && // never search when RAG docs are present
-      messageNeedsSearch(userMessageText);
-
-    // Gemma 4 does not honour response_format (json_schema), so Step 1 always fails
-    // and wastes 8-15 seconds. Step 2 with tools: [...] handles search for Gemma via
-    // native delta.tool_calls. Qwen/other models get the fast Step 1 JSON pre-fetch.
-    const isGemmaModel = modelId.toLowerCase().includes("gemma");
-
     try {
-      // ── Step 1: Non-streaming round for tool calls (only when shouldAttemptSearch) ──
-      if (shouldAttemptSearch && !isGemmaModel) {
-        // 4c — Step 1 payload diagnostic
-        if (DEBUG) {
-          console.log(
-            "[DEBUG] Step 1 body:",
-            JSON.stringify(step1Body, null, 2),
-          );
-        }
-        const r1 = await net.fetch(LMS_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(step1Body),
-          signal,
-        } as RequestInit);
-
-        if (!r1.ok)
-          throw new Error(`LM Studio ${r1.status}: ${await r1.text()}`);
-
-        const r1data = (await r1.json()) as {
-          choices?: Array<{
-            finish_reason?: string;
-            message?: {
-              content?: string | null;
-              reasoning_content?: string | null;
-              tool_calls?: Array<{
-                id: string;
-                type: string;
-                function: { name: string; arguments: string };
-              }>;
-            };
-          }>;
-        };
-
-        // 4d — Step 1 response diagnostic
-        if (DEBUG) {
-          console.log(
-            "[DEBUG] Step 1 response:",
-            JSON.stringify(r1data, null, 2),
-          );
-        }
-
-        const choice = r1data.choices?.[0];
-        // Qwen 3.5 puts the decision in reasoning_content when /think is active,
-        // leaving content empty. Fall back to reasoning_content if content is blank.
-        const rawDecision =
-          (choice?.message?.content ?? "").trim() ||
-          (
-            ((choice?.message as Record<string, unknown>)
-              ?.reasoning_content as string) ?? ""
-          ).trim();
-
-        // Parse the structured JSON decision from response_format
-        let decision: { action: string; queries?: string[] } = {
-          action: "answer",
-        };
-        try {
-          decision = JSON.parse(rawDecision);
-        } catch {
-          // response_format not honoured or malformed — treat as no-search
-          console.warn(
-            "[Step1] Failed to parse decision JSON, falling through to Step 2:",
-            rawDecision.slice(0, 100),
-          );
-        }
-
-        console.log("[Step1] Decision:", JSON.stringify(decision));
-
-        if (decision.action === "search") {
-          const queries = (decision.queries ?? [])
-            .map((q: string) => q.trim())
-            .filter((q: string) => q.length > 0)
-            .slice(0, 3);
-
-          if (queries.length > 0) {
-            const primaryQuery = queries[0];
-            const searchResultText = await executeSearchQueries(
-              queries,
-              resolvedKey!,
-              send,
-              primaryQuery,
-            );
-
-            const syntheticId = `call_${Date.now()}`;
-            currentMessages = [
-              ...currentMessages,
-              {
-                role: "assistant",
-                content: null as unknown as string,
-                tool_calls: [
-                  {
-                    id: syntheticId,
-                    type: "function",
-                    function: {
-                      name: "brave_web_search",
-                      arguments: JSON.stringify({ query: primaryQuery }),
-                    },
-                  },
-                ],
-              } as { role: string; content: string },
-              {
-                role: "tool",
-                tool_call_id: syntheticId,
-                content: searchResultText,
-              } as { role: string; content: string },
-            ];
-            toolCallRound = true;
-          }
-        }
-        // action === 'answer' → fall through to Step 2 streaming with no search injected
-      } else if (shouldAttemptSearch && isGemmaModel) {
-        // Gemma: Step 2 native tool_calls handles search.
-        // No Step 1 needed — skip entirely.
-        console.log("[Step1/Gemma] Skipped — native tool calling active");
-      }
-
-      // ── Step 2: Final streaming request ────────────────────────────
-      // Always runs. currentMessages includes the tool result if a search happened.
-      // If Brave is disabled, this is the only request.
-      //
-      // Adaptive thinking budget: when search data was injected, use a smaller
-      // budget (4000) — the model has real facts and shouldn't speculate at length.
-      // Without a search round, allow the full 8000 for deep reasoning.
+      // ── Streaming request ────────────────────────────────────────────────────────
+      // Single path for all models: native tool calling via delta.tool_calls[].
+      // The model autonomously decides whether to search and what query to use.
+      // Text-stream fallback (detectMidStreamToolCall) catches models that emit
+      // tool call syntax as raw text instead of the structured channel.
       while (searchLoopCount < MAX_SEARCH_LOOPS) {
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
@@ -1143,7 +645,8 @@ export class ChatService {
           top_p: topP ?? 0.95,
           max_tokens: maxOutputTokens ?? 16384,
           repeat_penalty: repeatPenalty ?? 1.1,
-          stop: isGemmaModel ? [] : STOP_SEQUENCES,
+          stop: STOP_SEQUENCES,
+
           ...step2ThinkingField,
           ...(braveEnabled
             ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: "auto" }
@@ -1405,7 +908,6 @@ export class ChatService {
                 this.controller = new AbortController();
 
                 searchLoopCount++;
-                toolCallRound = true;
                 break; // Break out of `for const raw`
               }
             }
@@ -1523,7 +1025,6 @@ export class ChatService {
 
             this.controller = new AbortController();
             searchLoopCount++;
-            toolCallRound = true;
             // Don't break — let the outer while loop continue for the
             // follow-up response with search results injected.
           }
@@ -1785,12 +1286,10 @@ export class ChatService {
       }
 
       // Topic-anchoring fix: truncate assistant messages from previous search turns.
-      // Step 1 runs with thinking:disabled and temperature:0.1 — it anchors heavily
-      // to the most prominent text in context.  A 400–700 token MSFT analysis sitting
-      // just before the new question causes the model to generate a tool call for the
-      // old topic rather than the new one.  We keep only the first 150 chars as a
-      // coherence stub; the full content of the MOST RECENT assistant message is
-      // preserved so the model has its latest answer for context.
+      // Without this, a 400–700 token answer from the previous turn sitting just before
+      // the new question causes the model to anchor to the old topic when deciding
+      // whether and what to search. We keep only the first 150 chars as a coherence
+      // stub; the full content of the MOST RECENT assistant message is preserved.
       const wm = m as unknown as WireMessage;
       if (
         m.role === "assistant" &&
