@@ -91,15 +91,13 @@ function UserBubble({ content, attachments }: { content: string; attachments?: M
 }
 
 // ── Thinking accordion (standalone, for MessageBlock rendering) ──
-function ThinkingAccordion({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+function ThinkingAccordion({ content, isStreaming, className }: { content: string; isStreaming?: boolean; className?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <details
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
-      className="group/think mb-3 rounded-lg overflow-hidden
-                 border border-accent-900/30
-                 bg-[rgba(127,29,29,0.04)]"
+      className={`group/think mb-3 rounded-lg overflow-hidden border border-accent-900/30 bg-[rgba(127,29,29,0.04)] ${className ?? ''}`}
     >
       <summary
         className="flex items-center gap-2 px-3 py-2
@@ -165,7 +163,7 @@ function AssistantBubble({
         {hasBlocks ? (
           /* ── v2.1 block-based render path ─────────────────────── */
           <>
-            {blocks.map((block) => {
+            {blocks.map((block, i) => {
               if (block.type === 'search') {
                 return (
                   <ToolCallNotification
@@ -178,11 +176,13 @@ function AssistantBubble({
                 )
               }
               if (block.type === 'thinking') {
+                const prevIsAnswer = i > 0 && blocks[i - 1].type === 'answer'
                 return (
                   <ThinkingAccordion
                     key={block.id}
                     content={block.content}
                     isStreaming={isStreaming && block.id === blocks[blocks.length - 1].id}
+                    className={prevIsAnswer ? 'mt-3' : ''}
                   />
                 )
               }
