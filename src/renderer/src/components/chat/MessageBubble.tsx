@@ -182,6 +182,7 @@ function AssistantBubble({
                   <ThinkingAccordion
                     key={block.id}
                     content={block.content}
+                    isStreaming={isStreaming && block.id === blocks[blocks.length - 1].id}
                   />
                 )
               }

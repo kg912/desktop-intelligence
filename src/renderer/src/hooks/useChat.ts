@@ -11,6 +11,12 @@
  *   each become their own typed block appended in arrival order.
  *   Nothing is ever retracted — CHAT_STREAM_RETRACT is gone.
  *
+ * v2.1.1: Block sequencing via chunk-buffer scan.
+ *   `chunkBufferRef` accumulates raw SSE text. `processBuffer()` scans for
+ *   `<think>` / `</think>` boundaries and routes tokens to the correct block
+ *   type. `activeBlockIdRef` tracks which specific block is currently receiving
+ *   tokens so post-search ThinkingBlocks are distinct from pre-search ones.
+ *
  * ── IS_MOCK detection ────────────────────────────────────────────
  * In Electron with contextIsolation:true the global `electron` object
  * is NOT injected into window, so `'electron' in window` is always
@@ -80,9 +86,16 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   const streamingContentRef = useRef<string>("");
 
   // Mirrors the current assistant message's blocks array — updated in sync with
-  // every appendBlock / updateLastBlock call so stream-end can read it without
-  // a nested setMessages (which would be a React anti-pattern).
+  // every block mutation so stream-end can read it without a nested setMessages.
   const currentBlocksRef = useRef<MessageBlock[]>([]);
+
+  // ── v2.1.1 block-sequencing refs ─────────────────────────────
+  /** Id of the block currently receiving tokens (thinking or answer). null = no active block. */
+  const activeBlockIdRef = useRef<string | null>(null);
+  /** Raw SSE text not yet routed to a block. */
+  const chunkBufferRef = useRef<string>("");
+  /** True while inside an open <think> tag (waiting for </think>). */
+  const inThinkBlockRef = useRef<boolean>(false);
 
   // Tracks the thinking mode used for the previous turn (divider insertion).
   const prevThinkingModeRef = useRef<"thinking" | "fast">("fast");
@@ -145,6 +158,32 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     [],
   );
 
+  /** Patch a specific block by id on the current assistant message. */
+  const updateBlockById = useCallback(
+    (blockId: string, patch: Partial<MessageBlock>) => {
+      const id = assistantIdRef.current;
+      // Update ref mirror
+      const refBlocks = [...currentBlocksRef.current];
+      const refIdx = refBlocks.findIndex((b) => b.id === blockId);
+      if (refIdx !== -1) {
+        refBlocks[refIdx] = { ...refBlocks[refIdx], ...patch } as MessageBlock;
+        currentBlocksRef.current = refBlocks;
+      }
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === id);
+        if (idx === -1) return prev;
+        const blocks = [...(prev[idx].blocks ?? [])];
+        const bIdx = blocks.findIndex((b) => b.id === blockId);
+        if (bIdx === -1) return prev;
+        blocks[bIdx] = { ...blocks[bIdx], ...patch } as MessageBlock;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], blocks };
+        return updated;
+      });
+    },
+    [],
+  );
+
   /** Patch the current assistant message's top-level fields (legacy / isThinking etc.) */
   const patchAssistant = useCallback((patch: Partial<Message>) => {
     const id = assistantIdRef.current;
@@ -168,48 +207,192 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
   // ── Subscribe to streaming events from main ───────────────────
   useEffect(() => {
-    // ── Chunk: append to the last answer block (create if needed) ─
+    // ── Local buffer-processing helpers ─────────────────────────
+    // These close over refs + stable setters only — safe inside the effect.
+
+    /** Append text to a specific block in the ref mirror (no state update). */
+    function appendToBlock(blockId: string, text: string): void {
+      const blocks = [...currentBlocksRef.current];
+      const idx = blocks.findIndex((b) => b.id === blockId);
+      if (idx === -1) return;
+      const b = blocks[idx];
+      if (b.type === "thinking") {
+        blocks[idx] = { ...b, content: b.content + text };
+      } else if (b.type === "answer") {
+        blocks[idx] = { ...b, content: b.content + text, isStreaming: true };
+      }
+      currentBlocksRef.current = blocks;
+    }
+
+    /**
+     * Route `text` to the active answer block.
+     * Creates a new AnswerBlock and sets activeBlockIdRef if there isn't one.
+     * Updates ref only — caller triggers the single setMessages at end of processBuffer.
+     */
+    function ensureAnswerAndAppend(text: string): void {
+      if (activeBlockIdRef.current) {
+        const existing = currentBlocksRef.current.find(
+          (b) => b.id === activeBlockIdRef.current,
+        );
+        if (existing?.type === "answer") {
+          appendToBlock(activeBlockIdRef.current, text);
+          return;
+        }
+      }
+      // No active answer block — create one
+      const newId = uuid();
+      currentBlocksRef.current = [
+        ...currentBlocksRef.current,
+        { id: newId, type: "answer", content: text, isStreaming: true } as MessageBlock,
+      ];
+      activeBlockIdRef.current = newId;
+    }
+
+    /** Mark an answer block as no longer streaming. Updates ref only. */
+    function closeAnswerBlock(blockId: string): void {
+      const blocks = [...currentBlocksRef.current];
+      const idx = blocks.findIndex((b) => b.id === blockId);
+      if (idx === -1) return;
+      const b = blocks[idx];
+      if (b.type === "answer") {
+        blocks[idx] = { ...b, isStreaming: false };
+        currentBlocksRef.current = blocks;
+      }
+    }
+
+    /** How many chars at the end of `buf` could be the start of `tag`. */
+    function partialTagSuffix(buf: string, tag: string): number {
+      for (let len = Math.min(tag.length - 1, buf.length); len > 0; len--) {
+        if (buf.endsWith(tag.slice(0, len))) return len;
+      }
+      return 0;
+    }
+
+    /**
+     * Flush `chunkBufferRef` by scanning for `<think>` / `</think>` boundaries.
+     * Text between boundaries is routed to the correct block type via ref mutation.
+     * A single `setMessages` is issued at the end when any mutation occurred.
+     */
+    function processBuffer(): void {
+      let buf = chunkBufferRef.current;
+      let mutated = false;
+
+      while (buf.length > 0) {
+        if (inThinkBlockRef.current) {
+          // ── Inside a think block — look for </think> ────────────
+          const closeTag = "</think>";
+          const closeIdx = buf.indexOf(closeTag);
+          if (closeIdx === -1) {
+            // No close tag yet — hold back any partial closing tag suffix
+            const partialLen = partialTagSuffix(buf, closeTag);
+            const safe = buf.slice(0, buf.length - partialLen);
+            if (safe && activeBlockIdRef.current) {
+              appendToBlock(activeBlockIdRef.current, safe);
+              mutated = true;
+            }
+            buf = partialLen > 0 ? buf.slice(buf.length - partialLen) : "";
+            break;
+          } else {
+            // Close tag found — commit text before it, then exit think mode
+            const before = buf.slice(0, closeIdx);
+            if (before && activeBlockIdRef.current) {
+              appendToBlock(activeBlockIdRef.current, before);
+              mutated = true;
+            }
+            inThinkBlockRef.current = false;
+            activeBlockIdRef.current = null; // next answer text → new AnswerBlock
+            buf = buf.slice(closeIdx + closeTag.length);
+            mutated = true;
+          }
+        } else {
+          // ── In answer mode — look for <think> ──────────────────
+          const openTag = "<think>";
+          const openIdx = buf.indexOf(openTag);
+          if (openIdx === -1) {
+            // No open tag — hold back any partial opening tag suffix
+            const partialLen = partialTagSuffix(buf, openTag);
+            const safe = buf.slice(0, buf.length - partialLen);
+            if (safe) {
+              ensureAnswerAndAppend(safe);
+              mutated = true;
+            }
+            buf = partialLen > 0 ? buf.slice(buf.length - partialLen) : "";
+            break;
+          } else {
+            // Open tag found — commit answer text before it, then enter think mode
+            const before = buf.slice(0, openIdx);
+            if (before) {
+              ensureAnswerAndAppend(before);
+              mutated = true;
+            }
+            // Close any active answer block
+            if (activeBlockIdRef.current) {
+              closeAnswerBlock(activeBlockIdRef.current);
+              activeBlockIdRef.current = null;
+            }
+            // Create a new ThinkingBlock
+            const newThinkId = uuid();
+            currentBlocksRef.current = [
+              ...currentBlocksRef.current,
+              { id: newThinkId, type: "thinking", content: "" } as MessageBlock,
+            ];
+            inThinkBlockRef.current = true;
+            activeBlockIdRef.current = newThinkId;
+            buf = buf.slice(openIdx + openTag.length);
+            mutated = true;
+          }
+        }
+      }
+
+      chunkBufferRef.current = buf;
+
+      if (mutated) {
+        const id = assistantIdRef.current;
+        const blocks = currentBlocksRef.current;
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === id);
+          if (idx === -1) return prev;
+          const updated = [...prev];
+          updated[idx] = {
+            ...updated[idx],
+            blocks,
+            content: streamingContentRef.current,
+            isThinking: false,
+            isStreaming: true,
+            isSearching: false,
+          };
+          return updated;
+        });
+      }
+    }
+
+    /**
+     * Push current ref state to React state.
+     * Called after ref-only mutations (e.g. closeAnswerBlock) to keep state in sync
+     * before an appendBlock call that reads from prev state.
+     */
+    function commitBlocksToState(): void {
+      const id = assistantIdRef.current;
+      const blocks = currentBlocksRef.current;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === id);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], blocks };
+        return updated;
+      });
+    }
+
+    // ── Chunk: buffer and route to the correct block type ─────────
     const unsubChunk = window.api.onChatStreamChunk((chunk: string) => {
       streamingContentRef.current += chunk;
+      chunkBufferRef.current += chunk;
 
       if (thinkStartedAt.current === null) {
         thinkStartedAt.current = Date.now();
       }
 
-      // Update currentBlocksRef mirror in sync with state
-      const refBlocks = currentBlocksRef.current;
-      let lastRefAnswerIdx = -1;
-      for (let i = refBlocks.length - 1; i >= 0; i--) {
-        if (refBlocks[i].type === "answer") { lastRefAnswerIdx = i; break; }
-      }
-      if (lastRefAnswerIdx === -1) {
-        const newBlock: MessageBlock = { id: uuid(), type: "answer", content: chunk, isStreaming: true };
-        currentBlocksRef.current = [...refBlocks, newBlock];
-      } else {
-        const nb = [...refBlocks];
-        const ex = nb[lastRefAnswerIdx] as Extract<MessageBlock, { type: "answer" }>;
-        nb[lastRefAnswerIdx] = { ...ex, content: ex.content + chunk, isStreaming: true };
-        currentBlocksRef.current = nb;
-      }
-
-      const id = assistantIdRef.current;
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === id);
-        if (idx === -1) return prev;
-        // Use currentBlocksRef directly since it was just updated above
-        const blocks = currentBlocksRef.current;
-
-        const updated = [...prev];
-        updated[idx] = {
-          ...updated[idx],
-          blocks,
-          content: streamingContentRef.current, // kept for legacy DB persistence
-          isThinking: false,
-          isStreaming: true,
-          isSearching: false,
-        };
-        return updated;
-      });
+      processBuffer();
 
       // Safety net: force-abort if think block unclosed for >180 s
       if (
@@ -223,15 +406,24 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       }
     });
 
-    // ── Tool start: append a new search block ─────────────────────
+    // ── Tool start: flush buffer, close active block, append search block ──
     const unsubToolStart = window.api.onChatStreamToolStart(
       ({ query }: { query: string }) => {
-        appendBlock({
-          id: uuid(),
-          type: "search",
-          query,
-          phase: "searching",
-        });
+        // Flush any buffered text before the search begins
+        processBuffer();
+
+        // Close and deactivate the currently active block
+        if (activeBlockIdRef.current) {
+          closeAnswerBlock(activeBlockIdRef.current);
+        }
+        activeBlockIdRef.current = null;
+        inThinkBlockRef.current = false;
+        chunkBufferRef.current = "";
+
+        // Commit the closed-block ref state to React before appendBlock reads prev state
+        commitBlocksToState();
+
+        appendBlock({ id: uuid(), type: "search", query, phase: "searching" });
         patchAssistant({ isSearching: true, isThinking: false });
       },
     );
@@ -289,11 +481,18 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         console.log("[DEV][useChat] stream-end stats:", JSON.stringify(stats));
       }
 
+      // Flush any remaining buffered content before finalising
+      processBuffer();
+
       // Clear in-flight refs before any async work
       assistantIdRef.current = null;
       streamingContentRef.current = "";
       thinkStartedAt.current = null;
-      // Finalise blocks: mark last answer block isStreaming: false in both ref and state
+      activeBlockIdRef.current = null;
+      chunkBufferRef.current = "";
+      inThinkBlockRef.current = false;
+
+      // Finalise blocks: mark all answer blocks isStreaming: false
       const finalizedBlocks = currentBlocksRef.current.map((b) =>
         b.type === "answer" ? { ...b, isStreaming: false } : b,
       ) as MessageBlock[];
@@ -387,6 +586,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       const id = assistantIdRef.current;
       assistantIdRef.current = null;
       streamingContentRef.current = "";
+      activeBlockIdRef.current = null;
+      chunkBufferRef.current = "";
+      inThinkBlockRef.current = false;
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id);
         if (idx === -1) return prev;
@@ -445,6 +647,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       assistantIdRef.current = assistantMsg.id;
       streamingContentRef.current = "";
       currentBlocksRef.current = [];
+      activeBlockIdRef.current = null;
+      chunkBufferRef.current = "";
+      inThinkBlockRef.current = false;
 
       const modeChanged = prevThinkingModeRef.current !== thinkingMode;
       prevThinkingModeRef.current = thinkingMode;
@@ -643,6 +848,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     assistantIdRef.current = null;
     streamingContentRef.current = "";
     currentBlocksRef.current = [];
+    activeBlockIdRef.current = null;
+    chunkBufferRef.current = "";
+    inThinkBlockRef.current = false;
   }, []);
 
   // ── Clear conversation ────────────────────────────────────────
@@ -654,6 +862,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     assistantIdRef.current = null;
     streamingContentRef.current = "";
     currentBlocksRef.current = [];
+    activeBlockIdRef.current = null;
+    chunkBufferRef.current = "";
+    inThinkBlockRef.current = false;
     currentChatIdRef.current = null;
   }, [isStreaming]);
 
