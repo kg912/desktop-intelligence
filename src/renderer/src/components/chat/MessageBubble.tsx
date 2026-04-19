@@ -165,6 +165,7 @@ function AssistantBubble({
           <>
             {blocks.map((block, i) => {
               if (block.type === 'search') {
+                const prevIsAnswer = i > 0 && blocks[i - 1].type === 'answer'
                 return (
                   <ToolCallNotification
                     key={block.id}
@@ -172,6 +173,7 @@ function AssistantBubble({
                     query={block.query}
                     results={block.results}
                     error={block.error}
+                    className={prevIsAnswer ? 'mt-3' : ''}
                   />
                 )
               }

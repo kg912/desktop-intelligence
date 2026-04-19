@@ -6,15 +6,16 @@ interface ToolCallNotificationProps {
   query:    string
   results?: Array<{ title: string; url: string }>
   error?:   string
+  className?: string
 }
 
-export function ToolCallNotification({ phase, query, results = [], error: errorMsg }: ToolCallNotificationProps) {
+export function ToolCallNotification({ phase, query, results = [], error: errorMsg, className = '' }: ToolCallNotificationProps) {
   const [expanded, setExpanded] = useState(false)
 
   if (phase === 'searching') {
     return (
       <div
-        className="rounded-lg border border-surface-border/40 mb-3 px-3 py-2.5 flex items-center gap-2.5"
+        className={`rounded-lg border border-surface-border/40 mb-3 px-3 py-2.5 flex items-center gap-2.5 ${className}`}
         style={{ background: '#141414' }}
       >
         <div className="w-3 h-3 rounded-full border border-surface-border border-t-content-muted animate-spin shrink-0" />
@@ -27,7 +28,7 @@ export function ToolCallNotification({ phase, query, results = [], error: errorM
   if (phase === 'error') {
     return (
       <div
-        className="rounded-lg border border-accent-900/30 mb-3 px-3 py-2"
+        className={`rounded-lg border border-accent-900/30 mb-3 px-3 py-2 ${className}`}
         style={{ background: '#141414' }}
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -41,7 +42,7 @@ export function ToolCallNotification({ phase, query, results = [], error: errorM
 
   return (
     <div
-      className="rounded-lg border border-surface-border/40 mb-3 overflow-hidden"
+      className={`rounded-lg border border-surface-border/40 mb-3 overflow-hidden ${className}`}
       style={{ background: '#141414' }}
     >
       <button
