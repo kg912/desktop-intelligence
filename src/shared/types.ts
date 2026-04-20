@@ -126,6 +126,9 @@ export type MessageBlock =
       id:               string
       type:             'search'
       query:            string
+      /** Namespaced tool name e.g. "memory__search_nodes" or "brave_web_search".
+       *  Absent on old persisted blocks — fall back to query-based detection. */
+      toolName?:        string
       results?:         Array<{ title: string; url: string }>
       formattedContent?: string
       phase:            'searching' | 'done' | 'error'

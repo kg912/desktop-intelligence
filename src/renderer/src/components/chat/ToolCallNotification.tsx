@@ -4,6 +4,9 @@ import { Globe, Plug, ChevronRight } from 'lucide-react'
 interface ToolCallNotificationProps {
   phase:    'searching' | 'done' | 'error'
   query:    string
+  /** Authoritative tool name e.g. "brave_web_search" or "memory__search_nodes".
+   *  When absent (old persisted blocks) falls back to query-based heuristic. */
+  toolName?: string
   results?: Array<{ title: string; url: string }>
   error?:   string
   className?: string
@@ -20,16 +23,19 @@ function formatQueryLabel(query: string): string {
   return query
 }
 
-// Detect whether this notification is for a web search (vs an MCP tool).
-// Web search queries never contain "__"; MCP tool names always do.
-function isWebSearch(query: string): boolean {
-  return !query.includes('__')
+// Returns true when this notification is for a Brave web search.
+// Prefers the authoritative toolName field; falls back to the query-based
+// heuristic for old persisted blocks that don't have toolName.
+function resolveIsWebSearch(toolName?: string, query?: string): boolean {
+  if (toolName !== undefined) return toolName === 'brave_web_search';
+  // Legacy fallback: Brave search queries never contain '__'
+  return !(query ?? '').includes('__')
 }
 
-export function ToolCallNotification({ phase, query, results = [], error: errorMsg, className = '' }: ToolCallNotificationProps) {
+export function ToolCallNotification({ phase, query, toolName, results = [], error: errorMsg, className = '' }: ToolCallNotificationProps) {
   const [expanded, setExpanded] = useState(false)
   const label = formatQueryLabel(query)
-  const webSearch = isWebSearch(query)
+  const webSearch = resolveIsWebSearch(toolName, query)
 
   if (phase === 'searching') {
     return (

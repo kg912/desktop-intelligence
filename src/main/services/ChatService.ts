@@ -1015,7 +1015,11 @@ export class ChatService {
               const mcpParts = !isBrave ? toolName.split("__") : null;
               const isMcp    = !isBrave && mcpParts && mcpParts.length === 2;
 
-              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: query || toolName });
+              // uiLabel: what appears in the tool pill. For search tools use the query
+              // string; for MCP tools use the namespaced name ("memory__search_nodes") so
+              // the renderer can tell them apart from Brave searches.
+              const uiLabel = isBrave ? (query || toolName) : toolName;
+              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: uiLabel, toolName });
 
               try {
                 let toolResult: string;
@@ -1031,7 +1035,8 @@ export class ChatService {
                   const links = results.slice(0, 3).map(r => ({ title: r.title, url: r.url }));
                   allResultLinks.push(...links);
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                    query,
+                    query: uiLabel,
+                    toolName,
                     results: links,
                     formattedContent: section,
                   });
@@ -1043,10 +1048,11 @@ export class ChatService {
                   let args: Record<string, unknown> = {};
                   try { args = JSON.parse(argsRaw || "{}"); } catch { /* use empty args */ }
 
-                  console.log(`[MCP] 🔧 Calling "${toolName}" with args: ${argsRaw}`);
+                  console.log(`[MCP] Calling "${toolName}" with args: ${argsRaw}`);
                   toolResult = await mcpServerManager.callTool(serverName, mcpToolName, args);
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                    query: toolName,
+                    query: uiLabel,
+                    toolName,
                     results: [],
                     formattedContent: toolResult,
                   });
@@ -1054,7 +1060,7 @@ export class ChatService {
                 } else {
                   toolResult = `Unknown tool: ${toolName}`;
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                    query: toolName, results: [], formattedContent: toolResult,
+                    query: uiLabel, toolName, results: [], formattedContent: toolResult,
                   });
                 }
 
@@ -1065,7 +1071,7 @@ export class ChatService {
 
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: query || toolName, error: errMsg });
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: uiLabel, toolName, error: errMsg });
                 currentMessages = [
                   ...currentMessages,
                   { role: "tool", tool_call_id: id, content: `Tool failed: ${errMsg}. Use training knowledge.` } as { role: string; content: string },
@@ -1074,7 +1080,10 @@ export class ChatService {
             }
 
             this.controller = new AbortController();
-            searchLoopCount++;
+            // Only Brave Search counts toward MAX_SEARCH_LOOPS — MCP tool calls
+            // are unlimited and should never trigger the search-limit guard.
+            const hadBraveCall = queries.some(q => q.name === "brave_web_search");
+            if (hadBraveCall) searchLoopCount++;
           }
         }
 

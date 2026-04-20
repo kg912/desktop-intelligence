@@ -171,6 +171,7 @@ function AssistantBubble({
                     key={block.id}
                     phase={block.phase}
                     query={block.query}
+                    toolName={block.toolName}
                     results={block.results}
                     error={block.error}
                     className={prevIsAnswer ? 'mt-3' : ''}

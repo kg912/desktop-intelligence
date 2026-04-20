@@ -408,7 +408,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Tool start: flush buffer, close active block, append search block ──
     const unsubToolStart = window.api.onChatStreamToolStart(
-      ({ query }: { query: string }) => {
+      ({ query, toolName }: { query: string; toolName?: string }) => {
         // Flush any buffered text before the search begins
         processBuffer();
 
@@ -423,7 +423,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         // Commit the closed-block ref state to React before appendBlock reads prev state
         commitBlocksToState();
 
-        appendBlock({ id: uuid(), type: "search", query, phase: "searching" });
+        appendBlock({ id: uuid(), type: "search", query, toolName, phase: "searching" });
         patchAssistant({ isSearching: true, isThinking: false });
       },
     );
@@ -432,10 +432,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     const unsubToolDone = window.api.onChatStreamToolDone(
       ({
         query,
+        toolName,
         results,
         formattedContent,
       }: {
         query: string;
+        toolName?: string;
         results: Array<{ title: string; url: string }>;
         formattedContent: string;
       }) => {
@@ -443,6 +445,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           phase: "done",
           results,
           formattedContent,
+          ...(toolName ? { toolName } : {}),
         } as Partial<MessageBlock>);
         patchAssistant({ isSearching: false });
       },
@@ -450,7 +453,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Tool error: mark last search block as error ───────────────
     const unsubToolError = window.api.onChatStreamToolError(
-      ({ query: _q, error }: { query: string; error: string }) => {
+      ({ query: _q, toolName: _tn, error }: { query: string; toolName?: string; error: string }) => {
         updateLastBlock("search", {
           phase: "error",
           error,
