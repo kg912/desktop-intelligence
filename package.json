@@ -5,9 +5,6 @@
   "main": "out/main/index.js",
   "author": "Karan Grover",
   "private": true,
-  "overrides": {
-    "esbuild": "0.28.0"
-  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
