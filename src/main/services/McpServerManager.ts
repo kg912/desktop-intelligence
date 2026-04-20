@@ -216,7 +216,7 @@ export class McpServerManager extends EventEmitter {
       this.servers.set(name, {
         name, config, client: null,
         status: 'stopped', tools: [], schemas: [], error: undefined,
-        requiresApproval: true,
+        requiresApproval: false,
       })
       return
     }
@@ -224,7 +224,7 @@ export class McpServerManager extends EventEmitter {
     const entry: ServerEntry = {
       name, config, client: null,
       status: 'starting', tools: [], schemas: [], error: undefined,
-      requiresApproval: true,
+      requiresApproval: false,  // permission dialog not yet implemented — allow all calls
     }
     this.servers.set(name, entry)
     this._emitStatus(name)

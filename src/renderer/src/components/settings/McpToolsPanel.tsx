@@ -14,6 +14,24 @@ import {
 import { cn } from '../../lib/utils'
 import type { McpServerRuntimeInfo, McpServerSettings } from '../../../../shared/types'
 
+// ── Toggle — matches MCPSettingsPanel exactly ────────────────────
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 focus:outline-none ${
+        checked ? 'bg-red-700' : 'bg-surface-border'
+      }`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${
+          checked ? 'translate-x-5' : 'translate-x-1'
+        }`}
+      />
+    </button>
+  )
+}
+
 // ── Status badge ────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: McpServerRuntimeInfo['status'] }) {
@@ -195,6 +213,13 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
     setError(null)
     try {
       const parsed = JSON.parse(jsonText) as McpServerSettings
+      // Auto-inject enabled:true on every entry that omits the field so servers
+      // start immediately without requiring users to know about this property.
+      for (const name of Object.keys(parsed)) {
+        if (parsed[name].enabled === undefined || parsed[name].enabled === null) {
+          parsed[name] = { ...parsed[name], enabled: true }
+        }
+      }
       await window.api.mcpSaveCustomServers(parsed)
       for (const name of Object.keys(parsed)) {
         if (parsed[name].enabled) await window.api.mcpRestartServer(name)
@@ -271,18 +296,10 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
           </div>
           {/* Enabled toggle */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setForm((f) => ({ ...f, enabled: !f.enabled }))}
-              className={cn(
-                'relative w-8 h-4 rounded-full transition-colors flex-shrink-0',
-                form.enabled ? 'bg-accent-600' : 'bg-surface-border',
-              )}
-            >
-              <span className={cn(
-                'absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform',
-                form.enabled ? 'translate-x-4' : 'translate-x-0.5',
-              )} />
-            </button>
+            <Toggle
+              checked={form.enabled}
+              onChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
+            />
             <span className="text-xs text-content-secondary">Start server automatically</span>
           </div>
         </div>
@@ -361,8 +378,8 @@ export function McpToolsPanel() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-base font-semibold text-content-primary mb-1">MCP Servers</h2>
-        <p className="text-sm text-content-muted">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-content-muted mb-3">MCP Servers</h2>
+        <p className="text-xs text-content-muted leading-relaxed">
           Connect external tools to the assistant via the Model Context Protocol.
           Each running server exposes one or more tools the model can call.
         </p>
