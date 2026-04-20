@@ -738,10 +738,18 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
         if (doneSearchBlock) {
           const isLastToolCall = i === lastToolCallIndex;
+          // Use the actual tool name from the block — MCP tools store their namespaced
+          // name (e.g. "memory__search_nodes") here; legacy search blocks have undefined.
+          const wireFuncName = doneSearchBlock.toolName ?? "brave_web_search";
+          // For Brave Search reconstruct args as {query}; for MCP tools the block query
+          // IS the namespaced tool name so reconstruct args as {} (content carries result).
+          const wireArgs = wireFuncName === "brave_web_search"
+            ? JSON.stringify({ query: doneSearchBlock.query })
+            : JSON.stringify({});
           const resultsStr = isLastToolCall
             ? doneSearchBlock.formattedContent ||
               JSON.stringify(doneSearchBlock.results?.slice(0, 3) || [])
-            : `[Previous search: ${doneSearchBlock.query}]`;
+            : `[Previous tool call: ${doneSearchBlock.toolName ?? doneSearchBlock.query}]`;
           const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(7)}`;
           return [
             {
@@ -752,10 +760,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
                   id: toolCallId,
                   type: "function",
                   function: {
-                    name: "brave_web_search",
-                    arguments: JSON.stringify({
-                      query: doneSearchBlock.query,
-                    }),
+                    name: wireFuncName,
+                    arguments: wireArgs,
                   },
                 },
               ],
