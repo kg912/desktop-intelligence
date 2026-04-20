@@ -10,12 +10,12 @@ A native macOS desktop chat application that runs large language models entirely
 
 > **This application runs large language models entirely on-device. Memory requirements depend on the model you choose.**
 >
-> | RAM | Status |
-> |-----|--------|
-> | **64 GB+** | ✅ Ideal — runs large MoE models (35B+) with full performance and headroom |
-> | **48 GB** | ✅ Recommended minimum for large models |
-> | **32 GB** | ⚠️ Workable with smaller models (7B–14B); avoid loading 35B+ models |
-> | **< 32 GB** | ❌ Not recommended — insufficient for most capable models |
+> | RAM         | Status                                                                     |
+> | ----------- | -------------------------------------------------------------------------- |
+> | **64 GB+**  | ✅ Ideal — runs large MoE models (35B+) with full performance and headroom |
+> | **48 GB**   | ✅ Recommended minimum for large models                                    |
+> | **32 GB**   | ⚠️ Workable with smaller models (7B–14B); avoid loading 35B+ models        |
+> | **< 32 GB** | ❌ Not recommended — insufficient for most capable models                  |
 >
 > **Apple Silicon (M-series) only.** Intel Macs are not supported.
 
@@ -83,13 +83,41 @@ Ask the model to plot anything — distributions, decision boundaries, neural ne
 
 Change your active model, adjust the context window, and tune generation parameters (Temperature, Top P, Max Output Tokens, Repeat Penalty) — all from the Settings panel (⚙️). Set a **custom system prompt** to give the model persistent instructions. All choices persist across restarts.
 
-### Settings — Brave Search MCP
+### Settings — MCP (Model Context Protocol)
+
+Desktop Intelligence supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — an open standard that lets the app call external tools and services on demand. MCP servers are configured from the Settings panel, then invoked by the model during chat.
+
+**Add a new MCP server using the form:**
+
+![Add an MCP server via the settings form](app_images/add_mcp_settings_form.png)
+
+Fill in a name, URL or command, and any required parameters. Click **Add** to register the server.
+
+![Add an MCP server via JSON configuration](app_images/add_mcp_settings_json_form.png)
+
+Alternatively, paste a raw MCP server configuration in JSON format for more advanced setups — ideal when you have a server definition from documentation or want to batch-import multiple servers.
+
+![Added MCP servers listed in settings](app_images/mcp_added_settings_example.png)
+
+Once added, each MCP server appears as a card in the settings list with its name and status. You can toggle individual servers on or off, edit their configuration, or remove them.
+
+### Built-in Brave Search MCP
+
+**Brave Search** is provided as a built-in MCP server (see the Web Search tab).
 
 ![Brave Search MCP settings](app_images/settings_screen_brave_search_mcp_api_key_and_toggle.png)
 
 Enable real-time web search by pasting your [Brave Search API key](https://brave.com/search/api/). The app performs a targeted search before answering time-sensitive questions — results are injected into the model's context, never hallucinated.
 
 ![Brave Search in chat — live web results surfaced inline](app_images/brave_search_mcp_chat_demo.png)
+
+### MCP Tool Calls in Chat
+
+When the model decides to use an MCP tool during a conversation, the call is rendered inline — you can see which tool was invoked and its result without leaving the chat.
+
+![MCP tool calls appear inline during chat](app_images/mcp_tool_use_demo.png)
+
+Tool invocations are handled transparently: the app sends the request to the MCP server, captures the result, and feeds it back into the model's context. The user sees a clean, structured representation of each tool call and its output.
 
 ### Context Compaction
 
@@ -131,20 +159,21 @@ The packaged app outputs to `dist/Desktop Intelligence-<version>-arm64.dmg`.
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Shell | Electron 31 |
-| Frontend | React 18 + Vite + TypeScript (strict) |
-| Styling | Tailwind CSS v3 + shadcn/ui |
-| Markdown | react-markdown + remark-gfm + remark-math + rehype-katex |
-| Diagrams | Mermaid 11 (native SVG) |
-| Syntax highlighting | highlight.js |
-| Database | better-sqlite3 (SQLite) |
-| AI backend | LM Studio (`/v1/chat/completions`, OpenAI-compatible SSE) |
-| Visualizations | matplotlib via persistent python3 worker |
-| Web search | Brave Search API (optional MCP tool) |
-| PDF parsing | pdf-parse |
-| Packaging | electron-builder (macOS arm64 DMG) |
+| Layer               | Technology                                                       |
+| ------------------- | ---------------------------------------------------------------- |
+| Shell               | Electron 31                                                      |
+| Frontend            | React 18 + Vite + TypeScript (strict)                            |
+| Styling             | Tailwind CSS v3 + shadcn/ui                                      |
+| Markdown            | react-markdown + remark-gfm + remark-math + rehype-katex         |
+| Diagrams            | Mermaid 11 (native SVG)                                          |
+| Syntax highlighting | highlight.js                                                     |
+| Database            | better-sqlite3 (SQLite)                                          |
+| AI backend          | LM Studio (`/v1/chat/completions`, OpenAI-compatible SSE)        |
+| Visualizations      | matplotlib via persistent python3 worker                         |
+| MCP                 | Model Context Protocol (MCP) server manager — form + JSON config |
+| Web search          | Brave Search API (optional MCP tool)                             |
+| PDF parsing         | pdf-parse                                                        |
+| Packaging           | electron-builder (macOS arm64 DMG)                               |
 
 ---
 
@@ -179,18 +208,18 @@ Since Electron swallows stdout in the packaged `.app`, launch from Terminal to s
 
 Key sentinel log lines:
 
-| Log prefix | Meaning |
-|---|---|
-| `[FileProcessor] 📄` | File received and being processed |
-| `📄 PDF-PARSE EXTRACTED CHARACTERS:` | PDF text extraction succeeded |
-| `[RAG] 🧠 ingestDocument` | Document being written to SQLite |
-| `🔥 VECTOR DB RESULTS COUNT:` | RAG retrieval result count |
-| `🚀 FINAL LM STUDIO PAYLOAD:` | Full JSON sent to LM Studio |
-| `[Python] ✅ matplotlib render OK` | Chart rendered successfully |
-| `[Settings] ✅ Reload complete` | Model reloaded with new settings |
+| Log prefix                           | Meaning                           |
+| ------------------------------------ | --------------------------------- |
+| `[FileProcessor] 📄`                 | File received and being processed |
+| `📄 PDF-PARSE EXTRACTED CHARACTERS:` | PDF text extraction succeeded     |
+| `[RAG] 🧠 ingestDocument`            | Document being written to SQLite  |
+| `🔥 VECTOR DB RESULTS COUNT:`        | RAG retrieval result count        |
+| `🚀 FINAL LM STUDIO PAYLOAD:`        | Full JSON sent to LM Studio       |
+| `[Python] ✅ matplotlib render OK`   | Chart rendered successfully       |
+| `[Settings] ✅ Reload complete`      | Model reloaded with new settings  |
 
 ---
 
-*v2.0.0-beta-7 — 2026-04-14*
+_2.2.0-alpha-6 — 2026-04-21_
 
 Built with [Claude Code](https://claude.ai/claude-code)

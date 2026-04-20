@@ -8,12 +8,12 @@ A complete reference of every capability currently implemented in the app.
 
 Desktop Intelligence is tested on Apple Silicon and optimised for local MoE models. These are the best options:
 
-| Model | Notes |
-|-------|-------|
-| `google/gemma-4-26b-a4b` | **Top pick.** Gemma 4's 26B MoE with 4B active parameters. Exceptional reasoning, vision support, and fast inference. Available as GGUF directly in LM Studio — no MLX conversion needed. Native web search via mid-stream tool calls. |
-| `mlx-community/Qwen3.5-35B-A3B-6bit` | Excellent thinking mode and coding. ~71 tok/s on M5 Pro. Best-in-class for complex reasoning tasks when using MLX. |
-| Any Qwen3 14B–32B MLX | Strong balance of speed and quality. Fully supported: thinking mode, web search, tool calls. |
-| Any DeepSeek-R1 MLX distil (7B–14B) | Good reasoning at lower RAM. Works well on 32 GB machines. |
+| Model                                | Notes                                                                                                                                                                                                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `google/gemma-4-26b-a4b`             | **Top pick.** Gemma 4's 26B MoE with 4B active parameters. Exceptional reasoning, vision support, and fast inference. Available as GGUF directly in LM Studio — no MLX conversion needed. Native web search via mid-stream tool calls. |
+| `mlx-community/Qwen3.5-35B-A3B-6bit` | Excellent thinking mode and coding. ~71 tok/s on M5 Pro. Best-in-class for complex reasoning tasks when using MLX.                                                                                                                     |
+| Any Qwen3 14B–32B MLX                | Strong balance of speed and quality. Fully supported: thinking mode, web search, tool calls.                                                                                                                                           |
+| Any DeepSeek-R1 MLX distil (7B–14B)  | Good reasoning at lower RAM. Works well on 32 GB machines.                                                                                                                                                                             |
 
 All models above support Thinking mode. Gemma 4 and Qwen3 are the primary tested configurations.
 
@@ -22,6 +22,7 @@ All models above support Thinking mode. Gemma 4 and Qwen3 are the primary tested
 ## Chat
 
 ### Streaming Responses
+
 - Token-by-token streaming with a live blinking cursor — output appears as the model generates it, not after
 - Smooth auto-scroll follows live output; pauses when you scroll up; resumes when you scroll to the bottom or send a new message
 - Stream can be aborted mid-generation (stop button)
@@ -40,27 +41,32 @@ User messages are now rendered as rich text — not displayed as raw markdown st
 - The wire payload sent to the model is always the original raw text — the model never sees HTML
 
 ### Markdown Rendering
+
 - Full CommonMark + GFM support: headings, bold/italic/strikethrough, blockquotes, task lists, tables, horizontal rules
 - Inline code and fenced code blocks with language labels
 - Nested lists and deep indentation handled correctly
 
 ### Syntax Highlighting
+
 - Powered by **highlight.js** with a dark theme matched to the app palette
 - Auto-detects language from the fenced code block identifier
 - One-click **Copy** button on every code block
 
 ### LaTeX Math
+
 - Inline math: `$...$`
 - Display (block) math: `$$...$$`
 - Rendered with **KaTeX** — fast, no external fonts, no network requests
 
 ### Mermaid Diagrams
+
 - Rendered as native **SVG** in the browser — no external service
 - Supported diagram types: flowcharts, sequence diagrams, class diagrams, Gantt charts, pie charts, state diagrams, entity-relationship diagrams, mindmaps, timelines, block diagrams, quadrant charts, and more
 - Graceful error fallback: if a diagram fails to parse, the raw code block is shown instead
 - Diagrams are skipped while the model is still streaming (prevents half-parsed renders)
 
 ### Thinking / Fast Mode Toggle
+
 - **Thinking mode** (🧠): enables the model's chain-of-thought reasoning (`budget_tokens: 8000`). Higher quality for complex tasks — math, code review, document analysis, multi-step reasoning. Works with any reasoning-capable model (e.g. Qwen3, DeepSeek-R1)
 - **Fast mode** (⚡): direct responses with no reasoning step. Lower latency, ideal for conversational queries and simple lookups
 - Toggle is visible in the input bar; switching mid-conversation inserts a labelled divider
@@ -69,9 +75,11 @@ User messages are now rendered as rich text — not displayed as raw markdown st
 - Gemma 4 thinking is activated via a `<|think|>` system prompt token (Gemma's native mechanism). The `/think` and `/no_think` soft-prompt prefixes are Qwen-specific and are automatically skipped for Gemma models.
 
 ### Thought Process Accordion
+
 - The model's internal reasoning is rendered in a collapsible accordion — dimmed, muted style so it doesn't dominate the UI. Collapsed by default; click to expand. Supports both `<think>...</think>` (Qwen3, DeepSeek) and `<|channel>thought\n...<channel|>` (Gemma 4 native format); both are normalised to the same accordion component.
 
 ### Context Utilisation Indicator
+
 - A slim progress bar in the top-right corner shows how much of the model's context window is currently in use
 - Colour transitions from muted → amber → red as context fills, giving an early warning before overflow
 - Hover over the bar to see exact token counts: e.g. "Used: 12,450 / 65,536 tokens (19%)"
@@ -98,16 +106,19 @@ A toast pill confirms how many tokens were freed (e.g. "42,150 → 1,840 tokens"
 ## Document Q&A (RAG)
 
 ### PDF Attachment
+
 - Attach a PDF via the paperclip icon in the input bar
 - The app extracts the full document text using **pdf-parse** (runs in the main process, not the renderer)
 - Extracted text is stored in SQLite alongside the chat, scoped per chat session
 
 ### Context Injection
+
 - On every message in a chat that has attached documents, the full document text (up to 12 000 characters) is injected as a dedicated `system` message immediately before the user's latest turn
 - A mandatory directive prefix instructs the model to treat the text as directly readable content — preventing it from claiming it "cannot access files"
 - Documents from different chats are never mixed; isolation is enforced at the SQL query level
 
 ### Image / Vision Support
+
 - Images attached to a message are passed as base64-encoded `image_url` payloads inside the user message
 - Compatible with vision-capable LM Studio models
 
@@ -116,6 +127,7 @@ A toast pill confirms how many tokens were freed (e.g. "42,150 → 1,840 tokens"
 ## Native Data Visualizations
 
 ### Matplotlib Rendering
+
 - When the model writes a `python` code block containing `matplotlib` code, the app executes it natively and renders the output as an inline PNG image directly in the chat
 - A **persistent Python worker process** pre-imports `numpy`, `matplotlib`, and `scipy` once at app startup. Each chart render takes ~200ms instead of 3–4s
 - Multiple charts in a single response are queued (FIFO) on the warm worker — no fallback spawns
@@ -123,11 +135,14 @@ A toast pill confirms how many tokens were freed (e.g. "42,150 → 1,840 tokens"
 - Rendering happens asynchronously; a spinner shows while the chart is being generated
 
 ### Dark-Theme Styling
+
 - All charts are automatically styled to match the app's dark palette (`#0f0f0f` background, muted grid lines, red/blue/green/orange colour cycle)
 - No additional styling code required in model-generated plots
 
 ### Safety Shims
+
 The Python execution environment includes safety shims that silently correct common model code mistakes:
+
 - **`plt.show()` / `plt.savefig()` / `plt.close()`** — replaced with no-ops; the engine captures the figure itself
 - **`matplotlib.use()`** — patched to no-op; `Agg` is already set at worker startup
 - **`_FlexAxes`** — out-of-bounds subplot axis access returns a hidden off-screen axis instead of `IndexError`
@@ -139,9 +154,11 @@ The Python execution environment includes safety shims that silently correct com
 - **`_safe_plot()`** — same truncation for two-argument `plot(x, y)` calls
 
 ### Supported Plot Types (tested)
+
 LASSO regression paths, K-Nearest Neighbours decision boundaries, SGD convergence curves, backpropagation weight updates, Gaussian Mixture Models, 2D GMM contour plots, convolutional neural network feature maps, and general scientific plots (distributions, histograms, scatter plots, bar charts, heatmaps, time series)
 
 ### ECharts (Interactive Charts)
+
 - JSON-based ECharts specs are rendered as interactive charts in the browser
 - Automatic JSON repair for common model output mistakes (trailing commas, stray braces)
 - Restricted to bar and pie chart types for reliability
@@ -166,18 +183,22 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Two tabs:
 ### Model Tab
 
 **Active Model**
+
 - Dropdown listing every model you have downloaded in LM Studio; switch at runtime
 
 **Context Length**
+
 - Slider with preset chips: **4K / 8K / 16K / 32K / 64K / 128K**; custom values via number input
 
 **Generation Parameters**
+
 - **Temperature** — controls response randomness (0 = deterministic, 2 = very random; default 0.7)
 - **Top P** — nucleus sampling threshold (0–1; default 0.95)
 - **Max Output Tokens** — maximum tokens the model generates per response (512–65 536; default 16 384)
 - **Repeat Penalty** — penalises token repetition to reduce loops (1.0–1.5; default 1.1)
 
 **System Prompt**
+
 - Free-form text field (up to 6 000 characters) prepended to every conversation as a system message
 - Use it to give the model a persistent persona, formatting rules, or domain focus
 - Leave blank to use the app's built-in base prompt
@@ -189,6 +210,7 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Two tabs:
 All settings are saved to `app-settings.json` in `app.getPath('userData')` and applied automatically on every subsequent launch.
 
 ### Web Search Tab (MCP)
+
 - Toggle to enable/disable Brave Search
 - API key field (password input with show/hide toggle)
 - Save button with unsaved-changes indicator and save confirmation feedback
@@ -199,16 +221,51 @@ All settings are saved to `app-settings.json` in `app.getPath('userData')` and a
 ## Reliability & Safety
 
 ### Daemon Management
+
 - **LM Studio** server is auto-launched via the `lms` CLI on app startup; pre-flight check skips launch if it's already running
 - Exponential-backoff health polling; connection overlay only appears after **two consecutive** failures — a single timeout during GPU-intensive generation is silently absorbed
 
 ### Runaway Generation Protection
+
 - **Server-side**: every LM Studio payload includes a `stop` sequences array (`<|im_end|>`, `<|endoftext|>`, and common loop-trigger phrases)
 - **Client-side**: if the same line appears 3+ consecutive times in the SSE stream, the stream is aborted immediately
 
 ### Context Overflow Protection
+
 - A sliding context window trims the oldest messages when the conversation history approaches the model's context limit
 - Thinking blocks (`<think>...</think>`) are stripped from assistant history before re-sending to LM Studio, recovering 60–80% of the context they would otherwise occupy
+
+## MCP (Model Context Protocol)
+
+Desktop Intelligence implements the [Model Context Protocol](https://modelcontextprotocol.io/) — an open standard that lets external tools and services be called by the model during chat. MCP servers are configured from the Settings panel, then invoked on demand.
+
+### Adding an MCP Server (Form)
+
+Use the built-in form to register a new MCP server with a name, URL or command, and parameters.
+
+![Add an MCP server via the settings form](app_images/add_mcp_settings_form.png)
+
+### Adding an MCP Server (JSON Config)
+
+For advanced setups, paste a raw `mcp.json` configuration — ideal when you have a server definition from documentation or want to batch-import multiple servers.
+
+![Add an MCP server via JSON configuration](app_images/add_mcp_settings_json_form.png)
+
+### Managing Servers
+
+Added servers appear as cards in the settings list with name and status. Toggle individual servers on or off, edit their configuration, or remove them.
+
+![Added MCP servers listed in settings](app_images/mcp_added_settings_example.png)
+
+> **Brave Search** ships as a built-in MCP server. Additional servers can be added using either input method above.
+
+### MCP Tool Calls in Chat
+
+When the model decides to use an MCP tool during a conversation, the call is rendered inline — you can see which tool was invoked and its result without leaving the chat.
+
+![MCP tool calls appear inline during chat](app_images/mcp_tool_use_demo.png)
+
+Tool invocations are handled transparently: the app sends the request to the MCP server, captures the result, and feeds it back into the model's context. The user sees a clean, structured representation of each tool call and its output.
 
 ---
 
@@ -255,4 +312,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-*Last updated: 2026-04-14 — v2.0.0-beta-7*
+_Last updated: 2026-04-21 — 2.2.0-alpha-6_
