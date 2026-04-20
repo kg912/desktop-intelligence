@@ -1100,8 +1100,23 @@ export class ChatService {
     // an accurate prompt-size figure without relying on the server to report it.
     if (promptTokens === 0) {
       promptTokens = currentMessages.reduce((sum, m) => {
-        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-        return sum + countTokens(text) + 4; // +4 per-message role overhead
+        let tokenEstimate: number;
+        if (typeof m.content === "string") {
+          tokenEstimate = countTokens(m.content);
+        } else if (Array.isArray(m.content)) {
+          // Multipart content (vision) — count text parts normally,
+          // substitute a fixed 1000-token estimate per image to avoid
+          // stringifying base64 data URLs (which are 600K+ chars and
+          // produce wildly inflated token counts).
+          tokenEstimate = (m.content as ContentPart[]).reduce((partSum, part) => {
+            if (part.type === "text") return partSum + countTokens(part.text);
+            if (part.type === "image_url") return partSum + 1000; // ~1K tokens per image
+            return partSum;
+          }, 0);
+        } else {
+          tokenEstimate = countTokens(JSON.stringify(m.content));
+        }
+        return sum + tokenEstimate + 4; // +4 per-message role overhead
       }, 0);
       if (DEBUG) console.log(`[DEV][ChatService] usage not emitted — computed promptTokens from wire payload: ${promptTokens}`);
     }
