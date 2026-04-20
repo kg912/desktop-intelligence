@@ -20,6 +20,9 @@ import type {
   AppInitPayload,
   CompactPayload,
   CompactResult,
+  McpServerSettings,
+  McpServerRuntimeInfo,
+  McpToolPermissionRequest,
 } from '../shared/types'
 
 const api = {
@@ -138,6 +141,37 @@ const api = {
   // ── Context compaction ───────────────────────────────────────
   compactChat: (payload: CompactPayload): Promise<CompactResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, payload),
+
+  // ── MCP Custom Servers ───────────────────────────────────────────
+  mcpListCustomServers: (): Promise<McpServerSettings> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_LIST_CUSTOM_SERVERS),
+
+  mcpSaveCustomServers: (s: McpServerSettings): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_SAVE_CUSTOM_SERVERS, s),
+
+  mcpGetServerStatus: (): Promise<McpServerRuntimeInfo[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_SERVER_STATUS),
+
+  mcpRestartServer: (name: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_RESTART_SERVER, name),
+
+  mcpRemoveServer: (name: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_REMOVE_SERVER, name),
+
+  mcpRespondToPermission: (r: { requestId: string; approved: boolean; alwaysAllow: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE, r),
+
+  onMcpServerStatusChanged: (cb: (info: McpServerRuntimeInfo) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, info: McpServerRuntimeInfo): void => cb(info)
+    ipcRenderer.on(IPC_CHANNELS.MCP_SERVER_STATUS_CHANGED, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_SERVER_STATUS_CHANGED, h)
+  },
+
+  onMcpToolPermissionRequest: (cb: (req: McpToolPermissionRequest) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, req: McpToolPermissionRequest): void => cb(req)
+    ipcRenderer.on(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
+  },
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),

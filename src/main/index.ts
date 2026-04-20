@@ -11,6 +11,9 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
+import { mcpServerManager } from './services/McpServerManager'
+import { IPC_CHANNELS } from '../shared/types'
+import type { McpServerRuntimeInfo, McpToolPermissionRequest } from '../shared/types'
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
@@ -54,6 +57,7 @@ async function gracefulShutdown(): Promise<void> {
   console.log('[App] Graceful shutdown initiated…')
   modelConnectionManager.stop()
   pythonWorker.stop()
+  await mcpServerManager.stopAll()
 
   await lmsDaemonManager.shutdown()
   console.log('[App] Shutdown complete.')
@@ -155,6 +159,21 @@ app.whenReady().then(async () => {
   // Non-fatal: if python3 is missing, render() will fall back to one-shot spawn.
   pythonWorker.start().catch((err: Error) => {
     console.warn('[PythonWorker] Failed to start at launch:', err.message)
+  })
+
+  // Start MCP servers and wire status/permission events to renderer.
+  mcpServerManager.startAll().catch((err: Error) => {
+    console.warn('[McpServerManager] startAll error:', err.message)
+  })
+  mcpServerManager.on('statusChanged', (info: McpServerRuntimeInfo) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.MCP_SERVER_STATUS_CHANGED, info)
+    }
+  })
+  mcpServerManager.on('permissionRequest', (req: McpToolPermissionRequest) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, req)
+    }
   })
 
   app.on('activate', () => {

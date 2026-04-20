@@ -837,4 +837,45 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     }
   )
 
+  // ── MCP Custom Servers ────────────────────────────────────────────
+  //
+  // These handlers manage the lifecycle and config of user-defined MCP servers.
+  // McpServerManager owns the child processes; handlers are thin pass-throughs.
+
+  ipcMain.handle(IPC_CHANNELS.MCP_LIST_CUSTOM_SERVERS, async () => {
+    const { mcpServerManager } = await import('../services/McpServerManager')
+    return mcpServerManager.readConfig()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_SAVE_CUSTOM_SERVERS,
+    async (_, settings) => {
+      const { mcpServerManager } = await import('../services/McpServerManager')
+      await mcpServerManager.writeConfig(settings)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MCP_GET_SERVER_STATUS, async () => {
+    const { mcpServerManager } = await import('../services/McpServerManager')
+    return mcpServerManager.getServerStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MCP_RESTART_SERVER, async (_, name: string) => {
+    const { mcpServerManager } = await import('../services/McpServerManager')
+    await mcpServerManager.restartServer(name)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MCP_REMOVE_SERVER, async (_, name: string) => {
+    const { mcpServerManager } = await import('../services/McpServerManager')
+    await mcpServerManager.removeServer(name)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE,
+    async (_, { requestId, approved, alwaysAllow }: { requestId: string; approved: boolean; alwaysAllow: boolean }) => {
+      const { mcpServerManager } = await import('../services/McpServerManager')
+      mcpServerManager.resolvePermission(requestId, approved, alwaysAllow)
+    }
+  )
+
 }

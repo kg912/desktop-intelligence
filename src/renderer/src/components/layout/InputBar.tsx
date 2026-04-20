@@ -8,7 +8,7 @@ import {
   type DragEvent
 } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain } from 'lucide-react'
+import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
 
@@ -69,6 +69,8 @@ export interface InputBarProps {
   /** Controlled attachment list — set by Layout's window-level drop handler */
   attachments?:   Attachment[]
   onAttachments?: (a: Attachment[]) => void
+  /** Non-null while an MCP tool call is in flight */
+  mcpActivity?:   { serverName: string; toolName: string } | null
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
@@ -81,6 +83,7 @@ export function InputBar({
   disabled = false,
   attachments:    externalAttachments,
   onAttachments,
+  mcpActivity = null,
 }: InputBarProps) {
   const { thinkingMode, setThinkingMode } = useModelStore()
   const [text, setText] = useState('')
@@ -369,7 +372,7 @@ export function InputBar({
           </motion.button>
         </div>
 
-        {/* Helper row: thinking mode toggle (left) + keyboard hints (right) */}
+        {/* Helper row: thinking mode toggle (left) + mcp activity + keyboard hints (right) */}
         <div className="px-3 pb-2.5 flex items-center justify-between">
           {/* Thinking / Fast mode toggle */}
           <button
@@ -393,10 +396,19 @@ export function InputBar({
             <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
           </button>
 
-          <p className="text-[10px] text-content-muted">
-            <kbd className="font-mono">⏎</kbd> send &nbsp;·&nbsp;
-            <kbd className="font-mono">⇧⏎</kbd> newline
-          </p>
+          <div className="flex items-center gap-2">
+            {/* MCP activity pill */}
+            {mcpActivity && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-950/50 border border-accent-900/40 text-[10px] text-accent-400">
+                <Plug className="w-2.5 h-2.5 animate-pulse" />
+                {mcpActivity.serverName} · {mcpActivity.toolName}
+              </span>
+            )}
+            <p className="text-[10px] text-content-muted">
+              <kbd className="font-mono">⏎</kbd> send &nbsp;·&nbsp;
+              <kbd className="font-mono">⇧⏎</kbd> newline
+            </p>
+          </div>
         </div>
       </div>
     </div>

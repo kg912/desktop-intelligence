@@ -11,13 +11,16 @@ import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
 import { useModelStore } from '../../store/ModelStore'
 import { CompactProgressOverlay } from '../chat/CompactProgressOverlay'
-import type { Chat, ProcessedAttachment, StoredMessage } from '../../../../shared/types'
+import { McpPermissionDialog } from '../chat/McpPermissionDialog'
+import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
   const { setThinkingMode, setContextUsage, isCompacting } = useModelStore()
-  const [sidebarCollapsed,  setSidebarCollapsed]  = useState(false)
-  const [settingsOpen,      setSettingsOpen]      = useState(false)
+  const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
+  const [settingsOpen,        setSettingsOpen]        = useState(false)
+  const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
+  const [mcpActivity,         setMcpActivity]         = useState<{ serverName: string; toolName: string } | null>(null)
   const chatAreaRef = useRef<ChatAreaHandle>(null)
 
   // ── Chat history list (sidebar) ───────────────────────────────
@@ -118,6 +121,27 @@ export function Layout() {
       refreshChats().catch(() => {/* already logged inside */})
     }
   }, [isStreaming, refreshChats])
+
+  // ── MCP permission dialog + activity indicator ────────────────
+  useEffect(() => {
+    const unsubPerm = window.api.onMcpToolPermissionRequest((req) => {
+      setMcpPermissionRequest(req)
+    })
+    const unsubStart = window.api.onChatStreamToolStart((payload) => {
+      // Show activity only for MCP tools (namespaced with __)
+      if (payload.query && payload.query.includes('__')) {
+        const [serverName, toolName] = payload.query.split('__')
+        setMcpActivity({ serverName, toolName })
+      }
+    })
+    const unsubDone = window.api.onChatStreamToolDone(() => {
+      setMcpActivity(null)
+    })
+    const unsubError = window.api.onChatStreamToolError(() => {
+      setMcpActivity(null)
+    })
+    return () => { unsubPerm(); unsubStart(); unsubDone(); unsubError() }
+  }, [])
 
   // ── Attachment list shared between window drop zone + InputBar ──
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -317,6 +341,14 @@ export function Layout() {
               {isCompacting && <CompactProgressOverlay />}
             </AnimatePresence>
 
+            {/* MCP tool permission dialog */}
+            {mcpPermissionRequest && (
+              <McpPermissionDialog
+                request={mcpPermissionRequest}
+                onDismiss={() => setMcpPermissionRequest(null)}
+              />
+            )}
+
             <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} />
 
             <ChatArea
@@ -333,6 +365,7 @@ export function Layout() {
               onAbort={abort}
               attachments={attachments}
               onAttachments={setAttachments}
+              mcpActivity={mcpActivity}
             />
           </div>
         </>

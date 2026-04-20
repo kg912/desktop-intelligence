@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Settings, Globe, Info } from "lucide-react";
+import { Settings, Globe, Info, Plug } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
+import { McpToolsPanel } from "./McpToolsPanel";
 import { cn } from "../../lib/utils";
 import { version, author } from "../../../../../package.json";
 
-type SettingsTab = "model" | "mcp" | "about";
+type SettingsTab = "model" | "websearch" | "tools" | "about";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -92,7 +93,7 @@ function AboutPanel() {
 export function SettingsPage({ onClose }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("model");
 
-  const paddingTop = tab !== "about" ? 60 : 160;
+  const paddingTop = tab === "about" ? 160 : tab === "tools" ? 40 : 60;
 
   return (
     <div className="flex h-full w-full" style={{ background: "#0f0f0f" }}>
@@ -144,9 +145,15 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
           />
           <TabItem
             icon={<Globe size={15} />}
-            label="MCP & Tools"
-            active={tab === "mcp"}
-            onClick={() => setTab("mcp")}
+            label="Web Search"
+            active={tab === "websearch"}
+            onClick={() => setTab("websearch")}
+          />
+          <TabItem
+            icon={<Plug size={15} />}
+            label="MCP Servers"
+            active={tab === "tools"}
+            onClick={() => setTab("tools")}
           />
           <TabItem
             icon={<Info size={15} />}
@@ -163,9 +170,10 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
           className="mx-auto px-12 pb-8 w-full"
           style={{ maxWidth: 720, paddingTop }}
         >
-          {tab === "model" && <ModelSettingsPanel />}
-          {tab === "mcp" && <MCPSettingsPanel />}
-          {tab === "about" && <AboutPanel />}
+          {tab === "model"     && <ModelSettingsPanel />}
+          {tab === "websearch" && <MCPSettingsPanel />}
+          {tab === "tools"     && <McpToolsPanel />}
+          {tab === "about"     && <AboutPanel />}
         </div>
       </div>
     </div>

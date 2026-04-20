@@ -233,6 +233,16 @@ export const mockApi: ElectronAPI = {
   mcpSaveSettings:   async () => {},
   mcpGetEnvKeyStatus: async () => ({ hasEnvKey: false }),
 
+  // ── MCP Custom Servers stubs ──────────────────────────────────
+  mcpListCustomServers:       async () => ({}),
+  mcpSaveCustomServers:       async () => {},
+  mcpGetServerStatus:         async () => [],
+  mcpRestartServer:           async () => {},
+  mcpRemoveServer:            async () => {},
+  mcpRespondToPermission:     async () => {},
+  onMcpServerStatusChanged:   () => () => {},
+  onMcpToolPermissionRequest: () => () => {},
+
   // ── Shell utilities ───────────────────────────────────────────
   openExternal: async (url: string) => { console.log('[mock] openExternal:', url) },
 

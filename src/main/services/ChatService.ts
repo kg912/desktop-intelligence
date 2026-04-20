@@ -25,6 +25,7 @@ import {
   augmentAndFormatResults,
   resolveBraveApiKey,
 } from "./BraveSearchService";
+import { mcpServerManager } from "./McpServerManager";
 import { BASE_SYSTEM_PROMPT } from "./SystemPromptService";
 import { countTokens } from "./tokenUtils";
 import { getCompactedSummary, clearCompactedSummary } from "./DatabaseService";
@@ -644,9 +645,14 @@ export class ChatService {
           repeat_penalty: repeatPenalty ?? 1.1,
           stop: STOP_SEQUENCES,
           ...step2ThinkingField,
-          ...(braveEnabled
-            ? { tools: [BRAVE_SEARCH_TOOL], tool_choice: "auto" }
-            : {}),
+          ...(() => {
+            const mcpTools = mcpServerManager.getToolSchemas();
+            const allTools = [
+              ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
+              ...mcpTools,
+            ];
+            return allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {};
+          })(),
           stream: true,
         });
 
@@ -999,32 +1005,66 @@ export class ChatService {
             // Execute each query, emitting its own search pill in the UI
             const allResultLinks: Array<{ title: string; url: string }> = [];
             const resultSections: string[] = [];
-            for (const { id, query } of queries) {
-              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query });
+            for (const { id, name: toolName, query, argsRaw } of queries) {
+              // Dispatch: Brave Search vs. MCP custom tool (namespaced as serverName__toolName)
+              const isBrave = toolName === "brave_web_search";
+              const mcpParts = !isBrave ? toolName.split("__") : null;
+              const isMcp    = !isBrave && mcpParts && mcpParts.length === 2;
+
+              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: query || toolName });
+
               try {
-                const results = await braveSearch(query, resolvedKey!, 5);
-                const formatted = await augmentAndFormatResults(results);
-                const section = queries.length > 1
-                  ? `## Results for: "${query}"\n${formatted}`
-                  : formatted;
-                resultSections.push(section);
-                const links = results.slice(0, 3).map(r => ({ title: r.title, url: r.url }));
-                allResultLinks.push(...links);
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                  query,
-                  results: links,
-                  formattedContent: section,
-                });
+                let toolResult: string;
+
+                if (isBrave) {
+                  // ── Existing Brave Search path — DO NOT MODIFY ────────────
+                  const results = await braveSearch(query, resolvedKey!, 5);
+                  const formatted = await augmentAndFormatResults(results);
+                  const section = queries.length > 1
+                    ? `## Results for: "${query}"\n${formatted}`
+                    : formatted;
+                  resultSections.push(section);
+                  const links = results.slice(0, 3).map(r => ({ title: r.title, url: r.url }));
+                  allResultLinks.push(...links);
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query,
+                    results: links,
+                    formattedContent: section,
+                  });
+                  toolResult = section;
+
+                } else if (isMcp && mcpParts) {
+                  // ── MCP custom tool dispatch ──────────────────────────────
+                  const [serverName, mcpToolName] = mcpParts;
+                  let args: Record<string, unknown> = {};
+                  try { args = JSON.parse(argsRaw || "{}"); } catch { /* use empty args */ }
+
+                  console.log(`[MCP] 🔧 Calling "${toolName}" with args: ${argsRaw}`);
+                  toolResult = await mcpServerManager.callTool(serverName, mcpToolName, args);
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query: toolName,
+                    results: [],
+                    formattedContent: toolResult,
+                  });
+
+                } else {
+                  toolResult = `Unknown tool: ${toolName}`;
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query: toolName, results: [], formattedContent: toolResult,
+                  });
+                }
+
                 currentMessages = [
                   ...currentMessages,
-                  { role: "tool", tool_call_id: id, content: section } as { role: string; content: string },
+                  { role: "tool", tool_call_id: id, content: toolResult } as { role: string; content: string },
                 ];
+
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query, error: errMsg });
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: query || toolName, error: errMsg });
                 currentMessages = [
                   ...currentMessages,
-                  { role: "tool", tool_call_id: id, content: `Search failed: ${errMsg}. Use training knowledge.` } as { role: string; content: string },
+                  { role: "tool", tool_call_id: id, content: `Tool failed: ${errMsg}. Use training knowledge.` } as { role: string; content: string },
                 ];
               }
             }

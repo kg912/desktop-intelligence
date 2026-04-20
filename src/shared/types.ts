@@ -227,6 +227,16 @@ export const IPC_CHANNELS = {
   CHAT_COMPACT:          'chat:compact',
   CHAT_COMPACT_PROGRESS: 'chat:compactProgress',
 
+  // ── MCP Custom Servers ─────────────────────────────────────────
+  MCP_LIST_CUSTOM_SERVERS:      'mcp:listCustomServers',
+  MCP_SAVE_CUSTOM_SERVERS:      'mcp:saveCustomServers',
+  MCP_GET_SERVER_STATUS:        'mcp:getServerStatus',
+  MCP_RESTART_SERVER:           'mcp:restartServer',
+  MCP_REMOVE_SERVER:            'mcp:removeServer',
+  MCP_TOOL_PERMISSION_REQUEST:  'mcp:toolPermissionRequest',   // main→renderer
+  MCP_TOOL_PERMISSION_RESPONSE: 'mcp:toolPermissionResponse',  // renderer→main
+  MCP_SERVER_STATUS_CHANGED:    'mcp:serverStatusChanged',     // main→renderer push
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -306,4 +316,36 @@ export interface StorePlotPayload {
   code:        string
   imageBase64: string
   caption:     string
+}
+
+// ── MCP (Model Context Protocol) ────────────────────────────────
+
+/** MCP server config — FastMCP standard format */
+export interface McpServerConfig {
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
+/** Persisted MCP server settings (mcp.json) — includes enabled flag per server */
+export interface McpServerSettings {
+  [serverName: string]: McpServerConfig & { enabled: boolean }
+}
+
+/** Runtime status of a running MCP server (main process only, not persisted) */
+export type McpServerStatus = 'starting' | 'running' | 'error' | 'stopped'
+
+export interface McpServerRuntimeInfo {
+  name:   string
+  status: McpServerStatus
+  tools:  string[]    // tool names exposed by this server
+  error?: string      // last error message if status === 'error'
+}
+
+/** Tool permission request — shown as approval dialog in renderer */
+export interface McpToolPermissionRequest {
+  serverName: string
+  toolName:   string
+  args:       Record<string, unknown>
+  requestId:  string   // UUID — used to correlate approval/denial IPC response
 }
