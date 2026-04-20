@@ -965,25 +965,29 @@ export class ChatService {
         // query it wants to run simultaneously). Executes them sequentially, merges
         // results, and injects a valid assistant→tool[] pair into the wire payload.
         if (pendingToolCalls.size > 0 && !toolCallIntercepted) {
-          // Collect unique queries in index order, drop exact duplicates
+          // Collect tool calls in index order.
+          // For search tools: dedup by query string.
+          // For MCP tools that have no "query" field (e.g. browser_navigate uses "url"):
+          // use the tool name as the dedup key so they are never silently dropped.
           const queries: Array<{ id: string; name: string; query: string; argsRaw: string }> = [];
-          const seenQueries = new Set<string>();
+          const seenKeys = new Set<string>();
           for (const [, tc] of [...pendingToolCalls.entries()].sort(([a], [b]) => a - b)) {
             let query = "";
             try {
               const tcArgs = JSON.parse(tc.argsRaw);
               query = typeof tcArgs.query === "string" ? tcArgs.query
                 : Array.isArray(tcArgs.queries) ? (tcArgs.queries[0] ?? "") : "";
-            } catch { /* malformed args — skip */ }
-            if (query && !seenQueries.has(query)) {
-              seenQueries.add(query);
+            } catch { /* malformed args — proceed with empty query */ }
+            // Dedup key: use query string for search tools, tool name for others
+            const dedupKey = query || tc.name;
+            if (!seenKeys.has(dedupKey)) {
+              seenKeys.add(dedupKey);
               queries.push({ id: tc.id, name: tc.name, query, argsRaw: tc.argsRaw });
             }
           }
 
           if (queries.length > 0) {
             toolCallIntercepted = true;
-            const primaryQuery = queries[0].query;
             console.log(`[MCP] \uD83D\uDD0D Native tool call(s): ${queries.map(q => `"${q.query}"`).join(", ")}`);
 
             // Build the assistant message with all tool_calls declared up front —
