@@ -220,7 +220,10 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
           parsed[name] = { ...parsed[name], enabled: true }
         }
       }
-      await window.api.mcpSaveCustomServers(parsed)
+      // Merge with existing config so adding a new server never wipes the others.
+      const existing = await window.api.mcpListCustomServers()
+      const merged   = { ...existing, ...parsed }
+      await window.api.mcpSaveCustomServers(merged)
       for (const name of Object.keys(parsed)) {
         if (parsed[name].enabled) await window.api.mcpRestartServer(name)
       }
