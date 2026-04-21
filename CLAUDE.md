@@ -162,6 +162,8 @@ append a row. Never delete rows. This is how you know what has and hasn't been d
 
 | 135 | 2026-04-21 | src/renderer/src/components/settings/McpToolsPanel.tsx, package.json | v2.2.0-alpha-16 — Tool panel UX: (1) Added "click to toggle" hint in italic next to active count so users know the badges are interactive. (2) Added "select all · none" inline controls on the right of the Tools header row — select all enables every tool, none disables all. Both use the same `onToggleTool` path so persistence and `_emitStatus` fire per-tool as normal. | ✅ Done |
 
+| 136 | 2026-04-21 | src/main/services/ChatService.ts, package.json | v2.2.0-alpha-17 — Debug log: added `[DEBUG] Tools sent to LM Studio (N): tool1, tool2, ...` log inside the IIFE that assembles `allTools` before the streamBody fetch, gated on `DEBUG` flag. Validates selective tool filtering end-to-end without requiring payload inspection. | ✅ Done |
+
 | 130 | 2026-04-21 | src/main/services/McpServerManager.ts, package.json | v2.2.0-alpha-10 — Fix meta-MCP TOOL_CALL `arguments` key: AlphaVantage Server's `TOOL_CALL` schema requires both `tool_name` AND `arguments` as top-level keys. Previous fix spread model args flat (`{ tool_name, ...args }`) but the server wants them nested: `{ tool_name: "GOLD_SILVER_SPOT", arguments: {} }`. Error was `'arguments' is a required property`. | ✅ Done |
 
 | 129 | 2026-04-21 | src/main/services/McpServerManager.ts, package.json | v2.2.0-alpha-9 — Fix meta-MCP TOOL_CALL arg key: `callTool()` translation was passing `{ name: toolName }` but AlphaVantage Server's `TOOL_CALL` requires `tool_name` as the key. Error was explicit: `'tool_name' is a required property`. One-character fix: `name` → `tool_name`. | ✅ Done |

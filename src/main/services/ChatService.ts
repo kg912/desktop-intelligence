@@ -651,6 +651,12 @@ export class ChatService {
               ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
               ...mcpTools,
             ];
+            if (DEBUG) {
+              console.log(
+                `[DEBUG] Tools sent to LM Studio (${allTools.length}):`,
+                allTools.map(t => t.function.name).join(', ') || '(none)'
+              );
+            }
             return allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {};
           })(),
           stream: true,
