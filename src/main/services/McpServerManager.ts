@@ -72,6 +72,12 @@ interface ServerEntry {
    * of passing it as the tool name directly.
    */
   metaToolMap?: Map<string, string> // expandedToolName → 'TOOL_CALL'
+  /**
+   * The parameter key names that TOOL_CALL expects, read from its inputSchema
+   * at startup. Different meta-MCP servers may use different key names.
+   * e.g. AlphaVantage uses { toolNameKey: 'tool_name', argumentsKey: 'arguments' }
+   */
+  metaCallKeys?: { toolNameKey: string; argumentsKey: string }
 }
 
 // ── Permission promise map ────────────────────────────────────────
@@ -189,7 +195,14 @@ export class McpServerManager extends EventEmitter {
     let resolvedArgs     = args
     if (entry.metaToolMap?.has(toolName)) {
       resolvedToolName = entry.metaToolMap.get(toolName)! // always 'TOOL_CALL'
-      resolvedArgs     = { tool_name: toolName, ...args }
+      const { toolNameKey, argumentsKey } = entry.metaCallKeys ?? {
+        toolNameKey: 'tool_name',
+        argumentsKey: 'arguments',
+      }
+      resolvedArgs = {
+        [toolNameKey]:  toolName,
+        [argumentsKey]: Object.keys(args).length > 0 ? args : {},
+      }
     }
 
     const result = await entry.client.callTool({ name: resolvedToolName, arguments: resolvedArgs })
@@ -289,6 +302,26 @@ export class McpServerManager extends EventEmitter {
       if (isMetaMcp) {
         console.log(`[McpServerManager] 🔍 "${name}" is a meta-MCP — eagerly resolving TOOL_LIST`)
         try {
+          // Read TOOL_CALL's inputSchema to learn what parameter keys it expects.
+          // This is the only server-agnostic way — we never hardcode key names.
+          const toolCallDef = tools.find((t) => t.name === 'TOOL_CALL')
+          const toolCallSchema = (toolCallDef?.inputSchema ?? {}) as {
+            properties?: Record<string, unknown>
+          }
+          const schemaKeys = Object.keys(toolCallSchema.properties ?? {})
+          // Heuristic: the tool-name key is the property whose name contains
+          // 'tool' or 'name' (but not 'arg'); the arguments key contains 'arg'.
+          // Fall back to first/second key if naming is non-standard.
+          const toolNameKey =
+            schemaKeys.find((k) => /tool|name/i.test(k) && !/arg/i.test(k)) ??
+            schemaKeys[0] ??
+            'tool_name'
+          const argumentsKey =
+            schemaKeys.find((k) => /arg/i.test(k)) ??
+            schemaKeys[1] ??
+            'arguments'
+          console.log(`[McpServerManager] 🔑 "${name}" TOOL_CALL keys: toolNameKey="${toolNameKey}" argumentsKey="${argumentsKey}"`)
+
           const listResult = await this._withTimeout(
             entry.client!.callTool({ name: 'TOOL_LIST', arguments: {} }),
             10_000,
@@ -306,12 +339,13 @@ export class McpServerManager extends EventEmitter {
           }>
 
           const metaToolMap = new Map<string, string>()
-          entry.tools   = toolDefs.map((t) => t.name)
-          entry.schemas = toolDefs.map((t) => {
+          entry.tools      = toolDefs.map((t) => t.name)
+          entry.schemas    = toolDefs.map((t) => {
             metaToolMap.set(t.name, 'TOOL_CALL')
             return this._mapToolSchema(name, t)
           })
-          entry.metaToolMap = metaToolMap
+          entry.metaToolMap  = metaToolMap
+          entry.metaCallKeys = { toolNameKey, argumentsKey }
           console.log(`[McpServerManager] ✅ "${name}" meta-MCP expanded — tools: ${entry.tools.join(', ')}`)
         } catch (err) {
           // TOOL_LIST failed — fall back to exposing the raw meta tools so the
