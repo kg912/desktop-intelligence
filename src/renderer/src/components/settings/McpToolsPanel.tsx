@@ -356,6 +356,28 @@ export function McpToolsPanel() {
     }
   }, [])
 
+  const handleToggleTool = useCallback(async (serverName: string, toolName: string, enabled: boolean) => {
+    // Optimistic update — immediately reflect in UI
+    setServers(prev => prev.map(s => {
+      if (s.name !== serverName) return s
+      const disabled = new Set(s.disabledTools)
+      if (enabled) {
+        disabled.delete(toolName)
+      } else {
+        disabled.add(toolName)
+      }
+      return { ...s, disabledTools: [...disabled] }
+    }))
+    // Persist to disk
+    try {
+      await window.api.mcpSetToolEnabled(serverName, toolName, enabled)
+    } catch (err) {
+      console.error('[McpToolsPanel] Failed to toggle tool:', err)
+      // Revert on failure
+      refreshStatus()
+    }
+  }, [refreshStatus])
+
   useEffect(() => {
     refreshStatus().finally(() => setLoading(false))
 
@@ -402,6 +424,7 @@ export function McpToolsPanel() {
             info={s}
             onRestart={() => window.api.mcpRestartServer(s.name)}
             onRemove={() => window.api.mcpRemoveServer(s.name)}
+            onToggleTool={handleToggleTool}
           />
         ))}
       </div>

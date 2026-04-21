@@ -239,6 +239,7 @@ export const IPC_CHANNELS = {
   MCP_TOOL_PERMISSION_REQUEST:  'mcp:toolPermissionRequest',   // main→renderer
   MCP_TOOL_PERMISSION_RESPONSE: 'mcp:toolPermissionResponse',  // renderer→main
   MCP_SERVER_STATUS_CHANGED:    'mcp:serverStatusChanged',     // main→renderer push
+  MCP_SET_TOOL_ENABLED:        'mcp:setToolEnabled',          // renderer→main
 
 } as const
 
@@ -328,6 +329,7 @@ export interface McpServerConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
+  disabledTools?: string[]   // List of un-namespaced tool names currently disabled for this server
 }
 
 /** Persisted MCP server settings (mcp.json) — includes enabled flag per server */
@@ -343,6 +345,7 @@ export interface McpServerRuntimeInfo {
   status: McpServerStatus
   tools:  string[]    // tool names exposed by this server
   error?: string      // last error message if status === 'error'
+  disabledTools: string[] // currently disabled tools for this server
 }
 
 /** Tool permission request — shown as approval dialog in renderer */

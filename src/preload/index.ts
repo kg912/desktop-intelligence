@@ -161,6 +161,9 @@ const api = {
   mcpRespondToPermission: (r: { requestId: string; approved: boolean; alwaysAllow: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE, r),
 
+  mcpSetToolEnabled: (serverName: string, toolName: string, enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_SET_TOOL_ENABLED, { serverName, toolName, enabled }),
+
   onMcpServerStatusChanged: (cb: (info: McpServerRuntimeInfo) => void): (() => void) => {
     const h = (_: Electron.IpcRendererEvent, info: McpServerRuntimeInfo): void => cb(info)
     ipcRenderer.on(IPC_CHANNELS.MCP_SERVER_STATUS_CHANGED, h)

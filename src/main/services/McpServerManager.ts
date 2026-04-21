@@ -116,6 +116,28 @@ export class McpServerManager extends EventEmitter {
     console.log('[McpServerManager] mcp.json written:', Object.keys(settings).join(', '))
   }
 
+  async setToolEnabled(serverName: string, toolName: string, enabled: boolean): Promise<void> {
+    const config = await this.readConfig()
+    const server = config[serverName]
+    if (!server) throw new Error(`Server "${serverName}" not found in config`)
+
+    const disabled = new Set(server.disabledTools ?? [])
+    if (enabled) {
+      disabled.delete(toolName)
+    } else {
+      disabled.add(toolName)
+    }
+    server.disabledTools = disabled.size > 0 ? [...disabled] : []
+
+    await this.writeConfig(config)
+    console.log(`[McpServerManager] Tool "${serverName}__${toolName}" ${enabled ? 'enabled' : 'disabled'}`)
+
+    const entry = this.servers.get(serverName)
+    if (entry) {
+      entry.config = { ...entry.config, disabledTools: server.disabledTools }
+    }
+  }
+
   // ── Lifecycle ────────────────────────────────────────────────
 
   async startAll(): Promise<void> {
@@ -152,18 +174,27 @@ export class McpServerManager extends EventEmitter {
 
   getServerStatus(): McpServerRuntimeInfo[] {
     return [...this.servers.values()].map((e) => ({
-      name:   e.name,
-      status: e.status,
-      tools:  e.tools,
-      error:  e.error,
+      name:          e.name,
+      status:        e.status,
+      tools:         e.tools,
+      error:         e.error,
+      disabledTools: e.config.disabledTools ?? [],
     }))
   }
 
   getToolSchemas(): LMStudioTool[] {
     const result: LMStudioTool[] = []
     for (const entry of this.servers.values()) {
-      if (entry.status === 'running') {
-        result.push(...entry.schemas)
+      if (entry.status !== 'running') continue
+      const disabledSet = new Set(entry.config.disabledTools ?? [])
+      for (const schema of entry.schemas) {
+        // schema.function.name is namespaced: "serverName__toolName"
+        // Extract the un-namespaced tool name for the disable check
+        const parts = schema.function.name.split('__')
+        const unNamespacedTool = parts.slice(1).join('__') // handles tool names that might contain __
+        if (!disabledSet.has(unNamespacedTool)) {
+          result.push(schema)
+        }
       }
     }
     return result
@@ -510,10 +541,11 @@ export class McpServerManager extends EventEmitter {
     const entry = this.servers.get(name)
     if (!entry) return
     this.emit('statusChanged', {
-      name:   entry.name,
-      status: entry.status,
-      tools:  entry.tools,
-      error:  entry.error,
+      name:          entry.name,
+      status:        entry.status,
+      tools:         entry.tools,
+      error:         entry.error,
+      disabledTools: entry.config.disabledTools ?? [],
     } as McpServerRuntimeInfo)
   }
 }
