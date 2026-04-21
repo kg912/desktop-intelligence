@@ -101,6 +101,10 @@ Alternatively, paste a raw MCP server configuration in JSON format for more adva
 
 Once added, each MCP server appears as a card in the settings list with its name and status. You can toggle individual servers on or off, edit their configuration, or remove them.
 
+Additionally, if an MCP server exposes extra tools, some can be disabled as necessary:
+
+![Selective MCP tool use](app_images/mcp_selective_tool_use.png)
+
 ### Built-in Brave Search MCP
 
 **Brave Search** is provided as a built-in MCP server (see the Web Search tab).
