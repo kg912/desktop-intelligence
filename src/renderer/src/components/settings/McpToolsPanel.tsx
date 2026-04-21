@@ -134,9 +134,22 @@ function ServerCard({ info, onRestart, onRemove, onToggleTool }: ServerCardProps
                 const activeCount = info.tools.length - info.disabledTools.length
                 return (
                   <>
-                    <p className="text-xs text-content-muted mb-1.5">
-                      Tools ({activeCount}/{info.tools.length} active)
-                    </p>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-xs text-content-muted">
+                        Tools ({activeCount}/{info.tools.length} active) — <span className="italic">click to toggle</span>
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => info.tools.forEach(t => onToggleTool(info.name, t, true))}
+                          className="text-xs text-content-muted hover:text-accent-400 transition-colors no-drag"
+                        >select all</button>
+                        <span className="text-content-muted/30">·</span>
+                        <button
+                          onClick={() => info.tools.forEach(t => onToggleTool(info.name, t, false))}
+                          className="text-xs text-content-muted hover:text-red-400 transition-colors no-drag"
+                        >none</button>
+                      </div>
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {info.tools.map((t) => {
                         const isEnabled = !info.disabledTools.includes(t)
