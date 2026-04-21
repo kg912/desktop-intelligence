@@ -136,7 +136,7 @@ export class McpServerManager extends EventEmitter {
     if (entry) {
       entry.config = { ...entry.config, disabledTools: server.disabledTools }
       // Push confirmed state to renderer so the UI reflects the persisted value
-      this._emitStatus(name)
+      this._emitStatus(serverName)
     }
   }
 
