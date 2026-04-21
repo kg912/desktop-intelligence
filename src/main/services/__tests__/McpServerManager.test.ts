@@ -163,6 +163,46 @@ describe('getToolSchemas()', () => {
     })
   })
 
+  it('parses inputSchema when it arrives as a JSON string from TOOL_LIST (meta-MCP)', async () => {
+    // Simulate a meta-MCP server whose TOOL_LIST returns inputSchema as a JSON string
+    const toolList = JSON.stringify([
+      {
+        name: 'GOLD_SILVER_SPOT',
+        description: 'Returns live spot prices',
+        // inputSchema is a string, not an object
+        inputSchema: JSON.stringify({
+          type: 'object',
+          properties: {
+            symbol: { type: 'string', description: 'Metal symbol: GOLD or SILVER' },
+          },
+          required: ['symbol'],
+        }),
+      },
+    ])
+
+    setConfig({ 'alpha': { command: 'npx', enabled: true } })
+    sdkMocks.listTools.mockResolvedValue({
+      tools: [
+        { name: 'TOOL_LIST', description: 'List tools' },
+        { name: 'TOOL_CALL', description: 'Call tool', inputSchema: { type: 'object', properties: { tool_name: { type: 'string' }, arguments: { type: 'object' } }, required: ['tool_name'] } },
+      ],
+    })
+    sdkMocks.callTool.mockResolvedValue({
+      isError: false,
+      content: [{ type: 'text', text: toolList }],
+    })
+
+    const mgr = newMgr()
+    await mgr.startAll()
+
+    const schemas = mgr.getToolSchemas()
+    expect(schemas).toHaveLength(1)
+    expect(schemas[0].function.name).toBe('alpha__GOLD_SILVER_SPOT')
+    // The critical assertion — symbol must be present and required
+    expect(schemas[0].function.parameters.properties).toHaveProperty('symbol')
+    expect(schemas[0].function.parameters.required).toContain('symbol')
+  })
+
   it('namespaces tool names as serverName__toolName', async () => {
     setConfig({ 'fs': { command: 'npx', enabled: true } })
     sdkMocks.listTools.mockResolvedValue({ tools: [{ name: 'read_file', description: 'Read' }] })

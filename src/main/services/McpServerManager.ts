@@ -339,11 +339,16 @@ export class McpServerManager extends EventEmitter {
           }>
 
           const metaToolMap = new Map<string, string>()
-          entry.tools      = toolDefs.map((t) => t.name)
-          entry.schemas    = toolDefs.map((t) => {
+          entry.tools = toolDefs.map((t) => t.name)
+
+          // Resolve schemas sequentially so TOOL_GET fallbacks don't race.
+          const resolvedSchemas: LMStudioTool[] = []
+          for (const t of toolDefs) {
             metaToolMap.set(t.name, 'TOOL_CALL')
-            return this._mapToolSchema(name, t)
-          })
+            const resolvedSchema = await this._resolveInputSchema(entry.client!, t.name, t.inputSchema)
+            resolvedSchemas.push(this._mapToolSchema(name, { ...t, inputSchema: resolvedSchema }))
+          }
+          entry.schemas      = resolvedSchemas
           entry.metaToolMap  = metaToolMap
           entry.metaCallKeys = { toolNameKey, argumentsKey }
           console.log(`[McpServerManager] ✅ "${name}" meta-MCP expanded — tools: ${entry.tools.join(', ')}`)
@@ -409,15 +414,69 @@ export class McpServerManager extends EventEmitter {
 
   // ── Private: schema mapping ──────────────────────────────────
 
+  private async _resolveInputSchema(
+    client: Client,
+    toolName: string,
+    rawSchema: unknown,
+  ): Promise<{ type: string; properties?: Record<string, unknown>; required?: string[] }> {
+    const empty = { type: 'object', properties: {} as Record<string, unknown>, required: [] as string[] }
+
+    // Case (b): JSON string — parse it
+    if (typeof rawSchema === 'string' && rawSchema.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(rawSchema)
+        if (typeof parsed === 'object' && parsed !== null) return parsed as typeof empty
+      } catch (err) {
+        console.warn(`[McpServerManager] ⚠️ inputSchema string parse failed for "${toolName}":`, err)
+      }
+      return empty
+    }
+
+    // Case (a): already a real object with at least one property
+    if (
+      typeof rawSchema === 'object' &&
+      rawSchema !== null &&
+      typeof (rawSchema as Record<string, unknown>).type === 'string'
+    ) {
+      return rawSchema as typeof empty
+    }
+
+    // Case (c): missing / null / empty — try TOOL_GET
+    try {
+      const result = await this._withTimeout(
+        client.callTool({ name: 'TOOL_GET', arguments: { tool_name: toolName } }),
+        8_000,
+        `TOOL_GET for "${toolName}" timed out`,
+      )
+      const text = (result.content as Array<{ type: string; text?: string }>)
+        .filter((c) => c.type === 'text')
+        .map((c) => c.text ?? '')
+        .join('')
+      const parsed = JSON.parse(text)
+      // TOOL_GET may return the full tool definition or just the schema —
+      // handle both shapes.
+      const schema = parsed?.inputSchema ?? parsed?.parameters ?? parsed
+      if (typeof schema === 'string') return JSON.parse(schema) as typeof empty
+      if (typeof schema === 'object' && schema !== null) return schema as typeof empty
+    } catch (err) {
+      console.warn(`[McpServerManager] ⚠️ TOOL_GET fallback failed for "${toolName}":`, err)
+    }
+
+    return empty
+  }
+
   private _mapToolSchema(
     serverName: string,
     tool: { name: string; description?: string; inputSchema?: unknown },
   ): LMStudioTool {
-    const schema = (tool.inputSchema ?? { type: 'object', properties: {}, required: [] }) as {
-      type:        string
-      properties?: Record<string, unknown>
-      required?:   string[]
-    }
+    // inputSchema is guaranteed to be a resolved object by the call site —
+    // either from TOOL_LIST (already parsed) or from TOOL_GET fallback.
+    // The null-coalesce is a last-resort guard only.
+    const schema = (
+      typeof tool.inputSchema === 'object' && tool.inputSchema !== null
+        ? tool.inputSchema
+        : { type: 'object', properties: {}, required: [] }
+    ) as { type: string; properties?: Record<string, unknown>; required?: string[] }
 
     return {
       type: 'function',
