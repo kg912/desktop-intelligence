@@ -63,6 +63,15 @@ interface ServerEntry {
   error:   string | undefined
   /** Session-level flag: false means calls bypass the approval dialog */
   requiresApproval: boolean
+  /**
+   * Meta-MCP translation map — only populated for servers that expose
+   * TOOL_LIST/TOOL_GET/TOOL_CALL instead of real domain tools.
+   * Maps the expanded tool name (as seen by the model, un-namespaced) → the
+   * real tool name to call on the server (always "TOOL_CALL" for meta-MCPs).
+   * When present, callTool() injects the logical name into the args instead
+   * of passing it as the tool name directly.
+   */
+  metaToolMap?: Map<string, string> // expandedToolName → 'TOOL_CALL'
 }
 
 // ── Permission promise map ────────────────────────────────────────
@@ -172,7 +181,18 @@ export class McpServerManager extends EventEmitter {
       if (!approved) throw new Error('Tool call denied by user')
     }
 
-    const result = await entry.client.callTool({ name: toolName, arguments: args })
+    // Meta-MCP translation: if this server uses a TOOL_LIST/TOOL_CALL proxy
+    // layer, the model was given expanded tool names (e.g. "TIME_SERIES_DAILY").
+    // We must translate back to the real executor ("TOOL_CALL") and pass the
+    // logical tool name as an argument so the server knows what to invoke.
+    let resolvedToolName = toolName
+    let resolvedArgs     = args
+    if (entry.metaToolMap?.has(toolName)) {
+      resolvedToolName = entry.metaToolMap.get(toolName)! // always 'TOOL_CALL'
+      resolvedArgs     = { name: toolName, ...args }
+    }
+
+    const result = await entry.client.callTool({ name: resolvedToolName, arguments: resolvedArgs })
 
     if (result.isError) {
       const msg = (result.content as Array<{ type: string; text?: string }>)
@@ -255,8 +275,56 @@ export class McpServerManager extends EventEmitter {
         `Server "${name}" did not respond to tools/list within 10 s`,
       )
 
-      entry.tools   = tools.map((t) => t.name)
-      entry.schemas = tools.map((t) => this._mapToolSchema(name, t))
+      // ── Meta-MCP detection ─────────────────────────────────────────
+      // Some MCP servers (e.g. AlphaVantage) expose a generic proxy layer:
+      // TOOL_LIST (discover available tools), TOOL_GET (get schema), TOOL_CALL
+      // (invoke a tool). The model would normally waste a full round-trip
+      // calling TOOL_LIST before it can do anything useful.
+      //
+      // Detection: if TOOL_LIST is among the discovered tools, we call it
+      // eagerly at startup, expand the real tool schemas, and present them
+      // directly to the model. callTool() translates back to TOOL_CALL.
+      const isMetaMcp = tools.some((t) => t.name === 'TOOL_LIST')
+
+      if (isMetaMcp) {
+        console.log(`[McpServerManager] 🔍 "${name}" is a meta-MCP — eagerly resolving TOOL_LIST`)
+        try {
+          const listResult = await this._withTimeout(
+            entry.client!.callTool({ name: 'TOOL_LIST', arguments: {} }),
+            10_000,
+            `Server "${name}" TOOL_LIST did not respond within 10 s`,
+          )
+          // TOOL_LIST returns text content — parse it as JSON
+          const rawText = (listResult.content as Array<{ type: string; text?: string }>)
+            .filter((c) => c.type === 'text')
+            .map((c) => c.text ?? '')
+            .join('')
+          const toolDefs = JSON.parse(rawText) as Array<{
+            name:        string
+            description?: string
+            inputSchema?: unknown
+          }>
+
+          const metaToolMap = new Map<string, string>()
+          entry.tools   = toolDefs.map((t) => t.name)
+          entry.schemas = toolDefs.map((t) => {
+            metaToolMap.set(t.name, 'TOOL_CALL')
+            return this._mapToolSchema(name, t)
+          })
+          entry.metaToolMap = metaToolMap
+          console.log(`[McpServerManager] ✅ "${name}" meta-MCP expanded — tools: ${entry.tools.join(', ')}`)
+        } catch (err) {
+          // TOOL_LIST failed — fall back to exposing the raw meta tools so the
+          // server is still usable (just with the extra round-trip at runtime).
+          console.warn(`[McpServerManager] ⚠️ "${name}" TOOL_LIST failed, falling back to raw tools:`, err)
+          entry.tools   = tools.map((t) => t.name)
+          entry.schemas = tools.map((t) => this._mapToolSchema(name, t))
+        }
+      } else {
+        entry.tools   = tools.map((t) => t.name)
+        entry.schemas = tools.map((t) => this._mapToolSchema(name, t))
+      }
+
       entry.status  = 'running'
       entry.error   = undefined
 
