@@ -189,7 +189,7 @@ export class McpServerManager extends EventEmitter {
     let resolvedArgs     = args
     if (entry.metaToolMap?.has(toolName)) {
       resolvedToolName = entry.metaToolMap.get(toolName)! // always 'TOOL_CALL'
-      resolvedArgs     = { name: toolName, ...args }
+      resolvedArgs     = { tool_name: toolName, ...args }
     }
 
     const result = await entry.client.callTool({ name: resolvedToolName, arguments: resolvedArgs })
