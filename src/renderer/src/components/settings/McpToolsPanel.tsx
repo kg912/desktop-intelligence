@@ -66,12 +66,13 @@ function StatusBadge({ status }: { status: McpServerRuntimeInfo['status'] }) {
 // ── Single server card ───────────────────────────────────────────
 
 interface ServerCardProps {
-  info:     McpServerRuntimeInfo
-  onRestart: (name: string) => void
-  onRemove:  (name: string) => void
+  info:        McpServerRuntimeInfo
+  onRestart:   (name: string) => void
+  onRemove:    (name: string) => void
+  onToggleTool: (serverName: string, toolName: string, enabled: boolean) => void
 }
 
-function ServerCard({ info, onRestart, onRemove }: ServerCardProps) {
+function ServerCard({ info, onRestart, onRemove, onToggleTool }: ServerCardProps) {
   const [expanded,   setExpanded]   = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [removing,   setRemoving]   = useState(false)
@@ -129,14 +130,36 @@ function ServerCard({ info, onRestart, onRemove }: ServerCardProps) {
           )}
           {info.tools.length > 0 ? (
             <div className="mt-2">
-              <p className="text-xs text-content-muted mb-1.5">Tools ({info.tools.length})</p>
-              <div className="flex flex-wrap gap-1.5">
-                {info.tools.map((t) => (
-                  <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-accent-950/40 border border-accent-900/30 text-accent-400 font-mono">
-                    {t}
-                  </span>
-                ))}
-              </div>
+              {(() => {
+                const activeCount = info.tools.length - info.disabledTools.length
+                return (
+                  <>
+                    <p className="text-xs text-content-muted mb-1.5">
+                      Tools ({activeCount}/{info.tools.length} active)
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {info.tools.map((t) => {
+                        const isEnabled = !info.disabledTools.includes(t)
+                        return (
+                          <button
+                            key={t}
+                            onClick={() => onToggleTool(info.name, t, !isEnabled)}
+                            title={isEnabled ? 'Click to disable' : 'Click to enable'}
+                            className={cn(
+                              'text-xs px-2 py-0.5 rounded-full border font-mono transition-all cursor-pointer',
+                              isEnabled
+                                ? 'bg-accent-950/40 border-accent-900/30 text-accent-400 hover:bg-red-950/50 hover:border-red-900/50 hover:text-red-400'
+                                : 'bg-surface-hover border-surface-border/40 text-content-muted/50 line-through hover:bg-accent-950/20 hover:text-accent-400/60'
+                            )}
+                          >
+                            {t}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           ) : (
             <p className="mt-2 text-xs text-content-muted italic">No tools discovered</p>

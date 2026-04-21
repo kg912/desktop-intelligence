@@ -871,6 +871,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.MCP_SET_TOOL_ENABLED,
+    async (_, { serverName, toolName, enabled }: { serverName: string; toolName: string; enabled: boolean }) => {
+      const { mcpServerManager } = await import('../services/McpServerManager')
+      await mcpServerManager.setToolEnabled(serverName, toolName, enabled)
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE,
     async (_, { requestId, approved, alwaysAllow }: { requestId: string; approved: boolean; alwaysAllow: boolean }) => {
       const { mcpServerManager } = await import('../services/McpServerManager')
