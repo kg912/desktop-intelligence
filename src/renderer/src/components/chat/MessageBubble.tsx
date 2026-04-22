@@ -5,7 +5,7 @@
  * AI    → left-aligned, transparent bg, full markdown + LaTeX + stats bar
  */
 
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { motion } from 'framer-motion'
 import { User, Globe, Paperclip, ChevronRight } from 'lucide-react'
 import avatarAssistant from '../../assets/avatar-assistant.png'
@@ -300,7 +300,7 @@ interface MessageBubbleProps {
   message: Message
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubbleInner({ message }: MessageBubbleProps) {
   if (message.role === 'divider') {
     return <ModeDivider label={message.content} />
   }
@@ -331,3 +331,26 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     </motion.div>
   )
 }
+
+// Shallow field comparator — only re-render when a visible field actually changed.
+// Completed messages keep the same object reference in state, so the `blocks`
+// reference check alone short-circuits for all non-streaming messages.
+function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
+  const p = prev.message
+  const n = next.message
+  return (
+    p.id          === n.id          &&
+    p.role        === n.role        &&
+    p.content     === n.content     &&
+    p.isThinking  === n.isThinking  &&
+    p.isStreaming  === n.isStreaming  &&
+    p.isSearching  === n.isSearching  &&
+    p.stats       === n.stats       &&
+    p.error       === n.error       &&
+    p.blocks      === n.blocks      &&
+    p.toolCall    === n.toolCall    &&
+    p.liveToolCall === n.liveToolCall
+  )
+}
+
+export const MessageBubble = memo(MessageBubbleInner, areEqual)

@@ -383,16 +383,28 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       });
     }
 
-    // ── Chunk: buffer and route to the correct block type ─────────
+    // ── 16ms flush interval — one React render per animation frame ──
+    // Chunks accumulate in chunkBufferRef; the interval drains them into
+    // React state at ~60 fps instead of on every incoming token.
+    // pendingFlushRef tracks whether the buffer has grown since the last flush
+    // so the setMessages updater is only invoked when there is new content.
+    const pendingFlushRef = { current: false };
+    const flushInterval = setInterval(() => {
+      if (pendingFlushRef.current) {
+        pendingFlushRef.current = false;
+        processBuffer();
+      }
+    }, 16);
+
+    // ── Chunk: accumulate into buffer, mark dirty ─────────────────
     const unsubChunk = window.api.onChatStreamChunk((chunk: string) => {
       streamingContentRef.current += chunk;
       chunkBufferRef.current += chunk;
+      pendingFlushRef.current = true;
 
       if (thinkStartedAt.current === null) {
         thinkStartedAt.current = Date.now();
       }
-
-      processBuffer();
 
       // Safety net: force-abort if think block unclosed for >180 s
       if (
@@ -406,10 +418,11 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       }
     });
 
-    // ── Tool start: flush buffer, close active block, append search block ──
+    // ── Tool start: flush buffer immediately, close active block, append search block ──
     const unsubToolStart = window.api.onChatStreamToolStart(
       ({ query, toolName }: { query: string; toolName?: string }) => {
-        // Flush any buffered text before the search begins
+        // Flush any buffered text before the search begins (bypass interval)
+        pendingFlushRef.current = false;
         processBuffer();
 
         // Close and deactivate the currently active block
@@ -484,7 +497,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         console.log("[DEV][useChat] stream-end stats:", JSON.stringify(stats));
       }
 
-      // Flush any remaining buffered content before finalising
+      // Flush any remaining buffered content immediately (bypass interval)
+      pendingFlushRef.current = false;
       processBuffer();
 
       // Clear in-flight refs before any async work
@@ -587,6 +601,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     const unsubErr = window.api.onChatError((msg: string) => {
       const id = assistantIdRef.current;
+      // Flush remaining buffer before error state
+      pendingFlushRef.current = false;
+      processBuffer();
       assistantIdRef.current = null;
       streamingContentRef.current = "";
       activeBlockIdRef.current = null;
@@ -609,6 +626,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     });
 
     return () => {
+      clearInterval(flushInterval);
       unsubChunk();
       unsubToolStart();
       unsubToolDone();

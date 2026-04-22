@@ -103,6 +103,19 @@ export function InputBar({
 
   const canSend = (text.trim().length > 0 || attachments.length > 0) && !disabled
 
+  // ── Stabilised handlers for props that change every render without useCallback ──
+  const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+    setText(e.target.value)
+  }, [])
+
+  const handlePaperclipClick = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  const handleThinkingToggle = useCallback(() => {
+    setThinkingMode(thinkingMode === 'thinking' ? 'fast' : 'thinking')
+  }, [thinkingMode, setThinkingMode])
+
   // ── Auto-resize textarea ──────────────────────────────────────
   const resize = useCallback(() => {
     const el = textareaRef.current
@@ -279,7 +292,7 @@ export function InputBar({
         <div className="flex items-end gap-2 px-3 py-3">
           {/* Paperclip */}
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={handlePaperclipClick}
             className="flex-shrink-0 p-1.5 rounded-lg
                        text-content-muted hover:text-content-secondary
                        hover:bg-surface-hover
@@ -304,7 +317,7 @@ export function InputBar({
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
             placeholder="Message… (Shift+Enter for newline)"
             rows={1}
@@ -376,7 +389,7 @@ export function InputBar({
         <div className="px-3 pb-2.5 flex items-center justify-between">
           {/* Thinking / Fast mode toggle */}
           <button
-            onClick={() => setThinkingMode(thinkingMode === 'thinking' ? 'fast' : 'thinking')}
+            onClick={handleThinkingToggle}
             title={thinkingMode === 'thinking'
               ? 'Thinking mode — click to switch to Fast'
               : 'Fast mode — click to switch to Thinking'}

@@ -22,6 +22,7 @@ import {
   useEffect,
   useRef,
   useMemo,
+  memo,
   createContext,
   useContext,
   type ComponentPropsWithoutRef
@@ -43,6 +44,14 @@ import {
   prepareUserContent,
 } from '../../lib/markdownUtils'
 import { ChatIdCtx } from '../layout/ChatArea'
+
+// ----------------------------------------------------------------
+// Plugin arrays — module-level constants so they are never re-created
+// on render, preventing ReactMarkdown from rebuilding its remark/rehype
+// pipeline on every streaming token update.
+// ----------------------------------------------------------------
+const REMARK_PLUGINS = [remarkGfm, remarkMath] as const
+const REHYPE_PLUGINS = [rehypeKatex]            as const
 
 // ----------------------------------------------------------------
 // Mermaid — initialised once at module load.
@@ -1118,7 +1127,7 @@ interface MarkdownRendererProps {
   variant?:    'assistant' | 'user'   // default: 'assistant'
 }
 
-export function MarkdownRenderer({ content, isStreaming = false, variant = 'assistant' }: MarkdownRendererProps) {
+function MarkdownRendererInner({ content, isStreaming = false, variant = 'assistant' }: MarkdownRendererProps) {
   // ── Hooks that must run unconditionally (before any early return) ─────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const userComponents = useMemo(() => buildComponents(), [])
@@ -1132,8 +1141,8 @@ export function MarkdownRenderer({ content, isStreaming = false, variant = 'assi
       <StreamingCtx.Provider value={false}>
         <div className="prose-chat prose-user selectable">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
             components={userComponents}
           >
             {prepared}
@@ -1205,8 +1214,8 @@ export function MarkdownRenderer({ content, isStreaming = false, variant = 'assi
       {/* ── Main answer ───────────────────────────────────────── */}
       {answer && (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[rehypeKatex]}
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
           components={components}
         >
           {answer}
@@ -1221,3 +1230,7 @@ export function MarkdownRenderer({ content, isStreaming = false, variant = 'assi
     </StreamingCtx.Provider>
   )
 }
+
+// Re-render only when the rendered content, streaming flag, or variant changes.
+// This prevents re-renders of completed assistant messages during active streaming.
+export const MarkdownRenderer = memo(MarkdownRendererInner)

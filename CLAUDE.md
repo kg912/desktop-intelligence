@@ -14,6 +14,7 @@ append a row. Never delete rows. This is how you know what has and hasn't been d
 
 | # | Date | File(s) Changed | What Was Done | Status |
 |---|------|-----------------|---------------|--------|
+| 137 | 2026-04-22 | src/renderer/src/hooks/useChat.ts, src/renderer/src/components/chat/MessageBubble.tsx, src/renderer/src/components/chat/MarkdownRenderer.tsx, src/renderer/src/components/layout/InputBar.tsx, src/renderer/src/components/layout/ChatArea.tsx, src/renderer/src/styles/globals.css | Perf: throttle stream state updates (16ms RAF flush), React.memo MessageBubble + MarkdownRenderer, useCallback InputBar handlers, CSS containment on scroll container, debounce auto-scroll via rAF, split streaming metrics context if mixed with model settings | ✅ Done |
 | 1 | 2026-03-21 | All | Initial commit — 44 files, 15,733 lines. Full app scaffold. | ✅ Done |
 | 2 | 2026-03-21 | ipc/fileProcessor.ts, rag/ingestor.ts | Fixed IPC file transfer — switched from DOM File object to ArrayBuffer + absolute path to cross Electron IPC boundary correctly | ✅ Done |
 | 3 | 2026-03-21 | rag/ingestor.ts, rag/retriever.ts | Added diagnostic sentinel logs: PDF-PARSE EXTRACTED CHARACTERS, VECTORS INSERTED INTO HNSWLIB, VECTOR DB RESULTS COUNT, FINAL LM STUDIO PAYLOAD | ✅ Done |

@@ -140,16 +140,19 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
   }, [messages.length])
 
   // ── Auto-scroll on every content change — unless paused ─────────
-  // During active streaming use 'instant' so rapid chunk updates don't
-  // stutter — the browser cancels-and-restarts a 'smooth' scroll on
-  // every invocation, making it look frozen until the stream ends.
+  // Wrapping the scroll in rAF batches the scrollTop write into the
+  // browser's paint cycle so multiple rapid state updates (streaming
+  // tokens) only trigger one layout recalculation per frame.
   useEffect(() => {
     if (userScrolledUp.current) return
-    isProgrammaticScroll.current = true        // mark: next onScroll is ours
-    bottomRef.current?.scrollIntoView({
-      behavior: isStreaming ? 'instant' : 'smooth',
-      block:    'end',
+    const raf = requestAnimationFrame(() => {
+      isProgrammaticScroll.current = true      // mark: next onScroll is ours
+      bottomRef.current?.scrollIntoView({
+        behavior: isStreaming ? 'instant' : 'smooth',
+        block:    'end',
+      })
     })
+    return () => cancelAnimationFrame(raf)
   }, [
     messages.length,
     messages[messages.length - 1]?.content,
@@ -200,7 +203,7 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
       ref={scrollContainerRef}
       onWheel={handleWheel}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto relative no-drag"
+      className="flex-1 overflow-y-auto relative no-drag chat-scroll-container"
     >
       {/* Compaction result toast */}
       <AnimatePresence>

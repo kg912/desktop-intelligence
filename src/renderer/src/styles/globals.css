@@ -44,6 +44,13 @@
   .no-drag        { -webkit-app-region: no-drag; }
   .text-glow-red  { text-shadow: 0 0 12px rgba(220,38,38,0.8); }
 
+  /* Isolate the chat scroll area from the rest of the layout so new messages
+     do not trigger a full-page layout recalculation on every streaming token. */
+  .chat-scroll-container {
+    contain: layout style paint;
+    will-change: transform;
+  }
+
   .shimmer {
     background: linear-gradient(90deg, #1a1a1a 0%, #2a2a2a 50%, #1a1a1a 100%);
     background-size: 1000px 100%;
