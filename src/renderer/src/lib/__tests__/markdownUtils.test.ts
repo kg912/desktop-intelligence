@@ -909,3 +909,76 @@ describe('isPlottingPython', () => {
     expect(isPlottingPython(code)).toBe(false)
   })
 })
+
+// ── Suite: deduplicateFencedCodeBlocks ────────────────────────────────────────
+
+import { deduplicateFencedCodeBlocks } from '../markdownUtils'
+
+describe('deduplicateFencedCodeBlocks', () => {
+  it('returns a string with no code blocks unchanged', () => {
+    expect(deduplicateFencedCodeBlocks('just prose')).toBe('just prose')
+  })
+
+  it('returns a single code block unchanged', () => {
+    const input = '```python\nprint("hi")\n```'
+    expect(deduplicateFencedCodeBlocks(input)).toBe(input)
+  })
+
+  it('removes an exact duplicate block (same language tag)', () => {
+    const block = '```python\nprint("hi")\n```'
+    const input = `${block}\n\n${block}`
+    const result = deduplicateFencedCodeBlocks(input)
+    // Only one occurrence of the block body should remain
+    expect(result.split('print("hi")').length - 1).toBe(1)
+  })
+
+  it('removes a duplicate with a different (missing) language tag — the Gemma 4 pattern', () => {
+    const body = 'import matplotlib.pyplot as plt\nplt.plot([1,2],[3,4])\n'
+    const first  = '```python\n' + body + '```'
+    const second = '```\n'       + body + '```'
+    const input = `Some prose\n\n${first}\n\nMore prose\n\n${second}`
+    const result = deduplicateFencedCodeBlocks(input)
+    // First block (with python tag) kept; second block (no tag) removed
+    expect(result).toContain('```python')
+    const fenceCount = (result.match(/^```/gm) ?? []).length
+    expect(fenceCount).toBe(2) // one opening + one closing fence line
+  })
+
+  it('keeps two genuinely different code blocks', () => {
+    const a = '```python\nprint("hello")\n```'
+    const b = '```python\nprint("world")\n```'
+    const input = `${a}\n\n${b}`
+    const result = deduplicateFencedCodeBlocks(input)
+    expect(result).toContain('hello')
+    expect(result).toContain('world')
+  })
+
+  it('keeps surrounding prose intact when removing a duplicate', () => {
+    const block = '```js\nconsole.log(1)\n```'
+    const input = `before\n\n${block}\n\nbetween\n\n${block}\n\nafter`
+    const result = deduplicateFencedCodeBlocks(input)
+    expect(result).toContain('before')
+    expect(result).toContain('between')
+    expect(result).toContain('after')
+    // Only one copy of the block body
+    expect(result.split('console.log(1)').length - 1).toBe(1)
+  })
+
+  it('handles three occurrences — only the first is kept', () => {
+    const block = '```ts\nconst x = 1\n```'
+    const input = `${block}\n\n${block}\n\n${block}`
+    const result = deduplicateFencedCodeBlocks(input)
+    expect(result.split('const x = 1').length - 1).toBe(1)
+  })
+
+  it('is integrated into parseThinkBlocks Gemma Case 1 — deduplicates chart code', () => {
+    const body = 'import matplotlib.pyplot as plt\nplt.plot([1],[2])\n'
+    const pythonBlock = '```python\n' + body + '```'
+    const plainBlock  = '```\n'       + body + '```'
+    // Gemma format: thinking contains the draft, answer repeats it with different fence
+    const raw = `<|channel>thought\nI will write a chart.\n${pythonBlock}\n<channel|>Here is the chart:\n\n${pythonBlock}\n\n${plainBlock}`
+    const { answer } = parseThinkBlocks(raw, true)
+    // Only one copy of the chart code should survive
+    expect(answer.split('plt.plot').length - 1).toBe(1)
+  })
+})

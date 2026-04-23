@@ -77,6 +77,35 @@ const IMO_PATTERNS: RegExp[] = [
   /^After (?:analyzing|reviewing|checking)\b/i,
 ]
 
+/**
+ * deduplicateFencedCodeBlocks
+ *
+ * Removes duplicate fenced code blocks from a markdown answer string.
+ * Gemma 4 occasionally drafts code inside its thinking block and then emits
+ * the same code again in the answer — sometimes with a different (or missing)
+ * fence language tag. This produces two identical rendered charts.
+ *
+ * Strategy: collect every fenced block's trimmed body (content between the
+ * fence delimiters). On second encounter of the same body, drop that block.
+ * The first occurrence is always kept, preserving its language tag.
+ *
+ * A fenced block is matched by the CommonMark rule: opening fence is a line
+ * of 3+ backticks (optionally with a language info string), closing fence is
+ * a line of 3+ backticks. Only backtick fences are handled (not tilde).
+ */
+export function deduplicateFencedCodeBlocks(answer: string): string {
+  // Regex: captures opening fence line (group 1) + body (group 2) + closing fence line (group 3)
+  // Flags: multiline so ^ / $ match line boundaries
+  const FENCE_RE = /(^```[^\n]*\n)([\s\S]*?)(^```[ \t]*$)/gm
+  const seen = new Set<string>()
+  return answer.replace(FENCE_RE, (match, open, body, close) => {
+    const key = body.trim()
+    if (seen.has(key)) return ''   // duplicate — drop entirely
+    seen.add(key)
+    return match                   // first occurrence — keep as-is
+  })
+}
+
 function cleanAnswerEcho(rawAnswer: string, thought: string): string {
   if (!rawAnswer || !thought) return rawAnswer
 
@@ -130,7 +159,7 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
       const rawAnswer = raw.slice(gCloseIdx + GEMMA_CLOSE.length).replace(/^\s*/, '')
       // Empty-block guard — thinking was disabled; don't show an empty accordion
       if (!thought) return { thought: '', answer: rawAnswer, isThinking: false }
-      const answer = cleanAnswerEcho(rawAnswer, thought)
+      const answer = deduplicateFencedCodeBlocks(cleanAnswerEcho(rawAnswer, thought))
       return { thought, answer, isThinking: false }
     }
 
@@ -157,7 +186,7 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
     // Strip leading whitespace from the answer (newline after </think> is common)
     const rawAnswer = raw.slice(closeIdx + CLOSE.length).replace(/^\s*/, '')
     // Remove internal-monologue echo paragraphs the model repeated after </think>
-    const answer = cleanAnswerEcho(rawAnswer, thought)
+    const answer = deduplicateFencedCodeBlocks(cleanAnswerEcho(rawAnswer, thought))
     if (DEBUG) console.log('[DEBUG parseThinkBlocks] Case 1 (closed): thoughtLen=', thought.length, 'answerLen=', answer.length)
     return { thought, answer, isThinking: false }
   }
