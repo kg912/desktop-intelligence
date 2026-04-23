@@ -97,6 +97,20 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   /** True while inside an open <think> tag (waiting for </think>). */
   const inThinkBlockRef = useRef<boolean>(false);
 
+  // ── rAF throttle for streaming state updates ─────────────────
+  // processBuffer() mutates refs on every token but only schedules ONE
+  // setMessages per animation frame. This cuts React re-renders from
+  // ~57/s (one per token) down to ~60/s max (one per frame), and the
+  // browser naturally coalesces them. pendingRafRef holds the rAF id
+  // so we never queue more than one frame at a time.
+  const pendingRafRef = useRef<number | null>(null);
+
+  // ── Cheap think-block open/close tracking ────────────────────
+  // Replaces the O(n) includes() scan on the full accumulated string
+  // that was running on every single token.
+  const hasSeenOpenThinkRef  = useRef<boolean>(false);
+  const hasSeenCloseThinkRef = useRef<boolean>(false);
+
   // Tracks the thinking mode used for the previous turn (divider insertion).
   const prevThinkingModeRef = useRef<"thinking" | "fast">("fast");
 
@@ -271,7 +285,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     /**
      * Flush `chunkBufferRef` by scanning for `<think>` / `</think>` boundaries.
      * Text between boundaries is routed to the correct block type via ref mutation.
-     * A single `setMessages` is issued at the end when any mutation occurred.
+     * State is committed via a rAF-throttled flush — at most one setMessages per
+     * animation frame regardless of how many tokens arrive in between.
      */
     function processBuffer(): void {
       let buf = chunkBufferRef.current;
@@ -299,6 +314,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
               appendToBlock(activeBlockIdRef.current, before);
               mutated = true;
             }
+            hasSeenCloseThinkRef.current = true;
             inThinkBlockRef.current = false;
             activeBlockIdRef.current = null; // next answer text → new AnswerBlock
             buf = buf.slice(closeIdx + closeTag.length);
@@ -336,6 +352,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
               ...currentBlocksRef.current,
               { id: newThinkId, type: "thinking", content: "" } as MessageBlock,
             ];
+            hasSeenOpenThinkRef.current = true;
             inThinkBlockRef.current = true;
             activeBlockIdRef.current = newThinkId;
             buf = buf.slice(openIdx + openTag.length);
@@ -347,8 +364,22 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       chunkBufferRef.current = buf;
 
       if (mutated) {
-        const id = assistantIdRef.current;
+        scheduleStateFlush();
+      }
+    }
+
+    /**
+     * scheduleStateFlush — commit ref state to React at most once per frame.
+     * Multiple processBuffer() calls within the same frame share one rAF;
+     * the callback reads the latest ref values so no tokens are lost.
+     */
+    function scheduleStateFlush(): void {
+      if (pendingRafRef.current !== null) return; // already scheduled
+      pendingRafRef.current = requestAnimationFrame(() => {
+        pendingRafRef.current = null;
+        const id     = assistantIdRef.current;
         const blocks = currentBlocksRef.current;
+        if (!id) return;
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === id);
           if (idx === -1) return prev;
@@ -363,7 +394,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           };
           return updated;
         });
-      }
+      });
     }
 
     /**
@@ -397,8 +428,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       // Safety net: force-abort if think block unclosed for >180 s
       if (
         thinkStartedAt.current !== null &&
-        streamingContentRef.current.includes("<think>") &&
-        !streamingContentRef.current.includes("</think>") &&
+        hasSeenOpenThinkRef.current &&
+        !hasSeenCloseThinkRef.current &&
         Date.now() - thinkStartedAt.current > 180_000
       ) {
         console.warn("[useChat] ⏱ Think block timeout — forcing stream end");
@@ -494,6 +525,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       activeBlockIdRef.current = null;
       chunkBufferRef.current = "";
       inThinkBlockRef.current = false;
+      hasSeenOpenThinkRef.current  = false;
+      hasSeenCloseThinkRef.current = false;
+      if (pendingRafRef.current !== null) {
+        cancelAnimationFrame(pendingRafRef.current);
+        pendingRafRef.current = null;
+      }
 
       // Finalise blocks: mark all answer blocks isStreaming: false
       const finalizedBlocks = currentBlocksRef.current.map((b) =>
@@ -592,6 +629,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       activeBlockIdRef.current = null;
       chunkBufferRef.current = "";
       inThinkBlockRef.current = false;
+      hasSeenOpenThinkRef.current  = false;
+      hasSeenCloseThinkRef.current = false;
+      if (pendingRafRef.current !== null) {
+        cancelAnimationFrame(pendingRafRef.current);
+        pendingRafRef.current = null;
+      }
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id);
         if (idx === -1) return prev;
@@ -653,6 +696,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       activeBlockIdRef.current = null;
       chunkBufferRef.current = "";
       inThinkBlockRef.current = false;
+      hasSeenOpenThinkRef.current  = false;
+      hasSeenCloseThinkRef.current = false;
+      if (pendingRafRef.current !== null) {
+        cancelAnimationFrame(pendingRafRef.current);
+        pendingRafRef.current = null;
+      }
 
       const modeChanged = prevThinkingModeRef.current !== thinkingMode;
       prevThinkingModeRef.current = thinkingMode;
@@ -874,6 +923,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     activeBlockIdRef.current = null;
     chunkBufferRef.current = "";
     inThinkBlockRef.current = false;
+    hasSeenOpenThinkRef.current  = false;
+    hasSeenCloseThinkRef.current = false;
+    if (pendingRafRef.current !== null) {
+      cancelAnimationFrame(pendingRafRef.current);
+      pendingRafRef.current = null;
+    }
     currentChatIdRef.current = null;
   }, [isStreaming]);
 

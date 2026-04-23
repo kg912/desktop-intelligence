@@ -5,7 +5,7 @@
  * AI    → left-aligned, transparent bg, full markdown + LaTeX + stats bar
  */
 
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { motion } from 'framer-motion'
 import { User, Globe, Paperclip, ChevronRight } from 'lucide-react'
 import avatarAssistant from '../../assets/avatar-assistant.png'
@@ -300,7 +300,7 @@ interface MessageBubbleProps {
   message: Message
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   if (message.role === 'divider') {
     return <ModeDivider label={message.content} />
   }
@@ -310,7 +310,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       variants={bubbleVariants}
       initial="initial"
       animate="animate"
-      layout="position"
     >
       {message.role === 'user'
         ? <UserBubble content={message.content} attachments={message.attachments} />
@@ -330,4 +329,4 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       }
     </motion.div>
   )
-}
+})

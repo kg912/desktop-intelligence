@@ -140,15 +140,20 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
   }, [messages.length])
 
   // ── Auto-scroll on every content change — unless paused ─────────
-  // During active streaming use 'instant' so rapid chunk updates don't
-  // stutter — the browser cancels-and-restarts a 'smooth' scroll on
-  // every invocation, making it look frozen until the stream ends.
+  // Throttled with rAF so rapid token updates don't call scrollIntoView
+  // on every single chunk (which was stacking with the React re-render cost).
+  const scrollRafRef = useRef<number | null>(null)
   useEffect(() => {
     if (userScrolledUp.current) return
-    isProgrammaticScroll.current = true        // mark: next onScroll is ours
-    bottomRef.current?.scrollIntoView({
-      behavior: isStreaming ? 'instant' : 'smooth',
-      block:    'end',
+    if (scrollRafRef.current !== null) return  // already scheduled this frame
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      if (userScrolledUp.current) return
+      isProgrammaticScroll.current = true
+      bottomRef.current?.scrollIntoView({
+        behavior: isStreaming ? 'instant' : 'smooth',
+        block:    'end',
+      })
     })
   }, [
     messages.length,
