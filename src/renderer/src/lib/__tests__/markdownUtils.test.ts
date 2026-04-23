@@ -818,3 +818,94 @@ describe('prepareUserContent', () => {
     expect(prepareUserContent('')).toBe('')
   })
 })
+
+// ── Suite: isPlottingPython ────────────────────────────────────────────────────────────────────
+
+import { isPlottingPython } from '../markdownUtils'
+
+describe('isPlottingPython', () => {
+  // ─ True cases ─ should be routed to MatplotlibBlock ──────────────────────────────
+
+  it('detects import matplotlib.pyplot + plt.plot()', () => {
+    const code = `import matplotlib.pyplot as plt\nimport numpy as np\nx = np.linspace(0,1)\nplt.plot(x, x**2)\nplt.show()`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects from matplotlib import ... + plt.bar()', () => {
+    const code = `from matplotlib import pyplot as plt\nplt.bar(['A','B'], [1,2])`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.scatter()', () => {
+    const code = `import matplotlib.pyplot as plt\nplt.scatter([1,2],[3,4])`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.hist()', () => {
+    const code = `import matplotlib.pyplot as plt\nimport numpy as np\nplt.hist(np.random.randn(100))`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.subplots() as draw-call signal', () => {
+    const code = `import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1,2],[3,4])`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.barh()', () => {
+    const code = `import matplotlib.pyplot as plt\nplt.barh(['x','y'], [5,10])`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.pie()', () => {
+    const code = `import matplotlib.pyplot as plt\nplt.pie([30,70], labels=['A','B'])`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.imshow()', () => {
+    const code = `import matplotlib.pyplot as plt\nimport numpy as np\nplt.imshow(np.zeros((10,10)))`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.contourf()', () => {
+    const code = `import matplotlib.pyplot as plt\nimport numpy as np\nX,Y=np.meshgrid(np.linspace(-1,1),np.linspace(-1,1))\nplt.contourf(X,Y,X**2+Y**2)`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  it('detects plt.figure() as draw-call signal', () => {
+    const code = `import matplotlib.pyplot as plt\nfig = plt.figure()\nax = fig.add_subplot(111)\nax.plot([1,2],[3,4])`
+    expect(isPlottingPython(code)).toBe(true)
+  })
+
+  // ─ False cases ─ must NOT be routed to MatplotlibBlock ─────────────────────────
+
+  it('returns false for plain Python with no matplotlib import', () => {
+    const code = `def fibonacci(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a+b\n    return a`
+    expect(isPlottingPython(code)).toBe(false)
+  })
+
+  it('returns false for numpy-only code (no matplotlib)', () => {
+    const code = `import numpy as np\nx = np.linspace(0, 1, 100)\nprint(x.mean())`
+    expect(isPlottingPython(code)).toBe(false)
+  })
+
+  it('returns false when matplotlib is imported but no draw call present', () => {
+    // e.g. model mentions matplotlib in a comment / description without drawing
+    const code = `import matplotlib.pyplot as plt\n# We would normally call plt.plot here\nprint('no chart')`
+    expect(isPlottingPython(code)).toBe(false)
+  })
+
+  it('returns false for empty string', () => {
+    expect(isPlottingPython('')).toBe(false)
+  })
+
+  it('returns false for non-Python code that mentions plt coincidentally', () => {
+    // TypeScript file that happens to have the word plt in a string
+    const code = `const label = 'plt.plot is a matplotlib function'`
+    expect(isPlottingPython(code)).toBe(false)
+  })
+
+  it('returns false for a data-science script that only uses pandas/sklearn', () => {
+    const code = `import pandas as pd\nfrom sklearn.linear_model import LinearRegression\ndf = pd.read_csv('data.csv')\nmodel = LinearRegression().fit(df[['x']], df['y'])`
+    expect(isPlottingPython(code)).toBe(false)
+  })
+})

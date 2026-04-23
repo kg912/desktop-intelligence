@@ -38,6 +38,7 @@ import { cn } from '../../lib/utils'
 import {
   parseThinkBlocks,
   classifyCodeBlock,
+  isPlottingPython,
   isValidMermaidSyntax,
   escapeCurrencyDollars,
   prepareUserContent,
@@ -966,6 +967,15 @@ function CodeBlock({ className, children }: CodeProps) {
 
   // ── Matplotlib chart ──
   if (kind === 'matplotlib') {
+    return <MatplotlibBlock code={rawCode} />
+  }
+
+  // ── Python plotting auto-detect (Gemma 4 fallback) ──
+  // Gemma 4 sometimes emits ```python instead of ```matplotlib.
+  // If the code imports matplotlib and contains a draw call, route it
+  // to MatplotlibBlock transparently — existing ```matplotlib blocks
+  // are already handled above and are unaffected by this branch.
+  if (lang === 'python' && isPlottingPython(rawCode)) {
     return <MatplotlibBlock code={rawCode} />
   }
 

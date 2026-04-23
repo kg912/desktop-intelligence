@@ -229,6 +229,25 @@ export function escapeCurrencyDollars(md: string): string {
 export type CodeBlockKind = 'inline' | 'mermaid' | 'echarts' | 'matplotlib' | 'svg' | 'code'
 
 /**
+ * isPlottingPython
+ *
+ * Returns true when a Python code block appears to be a matplotlib chart.
+ * Used to auto-route ```python blocks from models (e.g. Gemma 4) that emit
+ * `python` instead of `matplotlib` as the fence language.
+ *
+ * Requires BOTH:
+ *  1. matplotlib is imported / plt is used
+ *  2. At least one concrete draw call is present
+ *
+ * False negatives (non-plotting Python that doesn't trigger) are fine.
+ * False positives (non-chart code sent to the worker) must be avoided.
+ */
+export function isPlottingPython(code: string): boolean {
+  if (!/(import matplotlib|from matplotlib|import plt|\bplt\.)/.test(code)) return false
+  return /plt\.(plot|bar|barh|scatter|hist|pie|imshow|contour[f]?|fill_between|stackplot|step|stem|violinplot|boxplot|errorbar|quiver|streamplot|figure|subplots)\s*\(/.test(code)
+}
+
+/**
  * classifyCodeBlock
  *
  * Pure function — takes the language string extracted from a markdown fence
