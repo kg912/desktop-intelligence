@@ -423,6 +423,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         thinkStartedAt.current = Date.now();
       }
 
+      if (DEBUG) console.log(`[Debug][useChat][ChunkReceived] chunkLen=${chunk.length} totalBuffered=${chunkBufferRef.current.length} chunk="${chunk.slice(0,40)}"`);
       processBuffer();
 
       // Safety net: force-abort if think block unclosed for >180 s
@@ -454,6 +455,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         // Commit the closed-block ref state to React before appendBlock reads prev state
         commitBlocksToState();
 
+        if (DEBUG) console.log(`[Debug][useChat][ToolStart] query="${query}" toolName=${toolName ?? 'brave_web_search'} activeBlockId=${activeBlockIdRef.current}`);
         appendBlock({ id: uuid(), type: "search", query, toolName, phase: "searching" });
         patchAssistant({ isSearching: true, isThinking: false });
       },
@@ -472,6 +474,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         results: Array<{ title: string; url: string }>;
         formattedContent: string;
       }) => {
+        if (DEBUG) console.log(`[Debug][useChat][ToolDone] query="${query}" toolName=${toolName ?? 'brave_web_search'} resultsCount=${results.length} formattedLen=${formattedContent.length}`);
         updateLastBlock("search", {
           phase: "done",
           results,
@@ -485,6 +488,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     // ── Tool error: mark last search block as error ───────────────
     const unsubToolError = window.api.onChatStreamToolError(
       ({ query: _q, toolName: _tn, error }: { query: string; toolName?: string; error: string }) => {
+        if (DEBUG) console.log(`[Debug][useChat][ToolError] query="${_q}" toolName=${_tn ?? 'unknown'} error="${error}"`);
         updateLastBlock("search", {
           phase: "error",
           error,
@@ -515,6 +519,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         console.log("[DEV][useChat] stream-end stats:", JSON.stringify(stats));
       }
 
+      if (DEBUG) console.log(`[Debug][useChat][StreamEnd] contentLen=${assistantContent.length} blocks=${currentBlocksRef.current.length} stats=${JSON.stringify(stats)}`);
       // Flush any remaining buffered content before finalising
       processBuffer();
 
@@ -623,6 +628,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     });
 
     const unsubErr = window.api.onChatError((msg: string) => {
+      if (DEBUG) console.log(`[Debug][useChat][ChatError] msg="${msg}"`);
       const id = assistantIdRef.current;
       assistantIdRef.current = null;
       streamingContentRef.current = "";

@@ -611,6 +611,7 @@ export class ChatService {
       // Text-stream fallback (detectMidStreamToolCall) catches models that emit
       // tool call syntax as raw text instead of the structured channel.
       while (searchLoopCount < MAX_SEARCH_LOOPS) {
+        if (DEBUG) console.log(`[Debug][ChatService][LoopStart] iteration=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} braveEnabled=${braveEnabled}`);
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
 
@@ -965,12 +966,15 @@ export class ChatService {
           }
         }
 
+        if (DEBUG) console.log(`[Debug][ChatService][ReaderExit] loopAborted=${loopAborted} toolCallIntercepted=${toolCallIntercepted} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} totalTokens=${totalTokens}`);
+
         // ── Native tool call handler ─────────────────────────────────────────────
         // Fires after the SSE stream ends naturally when delta.tool_calls[] was used.
         // Handles multiple parallel tool calls (Qwen emits index 0, 1, ... for each
         // query it wants to run simultaneously). Executes them sequentially, merges
         // results, and injects a valid assistant→tool[] pair into the wire payload.
         if (pendingToolCalls.size > 0 && !toolCallIntercepted) {
+          if (DEBUG) console.log(`[Debug][ChatService][NativeToolEnter] pendingToolCalls.size=${pendingToolCalls.size} toolNames=${[...pendingToolCalls.values()].map(t => t.name).join(',')}`);
           // Collect tool calls in index order.
           // For search tools: dedup by query string.
           // For MCP tools that have no "query" field (e.g. browser_navigate uses "url"):
@@ -1020,6 +1024,7 @@ export class ChatService {
               const isBrave = toolName === "brave_web_search";
               const mcpParts = !isBrave ? toolName.split("__") : null;
               const isMcp    = !isBrave && mcpParts && mcpParts.length === 2;
+              if (DEBUG) console.log(`[Debug][ChatService][ToolDispatch] toolName=${toolName} query="${query}" isBrave=${isBrave} isMcp=${!isBrave && !!mcpParts && mcpParts.length === 2}`);
 
               // uiLabel: what appears in the tool pill. For search tools use the query
               // string; for MCP tools use the namespaced name ("memory__search_nodes") so
@@ -1090,9 +1095,11 @@ export class ChatService {
             // are unlimited and should never trigger the search-limit guard.
             const hadBraveCall = queries.some(q => q.name === "brave_web_search");
             if (hadBraveCall) searchLoopCount++;
+            if (DEBUG) console.log(`[Debug][ChatService][NativeToolExit] hadBraveCall=${hadBraveCall} searchLoopCount now=${searchLoopCount} toolCallIntercepted=${toolCallIntercepted}`);
           }
         }
 
+        if (DEBUG) console.log(`[Debug][ChatService][LoopExitCheck] toolCallIntercepted=${toolCallIntercepted} searchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} willBreak=${!toolCallIntercepted}`);
         // Exit outer loop if stream finished naturally or repetition aborted it
         if (!toolCallIntercepted) {
           // 4b — full accumulated stream content diagnostic
@@ -1126,10 +1133,13 @@ export class ChatService {
       this.controller = null;
     }
 
+    if (DEBUG) console.log(`[Debug][ChatService][LoopExited] finalSearchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} firstTokenAt=${firstTokenAt}`);
+
     // Search-limit guard: if the while loop was exhausted by MAX_SEARCH_LOOPS and
     // no tokens were streamed, the model kept attempting searches without producing
     // an answer. Surface a clear error rather than letting it silently hallucinate.
     if (searchLoopCount >= MAX_SEARCH_LOOPS && totalTokens === 0) {
+      if (DEBUG) console.log(`[Debug][ChatService][SearchLimitGuard] FIRING — sending CHAT_ERROR to renderer. searchLoopCount=${searchLoopCount} totalTokens=${totalTokens}`);
       console.warn(
         "[ChatService] ⚠️  Search limit reached — model attempted search again after limit",
       );
@@ -1144,6 +1154,7 @@ export class ChatService {
     }
 
     if (totalTokens === 0 && firstTokenAt === null) {
+      if (DEBUG) console.log(`[Debug][ChatService][EmptyResponseGuard] FIRING — totalTokens=0 and firstTokenAt=null`);
       console.warn(
         "[ChatService] ⚠️  Empty response from LM Studio — possible context overflow or stop-sequence collision",
       );
@@ -1189,6 +1200,7 @@ export class ChatService {
     if (DEBUG) console.log(`[DEV][ChatService] answerTokens (stripped): ${answerTokens} / totalTokens: ${totalTokens}`);
 
     const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokens, answerTokens);
+    if (DEBUG) console.log(`[Debug][ChatService][StreamEnd] sending CHAT_STREAM_END — ttft=${stats.ttft}ms tps=${stats.tokensPerSec} totalTokens=${stats.totalTokens} promptTokens=${stats.promptTokens} aborted=${stats.aborted}`);
     send(IPC_CHANNELS.CHAT_STREAM_END, stats);
   }
 
