@@ -38,6 +38,9 @@ interface ModelStoreValue {
   /** Toast shown after compaction completes; null when hidden */
   compactToast: { tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null;
   setCompactToast: (v: { tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null) => void;
+  /** True while the model is being reloaded (unload → load cycle) */
+  isReloading: boolean;
+  setIsReloading: (v: boolean) => void;
 }
 
 // ── Context ──────────────────────────────────────────────────────
@@ -55,6 +58,7 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   }>({ used: 0, total: 0 });
   const [isCompacting,  setIsCompacting]  = useState<boolean>(false);
   const [compactToast,  setCompactToast]  = useState<{ tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null>(null);
+  const [isReloading,   setIsReloading]   = useState<boolean>(false);
 
   return (
     <ModelStoreContext.Provider
@@ -69,6 +73,8 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
         setIsCompacting,
         compactToast,
         setCompactToast,
+        isReloading,
+        setIsReloading,
       }}
     >
       {children}

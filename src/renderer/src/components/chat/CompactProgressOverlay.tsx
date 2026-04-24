@@ -1,6 +1,10 @@
 import { motion } from 'framer-motion'
 
-export function CompactProgressOverlay() {
+interface Props {
+  label?: string
+}
+
+export function CompactProgressOverlay({ label = 'Compacting context\u2026' }: Props) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -10,7 +14,7 @@ export function CompactProgressOverlay() {
                  bg-black/60 backdrop-blur-sm rounded-none"
     >
       <p className="text-content-secondary text-sm font-medium mb-6 tracking-wide">
-        Compacting context…
+        {label}
       </p>
       {/* Indeterminate progress bar — same red as accent */}
       <div className="w-64 h-1 bg-surface-border/40 rounded-full overflow-hidden">

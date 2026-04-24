@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Zap } from 'lucide-react'
+import { Zap, RotateCw } from 'lucide-react'
 import { useModelStore } from '../../store/ModelStore'
 
 const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
@@ -29,6 +29,8 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
     isCompacting,
     setIsCompacting,
     setCompactToast,
+    isReloading,
+    setIsReloading,
   } = useModelStore()
   const [showTooltip, setShowTooltip] = useState(false)
 
@@ -57,6 +59,31 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
     : 'bg-accent-800/60'
 
   const canCompact = contextUsage.used >= 5000 && !isCompacting
+  const isBusy     = isCompacting || isReloading
+
+  async function handleReload() {
+    if (isBusy) return
+    setIsReloading(true)
+    try {
+      const config = await window.api.getModelConfig()
+      await window.api.reloadModel({
+        modelId:         config.modelId,
+        contextLength:   config.contextLength,
+        temperature:     config.temperature,
+        topP:            config.topP,
+        maxOutputTokens: config.maxOutputTokens,
+        repeatPenalty:   config.repeatPenalty,
+        systemPrompt:    config.systemPrompt,
+        gpuOffload:      config.gpuOffload,
+      })
+      // Clear context bar so it re-seeds on next response
+      setContextUsage((prev) => ({ used: 0, total: prev.total }))
+    } catch (err) {
+      console.error('[Reload] failed:', err)
+    } finally {
+      setIsReloading(false)
+    }
+  }
 
   async function handleCompact() {
     if (!activeChatId || !contextUsage || contextUsage.used < 5000 || isCompacting) return
@@ -89,7 +116,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
     <div className="drag-region flex-shrink-0 flex items-center justify-between
                     px-8 h-[52px] border-b border-surface-border/50 relative">
 
-      {/* Left: model name — left-aligned */}
+      {/* Left: model name + reload button */}
       <div className="no-drag flex items-center gap-1.5">
         <motion.div
           initial={{ opacity: 0, y: -4 }}
@@ -101,6 +128,22 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
             {selectedModel}
           </span>
         </motion.div>
+
+        {/* Reload model button — small icon button, spins while reloading */}
+        <button
+          onClick={handleReload}
+          disabled={isBusy}
+          title={isBusy ? 'Busy…' : 'Reload model (clears memory)'}
+          className={
+            isBusy
+              ? 'ml-1 p-1 rounded text-content-muted/30 cursor-not-allowed'
+              : 'ml-1 p-1 rounded text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer transition-colors'
+          }
+        >
+          <RotateCw
+            className={`w-3 h-3 ${isReloading ? 'animate-spin text-accent-400' : ''}`}
+          />
+        </button>
       </div>
 
       {/* Right: context bar then Compact button — always visible */}

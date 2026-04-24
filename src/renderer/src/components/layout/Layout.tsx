@@ -16,7 +16,7 @@ import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode, setContextUsage, isCompacting } = useModelStore()
+  const { setThinkingMode, setContextUsage, isCompacting, isReloading } = useModelStore()
   const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
@@ -336,9 +336,13 @@ export function Layout() {
               )}
             </AnimatePresence>
 
-            {/* Compaction blocking overlay — sits over the entire main column */}
+            {/* Compaction / reload blocking overlay — sits over the entire main column */}
             <AnimatePresence>
-              {isCompacting && <CompactProgressOverlay />}
+              {(isCompacting || isReloading) && (
+                <CompactProgressOverlay
+                  label={isReloading ? 'Reloading model…' : 'Compacting context…'}
+                />
+              )}
             </AnimatePresence>
 
             {/* MCP tool permission dialog */}
@@ -360,7 +364,7 @@ export function Layout() {
             />
 
             <InputBar
-              isStreaming={isStreaming || isCompacting}
+              isStreaming={isStreaming || isCompacting || isReloading}
               onSend={handleSend}
               onAbort={abort}
               attachments={attachments}
