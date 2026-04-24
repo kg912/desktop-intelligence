@@ -89,54 +89,39 @@ const BRAVE_SEARCH_TOOL = {
 } as const;
 
 const WEB_SEARCH_SYSTEM_ADDENDUM = `
-You have access to a real-time web search tool: brave_web_search. Use it selectively and only when it genuinely adds value.
+You have access to a real-time web search tool: brave_web_search.
 
-USE the search tool when:
-- The user explicitly asks you to search, look something up, or find current information
-- The question requires data that changes frequently: stock prices, weather, live scores, election results, current news, product availability, today's events
-- You need to verify a specific fact that may have changed since your training
-- The user asks about something you don't know or aren't confident about — search rather than guess
-- If you are not confident you know what something is (a product, company, paper, person, or event), search for it rather than guessing. Never invent an explanation for something you don't recognise.
+SEARCH ONLY when the question genuinely requires it:
+- Live or fast-changing data: stock prices, weather, live scores, breaking news, today's events
+- The user explicitly asks you to search or look something up
+- You encounter an entity (product, person, company, event) you do not recognise at all — search rather than invent
 
-DO NOT use the search tool for:
-- Stable conceptual/theoretical knowledge (math, physics, established CS theory, history)
-- Creative writing, coding help where you don't need current docs, math, analysis
-- Historical facts that do not change
-- Casual conversation
+DO NOT search for:
+- Anything you can answer reliably from training: concepts, history, established facts, coding, math, creative tasks
+- Information that is unlikely to have changed in a meaningful way
+- Topics where you have solid knowledge and the user has not asked for current data
 
-IMPORTANT EXCEPTION: Even if you think you know something, SEARCH if:
-- It is a specific versioned product, library, framework, or course (content changes with releases)
-- It is a company's current offering, pricing, or status
-- It is a person's current role, recent work, or latest statements
-When in doubt about whether your knowledge is current enough, search.
+ONE SEARCH IS THE DEFAULT. Do your search, read the results, then write your answer.
+A second search is only permitted if the first results were genuinely insufficient — missing key data the user needs — and a different, more specific query would fill that gap. Do not search again simply to be thorough or to add more detail.
+A third or fourth search requires the same justification. Do not chain searches speculatively.
 
-SELF-HONESTY RULE: Before answering from training knowledge, ask yourself: "Could this information have changed in the last year?" If yes, search first. Do not answer and then search when challenged — search proactively.
+CRITICAL — DATA INTEGRITY:
+- Your answer must be grounded in what the search results actually say.
+- If results contain only titles and URLs with no substantive content, say: "The search returned only links — I cannot provide current figures. Check these sources directly: [URLs]"
+- Do not fill gaps with training data presented as search-derived facts.
+- Numbers, prices, dates, and quotes must come from the results. If a figure is absent, say so.
 
-CRITICAL — DATA INTEGRITY (read this carefully):
-- Your answer must be built ONLY from facts explicitly present in the search result snippets or page content provided to you.
-- If the tool result contains only titles and URLs with no substantive content, you MUST say exactly: "The search returned only links without content — I cannot provide current figures. Check these sources directly: [URLs]"
-  Do NOT fill the gap with training data. Do NOT speculate. Do NOT present training knowledge as if it came from the search.
-- Numbers, prices, percentages, dates, and quotes must come verbatim from the search results. If a specific figure is not in the results, say it is not available in the results.
-- This rule overrides your instinct to be helpful with a complete answer. An honest "I don't have that data" is better than a confident hallucination.
-
-After searching, cite your sources using the result titles and URLs.
-When you do not search, answer directly from your training knowledge without mentioning the search tool.
+After searching, cite your sources using result titles and URLs.
+When you do not search, answer directly from training knowledge without mentioning the search tool.
 
 When you have received web search results:
 - Put ALL your analysis of the results inside <think>…</think>.
-- Your response to the user must start with the answer directly — never with "Step 1: Analyse…" or similar.
-- Keep your thinking block brief — the search results provide the key facts.
-
-SEARCH EFFICIENCY & BUDGET: Prioritize finding the most direct and efficient path to a comprehensive answer. Use the minimum number of searches necessary; do not perform redundant or unnecessary calls. You are granted an absolute hard limit of 5 search calls per response for deep investigations. Once you have sufficient, verifiable data to satisfy the user's intent, terminate searching immediately and proceed to your answer.
+- Your response to the user must start with the answer directly.
 
 HEURISTIC SEARCH STRATEGY:
- 1. ENTITY PAIRING: If the user query contains [Company/Entity] + [Technical Term/Noun], 
-     do not assume the noun is a general concept. Prioritize searching for "[Entity] [Noun] product launch", 
-     "[Entity] [Noun] announcement", or "[Entity] [Noun] news".
- 2. DISAMBIGUATION: If a term has dual meanings (e.g., "Ising" as a physics model vs. a brand), 
-     your first query MUST attempt to disambiguate by including the entity name in the search string.
- 3. SEMANTIC PROBING: If a search returns results that seem disconnected from the user's 
-     intent, pivot your second query from "Definition" to "Recent News/Releases" regarding that term.
+ 1. ENTITY PAIRING: If the query contains [Company/Entity] + [Noun], search for "[Entity] [Noun]" specifically — do not treat the noun as a generic concept.
+ 2. DISAMBIGUATION: If a term has dual meanings, your first query must include the entity name to disambiguate.
+ 3. PIVOT: If results are clearly off-topic, one follow-up query is permitted to correct course.
 `.trim();
 
 const WEB_SEARCH_DISABLED_ADDENDUM = `
@@ -610,7 +595,7 @@ export class ChatService {
       // The model autonomously decides whether to search and what query to use.
       // Text-stream fallback (detectMidStreamToolCall) catches models that emit
       // tool call syntax as raw text instead of the structured channel.
-      while (searchLoopCount < MAX_SEARCH_LOOPS) {
+      while (searchLoopCount <= MAX_SEARCH_LOOPS) {
         if (DEBUG) console.log(`[Debug][ChatService][LoopStart] iteration=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} braveEnabled=${braveEnabled}`);
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
