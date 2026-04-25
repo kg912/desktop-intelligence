@@ -114,6 +114,14 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   // Tracks the thinking mode used for the previous turn (divider insertion).
   const prevThinkingModeRef = useRef<"thinking" | "fast">("fast");
 
+  // Mirrors messages state so sendMessage can read current history without
+  // closing over the messages array in its useCallback dep array.
+  // Synced on every messages update — always consistent before any send.
+  const messagesRef = useRef<Message[]>([]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   useEffect(() => {
     currentChatIdRef.current = chatId;
   }, [chatId]);
@@ -769,7 +777,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       // Build wire messages from history.
       // For messages with blocks, derive tool call wire format from search blocks.
       // For legacy messages (no blocks), use existing toolCall field.
-      const allMsgsForWire = [...messages, userMsg].filter(
+      const allMsgsForWire = [...messagesRef.current, userMsg].filter(
         (m) => m.role !== "divider",
       );
 
@@ -890,7 +898,6 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     },
     [
       isStreaming,
-      messages,
       appendBlock,
       updateLastBlock,
       patchAssistant,

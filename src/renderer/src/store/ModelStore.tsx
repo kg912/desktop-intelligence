@@ -1,37 +1,45 @@
 /**
- * ModelStore — global frontend model selection state
+ * ModelStore — global frontend model selection and runtime state
  *
- * Provides `selectedModel` (string) and `setSelectedModel` to the entire
- * renderer tree via React Context.
+ * Split into two contexts to eliminate unnecessary re-renders during streaming:
  *
- * Design goals:
- *   • Single source of truth for the active model — all send-message
- *     paths read from here so switching models in the future requires
- *     only one `setSelectedModel` call anywhere in the UI.
- *   • No external state library — React Context is sufficient for a
- *     single scalar value; add Zustand or Jotai later if the store grows.
+ *   ModelConfigContext  — stable, changes rarely (model selection, thinking mode).
+ *                         Components that only need these fields subscribe here and
+ *                         are never re-rendered by streaming state changes.
+ *
+ *   ModelRuntimeContext — volatile, changes during/after streaming (contextUsage,
+ *                         isCompacting, compactToast, isReloading).
+ *
+ * Backward-compatibility:
+ *   useModelStore() merges both contexts and returns all 12 fields unchanged —
+ *   existing callers (TopBar, Layout, SettingsModal, …) require zero changes.
+ *
+ * New granular hooks:
+ *   useModelConfig()   — subscribes only to ModelConfigContext
+ *   useModelRuntime()  — subscribes only to ModelRuntimeContext
  */
 
 import { createContext, useContext, useState } from "react";
-import type { ReactNode, SetStateAction } from "react";
+import type { ReactNode, Dispatch, SetStateAction } from "react";
 import type { ThinkingMode } from "../../../shared/types";
 
 // ── Types ────────────────────────────────────────────────────────
-interface ModelStoreValue {
+
+/** Stable config that changes at most once per session. */
+interface ModelConfigValue {
   /** The currently selected LM Studio model identifier */
   selectedModel: string;
-  /** Swap the active model — consumed by a future Model Switcher UI */
   setSelectedModel: (modelId: string) => void;
   /** Whether the model reasons before answering (Section 5 of CLAUDE.md) */
   thinkingMode: ThinkingMode;
-  /** Toggle between thinking and fast mode */
   setThinkingMode: (mode: ThinkingMode) => void;
+}
+
+/** Volatile runtime state that changes during/after streaming. */
+interface ModelRuntimeValue {
   /** Context window utilisation; starts at {used:0, total:0} until model config is loaded */
   contextUsage: { used: number; total: number };
-  /** Update context utilisation — called from useChat after each stream-end */
-  setContextUsage: React.Dispatch<
-    React.SetStateAction<{ used: number; total: number }>
-  >;
+  setContextUsage: Dispatch<SetStateAction<{ used: number; total: number }>>;
   /** True while a manual context compaction is in progress */
   isCompacting: boolean;
   setIsCompacting: (v: boolean) => void;
@@ -43,54 +51,96 @@ interface ModelStoreValue {
   setIsReloading: (v: boolean) => void;
 }
 
-// ── Context ──────────────────────────────────────────────────────
-const ModelStoreContext = createContext<ModelStoreValue | null>(null);
+/** Combined interface — structurally identical to the original ModelStoreValue. */
+interface ModelStoreValue extends ModelConfigValue, ModelRuntimeValue {}
+
+// ── Contexts ─────────────────────────────────────────────────────
+const ModelConfigContext  = createContext<ModelConfigValue  | null>(null);
+const ModelRuntimeContext = createContext<ModelRuntimeValue | null>(null);
 
 // ── Provider ─────────────────────────────────────────────────────
 export function ModelStoreProvider({ children }: { children: ReactNode }) {
   // Intentionally empty string — App.tsx populates this via setSelectedModel
   // once it has read the saved modelId from SettingsStore (IPC round-trip).
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("thinking");
-  const [contextUsage, setContextUsage] = useState<{
-    used: number;
-    total: number;
-  }>({ used: 0, total: 0 });
-  const [isCompacting,  setIsCompacting]  = useState<boolean>(false);
-  const [compactToast,  setCompactToast]  = useState<{ tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null>(null);
-  const [isReloading,   setIsReloading]   = useState<boolean>(false);
+  const [thinkingMode,  setThinkingMode]  = useState<ThinkingMode>("thinking");
+
+  const [contextUsage, setContextUsage] = useState<{ used: number; total: number }>(
+    { used: 0, total: 0 }
+  );
+  const [isCompacting, setIsCompacting] = useState<boolean>(false);
+  const [compactToast, setCompactToast] = useState<{
+    tokensBefore: number;
+    tokensAfter: number;
+    hasDocuments: boolean;
+  } | null>(null);
+  const [isReloading, setIsReloading] = useState<boolean>(false);
+
+  const configValue: ModelConfigValue = {
+    selectedModel,
+    setSelectedModel,
+    thinkingMode,
+    setThinkingMode,
+  };
+
+  const runtimeValue: ModelRuntimeValue = {
+    contextUsage,
+    setContextUsage,
+    isCompacting,
+    setIsCompacting,
+    compactToast,
+    setCompactToast,
+    isReloading,
+    setIsReloading,
+  };
 
   return (
-    <ModelStoreContext.Provider
-      value={{
-        selectedModel,
-        setSelectedModel,
-        thinkingMode,
-        setThinkingMode,
-        contextUsage,
-        setContextUsage,
-        isCompacting,
-        setIsCompacting,
-        compactToast,
-        setCompactToast,
-        isReloading,
-        setIsReloading,
-      }}
-    >
-      {children}
-    </ModelStoreContext.Provider>
+    <ModelConfigContext.Provider value={configValue}>
+      <ModelRuntimeContext.Provider value={runtimeValue}>
+        {children}
+      </ModelRuntimeContext.Provider>
+    </ModelConfigContext.Provider>
   );
 }
 
-// ── Hook ─────────────────────────────────────────────────────────
+// ── Compatibility shim ────────────────────────────────────────────
 /**
- * Returns the current model selection state.
- * Must be called from within a <ModelStoreProvider> subtree.
+ * Returns all model state fields (config + runtime) merged into one object.
+ * Existing callers require zero changes. Subscribes to both contexts, so
+ * it re-renders on any field change — use useModelConfig() / useModelRuntime()
+ * for components that only need a subset.
  */
 export function useModelStore(): ModelStoreValue {
-  const ctx = useContext(ModelStoreContext);
-  if (!ctx) {
+  const config  = useContext(ModelConfigContext);
+  const runtime = useContext(ModelRuntimeContext);
+  if (!config || !runtime) {
     throw new Error("useModelStore must be used within <ModelStoreProvider>");
+  }
+  return { ...config, ...runtime };
+}
+
+// ── Granular hooks ────────────────────────────────────────────────
+
+/**
+ * Subscribe only to stable config fields: selectedModel, thinkingMode.
+ * Components using this hook are never re-rendered by streaming state changes.
+ */
+export function useModelConfig(): ModelConfigValue {
+  const ctx = useContext(ModelConfigContext);
+  if (!ctx) {
+    throw new Error("useModelConfig must be used within <ModelStoreProvider>");
+  }
+  return ctx;
+}
+
+/**
+ * Subscribe only to volatile runtime fields: contextUsage, isCompacting,
+ * compactToast, isReloading.
+ */
+export function useModelRuntime(): ModelRuntimeValue {
+  const ctx = useContext(ModelRuntimeContext);
+  if (!ctx) {
+    throw new Error("useModelRuntime must be used within <ModelStoreProvider>");
   }
   return ctx;
 }

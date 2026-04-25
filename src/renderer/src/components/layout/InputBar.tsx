@@ -1,4 +1,5 @@
 import {
+  memo,
   useRef,
   useState,
   useCallback,
@@ -76,7 +77,7 @@ export interface InputBarProps {
 const MAX_TEXTAREA_HEIGHT = 200
 const MIN_TEXTAREA_HEIGHT = 24
 
-export function InputBar({
+export const InputBar = memo(function InputBar({
   isStreaming = false,
   onSend,
   onAbort,
@@ -413,4 +414,4 @@ export function InputBar({
       </div>
     </div>
   )
-}
+})
