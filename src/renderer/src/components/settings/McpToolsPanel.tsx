@@ -185,9 +185,11 @@ function ServerCard({ info, onRestart, onRemove, onToggleTool }: ServerCardProps
 
 // ── Add server form ──────────────────────────────────────────────
 
-type AddTab = 'visual' | 'json'
+type AddTab        = 'visual' | 'json'
+type TransportType = 'stdio' | 'http'
 
-interface AddFormState {
+interface StdioFormState {
+  transport: 'stdio'
   name:    string
   command: string
   args:    string  // space-separated
@@ -195,7 +197,18 @@ interface AddFormState {
   enabled: boolean
 }
 
-const EMPTY_FORM: AddFormState = { name: '', command: '', args: '', envRaw: '', enabled: true }
+interface HttpFormState {
+  transport: 'http'
+  name:      string
+  url:       string
+  headersRaw: string  // KEY: VALUE lines
+  enabled:   boolean
+}
+
+type FormState = StdioFormState | HttpFormState
+
+const EMPTY_STDIO: StdioFormState = { transport: 'stdio', name: '', command: '', args: '', envRaw: '', enabled: true }
+const EMPTY_HTTP:  HttpFormState  = { transport: 'http',  name: '', url: '',     headersRaw: '', enabled: true }
 
 function parseEnv(raw: string): Record<string, string> {
   const env: Record<string, string> = {}
@@ -206,37 +219,105 @@ function parseEnv(raw: string): Record<string, string> {
   return env
 }
 
+/** Parse "Key: Value" lines into a headers object. */
+function parseHeaders(raw: string): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const line of raw.split('\n')) {
+    const colon = line.indexOf(':')
+    if (colon > 0) {
+      const key = line.slice(0, colon).trim()
+      const val = line.slice(colon + 1).trim()
+      if (key) headers[key] = val
+    }
+  }
+  return headers
+}
+
+/**
+ * Client-side URL validation mirror of the server-side check.
+ * Returns an error string, or null if valid.
+ */
+function validateHttpUrl(raw: string): string | null {
+  let parsed: URL
+  try { parsed = new URL(raw.trim()) } catch { return 'Invalid URL.' }
+  const isLocal = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+  if (!isLocal && parsed.protocol !== 'https:') {
+    return 'Remote servers must use HTTPS. Plain HTTP is only allowed for localhost.'
+  }
+  if (parsed.username || parsed.password) {
+    return 'Do not embed credentials in the URL. Use Authorization header instead.'
+  }
+  return null
+}
+
 interface AddServerFormProps {
   onAdded: () => void
   onCancel: () => void
 }
 
+const JSON_PLACEHOLDER = [
+  '{',
+  '  // stdio (local process)',
+  '  "my-stdio-server": {',
+  '    "command": "npx",',
+  '    "args": ["-y", "some-mcp-server"],',
+  '    "enabled": true',
+  '  },',
+  '',
+  '  // http (remote endpoint — HTTPS required)',
+  '  "my-http-server": {',
+  '    "url": "https://api.example.com/mcp",',
+  '    "headers": { "Authorization": "Bearer YOUR_TOKEN" },',
+  '    "enabled": true',
+  '  }',
+  '}',
+].join('\n')
+
 function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
-  const [activeTab, setActiveTab] = useState<AddTab>('visual')
-  const [form, setForm]           = useState<AddFormState>(EMPTY_FORM)
-  const [jsonText, setJsonText]   = useState('{\n  "myServer": {\n    "command": "npx",\n    "args": ["-y", "some-mcp-server"],\n    "enabled": true\n  }\n}')
-  const [saving, setSaving]       = useState(false)
-  const [error,  setError]        = useState<string | null>(null)
+  const [activeTab,  setActiveTab]  = useState<AddTab>('visual')
+  const [transport,  setTransport]  = useState<TransportType>('stdio')
+  const [stdioForm,  setStdioForm]  = useState<StdioFormState>(EMPTY_STDIO)
+  const [httpForm,   setHttpForm]   = useState<HttpFormState>(EMPTY_HTTP)
+  const [jsonText,   setJsonText]   = useState(JSON_PLACEHOLDER)
+  const [saving,     setSaving]     = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+
+  const form: FormState = transport === 'stdio' ? stdioForm : httpForm
 
   const handleSaveVisual = useCallback(async () => {
-    if (!form.name.trim() || !form.command.trim()) {
-      setError('Name and command are required.')
-      return
-    }
-    setSaving(true)
     setError(null)
-    try {
-      const existing = await window.api.mcpListCustomServers()
+    const name = form.name.trim()
+    if (!name) { setError('Server name is required.'); return }
+
+    let entry: Record<string, unknown>
+
+    if (form.transport === 'http') {
+      const urlErr = validateHttpUrl(form.url)
+      if (urlErr) { setError(urlErr); return }
+      const headers = parseHeaders(form.headersRaw)
+      entry = {
+        url: form.url.trim(),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        enabled: form.enabled,
+      }
+    } else {
+      if (!form.command.trim()) { setError('Command is required.'); return }
       const args = form.args.trim() ? form.args.trim().split(/\s+/) : []
       const env  = parseEnv(form.envRaw)
-      existing[form.name.trim()] = {
+      entry = {
         command: form.command.trim(),
         ...(args.length > 0 ? { args } : {}),
         ...(Object.keys(env).length > 0 ? { env } : {}),
         enabled: form.enabled,
       }
+    }
+
+    setSaving(true)
+    try {
+      const existing = await window.api.mcpListCustomServers()
+      existing[name] = entry as McpServerSettings[string]
       await window.api.mcpSaveCustomServers(existing)
-      if (form.enabled) await window.api.mcpRestartServer(form.name.trim())
+      if (form.enabled) await window.api.mcpRestartServer(name)
       onAdded()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -249,14 +330,13 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
     setError(null)
     try {
       const parsed = JSON.parse(jsonText) as McpServerSettings
-      // Auto-inject enabled:true on every entry that omits the field so servers
-      // start immediately without requiring users to know about this property.
+      // Auto-inject enabled:true on every entry that omits the field.
       for (const name of Object.keys(parsed)) {
         if (parsed[name].enabled === undefined || parsed[name].enabled === null) {
           parsed[name] = { ...parsed[name], enabled: true }
         }
       }
-      // Merge with existing config so adding a new server never wipes the others.
+      // Merge with existing so adding never wipes other servers.
       const existing = await window.api.mcpListCustomServers()
       const merged   = { ...existing, ...parsed }
       await window.api.mcpSaveCustomServers(merged)
@@ -277,8 +357,16 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
       : 'text-content-muted hover:text-content-secondary',
   )
 
+  const transportBtnClass = (t: TransportType) => cn(
+    'flex-1 py-1.5 text-xs font-medium rounded border transition-colors',
+    transport === t
+      ? 'bg-accent-950/60 border-accent-900/40 text-content-primary'
+      : 'border-surface-border/40 text-content-muted hover:text-content-secondary',
+  )
+
   return (
     <div className="rounded-lg border border-accent-900/30 bg-surface-DEFAULT p-4 space-y-4">
+      {/* Header + tab switcher */}
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-content-primary">Add MCP Server</span>
         <div className="flex gap-1">
@@ -289,64 +377,118 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
 
       {activeTab === 'visual' ? (
         <div className="space-y-3">
-          {/* Name */}
+          {/* Transport selector */}
+          <div>
+            <label className="text-xs text-content-muted block mb-1">Transport</label>
+            <div className="flex gap-2">
+              <button className={transportBtnClass('stdio')} onClick={() => setTransport('stdio')}>
+                Stdio — local process
+              </button>
+              <button className={transportBtnClass('http')} onClick={() => setTransport('http')}>
+                HTTP — remote endpoint
+              </button>
+            </div>
+          </div>
+
+          {/* Server name (shared) */}
           <div>
             <label className="text-xs text-content-muted block mb-1">Server name</label>
             <input
               type="text"
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              onChange={(e) => {
+                const v = e.target.value
+                transport === 'stdio'
+                  ? setStdioForm((f) => ({ ...f, name: v }))
+                  : setHttpForm((f)  => ({ ...f, name: v }))
+              }}
               placeholder="my-server"
               className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800"
             />
           </div>
-          {/* Command */}
-          <div>
-            <label className="text-xs text-content-muted block mb-1">Command</label>
-            <input
-              type="text"
-              value={form.command}
-              onChange={(e) => setForm((f) => ({ ...f, command: e.target.value }))}
-              placeholder="npx"
-              className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono"
-            />
-          </div>
-          {/* Args */}
-          <div>
-            <label className="text-xs text-content-muted block mb-1">Arguments (space-separated)</label>
-            <input
-              type="text"
-              value={form.args}
-              onChange={(e) => setForm((f) => ({ ...f, args: e.target.value }))}
-              placeholder="-y some-mcp-package"
-              className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono"
-            />
-          </div>
-          {/* Env */}
-          <div>
-            <label className="text-xs text-content-muted block mb-1">Environment variables (KEY=VALUE, one per line)</label>
-            <textarea
-              rows={3}
-              value={form.envRaw}
-              onChange={(e) => setForm((f) => ({ ...f, envRaw: e.target.value }))}
-              placeholder={'API_KEY=abc123\nBASE_URL=https://example.com'}
-              className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono resize-none"
-            />
-          </div>
-          {/* Enabled toggle */}
+
+          {transport === 'stdio' ? (
+            <>
+              {/* Command */}
+              <div>
+                <label className="text-xs text-content-muted block mb-1">Command</label>
+                <input
+                  type="text"
+                  value={stdioForm.command}
+                  onChange={(e) => setStdioForm((f) => ({ ...f, command: e.target.value }))}
+                  placeholder="npx"
+                  className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono"
+                />
+              </div>
+              {/* Args */}
+              <div>
+                <label className="text-xs text-content-muted block mb-1">Arguments (space-separated)</label>
+                <input
+                  type="text"
+                  value={stdioForm.args}
+                  onChange={(e) => setStdioForm((f) => ({ ...f, args: e.target.value }))}
+                  placeholder="-y some-mcp-package"
+                  className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono"
+                />
+              </div>
+              {/* Env */}
+              <div>
+                <label className="text-xs text-content-muted block mb-1">Environment variables (KEY=VALUE, one per line)</label>
+                <textarea
+                  rows={3}
+                  value={stdioForm.envRaw}
+                  onChange={(e) => setStdioForm((f) => ({ ...f, envRaw: e.target.value }))}
+                  placeholder={'API_KEY=abc123\nBASE_URL=https://example.com'}
+                  className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono resize-none"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {/* URL */}
+              <div>
+                <label className="text-xs text-content-muted block mb-1">Endpoint URL</label>
+                <input
+                  type="url"
+                  value={httpForm.url}
+                  onChange={(e) => setHttpForm((f) => ({ ...f, url: e.target.value }))}
+                  placeholder="https://api.example.com/mcp"
+                  className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono"
+                />
+                <p className="mt-1 text-xs text-content-muted/60">HTTPS required for remote servers. Credentials belong in headers, not the URL.</p>
+              </div>
+              {/* Headers */}
+              <div>
+                <label className="text-xs text-content-muted block mb-1">Request headers (Key: Value, one per line)</label>
+                <textarea
+                  rows={3}
+                  value={httpForm.headersRaw}
+                  onChange={(e) => setHttpForm((f) => ({ ...f, headersRaw: e.target.value }))}
+                  placeholder={'Authorization: Bearer YOUR_TOKEN\nX-Custom-Header: value'}
+                  className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono resize-none"
+                />
+              </div>
+            </>
+          )}
+
+          {/* Enabled toggle (shared) */}
           <div className="flex items-center gap-2">
             <Toggle
               checked={form.enabled}
-              onChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
+              onChange={(v) => {
+                transport === 'stdio'
+                  ? setStdioForm((f) => ({ ...f, enabled: v }))
+                  : setHttpForm((f)  => ({ ...f, enabled: v }))
+              }}
             />
             <span className="text-xs text-content-secondary">Start server automatically</span>
           </div>
         </div>
       ) : (
         <div>
-          <label className="text-xs text-content-muted block mb-1">Paste mcp.json (subset or full)</label>
+          <label className="text-xs text-content-muted block mb-1">Paste mcp.json (stdio and/or HTTP servers)</label>
           <textarea
-            rows={10}
+            rows={14}
             value={jsonText}
             onChange={(e) => setJsonText(e.target.value)}
             className="w-full bg-black/30 border border-surface-border rounded px-3 py-2 text-xs text-content-primary focus:outline-none focus:border-accent-800 font-mono resize-none"

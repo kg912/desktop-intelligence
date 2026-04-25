@@ -324,12 +324,37 @@ export interface StorePlotPayload {
 
 // ── MCP (Model Context Protocol) ────────────────────────────────
 
-/** MCP server config — FastMCP standard format */
-export interface McpServerConfig {
+/**
+ * Stdio transport — spawns a local process.
+ * Presence of `command` distinguishes this from HttpMcpServerConfig.
+ */
+export interface StdioMcpServerConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
-  disabledTools?: string[]   // List of un-namespaced tool names currently disabled for this server
+  disabledTools?: string[]
+}
+
+/**
+ * HTTP/SSE transport — connects to a remote MCP endpoint.
+ * No local process is spawned; the URL is the server.
+ *
+ * SECURITY NOTES:
+ *  - Only https:// URLs are accepted at runtime (enforced in McpServerManager).
+ *  - Headers are stored in mcp.json in userData (not shipped with the app).
+ *  - Never put credentials in `url` query params — use `headers` (Authorization).
+ */
+export interface HttpMcpServerConfig {
+  url: string
+  headers?: Record<string, string>
+  disabledTools?: string[]
+}
+
+export type McpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig
+
+/** True when config describes an HTTP server (type guard). */
+export function isHttpMcpConfig(c: McpServerConfig): c is HttpMcpServerConfig {
+  return 'url' in c && typeof (c as HttpMcpServerConfig).url === 'string'
 }
 
 /** Persisted MCP server settings (mcp.json) — includes enabled flag per server */

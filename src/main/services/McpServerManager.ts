@@ -22,11 +22,13 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type {
   McpServerConfig,
   McpServerSettings,
   McpServerRuntimeInfo,
 } from '../../shared/types'
+import { isHttpMcpConfig } from '../../shared/types'
 
 // ── LM Studio tool schema shape (matches BRAVE_SEARCH_TOOL in ChatService) ──
 
@@ -296,11 +298,41 @@ export class McpServerManager extends EventEmitter {
     this._emitStatus(name)
 
     try {
-      const transport = new StdioClientTransport({
-        command: config.command,
-        args:    config.args ?? [],
-        env:     { ...process.env, ...(config.env ?? {}) } as Record<string, string>,
-      })
+      // ── Security: validate config before connecting ───────────────
+      if (isHttpMcpConfig(config)) {
+        // Enforce HTTPS-only for remote endpoints to prevent credential leakage
+        // over plain HTTP. localhost is allowed for local dev servers.
+        const parsed = new URL(config.url)
+        const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1'
+        if (!isLocal && parsed.protocol !== 'https:') {
+          throw new Error(
+            `HTTP MCP servers must use HTTPS (got "${parsed.protocol}"). ` +
+            `Plain HTTP is only permitted for localhost.`
+          )
+        }
+        // Reject URLs with credentials embedded in them (e.g. http://user:pass@host)
+        if (parsed.username || parsed.password) {
+          throw new Error(
+            'Credentials must not be embedded in the URL. Use the Authorization header instead.'
+          )
+        }
+      }
+
+      // ── Build transport ───────────────────────────────────────────
+      const transport = isHttpMcpConfig(config)
+        ? new StreamableHTTPClientTransport(
+            new URL(config.url),
+            {
+              requestInit: {
+                headers: config.headers ?? {},
+              },
+            }
+          )
+        : new StdioClientTransport({
+            command: config.command,
+            args:    config.args ?? [],
+            env:     { ...process.env, ...(config.env ?? {}) } as Record<string, string>,
+          })
 
       const client = new Client(
         { name: 'desktop-intelligence', version: '1.0.0' },
