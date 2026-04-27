@@ -131,6 +131,10 @@ export type MessageBlock =
       toolName?:        string
       results?:         Array<{ title: string; url: string }>
       formattedContent?: string
+      /** Arguments the model passed to the MCP tool (non-Brave only) */
+      toolArgs?:        Record<string, unknown>
+      /** Image outputs returned by the tool (e.g. Puppeteer screenshots) */
+      toolImages?:      Array<{ mimeType: string; data: string }>
       phase:            'searching' | 'done' | 'error'
       error?:           string
     }

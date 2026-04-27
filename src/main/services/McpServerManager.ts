@@ -30,6 +30,13 @@ import type {
 } from '../../shared/types'
 import { isHttpMcpConfig } from '../../shared/types'
 
+// ── MCP tool call result ─────────────────────────────────────────
+
+export interface McpToolResult {
+  text:   string
+  images: Array<{ mimeType: string; data: string }>
+}
+
 // ── LM Studio tool schema shape (matches BRAVE_SEARCH_TOOL in ChatService) ──
 
 export interface LMStudioToolParam {
@@ -210,7 +217,7 @@ export class McpServerManager extends EventEmitter {
     serverName: string,
     toolName:   string,
     args:       Record<string, unknown>,
-  ): Promise<string> {
+  ): Promise<McpToolResult> {
     const entry = this.servers.get(serverName)
     if (!entry || entry.status !== 'running' || !entry.client) {
       throw new Error(`MCP server "${serverName}" is not running`)
@@ -250,12 +257,13 @@ export class McpServerManager extends EventEmitter {
       throw new Error(msg || 'MCP tool returned an error')
     }
 
-    const text = (result.content as Array<{ type: string; text?: string }>)
-      .filter((c) => c.type === 'text')
-      .map((c) => c.text ?? '')
-      .join('\n')
+    const content = result.content as Array<{ type: string; text?: string; mimeType?: string; data?: string }>
+    const text   = content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n')
+    const images = content
+      .filter((c) => c.type === 'image' && c.data)
+      .map((c) => ({ mimeType: c.mimeType ?? 'image/png', data: c.data! }))
 
-    return text
+    return { text, images }
   }
 
   // ── Permission resolution (called by IPC handler) ────────────

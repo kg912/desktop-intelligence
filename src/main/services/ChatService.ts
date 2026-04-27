@@ -1051,12 +1051,15 @@ export class ChatService {
                   try { args = JSON.parse(argsRaw || "{}"); } catch { /* use empty args */ }
 
                   console.log(`[MCP] Calling "${toolName}" with args: ${argsRaw}`);
-                  toolResult = await mcpServerManager.callTool(serverName, mcpToolName, args);
+                  const mcpResult = await mcpServerManager.callTool(serverName, mcpToolName, args);
+                  toolResult = mcpResult.text;
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                     query: uiLabel,
                     toolName,
                     results: [],
-                    formattedContent: toolResult,
+                    formattedContent: mcpResult.text,
+                    toolArgs:   args,
+                    toolImages: mcpResult.images,
                   });
 
                 } else {

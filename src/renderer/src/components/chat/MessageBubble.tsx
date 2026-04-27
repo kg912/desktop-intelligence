@@ -174,6 +174,9 @@ function AssistantBubble({
                     toolName={block.toolName}
                     results={block.results}
                     error={block.error}
+                    formattedContent={block.formattedContent}
+                    toolArgs={block.toolArgs}
+                    toolImages={block.toolImages}
                     className={prevIsAnswer ? 'mt-3' : ''}
                   />
                 )

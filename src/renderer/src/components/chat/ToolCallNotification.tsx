@@ -9,6 +9,12 @@ interface ToolCallNotificationProps {
   toolName?: string
   results?: Array<{ title: string; url: string }>
   error?:   string
+  /** Full augmented text returned by the tool */
+  formattedContent?: string
+  /** Arguments the model passed to the tool (MCP only) */
+  toolArgs?: Record<string, unknown>
+  /** Image outputs returned by the tool (e.g. Puppeteer screenshots) */
+  toolImages?: Array<{ mimeType: string; data: string }>
   className?: string
 }
 
@@ -32,7 +38,17 @@ function resolveIsWebSearch(toolName?: string, query?: string): boolean {
   return !(query ?? '').includes('__')
 }
 
-export function ToolCallNotification({ phase, query, toolName, results = [], error: errorMsg, className = '' }: ToolCallNotificationProps) {
+export function ToolCallNotification({
+  phase,
+  query,
+  toolName,
+  results = [],
+  error: errorMsg,
+  formattedContent,
+  toolArgs,
+  toolImages,
+  className = '',
+}: ToolCallNotificationProps) {
   const [expanded, setExpanded] = useState(false)
   const label = formatQueryLabel(query)
   const webSearch = resolveIsWebSearch(toolName, query)
@@ -75,6 +91,10 @@ export function ToolCallNotification({ phase, query, toolName, results = [], err
     )
   }
 
+  const hasArgs   = toolArgs   && Object.keys(toolArgs).length > 0
+  const hasImages = toolImages && toolImages.length > 0
+  const hasText   = !!formattedContent
+
   return (
     <div
       className={`rounded-lg border border-surface-border/40 mb-3 overflow-hidden ${className}`}
@@ -100,7 +120,9 @@ export function ToolCallNotification({ phase, query, toolName, results = [], err
       {expanded && (
         <div className="border-t border-surface-border/30 px-3 py-3 space-y-2.5">
           <p className="text-xs font-mono text-content-muted">"{label}"</p>
-          {results.length > 0 && (
+
+          {/* Web search results */}
+          {webSearch && results.length > 0 && (
             <div className="space-y-2 mt-1">
               {results.slice(0, 5).map((r, i) => (
                 <div key={i} className="flex items-start gap-2">
@@ -114,6 +136,38 @@ export function ToolCallNotification({ phase, query, toolName, results = [], err
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* MCP: Arguments */}
+          {!webSearch && hasArgs && (
+            <div className="mt-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-content-tertiary mb-1.5 font-medium">Arguments</p>
+              <pre className="text-xs font-mono text-content-secondary bg-black/30 rounded-md px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-surface-border/20">
+                {JSON.stringify(toolArgs, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {/* MCP: Output (images + text) */}
+          {!webSearch && (hasImages || hasText) && (
+            <div className="mt-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-content-tertiary mb-1.5 font-medium">Output</p>
+              {hasImages && toolImages!.map((img, i) => (
+                <img
+                  key={i}
+                  src={`data:${img.mimeType};base64,${img.data}`}
+                  className="rounded-md w-full mt-2 border border-surface-border/30"
+                  alt="Tool output"
+                />
+              ))}
+              {hasText && (
+                <pre className="text-xs font-mono text-content-secondary bg-black/30 rounded-md px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-surface-border/20 max-h-48 overflow-y-auto mt-2">
+                  {formattedContent!.length > 2000
+                    ? formattedContent!.slice(0, 2000) + '\n…'
+                    : formattedContent}
+                </pre>
+              )}
             </div>
           )}
         </div>
