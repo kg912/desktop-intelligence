@@ -595,8 +595,13 @@ export class ChatService {
       // The model autonomously decides whether to search and what query to use.
       // Text-stream fallback (detectMidStreamToolCall) catches models that emit
       // tool call syntax as raw text instead of the structured channel.
-      while (searchLoopCount <= MAX_SEARCH_LOOPS) {
+      while (true) {
         if (DEBUG) console.log(`[Debug][ChatService][LoopStart] iteration=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} braveEnabled=${braveEnabled}`);
+
+        // When the search limit has been reached, strip tools from the payload
+        // so the model is forced to synthesize an answer. The loop exits naturally
+        // when toolCallIntercepted is false (model wrote an answer, not a tool call).
+        const forceFinalAnswer = searchLoopCount >= MAX_SEARCH_LOOPS;
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
 
@@ -632,6 +637,7 @@ export class ChatService {
           stop: STOP_SEQUENCES,
           ...step2ThinkingField,
           ...(() => {
+            if (forceFinalAnswer) return {}; // strip tools — force synthesis pass
             const mcpTools = mcpServerManager.getToolSchemas();
             const allTools = [
               ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
@@ -1084,10 +1090,10 @@ export class ChatService {
           }
         }
 
-        if (DEBUG) console.log(`[Debug][ChatService][LoopExitCheck] toolCallIntercepted=${toolCallIntercepted} searchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} willBreak=${!toolCallIntercepted}`);
-        // Exit outer loop if stream finished naturally or repetition aborted it
+        if (DEBUG) console.log(`[Debug][ChatService][LoopExitCheck] toolCallIntercepted=${toolCallIntercepted} searchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} forceFinalAnswer=${forceFinalAnswer} willBreak=${!toolCallIntercepted}`);
+
         if (!toolCallIntercepted) {
-          // 4b — full accumulated stream content diagnostic
+          // Model produced an answer — natural exit
           if (DEBUG) {
             console.log(
               "[DEBUG] Full stream content at end (length:",
@@ -1098,6 +1104,20 @@ export class ChatService {
           }
           lastStreamBuffer = streamBuffer;
           break;
+        }
+
+        if (forceFinalAnswer && toolCallIntercepted) {
+          // Tools were stripped but the model still intercepted a tool call via
+          // text-stream fallback (detectMidStreamToolCall). This should not happen
+          // in normal operation. Break and surface an error rather than looping forever.
+          console.warn("[ChatService] ⚠️ Tool call intercepted after tools were stripped — breaking to prevent infinite loop");
+          send(
+            IPC_CHANNELS.CHAT_ERROR,
+            "The model attempted to search again after the search limit was reached. Try rephrasing your question or reducing Max Search Rounds in Settings.",
+          );
+          const stats = this.buildStats(startTime, firstTokenAt, totalTokens, true, promptTokens);
+          send(IPC_CHANNELS.CHAT_STREAM_END, stats);
+          return;
         }
       }
     } catch (err) {
@@ -1119,24 +1139,6 @@ export class ChatService {
     }
 
     if (DEBUG) console.log(`[Debug][ChatService][LoopExited] finalSearchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} firstTokenAt=${firstTokenAt}`);
-
-    // Search-limit guard: if the while loop was exhausted by MAX_SEARCH_LOOPS and
-    // no tokens were streamed, the model kept attempting searches without producing
-    // an answer. Surface a clear error rather than letting it silently hallucinate.
-    if (searchLoopCount >= MAX_SEARCH_LOOPS && totalTokens === 0) {
-      if (DEBUG) console.log(`[Debug][ChatService][SearchLimitGuard] FIRING — sending CHAT_ERROR to renderer. searchLoopCount=${searchLoopCount} totalTokens=${totalTokens}`);
-      console.warn(
-        "[ChatService] ⚠️  Search limit reached — model attempted search again after limit",
-      );
-      send(
-        IPC_CHANNELS.CHAT_ERROR,
-        "The search tool was called multiple times without producing an answer. " +
-          "Try rephrasing your question or disabling web search in Settings → MCP & Tools.",
-      );
-      const stats = this.buildStats(startTime, firstTokenAt, 0, true, promptTokens);
-      send(IPC_CHANNELS.CHAT_STREAM_END, stats);
-      return;
-    }
 
     if (totalTokens === 0 && firstTokenAt === null) {
       if (DEBUG) console.log(`[Debug][ChatService][EmptyResponseGuard] FIRING — totalTokens=0 and firstTokenAt=null`);
