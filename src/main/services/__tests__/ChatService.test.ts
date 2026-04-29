@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks } from '../ChatService'
+import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks, parseRawToolCall, detectMidStreamToolCall } from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
 type Msg = { role: string; content: string | ContentPart[] }
@@ -367,4 +367,77 @@ describe('delta routing — Gemma 4 MLX native channel tokens', () => {
     expect(delta2).toBe("</think>answer");
     expect(openAfterC).toBe(false);
   });
+})
+
+// ── Suite: parseRawToolCall — Format E with leading space (Qwen3) ─────────────
+
+describe('parseRawToolCall — Format E (Qwen3 with leading space)', () => {
+  it('parses closed Qwen format with space after <tool_call>', () => {
+    const input = '<tool_call> <function=brave_web_search><parameter=query>oracle stock price</parameter><parameter=count>3</parameter></function></tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('oracle stock price')
+    expect(result!.args.count).toBe('3')
+  })
+
+  it('parses closed Qwen format WITHOUT leading space (existing behaviour preserved)', () => {
+    const input = '<tool_call><function=brave_web_search><parameter=query>test query</parameter></function></tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.args.query).toBe('test query')
+  })
+
+  it('returns result with empty query when query parameter has no value yet (mid-stream)', () => {
+    // This is the mid-stream case — query tag opened but text not yet arrived.
+    // parseRawToolCall returns args with empty query; detectMidStreamToolCall
+    // guards on non-empty before firing a search.
+    const input = '<tool_call> <function=brave_web_search><parameter=count>3</parameter><parameter=query></parameter></function></tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.args.query).toBe('')
+  })
+})
+
+// ── Suite: detectMidStreamToolCall — Qwen3 partial format ────────────────────
+
+describe('detectMidStreamToolCall — Qwen3 partial format', () => {
+  it('intercepts fully-formed Qwen format with space after <tool_call>', () => {
+    const buffer = 'Let me search.\n<tool_call> <function=brave_web_search><parameter=query>ORCL stock news</parameter><parameter=count>3</parameter></function></tool_call>'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('ORCL stock news')
+    expect(result!.cleanedBuffer).toBe('Let me search.')
+  })
+
+  it('intercepts when count param is closed but query param text is present (mid-stream)', () => {
+    // count param closed, query param opened with text but no closing tag
+    const buffer = 'Let me search.\n<tool_call> <function=brave_web_search><parameter=count>3</parameter><parameter=query>Oracle earnings 2025'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('Oracle earnings 2025')
+    expect(result!.cleanedBuffer).toBe('Let me search.')
+  })
+
+  it('does NOT intercept when query parameter is opened but has no text yet', () => {
+    // count closed, query tag opened with no value — should wait for more chunks
+    const buffer = '<tool_call> <function=brave_web_search><parameter=count>3</parameter><parameter=query>'
+    const result = detectMidStreamToolCall(buffer)
+    // empty query → should NOT return a result (would fire a blank search)
+    expect(result).toBeNull()
+  })
+
+  it('preserves existing closed-tag detection (no regression)', () => {
+    const buffer = '<tool_call>brave_web_search query="what is the weather"</tool_call>'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('what is the weather')
+  })
+
+  it('cleanedBuffer strips the tool call tag but preserves preceding answer text', () => {
+    const buffer = 'Here is what I found:\n<tool_call> <function=brave_web_search><parameter=query>ORCL 2025</parameter></function></tool_call>'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.cleanedBuffer).toBe('Here is what I found:')
+  })
 })

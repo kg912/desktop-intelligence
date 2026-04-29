@@ -151,7 +151,7 @@ Never pretend to have searched when you have not.
  *
  * Returns null if no recognisable tool call is found.
  */
-function parseRawToolCall(
+export function parseRawToolCall(
   content: string,
 ): { name: string; args: Record<string, string> } | null {
   // Format F: pipe-delimited format used by Gemma 4 and similar models
@@ -195,12 +195,14 @@ function parseRawToolCall(
     }
   }
 
-  const match = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
+  // Whitespace-tolerant: Qwen3 emits `<tool_call> <function=` (space after tag).
+  const match = content.match(/<tool_call>\s*([\s\S]*?)<\/tool_call>/);
   if (!match) return null;
 
   const inner = match[1].trim();
 
   // Format E: Qwen structured format
+  // Handles both `<tool_call><function=name>` and `<tool_call> <function=name>`.
   const funcMatch = inner.match(
     /<function=([^>]+)>([\s\S]*?)(?:<\/function>|$)/,
   );
@@ -318,7 +320,7 @@ function extractQueryFromCodeFenceToolCall(content: string): string | null {
  * Handles extracting tool queries from incomplete or incorrectly formatted tags during SSE stream decoding.
  * Returns the detected query and the cleaned buffer to retract.
  */
-function detectMidStreamToolCall(
+export function detectMidStreamToolCall(
   buffer: string,
 ): { query: string; cleanedBuffer: string } | null {
   // Case 1: Closed <tool_call> tag (e.g. standard fallback)
@@ -335,19 +337,30 @@ function detectMidStreamToolCall(
     }
   }
 
-  // Case 2: Unclosed <tool_call> (often emitted at stream end or mid-stream before stop token)
-  const unclosedMatch = buffer.match(/<tool_call>([\s\S]+)$/i);
+  // Case 2: Unclosed <tool_call> (often emitted at stream end or mid-stream before stop token).
+  // Whitespace-tolerant regex to handle Qwen3's `<tool_call> <function=` format.
+  const unclosedMatch = buffer.match(/<tool_call>\s*([\s\S]+)$/i);
   if (unclosedMatch) {
     const inner = unclosedMatch[1].trim();
-    // It's likely a complete JSON object if it ends with } or a completed format C string ="..." or a completed Qwen parameter tag
-    if (
+    // Completeness heuristics — any of these indicate the tag is parseable:
+    //   • ends with }          → Format D (JSON)
+    //   • includes ="          → Format C (quoted key=value)
+    //   • includes </parameter> → Format E (Qwen) — at least one param closed
+    //   • includes <parameter=  → Format E (Qwen) — param tag opened; may be
+    //     mid-stream, so we attempt parse and only fire when query is non-empty.
+    const likelyClosed =
       inner.endsWith("}") ||
       inner.includes('="') ||
-      inner.includes("</parameter>")
-    ) {
+      inner.includes("</parameter>") ||
+      inner.includes("<parameter=");
+
+    if (likelyClosed) {
       const fakeClosed = buffer + "</tool_call>";
       const raw = parseRawToolCall(fakeClosed);
       const q = raw?.args?.["query"];
+      // Guard: only intercept when query is non-empty.  An empty value means
+      // the <parameter=query> tag opened but its text hasn't arrived yet —
+      // wait for more chunks rather than firing a blank search.
       if (q) {
         return {
           query: q,
@@ -919,10 +932,15 @@ export class ChatService {
 
             if (chunkToSend) {
               totalTokens += estimateTokens(chunkToSend);
-              // Do NOT forward chunks while a native tool call is being accumulated.
-              // pendingToolCalls is non-empty once the first delta.tool_calls event fires;
-              // while it has entries the model is deciding to search, not producing an answer.
-              if (!pendingToolCalls.size) {
+              // Do NOT forward chunks while a native tool call is being accumulated
+              // (pendingToolCalls non-empty) or while a text-format tool call tag is
+              // open in the buffer.  Once `<tool_call` appears every subsequent chunk
+              // until interception is tool call syntax — sending it renders as visible
+              // XML in the chat window.
+              const hasOpenToolCallTag =
+                streamBuffer.includes("<tool_call") ||
+                streamBuffer.includes("<|tool_call>");
+              if (!pendingToolCalls.size && !hasOpenToolCallTag) {
                 send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
               }
               lineBuffer += chunkToSend;
