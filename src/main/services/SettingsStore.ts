@@ -15,6 +15,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
+import type { BackendProvider } from '../../shared/types'
 
 export interface AppSettings {
   /** Context length (n_ctx) to use when loading the model. */
@@ -41,6 +42,12 @@ export interface AppSettings {
   systemPrompt?: string
   /** When true, `--gpu max` is passed to every `lms load` call. Default: false */
   gpuOffload?: boolean
+  /** Active inference backend. Default: 'lmstudio' */
+  backendProvider?: BackendProvider
+  /** NVIDIA Build API key (nvapi-…). Only used when backendProvider === 'nvidia' */
+  nvidiaApiKey?: string
+  /** NVIDIA Build model identifier e.g. "deepseek-ai/deepseek-v4-pro" */
+  nvidiaModel?: string
 }
 
 function settingsPath(): string {

@@ -181,24 +181,54 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   }
 
   // ── Model Connection ────────────────────────────────────────
-  ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, (): ConnectionState =>
-    modelConnectionManager.getState()
-  )
+  ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, async (): Promise<ConnectionState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    if ((s.backendProvider ?? 'lmstudio') === 'nvidia') {
+      return {
+        status:         'ready',
+        modelInfo:      { id: s.nvidiaModel ?? 'deepseek-ai/deepseek-v4-pro', object: 'model', created: 0, owned_by: 'nvidia' },
+        lastChecked:    Date.now(),
+        error:          null,
+        pollIntervalMs: 0,
+      }
+    }
+    return modelConnectionManager.getState()
+  })
 
-  ipcMain.handle(IPC_CHANNELS.MODEL_FORCE_POLL, async (): Promise<ConnectionState> =>
-    modelConnectionManager.forcePoll()
-  )
+  ipcMain.handle(IPC_CHANNELS.MODEL_FORCE_POLL, async (): Promise<ConnectionState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    if ((s.backendProvider ?? 'lmstudio') === 'nvidia') {
+      return {
+        status:         'ready',
+        modelInfo:      { id: s.nvidiaModel ?? 'deepseek-ai/deepseek-v4-pro', object: 'model', created: 0, owned_by: 'nvidia' },
+        lastChecked:    Date.now(),
+        error:          null,
+        pollIntervalMs: 0,
+      }
+    }
+    return modelConnectionManager.forcePoll()
+  })
 
   modelConnectionManager.on('statusChange', (state: ConnectionState) =>
     send(IPC_CHANNELS.MODEL_STATUS_CHANGE, state)
   )
 
   // ── Daemon ──────────────────────────────────────────────────
-  ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, (): DaemonState =>
-    lmsDaemonManager.getState()
-  )
+  ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    if ((readSettings().backendProvider ?? 'lmstudio') === 'nvidia') {
+      return { phase: 'ready', error: null, stderr: null }
+    }
+    return lmsDaemonManager.getState()
+  })
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    if ((readSettings().backendProvider ?? 'lmstudio') === 'nvidia') {
+      return { phase: 'ready', error: null, stderr: null }
+    }
     await lmsDaemonManager.retry()
     return lmsDaemonManager.getState()
   })
@@ -804,6 +834,29 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS, () => ({
     hasEnvKey: !!(process.env.BRAVE_SEARCH_API_KEY?.trim()),
   }))
+
+  // ── settings:getBackend / settings:saveBackend ────────────────────
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_BACKEND, async () => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    return {
+      provider:     s.backendProvider ?? 'lmstudio',
+      nvidiaApiKey: s.nvidiaApiKey    ?? '',
+      nvidiaModel:  s.nvidiaModel     ?? 'deepseek-ai/deepseek-v4-pro',
+    }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
+    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string }) => {
+      const { writeSettings } = await import('../services/SettingsStore')
+      const cleanPatch: Record<string, unknown> = {}
+      if (patch.provider     !== undefined) cleanPatch.backendProvider = patch.provider
+      if (patch.nvidiaApiKey !== undefined) cleanPatch.nvidiaApiKey    = patch.nvidiaApiKey
+      if (patch.nvidiaModel  !== undefined) cleanPatch.nvidiaModel     = patch.nvidiaModel
+      writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
+    },
+  )
 
   // ── chat:compact — manual context compaction ─────────────────────
   // Summarises the current chat via a local LM Studio call, replaces

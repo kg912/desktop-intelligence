@@ -150,9 +150,11 @@ app.whenReady().then(async () => {
   const { readSettings } = await import('./services/SettingsStore')
   const savedSettings = readSettings()
 
-  lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
-    console.error('[App] LMSDaemon unhandled error:', err)
-  })
+  if ((savedSettings.backendProvider ?? 'lmstudio') === 'lmstudio') {
+    lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
+      console.error('[App] LMSDaemon unhandled error:', err)
+    })
+  }
   modelConnectionManager.start()
 
   // Pre-warm the persistent Python worker so the first chart renders fast.

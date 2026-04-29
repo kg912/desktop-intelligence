@@ -152,6 +152,8 @@ export type MessageBlock =
 
 export type ThinkingMode = 'thinking' | 'fast'
 
+export type BackendProvider = 'lmstudio' | 'nvidia'
+
 export interface ChatSendPayload {
   messages:       WireMessage[]
   systemPrompt?:  string
@@ -245,6 +247,9 @@ export const IPC_CHANNELS = {
   MCP_SERVER_STATUS_CHANGED:    'mcp:serverStatusChanged',     // main→renderer push
   MCP_SET_TOOL_ENABLED:        'mcp:setToolEnabled',          // renderer→main
 
+  SETTINGS_GET_BACKEND:  'settings:getBackend',
+  SETTINGS_SAVE_BACKEND: 'settings:saveBackend',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -285,6 +290,12 @@ export interface ReloadResult {
   error?:         string
   /** Context length confirmed by re-reading /api/v0/models after reload */
   confirmedCtx?:  number
+}
+
+export interface NvidiaSettings {
+  provider:     BackendProvider
+  nvidiaApiKey: string
+  nvidiaModel:  string
 }
 
 // --- Model selection & first-launch onboarding ---

@@ -33,6 +33,9 @@ import { getCompactedSummary, clearCompactedSummary } from "./DatabaseService";
 /** LM Studio OpenAI-compatible completions endpoint. Single source of truth. */
 const LMS_ENDPOINT = "http://localhost:1234/v1/chat/completions";
 
+/** NVIDIA Build OpenAI-compatible completions endpoint. */
+const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
+
 // Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true).
 // __DEV_MODE__ is a compile-time constant injected by Rollup define — see globals.d.ts.
 const DEBUG = __DEV_MODE__;
@@ -511,7 +514,10 @@ export function applyThinkingPrefix(
   messages: Array<{ role: string; content: string | ContentPart[] }>,
   thinkingMode: import("../../shared/types").ThinkingMode | undefined,
   model?: string,
+  provider?: import("../../shared/types").BackendProvider,
 ): Array<{ role: string; content: string | ContentPart[] }> {
+  // NVIDIA-hosted models do not use /think or /no_think soft-prompt tokens.
+  if (provider === "nvidia") return messages;
   // Gemma models do not recognise /think or /no_think — they are Qwen/MLX-specific
   // soft-prompt tokens. Injecting them into Gemma messages causes them to be echoed
   // verbatim inside the <think> block, polluting the thought accordion with junk text.
@@ -560,14 +566,17 @@ export class ChatService {
 
     // ── Read MCP settings ──────────────────────────────────────────
     const appSettings = readSettings();
+    const provider = appSettings.backendProvider ?? "lmstudio";
+    const isNvidia = provider === "nvidia";
     const resolvedKey = resolveBraveApiKey();
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
 
     // ── Build base messages ────────────────────────────────────────
     const builtMessages = applyThinkingPrefix(
-      this.buildMessages(payload),
+      this.buildMessages(payload, isNvidia),
       payload.thinkingMode,
       payload.model,
+      provider,
     );
     console.log(
       "🚀 FINAL LM STUDIO PAYLOAD:",
@@ -648,44 +657,69 @@ export class ChatService {
         const effectiveMax = maxOutputTokens ?? 16384;
         const thinkingBudget = Math.max(1024, Math.floor(effectiveMax * 0.75));
 
-        const step2ThinkingField = isThinking
-          ? {
-              thinking: {
-                type: "enabled",
-                budget_tokens: thinkingBudget,
-              },
-            }
-          : { thinking: { type: "disabled" } };
-        const streamBody = JSON.stringify({
-          model: modelId,
-          messages: messagesForRequest,
-          temperature: temperature ?? 0.7,
-          top_p: topP ?? 0.95,
-          max_tokens: maxOutputTokens ?? 16384,
-          repeat_penalty: repeatPenalty ?? 1.1,
-          stop: STOP_SEQUENCES,
-          ...step2ThinkingField,
-          ...(() => {
-            if (forceFinalAnswer) return {}; // strip tools — force synthesis pass
-            const mcpTools = mcpServerManager.getToolSchemas();
-            const allTools = [
-              ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
-              ...mcpTools,
-            ];
-            if (DEBUG) {
-              console.log(
-                `[DEBUG] Tools sent to LM Studio (${allTools.length}):`,
-                allTools.map(t => t.function.name).join(', ') || '(none)'
-              );
-            }
-            return allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {};
-          })(),
-          stream: true,
-        });
+        // ── Provider-aware request body ──────────────────────────────────────
+        const commonFields = {
+          model:       modelId,
+          messages:    messagesForRequest,
+          temperature: temperature ?? (isNvidia ? 1 : 0.7),
+          top_p:       topP ?? 0.95,
+          max_tokens:  maxOutputTokens ?? 16384,
+          stream:      true,
+        };
 
-        const response = await net.fetch(LMS_ENDPOINT, {
+        // Tools payload — same logic for both providers
+        const toolsPayload = (() => {
+          if (forceFinalAnswer) return {}; // strip tools — force synthesis pass
+          const mcpTools = mcpServerManager.getToolSchemas();
+          const allTools = [
+            ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
+            ...mcpTools,
+          ];
+          if (DEBUG) {
+            console.log(
+              `[DEBUG] Tools sent (${allTools.length}):`,
+              allTools.map(t => t.function.name).join(', ') || '(none)',
+            );
+          }
+          return allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {};
+        })();
+
+        let streamBody: string;
+        if (isNvidia) {
+          // NVIDIA Build payload — OpenAI-compatible, no LM Studio extensions
+          const thinkingEnabled = payload.thinkingMode === "thinking";
+          streamBody = JSON.stringify({
+            ...commonFields,
+            chat_template_kwargs: { thinking: thinkingEnabled },
+            stream_options: { include_usage: true },
+            ...toolsPayload,
+          });
+        } else {
+          // LM Studio payload — unchanged from original
+          const step2ThinkingField = isThinking
+            ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } }
+            : { thinking: { type: "disabled" } };
+
+          streamBody = JSON.stringify({
+            ...commonFields,
+            repeat_penalty: repeatPenalty ?? 1.1,
+            stop:           STOP_SEQUENCES,
+            ...step2ThinkingField,
+            ...toolsPayload,
+          });
+        }
+
+        const endpoint = isNvidia ? NVIDIA_ENDPOINT : LMS_ENDPOINT;
+        const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (isNvidia) {
+          const apiKey = appSettings.nvidiaApiKey ?? "";
+          if (!apiKey) throw new Error("NVIDIA API key is not configured. Set it in Settings → Backend.");
+          fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
+        }
+
+        const response = await net.fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: fetchHeaders,
           body: streamBody,
           signal: this.controller?.signal || signal,
         } as RequestInit);
@@ -706,6 +740,7 @@ export class ChatService {
         let streamBuffer = "";
         let toolCallIntercepted = false;
         let reasoningOpen = false;
+        let hasNonWhitespaceContent = false;
         // true while inside a Gemma 4 MLX native <|channel>thought…<channel|> block;
         // prevents the Source A→C </think> injection from firing for mid-thought chunks.
         let inChannelThought = false;
@@ -956,8 +991,14 @@ export class ChatService {
               const hasOpenToolCallTag =
                 streamBuffer.includes("<tool_call") ||
                 streamBuffer.includes("<|tool_call>");
+              // Suppress leading whitespace-only chunks before any real content is seen.
+              // DeepSeek-v4-pro emits "\n\n" before tool_calls start; without this guard
+              // it renders as a blank answer block before the search pill.
               if (!pendingToolCalls.size && !hasOpenToolCallTag) {
-                send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
+                if (chunkToSend.trim() || hasNonWhitespaceContent) {
+                  hasNonWhitespaceContent = true;
+                  send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
+                }
               }
               lineBuffer += chunkToSend;
             }
@@ -1269,6 +1310,7 @@ export class ChatService {
   // LM Studio vision content part shapes
   private buildMessages(
     payload: ChatSendPayload,
+    isNvidia = false,
   ): Array<{ role: string; content: string | ContentPart[] }> {
     const msgs: Array<{ role: string; content: string | ContentPart[] }> = [];
 
@@ -1301,6 +1343,7 @@ export class ChatService {
     // prompt.  Detection is by model name (only route that is reliable here since
     // we don't yet have content to inspect).
     if (
+      !isNvidia &&
       payload.thinkingMode === "thinking" &&
       payload.model?.toLowerCase().includes("gemma")
     ) {
@@ -1487,6 +1530,7 @@ export class ChatService {
     // contain "mlx" in their LM Studio model ID and must not receive this prefill
     // since they already activate thinking via reasoning_content correctly.
     if (
+      !isNvidia &&
       payload.thinkingMode === "thinking" &&
       payload.model?.toLowerCase().includes("gemma") &&
       payload.model?.toLowerCase().includes("mlx")
