@@ -9,9 +9,11 @@ import {
   type DragEvent
 } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useSignals } from '@preact/signals-react/runtime'
 import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
+import { isStreamingSignal } from '../../signals/chatSignals'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
 
@@ -78,7 +80,7 @@ const MAX_TEXTAREA_HEIGHT = 200
 const MIN_TEXTAREA_HEIGHT = 24
 
 export const InputBar = memo(function InputBar({
-  isStreaming = false,
+  isStreaming: isStreamingProp = false,  // kept as no-op fallback; signal is authoritative
   onSend,
   onAbort,
   disabled = false,
@@ -86,6 +88,10 @@ export const InputBar = memo(function InputBar({
   onAttachments,
   mcpActivity = null,
 }: InputBarProps) {
+  useSignals()
+  // Read streaming state from signal directly — avoids a Layout re-render cascade
+  // on every token. isStreamingProp is accepted for backwards compat but ignored.
+  const isStreaming = isStreamingSignal.value
   const { thinkingMode, setThinkingMode } = useModelStore()
   const [text, setText] = useState('')
   const [localAttachments, setLocalAttachments] = useState<Attachment[]>([])

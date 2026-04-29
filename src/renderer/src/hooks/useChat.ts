@@ -17,6 +17,12 @@
  *   type. `activeBlockIdRef` tracks which specific block is currently receiving
  *   tokens so post-search ThinkingBlocks are distinct from pre-search ones.
  *
+ * v2.3.0 (Phase 1): Buffer state machine extracted to chunkBuffer.ts + wireMessages.ts
+ *   for unit testability. Streaming state migrated from monolithic useState to
+ *   @preact/signals-react for surgical per-component reactivity — streamingBlocks
+ *   updates every rAF tick without triggering React re-renders; ChatArea scroll
+ *   and InputBar send-gate subscribe to signals directly.
+ *
  * ── IS_MOCK detection ────────────────────────────────────────────
  * In Electron with contextIsolation:true the global `electron` object
  * is NOT injected into window, so `'electron' in window` is always
@@ -26,7 +32,8 @@
  * fall back to the in-memory mock that main.tsx already injected.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { useSignals } from "@preact/signals-react/runtime";
 import { useModelStore } from "../store/ModelStore";
 import { v4 as uuid } from "uuid";
 import type {
@@ -38,8 +45,21 @@ import type {
   GenerationStats,
   MessageBlock,
   ProcessedAttachment,
-  WireMessage,
 } from "../../../shared/types";
+import {
+  processBuffer as processBufferPure,
+  closeAnswerBlock as closeAnswerBlockPure,
+  type BlockState,
+  type BufferContext,
+} from "../lib/chunkBuffer";
+import { buildWireMessages } from "../lib/wireMessages";
+import {
+  completedMessages,
+  streamingMessage,
+  streamingBlocks,
+  isStreamingSignal,
+  allMessages,
+} from "../signals/chatSignals";
 
 // ── Environment detection ────────────────────────────────────────
 const IS_BROWSER_MOCK = !navigator.userAgent.includes("Electron");
@@ -70,8 +90,9 @@ interface UseChatOptions {
 }
 
 export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+  // Enable signal subscriptions — the calling component re-renders when any
+  // signal read inside this hook changes.
+  useSignals();
 
   const { selectedModel, thinkingMode, setContextUsage } = useModelStore();
 
@@ -86,7 +107,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   const streamingContentRef = useRef<string>("");
 
   // Mirrors the current assistant message's blocks array — updated in sync with
-  // every block mutation so stream-end can read it without a nested setMessages.
+  // every block mutation so stream-end can read it without a setMessages round-trip.
   const currentBlocksRef = useRef<MessageBlock[]>([]);
 
   // ── v2.1.1 block-sequencing refs ─────────────────────────────
@@ -98,124 +119,85 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   const inThinkBlockRef = useRef<boolean>(false);
 
   // ── rAF throttle for streaming state updates ─────────────────
-  // processBuffer() mutates refs on every token but only schedules ONE
-  // setMessages per animation frame. This cuts React re-renders from
-  // ~57/s (one per token) down to ~60/s max (one per frame), and the
-  // browser naturally coalesces them. pendingRafRef holds the rAF id
-  // so we never queue more than one frame at a time.
+  // processBuffer() mutates refs on every token but schedules at most ONE
+  // signal write per animation frame via pendingRafRef. This caps per-token
+  // signal updates at ~60/s without losing any tokens (refs hold latest state).
   const pendingRafRef = useRef<number | null>(null);
 
   // ── Cheap think-block open/close tracking ────────────────────
-  // Replaces the O(n) includes() scan on the full accumulated string
-  // that was running on every single token.
   const hasSeenOpenThinkRef  = useRef<boolean>(false);
   const hasSeenCloseThinkRef = useRef<boolean>(false);
 
   // Tracks the thinking mode used for the previous turn (divider insertion).
   const prevThinkingModeRef = useRef<"thinking" | "fast">("fast");
 
-  // Mirrors messages state so sendMessage can read current history without
-  // closing over the messages array in its useCallback dep array.
-  // Synced on every messages update — always consistent before any send.
-  const messagesRef = useRef<Message[]>([]);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
   useEffect(() => {
     currentChatIdRef.current = chatId;
   }, [chatId]);
 
-  // ── Block helpers ─────────────────────────────────────────────
+  // ── Signal-based block helpers ────────────────────────────────
+  // These helpers update currentBlocksRef (the ref mirror) AND write to
+  // streamingMessage.value so the rendering component sees the change.
+  // They replace the old setMessages(findIndex...) pattern.
 
-  /** Append a new block to the current assistant message's blocks array. */
+  /** Append a new block to the current assistant turn. */
   const appendBlock = useCallback((block: MessageBlock) => {
-    const id = assistantIdRef.current;
     currentBlocksRef.current = [...currentBlocksRef.current, block];
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === id);
-      if (idx === -1) return prev;
-      const updated = [...prev];
-      updated[idx] = {
-        ...updated[idx],
-        blocks: [...(updated[idx].blocks ?? []), block],
+    streamingBlocks.value = currentBlocksRef.current;
+    const cur = streamingMessage.value;
+    if (cur) {
+      streamingMessage.value = {
+        ...cur,
+        blocks: currentBlocksRef.current,
       };
-      return updated;
-    });
+    }
   }, []);
 
-  /** Patch the last block of a given type on the current assistant message. */
+  /** Patch the last block of a given type on the current assistant turn. */
   const updateLastBlock = useCallback(
     (type: MessageBlock["type"], patch: Partial<MessageBlock>) => {
-      const id = assistantIdRef.current;
-      // Update the ref mirror
       const refBlocks = [...currentBlocksRef.current];
-      let lastRefIdx = -1;
+      let lastIdx = -1;
       for (let i = refBlocks.length - 1; i >= 0; i--) {
-        if (refBlocks[i].type === type) { lastRefIdx = i; break; }
+        if (refBlocks[i].type === type) { lastIdx = i; break; }
       }
-      if (lastRefIdx !== -1) {
-        refBlocks[lastRefIdx] = { ...refBlocks[lastRefIdx], ...patch } as MessageBlock;
+      if (lastIdx !== -1) {
+        refBlocks[lastIdx] = { ...refBlocks[lastIdx], ...patch } as MessageBlock;
         currentBlocksRef.current = refBlocks;
       }
-
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === id);
-        if (idx === -1) return prev;
-        const blocks = [...(prev[idx].blocks ?? [])];
-        let lastIdx = -1;
-        for (let i = blocks.length - 1; i >= 0; i--) {
-          if (blocks[i].type === type) {
-            lastIdx = i;
-            break;
-          }
-        }
-        if (lastIdx === -1) return prev;
-        blocks[lastIdx] = { ...blocks[lastIdx], ...patch } as MessageBlock;
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], blocks };
-        return updated;
-      });
+      streamingBlocks.value = currentBlocksRef.current;
+      const cur = streamingMessage.value;
+      if (cur) {
+        streamingMessage.value = { ...cur, blocks: currentBlocksRef.current };
+      }
     },
     [],
   );
 
-  /** Patch a specific block by id on the current assistant message. */
+  /** Patch a specific block by id on the current assistant turn. */
   const updateBlockById = useCallback(
     (blockId: string, patch: Partial<MessageBlock>) => {
-      const id = assistantIdRef.current;
-      // Update ref mirror
       const refBlocks = [...currentBlocksRef.current];
-      const refIdx = refBlocks.findIndex((b) => b.id === blockId);
-      if (refIdx !== -1) {
-        refBlocks[refIdx] = { ...refBlocks[refIdx], ...patch } as MessageBlock;
+      const idx = refBlocks.findIndex((b) => b.id === blockId);
+      if (idx !== -1) {
+        refBlocks[idx] = { ...refBlocks[idx], ...patch } as MessageBlock;
         currentBlocksRef.current = refBlocks;
       }
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === id);
-        if (idx === -1) return prev;
-        const blocks = [...(prev[idx].blocks ?? [])];
-        const bIdx = blocks.findIndex((b) => b.id === blockId);
-        if (bIdx === -1) return prev;
-        blocks[bIdx] = { ...blocks[bIdx], ...patch } as MessageBlock;
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], blocks };
-        return updated;
-      });
+      streamingBlocks.value = currentBlocksRef.current;
+      const cur = streamingMessage.value;
+      if (cur) {
+        streamingMessage.value = { ...cur, blocks: currentBlocksRef.current };
+      }
     },
     [],
   );
 
-  /** Patch the current assistant message's top-level fields (legacy / isThinking etc.) */
+  /** Patch the current assistant message's top-level fields (isThinking, isSearching, etc.) */
   const patchAssistant = useCallback((patch: Partial<Message>) => {
-    const id = assistantIdRef.current;
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === id);
-      if (idx === -1) return prev;
-      const updated = [...prev];
-      updated[idx] = { ...updated[idx], ...patch };
-      return updated;
-    });
+    const cur = streamingMessage.value;
+    if (cur) {
+      streamingMessage.value = { ...cur, ...patch };
+    }
   }, []);
 
   // ── Register demo trigger only in browser/mock mode ───────────
@@ -229,197 +211,80 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
   // ── Subscribe to streaming events from main ───────────────────
   useEffect(() => {
-    // ── Local buffer-processing helpers ─────────────────────────
-    // These close over refs + stable setters only — safe inside the effect.
+    // ── Buffer-processing wrapper ────────────────────────────────
+    // Delegates to the pure processBufferPure() from chunkBuffer.ts.
+    // Writes returned values back to refs and schedules the signal flush.
 
-    /** Append text to a specific block in the ref mirror (no state update). */
-    function appendToBlock(blockId: string, text: string): void {
-      const blocks = [...currentBlocksRef.current];
-      const idx = blocks.findIndex((b) => b.id === blockId);
-      if (idx === -1) return;
-      const b = blocks[idx];
-      if (b.type === "thinking") {
-        blocks[idx] = { ...b, content: b.content + text };
-      } else if (b.type === "answer") {
-        blocks[idx] = { ...b, content: b.content + text, isStreaming: true };
-      }
-      currentBlocksRef.current = blocks;
-    }
-
-    /**
-     * Route `text` to the active answer block.
-     * Creates a new AnswerBlock and sets activeBlockIdRef if there isn't one.
-     * Updates ref only — caller triggers the single setMessages at end of processBuffer.
-     */
-    function ensureAnswerAndAppend(text: string): void {
-      if (activeBlockIdRef.current) {
-        const existing = currentBlocksRef.current.find(
-          (b) => b.id === activeBlockIdRef.current,
-        );
-        if (existing?.type === "answer") {
-          appendToBlock(activeBlockIdRef.current, text);
-          return;
-        }
-      }
-      // No active answer block — create one
-      const newId = uuid();
-      currentBlocksRef.current = [
-        ...currentBlocksRef.current,
-        { id: newId, type: "answer", content: text, isStreaming: true } as MessageBlock,
-      ];
-      activeBlockIdRef.current = newId;
-    }
-
-    /** Mark an answer block as no longer streaming. Updates ref only. */
-    function closeAnswerBlock(blockId: string): void {
-      const blocks = [...currentBlocksRef.current];
-      const idx = blocks.findIndex((b) => b.id === blockId);
-      if (idx === -1) return;
-      const b = blocks[idx];
-      if (b.type === "answer") {
-        blocks[idx] = { ...b, isStreaming: false };
-        currentBlocksRef.current = blocks;
-      }
-    }
-
-    /** How many chars at the end of `buf` could be the start of `tag`. */
-    function partialTagSuffix(buf: string, tag: string): number {
-      for (let len = Math.min(tag.length - 1, buf.length); len > 0; len--) {
-        if (buf.endsWith(tag.slice(0, len))) return len;
-      }
-      return 0;
-    }
-
-    /**
-     * Flush `chunkBufferRef` by scanning for `<think>` / `</think>` boundaries.
-     * Text between boundaries is routed to the correct block type via ref mutation.
-     * State is committed via a rAF-throttled flush — at most one setMessages per
-     * animation frame regardless of how many tokens arrive in between.
-     */
     function processBuffer(): void {
-      let buf = chunkBufferRef.current;
-      let mutated = false;
+      const prevInThink = inThinkBlockRef.current;
+      const result = processBufferPure(
+        chunkBufferRef.current,
+        {
+          blocks:        currentBlocksRef.current as BlockState[],
+          activeBlockId: activeBlockIdRef.current,
+          inThinkBlock:  prevInThink,
+        } satisfies BufferContext,
+        () => uuid(),
+      );
 
-      while (buf.length > 0) {
-        if (inThinkBlockRef.current) {
-          // ── Inside a think block — look for </think> ────────────
-          const closeTag = "</think>";
-          const closeIdx = buf.indexOf(closeTag);
-          if (closeIdx === -1) {
-            // No close tag yet — hold back any partial closing tag suffix
-            const partialLen = partialTagSuffix(buf, closeTag);
-            const safe = buf.slice(0, buf.length - partialLen);
-            if (safe && activeBlockIdRef.current) {
-              appendToBlock(activeBlockIdRef.current, safe);
-              mutated = true;
-            }
-            buf = partialLen > 0 ? buf.slice(buf.length - partialLen) : "";
-            break;
-          } else {
-            // Close tag found — commit text before it, then exit think mode
-            const before = buf.slice(0, closeIdx);
-            if (before && activeBlockIdRef.current) {
-              appendToBlock(activeBlockIdRef.current, before);
-              mutated = true;
-            }
-            hasSeenCloseThinkRef.current = true;
-            inThinkBlockRef.current = false;
-            activeBlockIdRef.current = null; // next answer text → new AnswerBlock
-            buf = buf.slice(closeIdx + closeTag.length);
-            mutated = true;
-          }
-        } else {
-          // ── In answer mode — look for <think> ──────────────────
-          const openTag = "<think>";
-          const openIdx = buf.indexOf(openTag);
-          if (openIdx === -1) {
-            // No open tag — hold back any partial opening tag suffix
-            const partialLen = partialTagSuffix(buf, openTag);
-            const safe = buf.slice(0, buf.length - partialLen);
-            if (safe) {
-              ensureAnswerAndAppend(safe);
-              mutated = true;
-            }
-            buf = partialLen > 0 ? buf.slice(buf.length - partialLen) : "";
-            break;
-          } else {
-            // Open tag found — commit answer text before it, then enter think mode
-            const before = buf.slice(0, openIdx);
-            if (before) {
-              ensureAnswerAndAppend(before);
-              mutated = true;
-            }
-            // Close any active answer block
-            if (activeBlockIdRef.current) {
-              closeAnswerBlock(activeBlockIdRef.current);
-              activeBlockIdRef.current = null;
-            }
-            // Create a new ThinkingBlock
-            const newThinkId = uuid();
-            currentBlocksRef.current = [
-              ...currentBlocksRef.current,
-              { id: newThinkId, type: "thinking", content: "" } as MessageBlock,
-            ];
-            hasSeenOpenThinkRef.current = true;
-            inThinkBlockRef.current = true;
-            activeBlockIdRef.current = newThinkId;
-            buf = buf.slice(openIdx + openTag.length);
-            mutated = true;
-          }
-        }
+      currentBlocksRef.current = result.ctx.blocks as MessageBlock[];
+      activeBlockIdRef.current  = result.ctx.activeBlockId;
+      inThinkBlockRef.current   = result.ctx.inThinkBlock;
+      chunkBufferRef.current    = result.remaining;
+
+      // Maintain seen-tag flags (used by the timeout guard below)
+      if (result.ctx.blocks.some((b) => b.type === "thinking")) {
+        hasSeenOpenThinkRef.current = true;
+      }
+      if (prevInThink && !result.ctx.inThinkBlock) {
+        hasSeenCloseThinkRef.current = true;
       }
 
-      chunkBufferRef.current = buf;
-
-      if (mutated) {
+      if (result.mutated) {
         scheduleStateFlush();
       }
     }
 
     /**
-     * scheduleStateFlush — commit ref state to React at most once per frame.
-     * Multiple processBuffer() calls within the same frame share one rAF;
-     * the callback reads the latest ref values so no tokens are lost.
+     * scheduleStateFlush — write current ref state to signals at most once per
+     * animation frame. Multiple processBuffer() calls within one frame share one
+     * rAF; the callback reads the latest ref values so no tokens are lost.
+     *
+     * Writes streamingBlocks for components subscribing to per-token updates
+     * (e.g. ChatArea scroll via useSignalEffect), and also updates
+     * streamingMessage so allMessages recomputes and the rendering tree refreshes.
      */
     function scheduleStateFlush(): void {
       if (pendingRafRef.current !== null) return; // already scheduled
       pendingRafRef.current = requestAnimationFrame(() => {
         pendingRafRef.current = null;
-        const id     = assistantIdRef.current;
         const blocks = currentBlocksRef.current;
-        if (!id) return;
-        setMessages((prev) => {
-          const idx = prev.findIndex((m) => m.id === id);
-          if (idx === -1) return prev;
-          const updated = [...prev];
-          updated[idx] = {
-            ...updated[idx],
+        streamingBlocks.value = blocks;
+        const cur = streamingMessage.value;
+        if (cur) {
+          streamingMessage.value = {
+            ...cur,
             blocks,
-            content: streamingContentRef.current,
-            isThinking: false,
-            isStreaming: true,
-            isSearching: false,
+            content:     streamingContentRef.current,
+            isThinking:  false,
+            isStreaming:  true,
+            isSearching:  false,
           };
-          return updated;
-        });
+        }
       });
     }
 
     /**
-     * Push current ref state to React state.
-     * Called after ref-only mutations (e.g. closeAnswerBlock) to keep state in sync
-     * before an appendBlock call that reads from prev state.
+     * Flush current ref state to signals immediately (no rAF).
+     * Called before appendBlock so block-list mutations are visible when the
+     * signal update for the new block fires.
      */
     function commitBlocksToState(): void {
-      const id = assistantIdRef.current;
-      const blocks = currentBlocksRef.current;
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === id);
-        if (idx === -1) return prev;
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], blocks };
-        return updated;
-      });
+      streamingBlocks.value = currentBlocksRef.current;
+      const cur = streamingMessage.value;
+      if (cur) {
+        streamingMessage.value = { ...cur, blocks: currentBlocksRef.current };
+      }
     }
 
     // ── Chunk: buffer and route to the correct block type ─────────
@@ -452,18 +317,22 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         // Flush any buffered text before the search begins
         processBuffer();
 
-        // Close and deactivate the currently active block
+        // Close and deactivate the currently active block (pure — updates ref)
         if (activeBlockIdRef.current) {
-          closeAnswerBlock(activeBlockIdRef.current);
+          const closed = closeAnswerBlockPure(
+            currentBlocksRef.current as BlockState[],
+            activeBlockIdRef.current,
+          );
+          currentBlocksRef.current = closed as MessageBlock[];
         }
         activeBlockIdRef.current = null;
-        inThinkBlockRef.current = false;
-        chunkBufferRef.current = "";
+        inThinkBlockRef.current  = false;
+        chunkBufferRef.current   = "";
 
-        // Commit the closed-block ref state to React before appendBlock reads prev state
+        // Commit closed-block ref state to signals before appendBlock fires
         commitBlocksToState();
 
-        if (DEBUG) console.log(`[Debug][useChat][ToolStart] query="${query}" toolName=${toolName ?? 'brave_web_search'} activeBlockId=${activeBlockIdRef.current}`);
+        if (DEBUG) console.log(`[Debug][useChat][ToolStart] query="${query}" toolName=${toolName ?? 'brave_web_search'}`);
         appendBlock({ id: uuid(), type: "search", query, toolName, phase: "searching" });
         patchAssistant({ isSearching: true, isThinking: false });
       },
@@ -513,9 +382,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Stream end ────────────────────────────────────────────────
     const unsubEnd = window.api.onChatStreamEnd((stats: GenerationStats) => {
-      const assistantMsgId = assistantIdRef.current;
+      const assistantMsgId   = assistantIdRef.current;
       const assistantContent = streamingContentRef.current;
-      const activeChatId = currentChatIdRef.current;
+      const activeChatId     = currentChatIdRef.current;
 
       if (DEBUG) {
         console.log(
@@ -538,14 +407,14 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       processBuffer();
 
       // Clear in-flight refs before any async work
-      assistantIdRef.current = null;
-      streamingContentRef.current = "";
-      thinkStartedAt.current = null;
-      activeBlockIdRef.current = null;
-      chunkBufferRef.current = "";
-      inThinkBlockRef.current = false;
-      hasSeenOpenThinkRef.current  = false;
-      hasSeenCloseThinkRef.current = false;
+      assistantIdRef.current        = null;
+      streamingContentRef.current   = "";
+      thinkStartedAt.current        = null;
+      activeBlockIdRef.current      = null;
+      chunkBufferRef.current        = "";
+      inThinkBlockRef.current       = false;
+      hasSeenOpenThinkRef.current   = false;
+      hasSeenCloseThinkRef.current  = false;
       if (pendingRafRef.current !== null) {
         cancelAnimationFrame(pendingRafRef.current);
         pendingRafRef.current = null;
@@ -557,21 +426,21 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       ) as MessageBlock[];
       currentBlocksRef.current = finalizedBlocks;
 
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === assistantMsgId);
-        if (idx === -1) return prev;
-        const updated = [...prev];
-        updated[idx] = {
-          ...updated[idx],
-          blocks: finalizedBlocks,
-          isThinking: false,
-          isStreaming: false,
-          isSearching: false,
-          stats,
-        };
-        return updated;
-      });
-      setIsStreaming(false);
+      // Move the streaming message into the completed list
+      const cur = streamingMessage.value;
+      const finalizedMsg: Message = {
+        ...(cur ?? makeAssistant()),
+        id:          assistantMsgId ?? (cur?.id ?? uuid()),
+        blocks:      finalizedBlocks,
+        isThinking:  false,
+        isStreaming:  false,
+        isSearching:  false,
+        stats,
+      };
+      completedMessages.value = [...completedMessages.value, finalizedMsg];
+      streamingMessage.value  = null;
+      streamingBlocks.value   = [];
+      isStreamingSignal.value = false;
 
       // Context utilisation bar — preserve exact existing logic
       if (stats.promptTokens) {
@@ -606,13 +475,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
       // Persist assistant message to SQLite
       if (activeChatId && assistantMsgId && assistantContent) {
-        // Read from the ref mirror — avoids a nested setMessages anti-pattern.
-        const finalBlocks = currentBlocksRef.current;
-        const blocksJson = finalBlocks.length
-          ? JSON.stringify(finalBlocks)
+        const blocksJson = finalizedBlocks.length
+          ? JSON.stringify(finalizedBlocks)
           : null;
-        // Derive legacy toolCallJson from the last done search block for backward compat
-        const doneBlock = finalBlocks
+        const doneBlock = finalizedBlocks
           .slice()
           .reverse()
           .find(
@@ -621,8 +487,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           );
         const toolCallJson = doneBlock
           ? JSON.stringify({
-              query: doneBlock.query,
-              results: doneBlock.results ?? [],
+              query:            doneBlock.query,
+              results:          doneBlock.results ?? [],
               formattedContent: doneBlock.formattedContent ?? "",
             })
           : null;
@@ -643,32 +509,31 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     const unsubErr = window.api.onChatError((msg: string) => {
       if (DEBUG) console.log(`[Debug][useChat][ChatError] msg="${msg}"`);
-      const id = assistantIdRef.current;
-      assistantIdRef.current = null;
-      streamingContentRef.current = "";
-      activeBlockIdRef.current = null;
-      chunkBufferRef.current = "";
-      inThinkBlockRef.current = false;
-      hasSeenOpenThinkRef.current  = false;
-      hasSeenCloseThinkRef.current = false;
+      const assistantMsgId = assistantIdRef.current;
+      assistantIdRef.current        = null;
+      streamingContentRef.current   = "";
+      activeBlockIdRef.current      = null;
+      chunkBufferRef.current        = "";
+      inThinkBlockRef.current       = false;
+      hasSeenOpenThinkRef.current   = false;
+      hasSeenCloseThinkRef.current  = false;
       if (pendingRafRef.current !== null) {
         cancelAnimationFrame(pendingRafRef.current);
         pendingRafRef.current = null;
       }
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === id);
-        if (idx === -1) return prev;
-        const updated = [...prev];
-        updated[idx] = {
-          ...updated[idx],
-          isThinking: false,
-          isStreaming: false,
-          isSearching: false,
-          error: msg,
-        };
-        return updated;
-      });
-      setIsStreaming(false);
+      const cur = streamingMessage.value;
+      const errorMsg: Message = {
+        ...(cur ?? makeAssistant()),
+        id:          assistantMsgId ?? (cur?.id ?? uuid()),
+        isThinking:  false,
+        isStreaming:  false,
+        isSearching:  false,
+        error:       msg,
+      };
+      completedMessages.value = [...completedMessages.value, errorMsg];
+      streamingMessage.value  = null;
+      streamingBlocks.value   = [];
+      isStreamingSignal.value = false;
     });
 
     return () => {
@@ -688,7 +553,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       attachments?: ProcessedAttachment[],
       overrideChatId?: string,
     ) => {
-      if (isStreaming) return;
+      if (isStreamingSignal.value) return;
 
       thinkStartedAt.current = null;
 
@@ -698,26 +563,26 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           : undefined;
 
       const userMsg: Message = {
-        id: uuid(),
-        role: "user",
-        content: text,
-        stats: null,
-        isThinking: false,
-        isStreaming: false,
-        isSearching: false,
-        error: null,
+        id:          uuid(),
+        role:        "user",
+        content:     text,
+        stats:       null,
+        isThinking:  false,
+        isStreaming:  false,
+        isSearching:  false,
+        error:       null,
         attachments: msgAttachments,
       };
 
       const assistantMsg = makeAssistant();
-      assistantIdRef.current = assistantMsg.id;
-      streamingContentRef.current = "";
-      currentBlocksRef.current = [];
-      activeBlockIdRef.current = null;
-      chunkBufferRef.current = "";
-      inThinkBlockRef.current = false;
-      hasSeenOpenThinkRef.current  = false;
-      hasSeenCloseThinkRef.current = false;
+      assistantIdRef.current        = assistantMsg.id;
+      streamingContentRef.current   = "";
+      currentBlocksRef.current      = [];
+      activeBlockIdRef.current      = null;
+      chunkBufferRef.current        = "";
+      inThinkBlockRef.current       = false;
+      hasSeenOpenThinkRef.current   = false;
+      hasSeenCloseThinkRef.current  = false;
       if (pendingRafRef.current !== null) {
         cancelAnimationFrame(pendingRafRef.current);
         pendingRafRef.current = null;
@@ -726,28 +591,34 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       const modeChanged = prevThinkingModeRef.current !== thinkingMode;
       prevThinkingModeRef.current = thinkingMode;
 
-      setMessages((prev) => {
-        const dividers: Message[] =
-          modeChanged && prev.length > 0
-            ? [
-                {
-                  id: uuid(),
-                  role: "divider",
-                  content:
-                    thinkingMode === "thinking"
-                      ? "— Switched to Thinking Mode —"
-                      : "— Switched to Fast Mode —",
-                  stats: null,
-                  isThinking: false,
-                  isStreaming: false,
-                  isSearching: false,
-                  error: null,
-                },
-              ]
-            : [];
-        return [...prev, ...dividers, userMsg, assistantMsg];
-      });
-      setIsStreaming(true);
+      // Snapshot pre-send history for wire building (before we mutate signals)
+      const prevHistory = allMessages.value;
+
+      const dividers: Message[] =
+        modeChanged && prevHistory.length > 0
+          ? [
+              {
+                id:          uuid(),
+                role:        "divider",
+                content:
+                  thinkingMode === "thinking"
+                    ? "— Switched to Thinking Mode —"
+                    : "— Switched to Fast Mode —",
+                stats:       null,
+                isThinking:  false,
+                isStreaming:  false,
+                isSearching:  false,
+                error:       null,
+              },
+            ]
+          : [];
+
+      // Update signals: push user message (and optional divider) to history,
+      // set the in-flight assistant placeholder.
+      completedMessages.value = [...completedMessages.value, ...dividers, userMsg];
+      streamingMessage.value  = assistantMsg;
+      streamingBlocks.value   = [];
+      isStreamingSignal.value = true;
 
       let activeChatId = overrideChatId ?? currentChatIdRef.current;
 
@@ -780,130 +651,37 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           .catch((err) => console.warn("[DB] save user msg failed:", err));
       }
 
-      // Build wire messages from history.
-      // For messages with blocks, derive tool call wire format from search blocks.
-      // For legacy messages (no blocks), use existing toolCall field.
-      const allMsgsForWire = [...messagesRef.current, userMsg].filter(
-        (m) => m.role !== "divider",
-      );
-
-      // Find last message with a tool call (block or legacy) for context-amnesia fix
-      const lastToolCallIndex = allMsgsForWire.reduce((last, m, i) => {
-        const hasBlockSearch = m.blocks?.some(
-          (b) => b.type === "search" && b.phase === "done",
-        );
-        return hasBlockSearch || m.toolCall ? i : last;
-      }, -1);
-
-      const wire: WireMessage[] = allMsgsForWire.flatMap((m, i) => {
-        // ── v2.1 block-based path ─────────────────────────────────
-        const doneSearchBlock = m.blocks
-          ?.slice()
-          .reverse()
-          .find(
-            (b): b is Extract<MessageBlock, { type: "search" }> =>
-              b.type === "search" && b.phase === "done",
-          );
-
-        if (doneSearchBlock) {
-          const isLastToolCall = i === lastToolCallIndex;
-          // Use the actual tool name from the block — MCP tools store their namespaced
-          // name (e.g. "memory__search_nodes") here; legacy search blocks have undefined.
-          const wireFuncName = doneSearchBlock.toolName ?? "brave_web_search";
-          // For Brave Search reconstruct args as {query}; for MCP tools the block query
-          // IS the namespaced tool name so reconstruct args as {} (content carries result).
-          const wireArgs = wireFuncName === "brave_web_search"
-            ? JSON.stringify({ query: doneSearchBlock.query })
-            : JSON.stringify({});
-          const resultsStr = isLastToolCall
-            ? doneSearchBlock.formattedContent ||
-              JSON.stringify(doneSearchBlock.results?.slice(0, 3) || [])
-            : `[Previous tool call: ${doneSearchBlock.toolName ?? doneSearchBlock.query}]`;
-          const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-          return [
-            {
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              tool_calls: [
-                {
-                  id: toolCallId,
-                  type: "function",
-                  function: {
-                    name: wireFuncName,
-                    arguments: wireArgs,
-                  },
-                },
-              ],
-            },
-            {
-              role: "tool",
-              tool_call_id: toolCallId,
-              content: resultsStr,
-            },
-          ] as WireMessage[];
-        }
-
-        // ── Legacy toolCall path ──────────────────────────────────
-        if (m.toolCall) {
-          const isLastToolCall = i === lastToolCallIndex;
-          const resultsStr = isLastToolCall
-            ? m.toolCall.formattedContent ||
-              JSON.stringify(m.toolCall.results?.slice(0, 3) || [])
-            : `[Previous search: ${m.toolCall.query}]`;
-          const toolCallId = `call_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-          return [
-            {
-              role: m.role as "user" | "assistant",
-              content: m.content,
-              tool_calls: [
-                {
-                  id: toolCallId,
-                  type: "function",
-                  function: {
-                    name: "brave_web_search",
-                    arguments: JSON.stringify({ query: m.toolCall.query }),
-                  },
-                },
-              ],
-            },
-            {
-              role: "tool",
-              tool_call_id: toolCallId,
-              content: resultsStr,
-            },
-          ] as WireMessage[];
-        }
-
-        return [
-          {
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          },
-        ] as WireMessage[];
-      });
+      // Build wire messages from pre-send history + current user message.
+      const wire = buildWireMessages([...prevHistory, ...dividers, userMsg]);
 
       try {
         await window.api.sendChatMessage({
-          messages: wire,
-          attachments: attachments?.length ? attachments : undefined,
-          chatId: activeChatId ?? undefined,
-          model: selectedModel,
+          messages:     wire,
+          attachments:  attachments?.length ? attachments : undefined,
+          chatId:       activeChatId ?? undefined,
+          model:        selectedModel,
           thinkingMode,
         });
       } catch (err) {
         patchAssistant({
-          isThinking: false,
-          isStreaming: false,
-          isSearching: false,
+          isThinking:  false,
+          isStreaming:  false,
+          isSearching:  false,
           error: err instanceof Error ? err.message : String(err),
         });
-        setIsStreaming(false);
-        assistantIdRef.current = null;
-        streamingContentRef.current = "";
+        // Move the error assistant to completed
+        const cur = streamingMessage.value;
+        if (cur) {
+          completedMessages.value = [...completedMessages.value, { ...cur, error: err instanceof Error ? err.message : String(err), isThinking: false, isStreaming: false, isSearching: false }];
+        }
+        streamingMessage.value  = null;
+        streamingBlocks.value   = [];
+        isStreamingSignal.value = false;
+        assistantIdRef.current        = null;
+        streamingContentRef.current   = "";
       }
     },
     [
-      isStreaming,
       appendBlock,
       updateLastBlock,
       patchAssistant,
@@ -920,36 +698,47 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
   // ── Load messages ─────────────────────────────────────────────
   const loadMessages = useCallback((msgs: Message[]) => {
-    setMessages(msgs);
-    setIsStreaming(false);
-    assistantIdRef.current = null;
-    streamingContentRef.current = "";
-    currentBlocksRef.current = [];
-    activeBlockIdRef.current = null;
-    chunkBufferRef.current = "";
-    inThinkBlockRef.current = false;
+    completedMessages.value = msgs;
+    streamingMessage.value  = null;
+    streamingBlocks.value   = [];
+    isStreamingSignal.value = false;
+    assistantIdRef.current        = null;
+    streamingContentRef.current   = "";
+    currentBlocksRef.current      = [];
+    activeBlockIdRef.current      = null;
+    chunkBufferRef.current        = "";
+    inThinkBlockRef.current       = false;
   }, []);
 
   // ── Clear conversation ────────────────────────────────────────
   const clearMessages = useCallback(() => {
-    if (isStreaming) window.api.abortChat();
-    setMessages([]);
-    setIsStreaming(false);
+    if (isStreamingSignal.value) window.api.abortChat();
+    completedMessages.value = [];
+    streamingMessage.value  = null;
+    streamingBlocks.value   = [];
+    isStreamingSignal.value = false;
     setContextUsage({ used: 0, total: 0 });
-    assistantIdRef.current = null;
-    streamingContentRef.current = "";
-    currentBlocksRef.current = [];
-    activeBlockIdRef.current = null;
-    chunkBufferRef.current = "";
-    inThinkBlockRef.current = false;
-    hasSeenOpenThinkRef.current  = false;
-    hasSeenCloseThinkRef.current = false;
+    assistantIdRef.current        = null;
+    streamingContentRef.current   = "";
+    currentBlocksRef.current      = [];
+    activeBlockIdRef.current      = null;
+    chunkBufferRef.current        = "";
+    inThinkBlockRef.current       = false;
+    hasSeenOpenThinkRef.current   = false;
+    hasSeenCloseThinkRef.current  = false;
     if (pendingRafRef.current !== null) {
       cancelAnimationFrame(pendingRafRef.current);
       pendingRafRef.current = null;
     }
     currentChatIdRef.current = null;
-  }, [isStreaming]);
+  }, [setContextUsage]);
+
+  // ── Derive return values from signals ─────────────────────────
+  // Reading signal.value here subscribes the calling component to changes
+  // (via useSignals() above). allMessages is a computed that only recomputes
+  // on message-level events, not on every streaming token.
+  const messages   = allMessages.value;
+  const isStreaming = isStreamingSignal.value;
 
   return {
     messages,

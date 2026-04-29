@@ -1,8 +1,10 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useSignals, useSignalEffect } from '@preact/signals-react/runtime'
 import { MessageBubble } from '../chat/MessageBubble'
 import { CompactToast } from '../chat/CompactToast'
 import { useModelStore } from '../../store/ModelStore'
+import { streamingBlocks, isStreamingSignal } from '../../signals/chatSignals'
 import logoWelcome from '../../assets/logo-welcome.png'
 import type { Message } from '../chat/MessageBubble'
 
@@ -79,6 +81,7 @@ export interface ChatAreaHandle {
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
 function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, ref) {
+  useSignals()
   const { compactToast } = useModelStore()
   const bottomRef          = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -139,11 +142,14 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
     }
   }, [messages.length])
 
-  // ── Auto-scroll on every content change — unless paused ─────────
-  // Throttled with rAF so rapid token updates don't call scrollIntoView
-  // on every single chunk (which was stacking with the React re-render cost).
+  // ── Auto-scroll on streaming block updates — unless paused ──────
+  // useSignalEffect subscribes to streamingBlocks so it fires on every rAF
+  // tick during token streaming without needing a React re-render. This
+  // replaces the old useEffect([messages[last].content, ...]) dep array,
+  // which required a full re-render before scroll could fire.
   const scrollRafRef = useRef<number | null>(null)
-  useEffect(() => {
+  useSignalEffect(() => {
+    void streamingBlocks.value  // subscribe: fires on every block update
     if (userScrolledUp.current) return
     if (scrollRafRef.current !== null) return  // already scheduled this frame
     scrollRafRef.current = requestAnimationFrame(() => {
@@ -151,17 +157,11 @@ function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, re
       if (userScrolledUp.current) return
       isProgrammaticScroll.current = true
       bottomRef.current?.scrollIntoView({
-        behavior: isStreaming ? 'instant' : 'smooth',
+        behavior: isStreamingSignal.value ? 'instant' : 'smooth',
         block:    'end',
       })
     })
-  }, [
-    messages.length,
-    messages[messages.length - 1]?.content,
-    messages[messages.length - 1]?.isSearching,
-    messages[messages.length - 1]?.isThinking,
-    isStreaming,
-  ])
+  })
 
   // ── Pause auto-scroll when user scrolls UP ───────────────────────
   // onWheel fires for real trackpad / mouse-wheel gestures only; it does
