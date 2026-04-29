@@ -7,8 +7,8 @@
  *                         Components that only need these fields subscribe here and
  *                         are never re-rendered by streaming state changes.
  *
- *   ModelRuntimeContext — volatile, changes during/after streaming (contextUsage,
- *                         isCompacting, compactToast, isReloading).
+ *   ModelRuntimeContext — volatile setters only; reads come from signals directly
+ *                         (contextUsageSignal, isCompactingSignal, contextFillSignal).
  *
  * Backward-compatibility:
  *   useModelStore() merges both contexts and returns all 12 fields unchanged —
@@ -19,8 +19,8 @@
  *   useModelRuntime()  — subscribes only to ModelRuntimeContext
  */
 
-import { createContext, useContext, useState, useEffect } from "react";
-import type { ReactNode, Dispatch, SetStateAction } from "react";
+import { createContext, useContext, useState, useCallback } from "react";
+import type { ReactNode } from "react";
 import type { ThinkingMode } from "../../../shared/types";
 
 // ── Runtime signals (re-exported from pure .ts sidecar) ─────────
@@ -44,11 +44,9 @@ interface ModelConfigValue {
 
 /** Volatile runtime state that changes during/after streaming. */
 interface ModelRuntimeValue {
-  /** Context window utilisation; starts at {used:0, total:0} until model config is loaded */
-  contextUsage: { used: number; total: number };
-  setContextUsage: Dispatch<SetStateAction<{ used: number; total: number }>>;
-  /** True while a manual context compaction is in progress */
-  isCompacting: boolean;
+  /** Write context-window utilisation — reads come from contextUsageSignal directly */
+  setContextUsage: (value: { used: number; total: number } | ((prev: { used: number; total: number }) => { used: number; total: number })) => void;
+  /** Write compaction state — reads come from isCompactingSignal directly */
   setIsCompacting: (v: boolean) => void;
   /** Toast shown after compaction completes; null when hidden */
   compactToast: { tokensBefore: number; tokensAfter: number; hasDocuments: boolean } | null;
@@ -72,10 +70,6 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [thinkingMode,  setThinkingMode]  = useState<ThinkingMode>("thinking");
 
-  const [contextUsage, setContextUsage] = useState<{ used: number; total: number }>(
-    { used: 0, total: 0 }
-  );
-  const [isCompacting, setIsCompacting] = useState<boolean>(false);
   const [compactToast, setCompactToast] = useState<{
     tokensBefore: number;
     tokensAfter: number;
@@ -83,12 +77,20 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const [isReloading, setIsReloading] = useState<boolean>(false);
 
-  // ── Dual-write: keep runtime signals in sync with React state ────
-  // Signals are the fast path (subscribed components skip the React
-  // render cascade). React state is kept as the authoritative source
-  // for all existing consumers that call useModelStore().
-  useEffect(() => { contextUsageSignal.value = contextUsage }, [contextUsage])
-  useEffect(() => { isCompactingSignal.value = isCompacting }, [isCompacting])
+  // ── Setters that write directly to signals ───────────────────────
+  // contextUsage and isCompacting have been fully migrated to signals.
+  // Callers retain the same API; signals are the single source of truth.
+  const setContextUsage = useCallback(
+    (value: { used: number; total: number } | ((prev: { used: number; total: number }) => { used: number; total: number })) => {
+      contextUsageSignal.value = typeof value === 'function'
+        ? value(contextUsageSignal.value)
+        : value
+    },
+    []
+  )
+  const setIsCompacting = useCallback((value: boolean) => {
+    isCompactingSignal.value = value
+  }, [])
 
   const configValue: ModelConfigValue = {
     selectedModel,
@@ -98,9 +100,7 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   };
 
   const runtimeValue: ModelRuntimeValue = {
-    contextUsage,
     setContextUsage,
-    isCompacting,
     setIsCompacting,
     compactToast,
     setCompactToast,
@@ -148,8 +148,9 @@ export function useModelConfig(): ModelConfigValue {
 }
 
 /**
- * Subscribe only to volatile runtime fields: contextUsage, isCompacting,
- * compactToast, isReloading.
+ * Subscribe only to volatile runtime setters and remaining React state:
+ * setContextUsage, setIsCompacting, compactToast, isReloading.
+ * For reads use contextUsageSignal / isCompactingSignal / contextFillSignal.
  */
 export function useModelRuntime(): ModelRuntimeValue {
   const ctx = useContext(ModelRuntimeContext);

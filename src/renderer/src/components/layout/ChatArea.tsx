@@ -67,7 +67,6 @@ function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
 // ----------------------------------------------------------------
 interface ChatAreaProps {
   messages:     Message[]
-  isStreaming?: boolean
   activeChatId: string | null
   onSuggest?:   (text: string) => void
 }
@@ -80,7 +79,7 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ messages, isStreaming = false, activeChatId, onSuggest }, ref) {
+function ChatArea({ messages, activeChatId, onSuggest }, ref) {
   useSignals()
   const { compactToast } = useModelStore()
   const bottomRef          = useRef<HTMLDivElement>(null)

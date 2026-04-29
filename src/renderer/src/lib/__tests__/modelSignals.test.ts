@@ -77,3 +77,28 @@ describe('isCompactingSignal', () => {
     expect(isCompactingSignal.value).toBe(false)
   })
 })
+
+describe('setContextUsage stable callback', () => {
+  beforeEach(() => {
+    contextUsageSignal.value = { used: 0, total: 0 }
+  })
+
+  test('11. direct object write updates signal', () => {
+    // Simulate what useChat calls after a stream ends
+    contextUsageSignal.value = { used: 1024, total: 4096 }
+    expect(contextUsageSignal.value).toEqual({ used: 1024, total: 4096 })
+  })
+
+  test('12. functional updater pattern works on signal', () => {
+    contextUsageSignal.value = { used: 100, total: 4096 }
+    // Simulate a functional update (prev => ...)
+    const prev = contextUsageSignal.value
+    contextUsageSignal.value = { ...prev, used: prev.used + 50 }
+    expect(contextUsageSignal.value.used).toBe(150)
+  })
+
+  test('13. contextFillSignal reacts to setContextUsage-style write', () => {
+    contextUsageSignal.value = { used: 2048, total: 4096 }
+    expect(contextFillSignal.value).toBeCloseTo(0.5)
+  })
+})
