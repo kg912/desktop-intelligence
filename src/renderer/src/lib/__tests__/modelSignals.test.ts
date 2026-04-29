@@ -9,7 +9,7 @@
 // Import from the pure .ts sidecar (not ModelStore.tsx) so vitest's node
 // environment can parse the file without encountering JSX syntax.
 // ModelStore.tsx re-exports both names — consumers use 'from ModelStore'.
-import { contextUsageSignal, contextFillSignal } from '../../store/runtimeSignals'
+import { contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/runtimeSignals'
 
 // Reset to initial state between tests so writes in one case don't bleed into the next.
 beforeEach(() => {
@@ -54,5 +54,26 @@ describe('contextFillSignal arithmetic', () => {
     // Write a new value — no React render cycle involved
     contextUsageSignal.value = { used: 800, total: 1000 }
     expect(contextFillSignal.value).toBeCloseTo(0.8)
+  })
+})
+
+describe('isCompactingSignal', () => {
+  beforeEach(() => {
+    isCompactingSignal.value = false
+  })
+
+  test('8. initial state is false', () => {
+    expect(isCompactingSignal.value).toBe(false)
+  })
+
+  test('9. can be set to true', () => {
+    isCompactingSignal.value = true
+    expect(isCompactingSignal.value).toBe(true)
+  })
+
+  test('10. returns to false after being reset', () => {
+    isCompactingSignal.value = true
+    isCompactingSignal.value = false
+    expect(isCompactingSignal.value).toBe(false)
   })
 })

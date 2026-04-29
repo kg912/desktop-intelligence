@@ -9,14 +9,17 @@ import type { ChatAreaHandle } from './ChatArea'
 import { InputBar } from './InputBar'
 import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
-import { useModelStore } from '../../store/ModelStore'
+import { useModelStore, isCompactingSignal } from '../../store/ModelStore'
+import { useSignals } from '@preact/signals-react/runtime'
 import { CompactProgressOverlay } from '../chat/CompactProgressOverlay'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode, setContextUsage, isCompacting, isReloading } = useModelStore()
+  useSignals()
+  const { setThinkingMode, setContextUsage, isReloading } = useModelStore()
+  const isCompacting = isCompactingSignal.value
   const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
@@ -364,7 +367,6 @@ export function Layout() {
             />
 
             <InputBar
-              isStreaming={isStreaming || isCompacting || isReloading}
               onSend={handleSend}
               onAbort={abort}
               attachments={attachments}

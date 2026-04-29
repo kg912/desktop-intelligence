@@ -65,7 +65,6 @@ function AttachmentBadge({
 // InputBar
 // ----------------------------------------------------------------
 export interface InputBarProps {
-  isStreaming?:   boolean
   onSend?:        (text: string, attachments?: Attachment[]) => void
   onAbort?:       () => void
   disabled?:      boolean
@@ -80,7 +79,6 @@ const MAX_TEXTAREA_HEIGHT = 200
 const MIN_TEXTAREA_HEIGHT = 24
 
 export const InputBar = memo(function InputBar({
-  isStreaming: isStreamingProp = false,  // kept as no-op fallback; signal is authoritative
   onSend,
   onAbort,
   disabled = false,
@@ -89,8 +87,6 @@ export const InputBar = memo(function InputBar({
   mcpActivity = null,
 }: InputBarProps) {
   useSignals()
-  // Read streaming state from signal directly — avoids a Layout re-render cascade
-  // on every token. isStreamingProp is accepted for backwards compat but ignored.
   const isStreaming = isStreamingSignal.value
   const { thinkingMode, setThinkingMode } = useModelStore()
   const [text, setText] = useState('')
