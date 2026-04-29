@@ -7,7 +7,11 @@
  *   done        → final TTFT · t/s · total time
  */
 
+import { useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useSignals } from '@preact/signals-react/runtime'
+import { signal } from '@preact/signals-react'
+import { useComputed } from '@preact/signals-react'
 import { Zap, Clock, Timer, StopCircle } from 'lucide-react'
 import type { GenerationStats } from '../../../../shared/types'
 
@@ -70,6 +74,19 @@ interface StatsBarProps {
 }
 
 export function StatsBar({ isThinking, isStreaming, stats }: StatsBarProps) {
+  useSignals()
+
+  // Wrap stats in a local signal so useComputed can track changes.
+  // A new signal is created only once per mount; value is updated each render
+  // (in practice, only once — from null → final value at stream-end).
+  const statsSignal = useMemo(() => signal<GenerationStats | null>(stats), [])
+  statsSignal.value = stats
+
+  const ttftStr   = useComputed(() => { const s = statsSignal.value; return s ? fmt(s.ttft)         : '' })
+  const tpsStr    = useComputed(() => { const s = statsSignal.value; return s ? `${s.tokensPerSec}` : '' })
+  const totalStr  = useComputed(() => { const s = statsSignal.value; return s ? fmt(s.totalMs)      : '' })
+  const tokensStr = useComputed(() => statsSignal.value?.totalTokens.toString() ?? '')
+
   const showBar = isThinking || isStreaming || stats !== null
 
   return (
@@ -126,14 +143,14 @@ export function StatsBar({ isThinking, isStreaming, stats }: StatsBarProps) {
                   transition={{ duration: 0.25 }}
                   className="flex items-center gap-4 flex-wrap"
                 >
-                  <Pill icon={Clock} value={fmt(stats.ttft)}         label="ttft"     />
+                  <Pill icon={Clock} value={ttftStr.value}   label="ttft"     />
                   <div className="w-px h-3 bg-surface-border/60" />
-                  <Pill icon={Zap}   value={`${stats.tokensPerSec}`} label="tok/s"    />
+                  <Pill icon={Zap}   value={tpsStr.value}    label="tok/s"    />
                   <div className="w-px h-3 bg-surface-border/60" />
-                  <Pill icon={Timer} value={fmt(stats.totalMs)}      label="total"    />
+                  <Pill icon={Timer} value={totalStr.value}  label="total"    />
                   <div className="w-px h-3 bg-surface-border/60" />
                   <span className="text-[10px] text-content-muted font-mono">
-                    {stats.totalTokens} tokens
+                    {tokensStr.value} tokens
                   </span>
                   {stats.aborted && (
                     <>

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useSignals } from '@preact/signals-react/runtime'
 import { Zap, RotateCw } from 'lucide-react'
-import { useModelStore } from '../../store/ModelStore'
+import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
 
 const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
 
@@ -22,16 +23,22 @@ interface TopBarProps {
 }
 
 export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
+  useSignals()
   const {
     selectedModel,
-    contextUsage,
+    // contextUsage / isCompacting removed — read from signals below
     setContextUsage,
-    isCompacting,
     setIsCompacting,
     setCompactToast,
     isReloading,
     setIsReloading,
   } = useModelStore()
+
+  // Read volatile fields from signals — only this component re-renders when they change
+  const contextUsage = contextUsageSignal.value
+  const isCompacting = isCompactingSignal.value
+  const pct          = Math.round(contextFillSignal.value * 100)
+
   const [showTooltip, setShowTooltip] = useState(false)
 
   // Seed the context bar total from model config on mount so the bar
@@ -46,10 +53,6 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
         if (DEBUG) console.log('[DEV][TopBar] getModelConfig failed:', err)
       })
   }, [])
-
-  const pct = contextUsage.total > 0
-    ? Math.min(100, Math.round((contextUsage.used / contextUsage.total) * 100))
-    : 0
 
   // Colour shifts from muted → amber → red as context fills
   const barColour = pct >= 90

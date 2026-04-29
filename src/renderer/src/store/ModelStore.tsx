@@ -19,9 +19,16 @@
  *   useModelRuntime()  — subscribes only to ModelRuntimeContext
  */
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
 import type { ReactNode, Dispatch, SetStateAction } from "react";
 import type { ThinkingMode } from "../../../shared/types";
+
+// ── Runtime signals (re-exported from pure .ts sidecar) ─────────
+// Defined in runtimeSignals.ts so vitest's node environment can test them
+// without JSX parse errors. Re-exported here so all consumers use a single
+// import path: import { contextUsageSignal, … } from '../store/ModelStore'
+export { contextUsageSignal, isCompactingSignal, contextFillSignal } from './runtimeSignals'
+import { contextUsageSignal, isCompactingSignal } from './runtimeSignals'
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -75,6 +82,13 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
     hasDocuments: boolean;
   } | null>(null);
   const [isReloading, setIsReloading] = useState<boolean>(false);
+
+  // ── Dual-write: keep runtime signals in sync with React state ────
+  // Signals are the fast path (subscribed components skip the React
+  // render cascade). React state is kept as the authoritative source
+  // for all existing consumers that call useModelStore().
+  useEffect(() => { contextUsageSignal.value = contextUsage }, [contextUsage])
+  useEffect(() => { isCompactingSignal.value = isCompacting }, [isCompacting])
 
   const configValue: ModelConfigValue = {
     selectedModel,
