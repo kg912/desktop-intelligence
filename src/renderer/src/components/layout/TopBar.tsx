@@ -40,6 +40,13 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   const pct          = Math.round(contextFillSignal.value * 100)
 
   const [showTooltip, setShowTooltip] = useState(false)
+  const [isNvidia,    setIsNvidia]    = useState(false)
+
+  useEffect(() => {
+    window.api.getBackendSettings()
+      .then((s) => setIsNvidia(s.provider === 'nvidia'))
+      .catch(() => {/* non-fatal */})
+  }, [])
 
   // Seed the context bar total from model config on mount so the bar
   // is visible immediately (showing 0 / contextLength) before any message is sent.
@@ -132,21 +139,23 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
           </span>
         </motion.div>
 
-        {/* Reload model button — small icon button, spins while reloading */}
-        <button
-          onClick={handleReload}
-          disabled={isBusy}
-          title={isBusy ? 'Busy…' : 'Reload model (clears memory)'}
-          className={
-            isBusy
-              ? 'ml-1 p-1 rounded text-content-muted/30 cursor-not-allowed'
-              : 'ml-1 p-1 rounded text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer transition-colors'
-          }
-        >
-          <RotateCw
-            className={`w-3 h-3 ${isReloading ? 'animate-spin text-accent-400' : ''}`}
-          />
-        </button>
+        {/* Reload model button — hidden when NVIDIA is active (no local model to reload) */}
+        {!isNvidia && (
+          <button
+            onClick={handleReload}
+            disabled={isBusy}
+            title={isBusy ? 'Busy…' : 'Reload model (clears memory)'}
+            className={
+              isBusy
+                ? 'ml-1 p-1 rounded text-content-muted/30 cursor-not-allowed'
+                : 'ml-1 p-1 rounded text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer transition-colors'
+            }
+          >
+            <RotateCw
+              className={`w-3 h-3 ${isReloading ? 'animate-spin text-accent-400' : ''}`}
+            />
+          </button>
+        )}
       </div>
 
       {/* Right: context bar then Compact button — always visible */}

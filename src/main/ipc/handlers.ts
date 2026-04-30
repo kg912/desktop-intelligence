@@ -653,6 +653,21 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
       const { readSettings: _rs, writeSettings } = await import('../services/SettingsStore')
 
+      // ── NVIDIA guard: skip lms CLI entirely, just persist params ─────
+      const currentSettings = _rs()
+      if ((currentSettings.backendProvider ?? 'lmstudio') === 'nvidia') {
+        const patch: Record<string, unknown> = {}
+        if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
+        if (payload.topP            !== undefined) patch.topP            = payload.topP
+        if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
+        if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
+        if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
+        if (payload.contextLength   !== undefined) patch.contextLength   = payload.contextLength
+        writeSettings(patch as Parameters<typeof writeSettings>[0])
+        console.log('[Settings] NVIDIA provider — skipped lms CLI, params saved to SettingsStore')
+        return { success: true, confirmedCtx: payload.contextLength }
+      }
+
       // ── LM Studio: use lms CLI ────────────────────────────────────
       const lmsBin = await findLmsBinAsync()
       if (!lmsBin) {

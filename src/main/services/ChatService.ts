@@ -578,8 +578,8 @@ export class ChatService {
       payload.model,
       provider,
     );
-    console.log(
-      "🚀 FINAL LM STUDIO PAYLOAD:",
+    if (DEBUG) console.log(
+      `🚀 FINAL ${isNvidia ? 'NVIDIA' : 'LM STUDIO'} PAYLOAD (${builtMessages.length} messages):`,
       JSON.stringify(builtMessages, null, 2),
     );
 
@@ -717,6 +717,13 @@ export class ChatService {
           fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
         }
 
+        if (DEBUG) {
+          const bodyPreview = JSON.parse(streamBody) as Record<string, unknown> & { messages?: unknown[] };
+          console.log(`[DEBUG][ChatService][Request] endpoint=${endpoint} provider=${provider} model=${modelId} loop=${searchLoopCount}`);
+          console.log(`[DEBUG][ChatService][Request] streamBody (sans messages):`, JSON.stringify({ ...bodyPreview, messages: `[${bodyPreview.messages?.length ?? 0} messages]` }));
+          console.log(`[DEBUG][ChatService][Request] message count=${currentMessages.length} last role=${currentMessages[currentMessages.length - 1]?.role}`);
+        }
+
         const response = await net.fetch(endpoint, {
           method: "POST",
           headers: fetchHeaders,
@@ -724,13 +731,19 @@ export class ChatService {
           signal: this.controller?.signal || signal,
         } as RequestInit);
 
+        if (DEBUG) {
+          console.log(`[DEBUG][ChatService][Response] HTTP ${response.status} ${response.statusText} provider=${provider}`);
+        }
+
         if (!response.ok) {
           const errText = await response.text();
-          throw new Error(`LM Studio ${response.status}: ${errText}`);
+          const label = isNvidia ? 'NVIDIA Build' : 'LM Studio';
+          if (DEBUG) console.log(`[DEBUG][ChatService][Response] ERROR body: ${errText}`);
+          throw new Error(`${label} ${response.status}: ${errText}`);
         }
 
         if (!response.body)
-          throw new Error("LM Studio returned no response body");
+          throw new Error(`${isNvidia ? 'NVIDIA Build' : 'LM Studio'} returned no response body`);
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -803,6 +816,7 @@ export class ChatService {
             if (parsed.usage) {
               if (parsed.usage.prompt_tokens)     promptTokens = parsed.usage.prompt_tokens;
               if (parsed.usage.completion_tokens) totalTokens  = parsed.usage.completion_tokens;
+              if (DEBUG) console.log(`[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`);
             }
 
             const deltaContent = parsed.choices?.[0]?.delta?.content ?? "";
@@ -890,7 +904,10 @@ export class ChatService {
               );
             }
 
-            if (firstTokenAt === null) firstTokenAt = Date.now();
+            if (firstTokenAt === null) {
+              firstTokenAt = Date.now();
+              if (DEBUG) console.log(`[DEBUG][ChatService][TTFT] First token arrived — ${firstTokenAt - startTime}ms since request start. provider=${provider} delta=${JSON.stringify(delta.slice(0, 80))}`);
+            }
 
             const cleanedDelta = firstChunkProcessed
               ? delta

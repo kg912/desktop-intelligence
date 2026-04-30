@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Wifi, WifiOff, RefreshCw, AlertCircle } from 'lucide-react'
 import type { ModelStatus } from '../../../shared/types'
@@ -165,11 +165,18 @@ export function ConnectionStatus({
   error,
   onRetry
 }: ConnectionStatusProps) {
-  // Keep useEffect to satisfy hook rules — but no provider tracking needed.
-  // LM Studio is the only supported inference runtime.
-  useEffect(() => { /* nothing */ }, [])
+  const [isNvidia, setIsNvidia] = useState(false)
 
-  const isVisible = status !== 'ready'
+  useEffect(() => {
+    window.api.getBackendSettings()
+      .then((s) => setIsNvidia(s.provider === 'nvidia'))
+      .catch(() => {/* non-fatal */})
+  }, [])
+
+  // When NVIDIA is the active backend, never show the LM Studio offline overlay.
+  // The main process returns a synthetic 'ready' state for NVIDIA, but there is
+  // a brief window on startup where the first poll hasn't resolved yet.
+  const isVisible = status !== 'ready' && !isNvidia
 
   return (
     <AnimatePresence mode="wait">

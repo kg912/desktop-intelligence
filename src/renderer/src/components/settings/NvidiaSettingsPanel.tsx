@@ -129,10 +129,11 @@ export function NvidiaSettingsPanel() {
                 placeholder="nvapi-…"
                 className={cn(
                   'w-full px-3 py-2 pr-10 rounded-lg text-sm font-mono',
-                  'bg-surface-elevated border border-surface-border/50',
-                  'text-content-primary placeholder:text-content-muted',
+                  'border border-surface-border/50',
+                  'placeholder:text-content-muted',
                   'focus:outline-none focus:ring-1 focus:ring-accent-600/60',
                 )}
+                style={{ background: '#111', color: '#f5f5f5' }}
                 spellCheck={false}
                 autoComplete="off"
               />
@@ -163,10 +164,11 @@ export function NvidiaSettingsPanel() {
               placeholder="deepseek-ai/deepseek-v4-pro"
               className={cn(
                 'w-full px-3 py-2 rounded-lg text-sm font-mono',
-                'bg-surface-elevated border border-surface-border/50',
-                'text-content-primary placeholder:text-content-muted',
+                'border border-surface-border/50',
+                'placeholder:text-content-muted',
                 'focus:outline-none focus:ring-1 focus:ring-accent-600/60',
               )}
+              style={{ background: '#111', color: '#f5f5f5' }}
               spellCheck={false}
               autoComplete="off"
             />

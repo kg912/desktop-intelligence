@@ -39,6 +39,10 @@ export function ModelSettingsPanel() {
   const [fetchedSysPrompt,    setFetchedSysPrompt]    = useState('')
   const [fetchedGpuOffload,   setFetchedGpuOffload]   = useState(false)
 
+  const [isNvidia,    setIsNvidia]    = useState(false)
+  const [nvidiaModel, setNvidiaModel] = useState('')
+  void nvidiaModel // consumed via setNvidiaModel; display uses fetchedModel
+
   const changed = fetchedCtx !== null && (
     draftCtx           !== fetchedCtx           ||
     draftModel         !== fetchedModel         ||
@@ -55,8 +59,9 @@ export function ModelSettingsPanel() {
     Promise.all([
       window.api.getModelConfig(),
       window.api.getAvailableModels(),
+      window.api.getBackendSettings(),
     ])
-      .then(([cfg, models]) => {
+      .then(([cfg, models, backend]) => {
         const ctx  = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
         const temp = cfg.temperature     ?? 0.7
         const tp   = cfg.topP            ?? 0.95
@@ -64,15 +69,23 @@ export function ModelSettingsPanel() {
         const rp   = cfg.repeatPenalty   ?? 1.1
         const sp   = cfg.systemPrompt    ?? ''
         const gpu  = cfg.gpuOffload      ?? false
+
+        const nvidia = backend.provider === 'nvidia'
+        setIsNvidia(nvidia)
+        if (nvidia) setNvidiaModel(backend.nvidiaModel)
+
+        // For NVIDIA, modelId display comes from nvidiaModel, not cfg.modelId
+        const displayModelId = nvidia ? backend.nvidiaModel : cfg.modelId
+
         setFetchedCtx(ctx);     setDraftCtx(ctx)
-        setFetchedModel(cfg.modelId); setDraftModel(cfg.modelId)
+        setFetchedModel(displayModelId); setDraftModel(displayModelId)
         setFetchedTemp(temp);   setDraftTemp(temp)
         setFetchedTopP(tp);     setDraftTopP(tp)
         setFetchedMaxTokens(mt); setDraftMaxTokens(mt)
         setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
         setFetchedGpuOffload(gpu); setDraftGpuOffload(gpu)
-        setAvailableModels(models)
+        setAvailableModels(nvidia ? [] : models)
       })
       .catch(() => {
         setFetchedCtx(32768);   setDraftCtx(32768)
@@ -120,6 +133,38 @@ export function ModelSettingsPanel() {
       setReloading(false)
     }
   }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, setSelectedModel])
+
+  const handleSaveNvidia = useCallback(async () => {
+    if (reloading) return
+    setReloading(true)
+    setResult(null)
+    try {
+      await window.api.saveBackendSettings({ nvidiaModel: draftModel })
+      // Persist generation params via reloadModel — the NVIDIA guard in
+      // handlers.ts skips the lms CLI and only writes to SettingsStore.
+      await window.api.reloadModel({
+        modelId:         draftModel,
+        contextLength:   draftCtx,
+        temperature:     draftTemp,
+        topP:            draftTopP,
+        maxOutputTokens: draftMaxTokens,
+        repeatPenalty:   draftRepeatPenalty,
+        systemPrompt:    draftSysPrompt,
+        gpuOffload:      false,
+      })
+      setFetchedModel(draftModel)
+      setFetchedTemp(draftTemp)
+      setFetchedTopP(draftTopP)
+      setFetchedMaxTokens(draftMaxTokens)
+      setFetchedRepeatPenalty(draftRepeatPenalty)
+      setFetchedSysPrompt(draftSysPrompt)
+      setResult({ ok: true, msg: 'Settings saved.' })
+    } catch (err) {
+      setResult({ ok: false, msg: (err as Error).message })
+    } finally {
+      setReloading(false)
+    }
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
 
   return (
     <div className="space-y-6">
@@ -372,14 +417,16 @@ export function ModelSettingsPanel() {
         </div>
       </div>
 
-      {/* Warning */}
-      <div className="flex gap-2.5 px-3 py-2.5 rounded-lg border border-amber-900/30" style={{ background: 'rgba(120,53,15,0.08)' }}>
-        <AlertCircle className="w-3.5 h-3.5 text-amber-600/80 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-600/80 leading-relaxed">
-          Reload unloads then reloads the model — takes <strong className="text-amber-500/90">30–60 seconds</strong>.
-          All active chats remain in history.
-        </p>
-      </div>
+      {/* Warning — only shown for LM Studio */}
+      {!isNvidia && (
+        <div className="flex gap-2.5 px-3 py-2.5 rounded-lg border border-amber-900/30" style={{ background: 'rgba(120,53,15,0.08)' }}>
+          <AlertCircle className="w-3.5 h-3.5 text-amber-600/80 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-600/80 leading-relaxed">
+            Reload unloads then reloads the model — takes <strong className="text-amber-500/90">30–60 seconds</strong>.
+            All active chats remain in history.
+          </p>
+        </div>
+      )}
 
       <AnimatePresence>
         {result && (
@@ -402,36 +449,57 @@ export function ModelSettingsPanel() {
         )}
       </AnimatePresence>
 
-      <button
-        onClick={handleReload}
-        disabled={!changed || reloading || loading}
-        className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
-          changed && !reloading && !loading
-            ? 'bg-accent-900/40 hover:bg-accent-800/50 active:bg-accent-900/60 border border-accent-800/50 hover:border-accent-700/60 text-accent-400 hover:text-accent-300'
-            : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed opacity-50'
-        }`}
-        style={changed && !reloading && !loading ? { boxShadow: '0 0 12px rgba(139,0,0,0.2)' } : {}}
-      >
-        {reloading ? (
-          <>
-            <div className="w-3.5 h-3.5 rounded-full border-2 border-accent-700 border-t-accent-400 animate-spin" />
-            Reloading model…
-          </>
-        ) : (
-          <>
-            <RefreshCw className="w-3.5 h-3.5" />
-            Reload Model
-            {changed && draftModel !== fetchedModel && (
-              <span className="ml-auto text-[10px] text-accent-600 font-mono truncate max-w-[160px]">new model selected</span>
-            )}
-            {changed && draftCtx !== fetchedCtx && draftModel === fetchedModel && (
-              <span className="ml-auto flex items-center gap-1 text-[10px] text-accent-600 font-mono">
-                {fmtCtx(fetchedCtx ?? 0)} <ChevronRight className="w-3 h-3" /> {fmtCtx(draftCtx)}
-              </span>
-            )}
-          </>
-        )}
-      </button>
+      {isNvidia ? (
+        <button
+          onClick={handleSaveNvidia}
+          disabled={!changed || reloading || loading}
+          className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
+            changed && !reloading && !loading
+              ? 'bg-accent-900/40 hover:bg-accent-800/50 active:bg-accent-900/60 border border-accent-800/50 hover:border-accent-700/60 text-accent-400 hover:text-accent-300'
+              : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed opacity-50'
+          }`}
+        >
+          {reloading ? (
+            <>
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-accent-700 border-t-accent-400 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            'Save Settings'
+          )}
+        </button>
+      ) : (
+        <button
+          onClick={handleReload}
+          disabled={!changed || reloading || loading}
+          className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
+            changed && !reloading && !loading
+              ? 'bg-accent-900/40 hover:bg-accent-800/50 active:bg-accent-900/60 border border-accent-800/50 hover:border-accent-700/60 text-accent-400 hover:text-accent-300'
+              : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed opacity-50'
+          }`}
+          style={changed && !reloading && !loading ? { boxShadow: '0 0 12px rgba(139,0,0,0.2)' } : {}}
+        >
+          {reloading ? (
+            <>
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-accent-700 border-t-accent-400 animate-spin" />
+              Reloading model…
+            </>
+          ) : (
+            <>
+              <RefreshCw className="w-3.5 h-3.5" />
+              Reload Model
+              {changed && draftModel !== fetchedModel && (
+                <span className="ml-auto text-[10px] text-accent-600 font-mono truncate max-w-[160px]">new model selected</span>
+              )}
+              {changed && draftCtx !== fetchedCtx && draftModel === fetchedModel && (
+                <span className="ml-auto flex items-center gap-1 text-[10px] text-accent-600 font-mono">
+                  {fmtCtx(fetchedCtx ?? 0)} <ChevronRight className="w-3 h-3" /> {fmtCtx(draftCtx)}
+                </span>
+              )}
+            </>
+          )}
+        </button>
+      )}
     </div>
   )
 }
