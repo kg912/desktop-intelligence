@@ -698,14 +698,21 @@ export class ChatService {
           // Only send chat_template_kwargs for models that support it.
           // Qwen models use 'enable_thinking'; Mistral/Llama/Nemotron reject the field entirely.
           const isQwenModel = modelId.toLowerCase().includes('qwen');
+          // Mistral Medium 3.5 uses reasoning_effort: 'high' | 'none' (not chat_template_kwargs)
+          // Reasoning output streams in delta.reasoning (not delta.reasoning_content)
+          const isMistralModel = modelId.toLowerCase().includes('mistral');
           const chatTemplateKwargs = isQwenModel
             ? { chat_template_kwargs: { enable_thinking: thinkingEnabled } }
+            : {};
+          const mistralReasoning = isMistralModel
+            ? { reasoning_effort: thinkingEnabled ? 'high' : 'none' }
             : {};
           streamBody = JSON.stringify({
             ...commonFields,
             temperature: nvidiaTemp,
             max_tokens: nvidiaMaxTokens,
             ...chatTemplateKwargs,
+            ...mistralReasoning,
             stream_options: { include_usage: true },
             ...toolsPayload,
           });
@@ -831,12 +838,15 @@ export class ChatService {
             if (parsed.usage) {
               if (parsed.usage.prompt_tokens)     promptTokens = parsed.usage.prompt_tokens;
               if (parsed.usage.completion_tokens) totalTokens  = parsed.usage.completion_tokens;
-              if (DEBUG) console.log(`[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`);
+              // Only log the final usage chunk (when choices is empty or stream is ending)
+              // Mistral sends usage on every chunk; logging all of them floods the console.
+              if (DEBUG && !parsed.choices?.length) console.log(`[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`);
             }
 
             const deltaContent = parsed.choices?.[0]?.delta?.content ?? "";
             const deltaReasoning =
-              parsed.choices?.[0]?.delta?.reasoning_content ?? "";
+              parsed.choices?.[0]?.delta?.reasoning_content ??
+              (parsed.choices?.[0]?.delta as Record<string, unknown>)?.reasoning as string ?? "";
 
             // ── Native channel token normalisation constants ───────────────
             const CHAN_OPEN  = "<|channel>thought\n";
