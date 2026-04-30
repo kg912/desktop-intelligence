@@ -23,6 +23,7 @@ import type {
   McpServerSettings,
   McpServerRuntimeInfo,
   McpToolPermissionRequest,
+  NvidiaSettings,
 } from '../shared/types'
 
 const api = {
@@ -137,6 +138,13 @@ const api = {
 
   mcpGetEnvKeyStatus: (): Promise<{ hasEnvKey: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS),
+
+  // ── Backend provider settings ─────────────────────────────────────
+  getBackendSettings: (): Promise<NvidiaSettings> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_BACKEND),
+
+  saveBackendSettings: (patch: Partial<NvidiaSettings>): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE_BACKEND, patch),
 
   // ── Context compaction ───────────────────────────────────────
   compactChat: (payload: CompactPayload): Promise<CompactResult> =>

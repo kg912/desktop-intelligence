@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { Settings, Globe, Info, Plug } from "lucide-react";
+import { Settings, Globe, Info, Plug, Server } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import { McpToolsPanel } from "./McpToolsPanel";
+import { NvidiaSettingsPanel } from "./NvidiaSettingsPanel";
 import { cn } from "../../lib/utils";
 import { version, author } from "../../../../../package.json";
 
-type SettingsTab = "model" | "websearch" | "tools" | "about";
+type SettingsTab = "model" | "websearch" | "tools" | "backend" | "about";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -93,7 +94,7 @@ function AboutPanel() {
 export function SettingsPage({ onClose }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("model");
 
-  const paddingTop = tab === "about" ? 160 : tab === "tools" ? 40 : 60;
+  const paddingTop = tab === "about" ? 160 : tab === "tools" ? 40 : tab === "backend" ? 60 : 60;
 
   return (
     <div className="flex h-full w-full" style={{ background: "#0f0f0f" }}>
@@ -156,6 +157,12 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
             onClick={() => setTab("tools")}
           />
           <TabItem
+            icon={<Server size={15} />}
+            label="Backend"
+            active={tab === "backend"}
+            onClick={() => setTab("backend")}
+          />
+          <TabItem
             icon={<Info size={15} />}
             label="About"
             active={tab === "about"}
@@ -173,6 +180,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
           {tab === "model"     && <ModelSettingsPanel />}
           {tab === "websearch" && <MCPSettingsPanel />}
           {tab === "tools"     && <McpToolsPanel />}
+          {tab === "backend"   && <NvidiaSettingsPanel />}
           {tab === "about"     && <AboutPanel />}
         </div>
       </div>
