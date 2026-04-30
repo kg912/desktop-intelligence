@@ -50,10 +50,7 @@ const DEBUG = __DEV_MODE__;
  * prevents tokens being generated past the natural end-of-turn marker.
  * The repetition detector handles actual runaway loops independently.
  */
-export const STOP_SEQUENCES = [
-  "<|im_end|>",
-  "<|endoftext|>",
-];
+export const STOP_SEQUENCES = ["<|im_end|>", "<|endoftext|>"];
 
 /**
  * Repetition detector state.
@@ -578,17 +575,18 @@ export class ChatService {
       payload.model,
       provider,
     );
-    if (DEBUG) console.log(
-      `🚀 FINAL ${isNvidia ? 'NVIDIA' : 'LM STUDIO'} PAYLOAD (${builtMessages.length} messages):`,
-      JSON.stringify(builtMessages, null, 2),
-    );
+    if (DEBUG)
+      console.log(
+        `🚀 FINAL ${isNvidia ? "NVIDIA" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
+        JSON.stringify(builtMessages, null, 2),
+      );
 
     const isThinking = payload.thinkingMode === "thinking";
 
     const startTime = Date.now();
     let firstTokenAt: number | null = null;
-    let totalTokens = 0;      // completion tokens (for TPS calculation)
-    let promptTokens = 0;     // cumulative prompt size from server usage field
+    let totalTokens = 0; // completion tokens (for TPS calculation)
+    let promptTokens = 0; // cumulative prompt size from server usage field
     let buffer = "";
     let searchLoopCount = 0;
     const MAX_SEARCH_LOOPS = appSettings.maxSearchLoops ?? 4;
@@ -618,7 +616,10 @@ export class ChatService {
       // Text-stream fallback (detectMidStreamToolCall) catches models that emit
       // tool call syntax as raw text instead of the structured channel.
       while (true) {
-        if (DEBUG) console.log(`[Debug][ChatService][LoopStart] iteration=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} braveEnabled=${braveEnabled}`);
+        if (DEBUG)
+          console.log(
+            `[Debug][ChatService][LoopStart] iteration=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} braveEnabled=${braveEnabled}`,
+          );
 
         // When the search limit has been reached, strip tools from the payload
         // so the model is forced to synthesize an answer. The loop exits naturally
@@ -659,12 +660,12 @@ export class ChatService {
 
         // ── Provider-aware request body ──────────────────────────────────────
         const commonFields = {
-          model:       modelId,
-          messages:    messagesForRequest,
+          model: modelId,
+          messages: messagesForRequest,
           temperature: temperature ?? (isNvidia ? 1 : 0.7),
-          top_p:       topP ?? 0.95,
-          max_tokens:  maxOutputTokens ?? 16384,
-          stream:      true,
+          top_p: topP ?? 0.95,
+          max_tokens: maxOutputTokens ?? 16384,
+          stream: true,
         };
 
         // Tools payload — same logic for both providers
@@ -678,10 +679,12 @@ export class ChatService {
           if (DEBUG) {
             console.log(
               `[DEBUG] Tools sent (${allTools.length}):`,
-              allTools.map(t => t.function.name).join(', ') || '(none)',
+              allTools.map((t) => t.function.name).join(", ") || "(none)",
             );
           }
-          return allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {};
+          return allTools.length > 0
+            ? { tools: allTools, tool_choice: "auto" }
+            : {};
         })();
 
         let streamBody: string;
@@ -697,16 +700,21 @@ export class ChatService {
           const nvidiaTemp = temperature ?? (thinkingEnabled ? 0.6 : 0.7);
           // Only send chat_template_kwargs for models that support it.
           // Qwen models use 'enable_thinking'; Mistral/Llama/Nemotron reject the field entirely.
-          const isQwenModel = modelId.toLowerCase().includes('qwen');
+          const isQwenModel = modelId.toLowerCase().includes("qwen");
           // Mistral Medium 3.5 uses reasoning_effort: 'high' | 'none' (not chat_template_kwargs)
           // Reasoning output streams in delta.reasoning (not delta.reasoning_content)
-          const isMistralModel = modelId.toLowerCase().includes('mistral');
+          const isMistralModel = modelId.toLowerCase().includes("mistral");
           const chatTemplateKwargs = isQwenModel
             ? { chat_template_kwargs: { enable_thinking: thinkingEnabled } }
             : {};
-          const mistralReasoning = isMistralModel
-            ? { reasoning_effort: thinkingEnabled ? 'high' : 'none' }
-            : {};
+          // Only send reasoning_effort when thinking is ON.
+          // Sending 'none' in fast mode causes slowdowns on NVIDIA's NIM endpoint
+          // (confirmed regression: 28 tok/s → 3-7 tok/s). Omitting it entirely
+          // restores the default fast path.
+          const mistralReasoning =
+            isMistralModel && thinkingEnabled
+              ? { reasoning_effort: "medium" }
+              : {};
           streamBody = JSON.stringify({
             ...commonFields,
             temperature: nvidiaTemp,
@@ -725,25 +733,43 @@ export class ChatService {
           streamBody = JSON.stringify({
             ...commonFields,
             repeat_penalty: repeatPenalty ?? 1.1,
-            stop:           STOP_SEQUENCES,
+            stop: STOP_SEQUENCES,
             ...step2ThinkingField,
             ...toolsPayload,
           });
         }
 
         const endpoint = isNvidia ? NVIDIA_ENDPOINT : LMS_ENDPOINT;
-        const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        const fetchHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
         if (isNvidia) {
           const apiKey = appSettings.nvidiaApiKey ?? "";
-          if (!apiKey) throw new Error("NVIDIA API key is not configured. Set it in Settings → Backend.");
+          if (!apiKey)
+            throw new Error(
+              "NVIDIA API key is not configured. Set it in Settings → Backend.",
+            );
           fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
         }
 
         if (DEBUG) {
-          const bodyPreview = JSON.parse(streamBody) as Record<string, unknown> & { messages?: unknown[] };
-          console.log(`[DEBUG][ChatService][Request] endpoint=${endpoint} provider=${provider} model=${modelId} loop=${searchLoopCount}`);
-          console.log(`[DEBUG][ChatService][Request] streamBody (sans messages):`, JSON.stringify({ ...bodyPreview, messages: `[${bodyPreview.messages?.length ?? 0} messages]` }));
-          console.log(`[DEBUG][ChatService][Request] message count=${currentMessages.length} last role=${currentMessages[currentMessages.length - 1]?.role}`);
+          const bodyPreview = JSON.parse(streamBody) as Record<
+            string,
+            unknown
+          > & { messages?: unknown[] };
+          console.log(
+            `[DEBUG][ChatService][Request] endpoint=${endpoint} provider=${provider} model=${modelId} loop=${searchLoopCount}`,
+          );
+          console.log(
+            `[DEBUG][ChatService][Request] streamBody (sans messages):`,
+            JSON.stringify({
+              ...bodyPreview,
+              messages: `[${bodyPreview.messages?.length ?? 0} messages]`,
+            }),
+          );
+          console.log(
+            `[DEBUG][ChatService][Request] message count=${currentMessages.length} last role=${currentMessages[currentMessages.length - 1]?.role}`,
+          );
         }
 
         const response = await net.fetch(endpoint, {
@@ -754,18 +780,25 @@ export class ChatService {
         } as RequestInit);
 
         if (DEBUG) {
-          console.log(`[DEBUG][ChatService][Response] HTTP ${response.status} ${response.statusText} provider=${provider}`);
+          console.log(
+            `[DEBUG][ChatService][Response] HTTP ${response.status} ${response.statusText} provider=${provider}`,
+          );
         }
 
         if (!response.ok) {
           const errText = await response.text();
-          const label = isNvidia ? 'NVIDIA Build' : 'LM Studio';
-          if (DEBUG) console.log(`[DEBUG][ChatService][Response] ERROR body: ${errText}`);
+          const label = isNvidia ? "NVIDIA Build" : "LM Studio";
+          if (DEBUG)
+            console.log(
+              `[DEBUG][ChatService][Response] ERROR body: ${errText}`,
+            );
           throw new Error(`${label} ${response.status}: ${errText}`);
         }
 
         if (!response.body)
-          throw new Error(`${isNvidia ? 'NVIDIA Build' : 'LM Studio'} returned no response body`);
+          throw new Error(
+            `${isNvidia ? "NVIDIA Build" : "LM Studio"} returned no response body`,
+          );
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -783,11 +816,14 @@ export class ChatService {
         // Native tool call accumulator — keyed by index since models like Qwen
         // can emit multiple parallel tool calls (index 0, 1, 2...) in a single
         // response. Each slot accumulates its own id, name, and args independently.
-        const pendingToolCalls: Map<number, {
-          id: string;
-          name: string;
-          argsRaw: string;
-        }> = new Map();
+        const pendingToolCalls: Map<
+          number,
+          {
+            id: string;
+            name: string;
+            argsRaw: string;
+          }
+        > = new Map();
 
         while (true) {
           if (loopAborted) break;
@@ -836,27 +872,38 @@ export class ChatService {
             // completion_tokens = tokens generated in this response.
             // These are kept SEPARATE from totalTokens which drives TPS calculation.
             if (parsed.usage) {
-              if (parsed.usage.prompt_tokens)     promptTokens = parsed.usage.prompt_tokens;
-              if (parsed.usage.completion_tokens) totalTokens  = parsed.usage.completion_tokens;
+              if (parsed.usage.prompt_tokens)
+                promptTokens = parsed.usage.prompt_tokens;
+              if (parsed.usage.completion_tokens)
+                totalTokens = parsed.usage.completion_tokens;
               // Only log the final usage chunk (when choices is empty or stream is ending)
               // Mistral sends usage on every chunk; logging all of them floods the console.
-              if (DEBUG && !parsed.choices?.length) console.log(`[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`);
+              if (DEBUG && !parsed.choices?.length)
+                console.log(
+                  `[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`,
+                );
             }
 
             const deltaContent = parsed.choices?.[0]?.delta?.content ?? "";
             const deltaReasoning =
               parsed.choices?.[0]?.delta?.reasoning_content ??
-              (parsed.choices?.[0]?.delta as Record<string, unknown>)?.reasoning as string ?? "";
+              ((parsed.choices?.[0]?.delta as Record<string, unknown>)
+                ?.reasoning as string) ??
+              "";
 
             // ── Native channel token normalisation constants ───────────────
-            const CHAN_OPEN  = "<|channel>thought\n";
+            const CHAN_OPEN = "<|channel>thought\n";
             const CHAN_CLOSE = "<channel|>";
 
             // ── Native tool call accumulation ──────────────────────────────
             // LM Studio streams function name + arguments across multiple delta events,
             // potentially across multiple parallel tool call indices in the same response.
             const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-            if (deltaToolCalls && deltaToolCalls.length > 0 && !toolCallIntercepted) {
+            if (
+              deltaToolCalls &&
+              deltaToolCalls.length > 0 &&
+              !toolCallIntercepted
+            ) {
               for (const tc of deltaToolCalls) {
                 const idx = (tc as { index?: number }).index ?? 0;
                 const existing = pendingToolCalls.get(idx);
@@ -887,7 +934,9 @@ export class ChatService {
             let delta = "";
             if (deltaReasoning) {
               // Source A: reasoning_content
-              delta = reasoningOpen ? deltaReasoning : "<think>" + deltaReasoning;
+              delta = reasoningOpen
+                ? deltaReasoning
+                : "<think>" + deltaReasoning;
               reasoningOpen = true;
             } else if (deltaContent) {
               let chunk = deltaContent;
@@ -911,7 +960,11 @@ export class ChatService {
               // Guard: inChannelThought prevents this from firing for Source B
               // mid-thought chunks where reasoningOpen is true but we're still inside
               // the channel block and have not yet seen CHAN_CLOSE.
-              if (reasoningOpen && !inChannelThought && !chunk.includes("</think>")) {
+              if (
+                reasoningOpen &&
+                !inChannelThought &&
+                !chunk.includes("</think>")
+              ) {
                 chunk = "</think>" + chunk;
                 reasoningOpen = false;
               }
@@ -931,7 +984,10 @@ export class ChatService {
 
             if (firstTokenAt === null) {
               firstTokenAt = Date.now();
-              if (DEBUG) console.log(`[DEBUG][ChatService][TTFT] First token arrived — ${firstTokenAt - startTime}ms since request start. provider=${provider} delta=${JSON.stringify(delta.slice(0, 80))}`);
+              if (DEBUG)
+                console.log(
+                  `[DEBUG][ChatService][TTFT] First token arrived — ${firstTokenAt - startTime}ms since request start. provider=${provider} delta=${JSON.stringify(delta.slice(0, 80))}`,
+                );
             }
 
             const cleanedDelta = firstChunkProcessed
@@ -1074,7 +1130,10 @@ export class ChatService {
           }
         }
 
-        if (DEBUG) console.log(`[Debug][ChatService][ReaderExit] loopAborted=${loopAborted} toolCallIntercepted=${toolCallIntercepted} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} totalTokens=${totalTokens}`);
+        if (DEBUG)
+          console.log(
+            `[Debug][ChatService][ReaderExit] loopAborted=${loopAborted} toolCallIntercepted=${toolCallIntercepted} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} totalTokens=${totalTokens}`,
+          );
 
         // ── Native tool call handler ─────────────────────────────────────────────
         // Fires after the SSE stream ends naturally when delta.tool_calls[] was used.
@@ -1082,35 +1141,58 @@ export class ChatService {
         // query it wants to run simultaneously). Executes them sequentially, merges
         // results, and injects a valid assistant→tool[] pair into the wire payload.
         if (pendingToolCalls.size > 0 && !toolCallIntercepted) {
-          if (DEBUG) console.log(`[Debug][ChatService][NativeToolEnter] pendingToolCalls.size=${pendingToolCalls.size} toolNames=${[...pendingToolCalls.values()].map(t => t.name).join(',')}`);
+          if (DEBUG)
+            console.log(
+              `[Debug][ChatService][NativeToolEnter] pendingToolCalls.size=${pendingToolCalls.size} toolNames=${[...pendingToolCalls.values()].map((t) => t.name).join(",")}`,
+            );
           // Collect tool calls in index order.
           // For search tools: dedup by query string.
           // For MCP tools that have no "query" field (e.g. browser_navigate uses "url"):
           // use the tool name as the dedup key so they are never silently dropped.
-          const queries: Array<{ id: string; name: string; query: string; argsRaw: string }> = [];
+          const queries: Array<{
+            id: string;
+            name: string;
+            query: string;
+            argsRaw: string;
+          }> = [];
           const seenKeys = new Set<string>();
-          for (const [, tc] of [...pendingToolCalls.entries()].sort(([a], [b]) => a - b)) {
+          for (const [, tc] of [...pendingToolCalls.entries()].sort(
+            ([a], [b]) => a - b,
+          )) {
             let query = "";
             try {
               const tcArgs = JSON.parse(tc.argsRaw);
-              query = typeof tcArgs.query === "string" ? tcArgs.query
-                : Array.isArray(tcArgs.queries) ? (tcArgs.queries[0] ?? "") : "";
-            } catch { /* malformed args — proceed with empty query */ }
+              query =
+                typeof tcArgs.query === "string"
+                  ? tcArgs.query
+                  : Array.isArray(tcArgs.queries)
+                    ? (tcArgs.queries[0] ?? "")
+                    : "";
+            } catch {
+              /* malformed args — proceed with empty query */
+            }
             // Dedup key: use query string for search tools, tool name for others
             const dedupKey = query || tc.name;
             if (!seenKeys.has(dedupKey)) {
               seenKeys.add(dedupKey);
-              queries.push({ id: tc.id, name: tc.name, query, argsRaw: tc.argsRaw });
+              queries.push({
+                id: tc.id,
+                name: tc.name,
+                query,
+                argsRaw: tc.argsRaw,
+              });
             }
           }
 
           if (queries.length > 0) {
             toolCallIntercepted = true;
-            console.log(`[MCP] \uD83D\uDD0D Native tool call(s): ${queries.map(q => `"${q.query}"`).join(", ")}`);
+            console.log(
+              `[MCP] \uD83D\uDD0D Native tool call(s): ${queries.map((q) => `"${q.query}"`).join(", ")}`,
+            );
 
             // Build the assistant message with all tool_calls declared up front —
             // required by the OpenAI wire format before any role:tool messages.
-            const assistantToolCalls = queries.map(q => ({
+            const assistantToolCalls = queries.map((q) => ({
               id: q.id,
               type: "function" as const,
               function: { name: q.name, arguments: q.argsRaw },
@@ -1131,14 +1213,20 @@ export class ChatService {
               // Dispatch: Brave Search vs. MCP custom tool (namespaced as serverName__toolName)
               const isBrave = toolName === "brave_web_search";
               const mcpParts = !isBrave ? toolName.split("__") : null;
-              const isMcp    = !isBrave && mcpParts && mcpParts.length === 2;
-              if (DEBUG) console.log(`[Debug][ChatService][ToolDispatch] toolName=${toolName} query="${query}" isBrave=${isBrave} isMcp=${!isBrave && !!mcpParts && mcpParts.length === 2}`);
+              const isMcp = !isBrave && mcpParts && mcpParts.length === 2;
+              if (DEBUG)
+                console.log(
+                  `[Debug][ChatService][ToolDispatch] toolName=${toolName} query="${query}" isBrave=${isBrave} isMcp=${!isBrave && !!mcpParts && mcpParts.length === 2}`,
+                );
 
               // uiLabel: what appears in the tool pill. For search tools use the query
               // string; for MCP tools use the namespaced name ("memory__search_nodes") so
               // the renderer can tell them apart from Brave searches.
-              const uiLabel = isBrave ? (query || toolName) : toolName;
-              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: uiLabel, toolName });
+              const uiLabel = isBrave ? query || toolName : toolName;
+              send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, {
+                query: uiLabel,
+                toolName,
+              });
 
               try {
                 let toolResult: string;
@@ -1147,11 +1235,14 @@ export class ChatService {
                   // ── Existing Brave Search path — DO NOT MODIFY ────────────
                   const results = await braveSearch(query, resolvedKey!, 5);
                   const formatted = await augmentAndFormatResults(results);
-                  const section = queries.length > 1
-                    ? `## Results for: "${query}"\n${formatted}`
-                    : formatted;
+                  const section =
+                    queries.length > 1
+                      ? `## Results for: "${query}"\n${formatted}`
+                      : formatted;
                   resultSections.push(section);
-                  const links = results.slice(0, 3).map(r => ({ title: r.title, url: r.url }));
+                  const links = results
+                    .slice(0, 3)
+                    .map((r) => ({ title: r.title, url: r.url }));
                   allResultLinks.push(...links);
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                     query: uiLabel,
@@ -1160,43 +1251,64 @@ export class ChatService {
                     formattedContent: section,
                   });
                   toolResult = section;
-
                 } else if (isMcp && mcpParts) {
                   // ── MCP custom tool dispatch ──────────────────────────────
                   const [serverName, mcpToolName] = mcpParts;
                   let args: Record<string, unknown> = {};
-                  try { args = JSON.parse(argsRaw || "{}"); } catch { /* use empty args */ }
+                  try {
+                    args = JSON.parse(argsRaw || "{}");
+                  } catch {
+                    /* use empty args */
+                  }
 
-                  console.log(`[MCP] Calling "${toolName}" with args: ${argsRaw}`);
-                  const mcpResult = await mcpServerManager.callTool(serverName, mcpToolName, args);
+                  console.log(
+                    `[MCP] Calling "${toolName}" with args: ${argsRaw}`,
+                  );
+                  const mcpResult = await mcpServerManager.callTool(
+                    serverName,
+                    mcpToolName,
+                    args,
+                  );
                   toolResult = mcpResult.text;
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                     query: uiLabel,
                     toolName,
                     results: [],
                     formattedContent: mcpResult.text,
-                    toolArgs:   args,
+                    toolArgs: args,
                     toolImages: mcpResult.images,
                   });
-
                 } else {
                   toolResult = `Unknown tool: ${toolName}`;
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                    query: uiLabel, toolName, results: [], formattedContent: toolResult,
+                    query: uiLabel,
+                    toolName,
+                    results: [],
+                    formattedContent: toolResult,
                   });
                 }
 
                 currentMessages = [
                   ...currentMessages,
-                  { role: "tool", tool_call_id: id, content: toolResult } as { role: string; content: string },
+                  { role: "tool", tool_call_id: id, content: toolResult } as {
+                    role: string;
+                    content: string;
+                  },
                 ];
-
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: uiLabel, toolName, error: errMsg });
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
+                  query: uiLabel,
+                  toolName,
+                  error: errMsg,
+                });
                 currentMessages = [
                   ...currentMessages,
-                  { role: "tool", tool_call_id: id, content: `Tool failed: ${errMsg}. Use training knowledge.` } as { role: string; content: string },
+                  {
+                    role: "tool",
+                    tool_call_id: id,
+                    content: `Tool failed: ${errMsg}. Use training knowledge.`,
+                  } as { role: string; content: string },
                 ];
               }
             }
@@ -1204,13 +1316,21 @@ export class ChatService {
             this.controller = new AbortController();
             // Only Brave Search counts toward MAX_SEARCH_LOOPS — MCP tool calls
             // are unlimited and should never trigger the search-limit guard.
-            const hadBraveCall = queries.some(q => q.name === "brave_web_search");
+            const hadBraveCall = queries.some(
+              (q) => q.name === "brave_web_search",
+            );
             if (hadBraveCall) searchLoopCount++;
-            if (DEBUG) console.log(`[Debug][ChatService][NativeToolExit] hadBraveCall=${hadBraveCall} searchLoopCount now=${searchLoopCount} toolCallIntercepted=${toolCallIntercepted}`);
+            if (DEBUG)
+              console.log(
+                `[Debug][ChatService][NativeToolExit] hadBraveCall=${hadBraveCall} searchLoopCount now=${searchLoopCount} toolCallIntercepted=${toolCallIntercepted}`,
+              );
           }
         }
 
-        if (DEBUG) console.log(`[Debug][ChatService][LoopExitCheck] toolCallIntercepted=${toolCallIntercepted} searchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} forceFinalAnswer=${forceFinalAnswer} willBreak=${!toolCallIntercepted}`);
+        if (DEBUG)
+          console.log(
+            `[Debug][ChatService][LoopExitCheck] toolCallIntercepted=${toolCallIntercepted} searchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} forceFinalAnswer=${forceFinalAnswer} willBreak=${!toolCallIntercepted}`,
+          );
 
         if (!toolCallIntercepted) {
           // Model produced an answer — natural exit
@@ -1224,6 +1344,28 @@ export class ChatService {
           }
           lastStreamBuffer = streamBuffer;
           break;
+        }
+
+        if (forceFinalAnswer && toolCallIntercepted) {
+          // Tools were stripped but the model still intercepted a tool call via
+          // text-stream fallback (detectMidStreamToolCall). This should not happen
+          // in normal operation. Break and surface an error rather than looping forever.
+          console.warn(
+            "[ChatService] ⚠️ Tool call intercepted after tools were stripped — breaking to prevent infinite loop",
+          );
+          send(
+            IPC_CHANNELS.CHAT_ERROR,
+            "The model attempted to search again after the search limit was reached. Try rephrasing your question or reducing Max Search Rounds in Settings.",
+          );
+          const stats = this.buildStats(
+            startTime,
+            firstTokenAt,
+            totalTokens,
+            true,
+            promptTokens,
+          );
+          send(IPC_CHANNELS.CHAT_STREAM_END, stats);
+          return;
         }
       }
     } catch (err) {
@@ -1244,10 +1386,16 @@ export class ChatService {
       this.controller = null;
     }
 
-    if (DEBUG) console.log(`[Debug][ChatService][LoopExited] finalSearchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} firstTokenAt=${firstTokenAt}`);
+    if (DEBUG)
+      console.log(
+        `[Debug][ChatService][LoopExited] finalSearchLoopCount=${searchLoopCount} MAX=${MAX_SEARCH_LOOPS} totalTokens=${totalTokens} firstTokenAt=${firstTokenAt}`,
+      );
 
     if (totalTokens === 0 && firstTokenAt === null) {
-      if (DEBUG) console.log(`[Debug][ChatService][EmptyResponseGuard] FIRING — totalTokens=0 and firstTokenAt=null`);
+      if (DEBUG)
+        console.log(
+          `[Debug][ChatService][EmptyResponseGuard] FIRING — totalTokens=0 and firstTokenAt=null`,
+        );
       console.warn(
         "[ChatService] ⚠️  Empty response from LM Studio — possible context overflow or stop-sequence collision",
       );
@@ -1271,17 +1419,23 @@ export class ChatService {
           // substitute a fixed 1000-token estimate per image to avoid
           // stringifying base64 data URLs (which are 600K+ chars and
           // produce wildly inflated token counts).
-          tokenEstimate = (m.content as ContentPart[]).reduce((partSum, part) => {
-            if (part.type === "text") return partSum + countTokens(part.text);
-            if (part.type === "image_url") return partSum + 1000; // ~1K tokens per image
-            return partSum;
-          }, 0);
+          tokenEstimate = (m.content as ContentPart[]).reduce(
+            (partSum, part) => {
+              if (part.type === "text") return partSum + countTokens(part.text);
+              if (part.type === "image_url") return partSum + 1000; // ~1K tokens per image
+              return partSum;
+            },
+            0,
+          );
         } else {
           tokenEstimate = countTokens(JSON.stringify(m.content));
         }
         return sum + tokenEstimate + 4; // +4 per-message role overhead
       }, 0);
-      if (DEBUG) console.log(`[DEV][ChatService] usage not emitted — computed promptTokens from wire payload: ${promptTokens}`);
+      if (DEBUG)
+        console.log(
+          `[DEV][ChatService] usage not emitted — computed promptTokens from wire payload: ${promptTokens}`,
+        );
     }
 
     // answerTokens = the completion content that will actually appear in the next
@@ -1290,10 +1444,23 @@ export class ChatService {
     // lastStreamBuffer holds the final loop's full raw stream output (think + answer).
     const strippedAnswer = this.stripThinkBlocks(lastStreamBuffer);
     const answerTokens = countTokens(strippedAnswer);
-    if (DEBUG) console.log(`[DEV][ChatService] answerTokens (stripped): ${answerTokens} / totalTokens: ${totalTokens}`);
+    if (DEBUG)
+      console.log(
+        `[DEV][ChatService] answerTokens (stripped): ${answerTokens} / totalTokens: ${totalTokens}`,
+      );
 
-    const stats = this.buildStats(startTime, firstTokenAt, totalTokens, false, promptTokens, answerTokens);
-    if (DEBUG) console.log(`[Debug][ChatService][StreamEnd] sending CHAT_STREAM_END — ttft=${stats.ttft}ms tps=${stats.tokensPerSec} totalTokens=${stats.totalTokens} promptTokens=${stats.promptTokens} aborted=${stats.aborted}`);
+    const stats = this.buildStats(
+      startTime,
+      firstTokenAt,
+      totalTokens,
+      false,
+      promptTokens,
+      answerTokens,
+    );
+    if (DEBUG)
+      console.log(
+        `[Debug][ChatService][StreamEnd] sending CHAT_STREAM_END — ttft=${stats.ttft}ms tps=${stats.tokensPerSec} totalTokens=${stats.totalTokens} promptTokens=${stats.promptTokens} aborted=${stats.aborted}`,
+      );
     send(IPC_CHANNELS.CHAT_STREAM_END, stats);
   }
 
@@ -1412,7 +1579,10 @@ export class ChatService {
           .reverse()
           .find((m) => (m.role as string) === "user");
         const compactedMsgs: typeof payload.messages = [
-          { role: "assistant", content: compactedSummary } as typeof payload.messages[0],
+          {
+            role: "assistant",
+            content: compactedSummary,
+          } as (typeof payload.messages)[0],
           ...(lastUserMsg ? [lastUserMsg] : []),
         ];
         // Splice directly into msgs (system already pushed) and return early
@@ -1421,7 +1591,7 @@ export class ChatService {
         }
         console.log(
           `[ChatService] 🗜 Using compacted summary (${compactedSummary.length} chars) ` +
-          `for chatId=${payload.chatId} — cleared for next request`,
+            `for chatId=${payload.chatId} — cleared for next request`,
         );
         return msgs;
       }
