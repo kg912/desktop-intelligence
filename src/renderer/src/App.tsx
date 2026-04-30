@@ -22,10 +22,16 @@ export default function App() {
     window.api.isFirstLaunch()
       .then(async (isFirst) => {
         if (!isFirst) {
-          // Returning user — restore model ID into the store so TopBar shows it
+          // Returning user — restore model ID into the store so TopBar shows it.
+          // When NVIDIA is the active backend, use nvidiaModel not the LM Studio modelId.
           try {
-            const cfg = await window.api.getModelConfig()
-            if (cfg.modelId) setSelectedModel(cfg.modelId)
+            const backend = await window.api.getBackendSettings()
+            if (backend.provider === 'nvidia') {
+              if (backend.nvidiaModel) setSelectedModel(backend.nvidiaModel)
+            } else {
+              const cfg = await window.api.getModelConfig()
+              if (cfg.modelId) setSelectedModel(cfg.modelId)
+            }
           } catch { /* non-fatal — model name will be empty until next getModelConfig */ }
         }
         setFirstLaunch(isFirst)
