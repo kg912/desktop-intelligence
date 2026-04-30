@@ -187,7 +187,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     if ((s.backendProvider ?? 'lmstudio') === 'nvidia') {
       return {
         status:         'ready',
-        modelInfo:      { id: s.nvidiaModel ?? 'deepseek-ai/deepseek-v4-pro', object: 'model', created: 0, owned_by: 'nvidia' },
+        modelInfo:      { id: s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b', object: 'model', created: 0, owned_by: 'nvidia' },
         lastChecked:    Date.now(),
         error:          null,
         pollIntervalMs: 0,
@@ -202,7 +202,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     if ((s.backendProvider ?? 'lmstudio') === 'nvidia') {
       return {
         status:         'ready',
-        modelInfo:      { id: s.nvidiaModel ?? 'deepseek-ai/deepseek-v4-pro', object: 'model', created: 0, owned_by: 'nvidia' },
+        modelInfo:      { id: s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b', object: 'model', created: 0, owned_by: 'nvidia' },
         lastChecked:    Date.now(),
         error:          null,
         pollIntervalMs: 0,
@@ -857,7 +857,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     return {
       provider:     s.backendProvider ?? 'lmstudio',
       nvidiaApiKey: s.nvidiaApiKey    ?? '',
-      nvidiaModel:  s.nvidiaModel     ?? 'deepseek-ai/deepseek-v4-pro',
+      nvidiaModel:  s.nvidiaModel     ?? 'mistralai/mistral-medium-3.5-128b',
     }
   })
 

@@ -154,8 +154,12 @@ app.whenReady().then(async () => {
     lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
       console.error('[App] LMSDaemon unhandled error:', err)
     })
+    modelConnectionManager.start()
+  } else {
+    // NVIDIA backend — skip LM Studio daemon and connection polling entirely.
+    // IPC handlers return a synthetic 'ready' state so the UI shows immediately.
+    console.log('[App] NVIDIA backend active — skipping LM Studio daemon and connection polling')
   }
-  modelConnectionManager.start()
 
   // Pre-warm the persistent Python worker so the first chart renders fast.
   // Non-fatal: if python3 is missing, render() will fall back to one-shot spawn.

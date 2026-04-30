@@ -27,7 +27,7 @@ export function NvidiaSettingsPanel() {
   const [settings, setSettings]           = useState<BackendSettings>({
     provider:     'lmstudio',
     nvidiaApiKey: '',
-    nvidiaModel:  'deepseek-ai/deepseek-v4-pro',
+    nvidiaModel:  'mistralai/mistral-medium-3.5-128b',
   })
   const [saved, setSaved]                 = useState(false)
   const [showKey, setShowKey]             = useState(false)

@@ -686,11 +686,26 @@ export class ChatService {
 
         let streamBody: string;
         if (isNvidia) {
-          // NVIDIA Build payload — OpenAI-compatible, no LM Studio extensions
+          // NVIDIA Build payload — OpenAI-compatible, no LM Studio extensions.
+          // thinking=true on large prompts causes 504s; only enable it when
+          // the user explicitly chose thinking mode AND the prompt is not huge.
           const thinkingEnabled = payload.thinkingMode === "thinking";
+          // Cap max_tokens for NVIDIA — their hosted inference has strict timeouts.
+          // 16384 with thinking on a large prompt can cause 504s. Use 8192 by default.
+          const nvidiaMaxTokens = Math.min(maxOutputTokens ?? 8192, 8192);
+          // Recommended temps: 0.6 for thinking mode, 0.7 for non-thinking (Qwen3.5 docs)
+          const nvidiaTemp = temperature ?? (thinkingEnabled ? 0.6 : 0.7);
+          // Only send chat_template_kwargs for models that support it.
+          // Qwen models use 'enable_thinking'; Mistral/Llama/Nemotron reject the field entirely.
+          const isQwenModel = modelId.toLowerCase().includes('qwen');
+          const chatTemplateKwargs = isQwenModel
+            ? { chat_template_kwargs: { enable_thinking: thinkingEnabled } }
+            : {};
           streamBody = JSON.stringify({
             ...commonFields,
-            chat_template_kwargs: { thinking: thinkingEnabled },
+            temperature: nvidiaTemp,
+            max_tokens: nvidiaMaxTokens,
+            ...chatTemplateKwargs,
             stream_options: { include_usage: true },
             ...toolsPayload,
           });
