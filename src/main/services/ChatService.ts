@@ -713,7 +713,7 @@ export class ChatService {
           // restores the default fast path.
           const mistralReasoning =
             isMistralModel && thinkingEnabled
-              ? { reasoning_effort: "medium" }
+              ? { reasoning_effort: "high" }
               : {};
           streamBody = JSON.stringify({
             ...commonFields,
