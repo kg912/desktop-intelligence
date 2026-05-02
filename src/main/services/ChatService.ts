@@ -615,6 +615,22 @@ export class ChatService {
         // so the model is forced to synthesize an answer. The loop exits naturally
         // when toolCallIntercepted is false (model wrote an answer, not a tool call).
         const forceFinalAnswer = searchLoopCount >= MAX_SEARCH_LOOPS;
+        // When forcing a final answer, inject an explicit stop instruction so
+        // aggressive tool-calling models (Qwen3.6, Gemma 4) don't try to search
+        // again via text-stream fallback even though tools are stripped from the payload.
+        const messagesForRequest = forceFinalAnswer
+          ? [
+              ...currentMessages,
+              {
+                role: "user" as const,
+                content:
+                  "[SYSTEM: You have used all permitted web searches. " +
+                  "Do NOT emit any tool calls or <tool_call> tags. " +
+                  "Write your complete final answer now using only the " +
+                  "search results already provided above.]",
+              },
+            ]
+          : currentMessages;
         const { temperature, topP, maxOutputTokens, repeatPenalty } =
           readSettings();
 
@@ -642,7 +658,7 @@ export class ChatService {
           : { thinking: { type: "disabled" } };
         const streamBody = JSON.stringify({
           model: modelId,
-          messages: currentMessages,
+          messages: messagesForRequest,
           temperature: temperature ?? 0.7,
           top_p: topP ?? 0.95,
           max_tokens: maxOutputTokens ?? 16384,
@@ -849,7 +865,7 @@ export class ChatService {
 
             streamBuffer += cleanedDelta;
 
-            if (!toolCallIntercepted) {
+            if (!toolCallIntercepted && !forceFinalAnswer) {
               const detected = detectMidStreamToolCall(streamBuffer);
               if (detected) {
                 const { query: midQuery, cleanedBuffer: cleanedSoFar } =
@@ -1125,20 +1141,6 @@ export class ChatService {
           }
           lastStreamBuffer = streamBuffer;
           break;
-        }
-
-        if (forceFinalAnswer && toolCallIntercepted) {
-          // Tools were stripped but the model still intercepted a tool call via
-          // text-stream fallback (detectMidStreamToolCall). This should not happen
-          // in normal operation. Break and surface an error rather than looping forever.
-          console.warn("[ChatService] ⚠️ Tool call intercepted after tools were stripped — breaking to prevent infinite loop");
-          send(
-            IPC_CHANNELS.CHAT_ERROR,
-            "The model attempted to search again after the search limit was reached. Try rephrasing your question or reducing Max Search Rounds in Settings.",
-          );
-          const stats = this.buildStats(startTime, firstTokenAt, totalTokens, true, promptTokens);
-          send(IPC_CHANNELS.CHAT_STREAM_END, stats);
-          return;
         }
       }
     } catch (err) {
