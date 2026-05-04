@@ -38,8 +38,9 @@ import { getDB } from './DatabaseService'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** Maximum total characters assembled into the context block injected as a system message. */
-const MAX_CONTEXT_CHARS = 12_000
+/** Maximum total characters assembled into the context block injected as a system message.
+ *  48 000 chars ≈ 13 300 tokens at 3.6 chars/token — well within Qwen3.5-35B's 32 768+ context. */
+const MAX_CONTEXT_CHARS = 48_000
 
 /** Target character width of each chunk.  1 800 chars ≈ 450 tokens — comfortably
  *  inside a single reasoning step for most models. */
@@ -50,8 +51,8 @@ const CHUNK_SIZE = 1_800
 const CHUNK_OVERLAP = 200
 
 /** Maximum number of chunks to include in the assembled context.
- *  8 × 1 800 = 14 400 chars before the MAX_CONTEXT_CHARS cap applies. */
-const MAX_CHUNKS = 8
+ *  32 × 1 800 = 57 600 chars before the MAX_CONTEXT_CHARS cap applies. */
+const MAX_CHUNKS = 32
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 

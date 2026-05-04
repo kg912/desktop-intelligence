@@ -8,7 +8,7 @@
  *   1.  Documents are stored with the correct chat_id.
  *   2.  Retrieval is strictly isolated to the requested chat_id.
  *   3.  Empty / whitespace-only documents are never stored.
- *   4.  Total context is capped at MAX_CONTEXT_CHARS (12 000).
+ *   4.  Total context is capped at MAX_CONTEXT_CHARS (48 000).
  *   5.  Multiple documents in the same chat are all returned.
  *   6.  Each chunk is labelled with [Document: name | Chunk N] header.
  *   7.  FTS5 keyword search returns the most relevant chunks.
@@ -285,25 +285,26 @@ describe('retrieveContext', () => {
 
   // ── Context truncation ────────────────────────────────────────────────────
 
-  it('caps total context at MAX_CONTEXT_CHARS (12 000) for a single large document', async () => {
-    const bigText = 'x'.repeat(20_000)
+  it('caps total context at MAX_CONTEXT_CHARS (48 000) for a single large document', async () => {
+    const bigText = 'x'.repeat(60_000)
     await ingestDocument('huge.pdf', bigText, 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
     // Allow small overhead for the [Document: ...] headers
-    expect(ctx.length).toBeLessThanOrEqual(12_200)
+    expect(ctx.length).toBeLessThanOrEqual(48_200)
   })
 
   it('caps total context across multiple documents', async () => {
-    // Two 8 000-char docs → combined 16 000 chars, must be truncated
-    const bigText = 'y'.repeat(8_000)
+    // Two 30 000-char docs → combined 60 000 chars, must be truncated at 48 000
+    const bigText = 'y'.repeat(30_000)
     await ingestDocument('part1.pdf', bigText, 'chat-1')
     await ingestDocument('part2.pdf', bigText, 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
-    expect(ctx.length).toBeLessThanOrEqual(12_200)
+    expect(ctx.length).toBeLessThanOrEqual(48_200)
   })
 
   it('appends ellipsis (…) when a chunk is truncated', async () => {
-    const bigText = 'z'.repeat(20_000)
+    // 60 000 chars > MAX_CONTEXT_CHARS (48 000) so truncation + ellipsis must occur
+    const bigText = 'z'.repeat(60_000)
     await ingestDocument('long.pdf', bigText, 'chat-1')
     const ctx = await retrieveContext('q', 'chat-1')
     expect(ctx).toContain('…')

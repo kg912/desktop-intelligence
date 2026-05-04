@@ -149,6 +149,7 @@ export async function processFile(
     : null
 
   console.log(`[FileProcessor] 📤 inject chars=${injectContent?.length ?? 0} for "${fileName}"`)
+  console.log(`[FileProcessor] 📋 INJECT CONTENT PREVIEW (first 500 chars): ${injectContent?.slice(0, 500).replace(/\n/g, '↵') ?? 'NULL'}`)
 
   return {
     id:      `${Date.now()}-${Math.random()}`,

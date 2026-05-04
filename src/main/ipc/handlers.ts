@@ -320,6 +320,42 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
     }
 
+    // ── 3b. Direct document injection — consume attachment.inject fields ──────
+    // FileProcessorService extracts raw PDF/text content and returns it in
+    // attachment.inject. This must be spliced into the wire messages so the
+    // model receives the full document text regardless of RAG retrieval timing.
+    // Without this step, inject is a dead end — it never reaches the model.
+    const injectAttachments = (payload.attachments ?? []).filter(
+      (a) => a.inject && typeof a.inject === 'string' && a.inject.trim().length > 0
+    )
+    if (injectAttachments.length > 0) {
+      const injectParts = injectAttachments.map((a) => a.inject as string)
+      const combinedInject = injectParts.join('\n\n---\n\n')
+      const injectMessage: WireMessage = {
+        role: 'system',
+        content:
+          `[DOCUMENT CONTENT — READ THIS CAREFULLY. The user has attached the following file(s). ` +
+          `This is the COMPLETE extracted text. Answer all questions using this content directly.]\n\n` +
+          combinedInject,
+      }
+      // Splice immediately before the last user message (same position as RAG context)
+      const lastUserIdx2 = [...enrichedMessages].map((m) => m.role).lastIndexOf('user')
+      if (lastUserIdx2 !== -1) {
+        enrichedMessages = [
+          ...enrichedMessages.slice(0, lastUserIdx2),
+          injectMessage,
+          ...enrichedMessages.slice(lastUserIdx2),
+        ]
+        console.log(
+          `[DirectInject] ✅ Injected ${injectAttachments.length} attachment(s) into wire payload. ` +
+          `Total inject chars: ${combinedInject.length}. ` +
+          `Files: ${injectAttachments.map((a) => a.name).join(', ')}`
+        )
+      }
+    } else {
+      console.log(`[DirectInject] No inject attachments found in payload (count=${payload.attachments?.length ?? 0})`)
+    }
+
     // ── 7. Image RAG — retrieve stored plots if user references a past chart ──
     // When the user's message contains phrases like "that chart", "earlier graph",
     // "the MSFT visualization", etc., we search the PlotStore for matching charts
@@ -366,6 +402,21 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         console.warn('[PlotRAG] searchPlots failed (non-fatal):', err)
       }
     }
+
+    // ── DEBUG: log what the model will actually receive ──────────────────────
+    console.log(`\n${'='.repeat(80)}`)
+    console.log(`🔍 FINAL WIRE PAYLOAD DEBUG — chatId=${enrichedPayload.chatId ?? 'none'}`)
+    console.log(`Total messages in wire: ${enrichedPayload.messages?.length ?? 0}`)
+    for (let _di = 0; _di < (enrichedPayload.messages?.length ?? 0); _di++) {
+      const _dm = enrichedPayload.messages[_di]
+      const _content = typeof _dm.content === 'string' ? _dm.content : JSON.stringify(_dm.content)
+      console.log(`  [${_di}] role=${_dm.role} chars=${_content.length} preview="${_content.slice(0, 120).replace(/\n/g, '↵')}…"`)
+    }
+    console.log(`Attachments in payload: ${enrichedPayload.attachments?.length ?? 0}`)
+    for (const _da of (enrichedPayload.attachments ?? [])) {
+      console.log(`  attachment: name="${_da.name}" kind=${_da.kind} injectChars=${_da.inject?.length ?? 0} hasDataUrl=${!!_da.dataUrl}`)
+    }
+    console.log(`${'='.repeat(80)}\n`)
 
     try {
       await chatService.send(enrichedPayload, modelId, wc)
