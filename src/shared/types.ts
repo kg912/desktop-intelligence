@@ -249,6 +249,7 @@ export const IPC_CHANNELS = {
 
   SETTINGS_GET_BACKEND:  'settings:getBackend',
   SETTINGS_SAVE_BACKEND: 'settings:saveBackend',
+  APP_RESTART: 'app:restart',
   SETTINGS_GET_OLLAMA_MODELS: 'settings:getOllamaModels',
 
 } as const

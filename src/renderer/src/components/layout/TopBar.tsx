@@ -41,10 +41,14 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
 
   const [showTooltip, setShowTooltip] = useState(false)
   const [isNvidia,    setIsNvidia]    = useState(false)
+  const [isOllama,    setIsOllama]    = useState(false)
 
   useEffect(() => {
     window.api.getBackendSettings()
-      .then((s) => setIsNvidia(s.provider === 'nvidia'))
+      .then((s) => {
+        setIsNvidia(s.provider === 'nvidia')
+        setIsOllama(s.provider === 'ollama')
+      })
       .catch(() => {/* non-fatal */})
   }, [])
 
@@ -139,8 +143,8 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
           </span>
         </motion.div>
 
-        {/* Reload model button — hidden when NVIDIA is active (no local model to reload) */}
-        {!isNvidia && (
+        {/* Reload model button — hidden for cloud backends (Ollama, NVIDIA) */}
+        {!isNvidia && !isOllama && (
           <button
             onClick={handleReload}
             disabled={isBusy}

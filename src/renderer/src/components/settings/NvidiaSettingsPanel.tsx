@@ -11,7 +11,7 @@
  * the in-memory provider differs from the one that was active at boot.
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { AlertTriangle, Eye, EyeOff, CheckCircle2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { BackendProvider, BackendSettings } from '../../../../../shared/types'
 
@@ -34,9 +34,10 @@ export function NvidiaSettingsPanel() {
     ollamaModel:   '',
     ollamaBaseUrl: 'https://ollama.com',
   })
-  const [saved, setSaved]               = useState(false)
   const [loading, setLoading]           = useState(true)
   const [restartNeeded, setRestartNeeded] = useState(false)
+  // Track the last-persisted snapshot to know when something has actually changed
+  const [savedSettings, setSavedSettings] = useState<BackendSettings | null>(null)
 
   // NVIDIA key visibility
   const [showNvidiaKey, setShowNvidiaKey] = useState(false)
@@ -56,6 +57,7 @@ export function NvidiaSettingsPanel() {
     window.api.getBackendSettings().then((s) => {
       bootProvider = s.provider
       setSettings(s)
+      setSavedSettings(s)
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
@@ -110,11 +112,12 @@ export function NvidiaSettingsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.ollamaBaseUrl, settings.ollamaApiKey])
 
-  // ── Save ──────────────────────────────────────────────────────
+  // ── Save & Restart ───────────────────────────────────────────
   const handleSave = useCallback(async () => {
     await window.api.saveBackendSettings(settings)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setSavedSettings(settings)
+    // Restart the app so the new backend takes effect immediately
+    await window.api.restartApp()
   }, [settings])
 
   const update = <K extends keyof BackendSettings>(key: K, value: BackendSettings[K]) => {
@@ -343,24 +346,27 @@ export function NvidiaSettingsPanel() {
         </div>
       )}
 
-      {/* Save */}
-      <div className="flex items-center gap-3 pt-2">
-        <button
-          onClick={handleSave}
-          className={cn(
-            'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-            'bg-accent-700 hover:bg-accent-600 text-white',
-          )}
-        >
-          Save
-        </button>
-        {saved && (
-          <span className="flex items-center gap-1.5 text-sm text-emerald-400">
-            <CheckCircle2 size={14} />
-            Saved
-          </span>
-        )}
-      </div>
+      {/* Save & Restart */}
+      {(() => {
+        const hasChanged = savedSettings !== null &&
+          JSON.stringify(settings) !== JSON.stringify(savedSettings)
+        return (
+          <div className="flex justify-center pt-2">
+            <button
+              onClick={handleSave}
+              disabled={!hasChanged}
+              className={cn(
+                'px-5 py-2 rounded-lg text-sm font-medium transition-colors',
+                hasChanged
+                  ? 'bg-accent-700 hover:bg-accent-600 text-white cursor-pointer'
+                  : 'bg-surface-hover border border-surface-border/40 text-content-muted cursor-not-allowed opacity-50',
+              )}
+            >
+              Save &amp; Restart
+            </button>
+          </div>
+        )
+      })()}
     </div>
   )
 }

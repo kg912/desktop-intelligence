@@ -149,6 +149,9 @@ const api = {
   getOllamaModels: (baseUrl?: string, apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, baseUrl, apiKey),
 
+  restartApp: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
+
   // ── Context compaction ───────────────────────────────────────
   compactChat: (payload: CompactPayload): Promise<CompactResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, payload),

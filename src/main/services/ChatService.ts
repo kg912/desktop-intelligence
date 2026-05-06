@@ -795,9 +795,11 @@ export class ChatService {
           // carries message.thinking (separate from message.content) which the NDJSON
           // loop normalises to <think>…</think> inline. Generation params go under
           // `options`, not at the top level. Tool format is OpenAI-compatible.
+          // Use messagesForRequest (not currentMessages) so the forceFinalAnswer
+          // stop-search injection is included when searchLoopCount >= MAX.
           streamBody = JSON.stringify({
             model:    modelId,
-            messages: buildOllamaMessages(currentMessages),
+            messages: buildOllamaMessages(messagesForRequest),
             stream:   true,
             think:    isThinking,
             options: {
@@ -805,7 +807,12 @@ export class ChatService {
               top_p:       topP        ?? 0.95,
               num_predict: maxOutputTokens ?? 16384,
             },
-            ...toolsPayload,
+            // When forcing a final answer, send tool_choice:'none' explicitly.
+            // Ollama models (esp. Qwen3) ignore the absence of tools and still
+            // emit tool_calls unless the API-level enforcement is present.
+            ...(forceFinalAnswer
+              ? { tool_choice: "none" }
+              : toolsPayload),
           });
         } else {
           // LM Studio payload — unchanged from original
@@ -949,7 +956,9 @@ export class ChatService {
               // an intermediate chunk before done:true (model-dependent). We overwrite
               // the slot each time so the last, most-complete version always wins.
               // Preserving the original id prevents duplicate call_ timestamps.
-              if (ollamaChunk.message?.tool_calls?.length && !toolCallIntercepted) {
+              // Guard: ignore tool_calls when forcing a final answer — Qwen3 emits
+              // them even when tool_choice:'none' is set, so we drop them here.
+              if (ollamaChunk.message?.tool_calls?.length && !toolCallIntercepted && !forceFinalAnswer) {
                 if (DEBUG)
                   console.log(
                     `[DEBUG][Ollama] tool_calls on chunk (done=${ollamaChunk.done}):`,
@@ -1188,7 +1197,7 @@ export class ChatService {
         // Handles multiple parallel tool calls (Qwen emits index 0, 1, ... for each
         // query it wants to run simultaneously). Executes them sequentially, merges
         // results, and injects a valid assistant→tool[] pair into the wire payload.
-        if (pendingToolCalls.size > 0 && !toolCallIntercepted) {
+        if (pendingToolCalls.size > 0 && !toolCallIntercepted && !forceFinalAnswer) {
           if (DEBUG)
             console.log(
               `[Debug][ChatService][NativeToolEnter] pendingToolCalls.size=${pendingToolCalls.size} toolNames=${[...pendingToolCalls.values()].map((t) => t.name).join(",")}`,

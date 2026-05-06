@@ -138,6 +138,17 @@ app.whenReady().then(async () => {
   // handler" and crashes the main process.
   registerIpcHandlers(() => mainWindow?.webContents ?? null)
 
+  // App restart — save is already handled by SETTINGS_SAVE_BACKEND before this fires.
+  // Shuts down the LMS daemon cleanly then relaunches the app.
+  const { ipcMain } = await import('electron')
+  ipcMain.handle(IPC_CHANNELS.APP_RESTART, async () => {
+    try {
+      await lmsDaemonManager.shutdown()
+    } catch { /* non-fatal */ }
+    app.relaunch()
+    app.quit()
+  })
+
   createWindow()
 
   // Start the daemon and connection polling once — they survive window
