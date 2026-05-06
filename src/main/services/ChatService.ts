@@ -945,19 +945,33 @@ export class ChatService {
               deltaContent   = ollamaChunk.message?.content  ?? "";
               deltaReasoning = ollamaChunk.message?.thinking ?? "";
 
+              // Check for tool calls on EVERY chunk — Ollama may deliver them on
+              // an intermediate chunk before done:true (model-dependent). We overwrite
+              // the slot each time so the last, most-complete version always wins.
+              // Preserving the original id prevents duplicate call_ timestamps.
+              if (ollamaChunk.message?.tool_calls?.length && !toolCallIntercepted) {
+                if (DEBUG)
+                  console.log(
+                    `[DEBUG][Ollama] tool_calls on chunk (done=${ollamaChunk.done}):`,
+                    JSON.stringify(ollamaChunk.message.tool_calls),
+                  );
+                for (const [idx, tc] of ollamaChunk.message.tool_calls.entries()) {
+                  pendingToolCalls.set(idx, {
+                    id:      pendingToolCalls.get(idx)?.id ?? `call_${Date.now()}_${idx}`,
+                    name:    tc.function.name,
+                    argsRaw: JSON.stringify(tc.function.arguments ?? {}),
+                  });
+                }
+              }
+
               if (ollamaChunk.done) {
                 if (ollamaChunk.eval_count)        totalTokens  = ollamaChunk.eval_count;
                 if (ollamaChunk.prompt_eval_count) promptTokens = ollamaChunk.prompt_eval_count;
-                // Ollama delivers structured tool calls on the done chunk, not streaming
-                if (ollamaChunk.message?.tool_calls?.length && !toolCallIntercepted) {
-                  for (const [idx, tc] of ollamaChunk.message.tool_calls.entries()) {
-                    pendingToolCalls.set(idx, {
-                      id:      `call_${Date.now()}_${idx}`,
-                      name:    tc.function.name,
-                      argsRaw: JSON.stringify(tc.function.arguments ?? {}),
-                    });
-                  }
-                }
+                if (DEBUG)
+                  console.log(
+                    `[DEBUG][Ollama][DoneChunk] done_reason=${ollamaChunk.done_reason} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} message:`,
+                    JSON.stringify(ollamaChunk.message),
+                  );
                 ndjsonDone = true;
               }
 
