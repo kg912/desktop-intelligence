@@ -184,10 +184,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, async (): Promise<ConnectionState> => {
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
-    if ((s.backendProvider ?? 'lmstudio') === 'nvidia') {
+    const bp = s.backendProvider ?? 'lmstudio'
+    if (bp === 'nvidia' || bp === 'ollama') {
+      const modelId  = bp === 'nvidia' ? (s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b') : (s.ollamaModel ?? 'ollama')
+      const ownedBy  = bp === 'nvidia' ? 'nvidia' : 'ollama'
       return {
         status:         'ready',
-        modelInfo:      { id: s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b', object: 'model', created: 0, owned_by: 'nvidia' },
+        modelInfo:      { id: modelId, object: 'model', created: 0, owned_by: ownedBy },
         lastChecked:    Date.now(),
         error:          null,
         pollIntervalMs: 0,
@@ -199,10 +202,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MODEL_FORCE_POLL, async (): Promise<ConnectionState> => {
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
-    if ((s.backendProvider ?? 'lmstudio') === 'nvidia') {
+    const bp = s.backendProvider ?? 'lmstudio'
+    if (bp === 'nvidia' || bp === 'ollama') {
+      const modelId  = bp === 'nvidia' ? (s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b') : (s.ollamaModel ?? 'ollama')
+      const ownedBy  = bp === 'nvidia' ? 'nvidia' : 'ollama'
       return {
         status:         'ready',
-        modelInfo:      { id: s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b', object: 'model', created: 0, owned_by: 'nvidia' },
+        modelInfo:      { id: modelId, object: 'model', created: 0, owned_by: ownedBy },
         lastChecked:    Date.now(),
         error:          null,
         pollIntervalMs: 0,
@@ -218,7 +224,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // ── Daemon ──────────────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
     const { readSettings } = await import('../services/SettingsStore')
-    if ((readSettings().backendProvider ?? 'lmstudio') === 'nvidia') {
+    if (['nvidia', 'ollama'].includes(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
     return lmsDaemonManager.getState()
@@ -226,7 +232,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
     const { readSettings } = await import('../services/SettingsStore')
-    if ((readSettings().backendProvider ?? 'lmstudio') === 'nvidia') {
+    if (['nvidia', 'ollama'].includes(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
     await lmsDaemonManager.retry()
@@ -655,7 +661,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
       // ── NVIDIA guard: skip lms CLI entirely, just persist params ─────
       const currentSettings = _rs()
-      if ((currentSettings.backendProvider ?? 'lmstudio') === 'nvidia') {
+      if (['nvidia', 'ollama'].includes(currentSettings.backendProvider ?? 'lmstudio')) {
         const patch: Record<string, unknown> = {}
         if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
         if (payload.topP            !== undefined) patch.topP            = payload.topP
@@ -664,7 +670,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
         if (payload.contextLength   !== undefined) patch.contextLength   = payload.contextLength
         writeSettings(patch as Parameters<typeof writeSettings>[0])
-        console.log('[Settings] NVIDIA provider — skipped lms CLI, params saved to SettingsStore')
+        console.log(`[Settings] Cloud provider (${currentSettings.backendProvider}) — skipped lms CLI, params saved to SettingsStore`)
         return { success: true, confirmedCtx: payload.contextLength }
       }
 

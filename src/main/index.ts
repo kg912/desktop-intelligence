@@ -150,15 +150,16 @@ app.whenReady().then(async () => {
   const { readSettings } = await import('./services/SettingsStore')
   const savedSettings = readSettings()
 
-  if ((savedSettings.backendProvider ?? 'lmstudio') === 'lmstudio') {
+  const isCloudBackend = (savedSettings.backendProvider ?? 'lmstudio') !== 'lmstudio'
+  if (!isCloudBackend) {
     lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
       console.error('[App] LMSDaemon unhandled error:', err)
     })
     modelConnectionManager.start()
   } else {
-    // NVIDIA backend — skip LM Studio daemon and connection polling entirely.
+    // Cloud backend (NVIDIA or Ollama) — skip LM Studio daemon and connection polling entirely.
     // IPC handlers return a synthetic 'ready' state so the UI shows immediately.
-    console.log('[App] NVIDIA backend active — skipping LM Studio daemon and connection polling')
+    console.log(`[App] Cloud backend active (${savedSettings.backendProvider}) — skipping LM Studio daemon and connection polling`)
   }
 
   // Pre-warm the persistent Python worker so the first chart renders fast.
