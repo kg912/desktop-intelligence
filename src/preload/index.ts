@@ -23,7 +23,7 @@ import type {
   McpServerSettings,
   McpServerRuntimeInfo,
   McpToolPermissionRequest,
-  NvidiaSettings,
+  BackendSettings,
 } from '../shared/types'
 
 const api = {
@@ -140,11 +140,14 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS),
 
   // ── Backend provider settings ─────────────────────────────────────
-  getBackendSettings: (): Promise<NvidiaSettings> =>
+  getBackendSettings: (): Promise<BackendSettings> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_BACKEND),
 
-  saveBackendSettings: (patch: Partial<NvidiaSettings>): Promise<void> =>
+  saveBackendSettings: (patch: Partial<BackendSettings>): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE_BACKEND, patch),
+
+  getOllamaModels: (baseUrl?: string, apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, baseUrl, apiKey),
 
   // ── Context compaction ───────────────────────────────────────
   compactChat: (payload: CompactPayload): Promise<CompactResult> =>

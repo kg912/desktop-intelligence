@@ -152,7 +152,7 @@ export type MessageBlock =
 
 export type ThinkingMode = 'thinking' | 'fast'
 
-export type BackendProvider = 'lmstudio' | 'nvidia'
+export type BackendProvider = 'lmstudio' | 'nvidia' | 'ollama'
 
 export interface ChatSendPayload {
   messages:       WireMessage[]
@@ -249,6 +249,7 @@ export const IPC_CHANNELS = {
 
   SETTINGS_GET_BACKEND:  'settings:getBackend',
   SETTINGS_SAVE_BACKEND: 'settings:saveBackend',
+  SETTINGS_GET_OLLAMA_MODELS: 'settings:getOllamaModels',
 
 } as const
 
@@ -292,10 +293,13 @@ export interface ReloadResult {
   confirmedCtx?:  number
 }
 
-export interface NvidiaSettings {
-  provider:     BackendProvider
-  nvidiaApiKey: string
-  nvidiaModel:  string
+export interface BackendSettings {
+  provider:       BackendProvider
+  nvidiaApiKey:   string
+  nvidiaModel:    string
+  ollamaApiKey:   string
+  ollamaModel:    string
+  ollamaBaseUrl:  string
 }
 
 // --- Model selection & first-launch onboarding ---

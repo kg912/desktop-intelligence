@@ -855,23 +855,50 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     return {
-      provider:     s.backendProvider ?? 'lmstudio',
-      nvidiaApiKey: s.nvidiaApiKey    ?? '',
-      nvidiaModel:  s.nvidiaModel     ?? 'mistralai/mistral-medium-3.5-128b',
+      provider:      s.backendProvider ?? 'lmstudio',
+      nvidiaApiKey:  s.nvidiaApiKey    ?? '',
+      nvidiaModel:   s.nvidiaModel     ?? 'mistralai/mistral-medium-3.5-128b',
+      ollamaApiKey:  s.ollamaApiKey    ?? '',
+      ollamaModel:   s.ollamaModel     ?? '',
+      ollamaBaseUrl: s.ollamaBaseUrl   ?? 'https://ollama.com',
     }
   })
 
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
-    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string }) => {
+    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string }) => {
       const { writeSettings } = await import('../services/SettingsStore')
       const cleanPatch: Record<string, unknown> = {}
-      if (patch.provider     !== undefined) cleanPatch.backendProvider = patch.provider
-      if (patch.nvidiaApiKey !== undefined) cleanPatch.nvidiaApiKey    = patch.nvidiaApiKey
-      if (patch.nvidiaModel  !== undefined) cleanPatch.nvidiaModel     = patch.nvidiaModel
+      if (patch.provider      !== undefined) cleanPatch.backendProvider = patch.provider
+      if (patch.nvidiaApiKey  !== undefined) cleanPatch.nvidiaApiKey    = patch.nvidiaApiKey
+      if (patch.nvidiaModel   !== undefined) cleanPatch.nvidiaModel     = patch.nvidiaModel
+      if (patch.ollamaApiKey  !== undefined) cleanPatch.ollamaApiKey    = patch.ollamaApiKey
+      if (patch.ollamaModel   !== undefined) cleanPatch.ollamaModel     = patch.ollamaModel
+      if (patch.ollamaBaseUrl !== undefined) cleanPatch.ollamaBaseUrl   = patch.ollamaBaseUrl
       writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
     },
   )
+
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, async (_, baseUrl?: string, apiKey?: string) => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    const url = (baseUrl ?? s.ollamaBaseUrl ?? 'https://ollama.com').replace(/\/$/, '')
+    const key = apiKey ?? s.ollamaApiKey ?? ''
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (key) headers['Authorization'] = `Bearer ${key}`
+      const res = await fetch(`${url}/api/tags`, { headers, signal: AbortSignal.timeout(8000) })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        return { models: [], error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
+      }
+      const data = await res.json() as { models?: Array<{ name: string }> }
+      return { models: (data.models ?? []).map((m) => m.name), error: null }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { models: [], error: msg }
+    }
+  })
 
   // ── chat:compact — manual context compaction ─────────────────────
   // Summarises the current chat via a local LM Studio call, replaces

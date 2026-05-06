@@ -48,6 +48,12 @@ export interface AppSettings {
   nvidiaApiKey?: string
   /** NVIDIA Build model identifier e.g. "deepseek-ai/deepseek-v4-pro" */
   nvidiaModel?: string
+  /** Ollama API key — required for Ollama Cloud, omit for local instances */
+  ollamaApiKey?: string
+  /** Ollama model identifier e.g. "qwen3:32b" */
+  ollamaModel?: string
+  /** Ollama base URL. Defaults to https://ollama.com. Use http://localhost:11434 for local. */
+  ollamaBaseUrl?: string
 }
 
 function settingsPath(): string {

@@ -1,40 +1,57 @@
 /**
- * NvidiaSettingsPanel
+ * BackendSettingsPanel (NvidiaSettingsPanel.tsx)
  *
- * Lets the user switch between LM Studio and NVIDIA Build as the active
- * inference backend and configure the NVIDIA API key + model identifier.
+ * Three-way provider selector: LM Studio | Ollama | NVIDIA Build
  *
- * Switching providers requires an app restart — a banner is shown as soon
- * as the saved provider differs from the currently-running provider.
+ * - LM Studio: no extra fields (managed via the Model tab)
+ * - Ollama: base URL + optional API key + model dropdown (live-fetched from /api/tags)
+ * - NVIDIA Build: API key + free-text model ID (legacy, no enumeration API)
+ *
+ * Switching providers requires an app restart — a banner appears as soon as
+ * the in-memory provider differs from the one that was active at boot.
  */
-import { useState, useEffect, useCallback } from 'react'
-import { AlertTriangle, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { AlertTriangle, Eye, EyeOff, CheckCircle2, RefreshCw } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import type { BackendProvider } from '../../../../../shared/types'
+import type { BackendProvider, BackendSettings } from '../../../../../shared/types'
 
-interface BackendSettings {
-  provider:     BackendProvider
-  nvidiaApiKey: string
-  nvidiaModel:  string
-}
-
-// The provider that was active when the app last started — used to decide
-// whether to show the restart banner. We read it once from the IPC response
-// on first mount; here we default to lmstudio conservatively.
+// Captured once on first IPC response — tells us which provider was running
+// when the app started so we know whether a restart banner is needed.
 let bootProvider: BackendProvider = 'lmstudio'
 
+const PROVIDER_LABELS: Record<BackendProvider, string> = {
+  lmstudio: 'LM Studio',
+  ollama:   'Ollama',
+  nvidia:   'NVIDIA Build',
+}
+
 export function NvidiaSettingsPanel() {
-  const [settings, setSettings]           = useState<BackendSettings>({
-    provider:     'lmstudio',
-    nvidiaApiKey: '',
-    nvidiaModel:  'mistralai/mistral-medium-3.5-128b',
+  const [settings, setSettings] = useState<BackendSettings>({
+    provider:      'lmstudio',
+    nvidiaApiKey:  '',
+    nvidiaModel:   'mistralai/mistral-medium-3.5-128b',
+    ollamaApiKey:  '',
+    ollamaModel:   '',
+    ollamaBaseUrl: 'https://ollama.com',
   })
-  const [saved, setSaved]                 = useState(false)
-  const [showKey, setShowKey]             = useState(false)
-  const [loading, setLoading]             = useState(true)
+  const [saved, setSaved]               = useState(false)
+  const [loading, setLoading]           = useState(true)
   const [restartNeeded, setRestartNeeded] = useState(false)
 
-  // Load saved settings on mount
+  // NVIDIA key visibility
+  const [showNvidiaKey, setShowNvidiaKey] = useState(false)
+  // Ollama key visibility
+  const [showOllamaKey, setShowOllamaKey] = useState(false)
+
+  // Ollama model list state
+  const [ollamaModels, setOllamaModels]               = useState<string[]>([])
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
+  const [ollamaModelsError, setOllamaModelsError]     = useState<string | null>(null)
+
+  // Debounce timer ref for auto-fetch on baseUrl/apiKey change
+  const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
     window.api.getBackendSettings().then((s) => {
       bootProvider = s.provider
@@ -43,11 +60,57 @@ export function NvidiaSettingsPanel() {
     }).catch(() => setLoading(false))
   }, [])
 
-  // Derive restart banner: show when saved provider != boot provider
+  // ── Restart banner ────────────────────────────────────────────
   useEffect(() => {
     setRestartNeeded(settings.provider !== bootProvider)
   }, [settings.provider])
 
+  // ── Fetch Ollama models ───────────────────────────────────────
+  const fetchOllamaModels = useCallback(async (baseUrl: string, apiKey: string) => {
+    setOllamaModelsLoading(true)
+    setOllamaModelsError(null)
+    try {
+      const result = await window.api.getOllamaModels(baseUrl, apiKey)
+      if (result.error) {
+        setOllamaModelsError(result.error)
+        setOllamaModels([])
+      } else {
+        setOllamaModels(result.models)
+        setOllamaModelsError(null)
+        // Auto-select first model if nothing saved yet
+        if (!settings.ollamaModel && result.models.length > 0) {
+          setSettings((prev) => ({ ...prev, ollamaModel: result.models[0] }))
+        }
+      }
+    } catch (err) {
+      setOllamaModelsError(err instanceof Error ? err.message : String(err))
+      setOllamaModels([])
+    } finally {
+      setOllamaModelsLoading(false)
+    }
+  }, [settings.ollamaModel])
+
+  // Auto-fetch when switching to Ollama, or after settings load
+  useEffect(() => {
+    if (settings.provider !== 'ollama' || loading) return
+    fetchOllamaModels(settings.ollamaBaseUrl, settings.ollamaApiKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.provider, loading])
+
+  // Debounced re-fetch when baseUrl or apiKey changes while Ollama is selected
+  useEffect(() => {
+    if (settings.provider !== 'ollama' || loading) return
+    if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+    fetchTimerRef.current = setTimeout(() => {
+      fetchOllamaModels(settings.ollamaBaseUrl, settings.ollamaApiKey)
+    }, 800)
+    return () => {
+      if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.ollamaBaseUrl, settings.ollamaApiKey])
+
+  // ── Save ──────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     await window.api.saveBackendSettings(settings)
     setSaved(true)
@@ -62,6 +125,14 @@ export function NvidiaSettingsPanel() {
     return <div className="text-sm text-content-muted">Loading…</div>
   }
 
+  // Shared input class
+  const inputCls = cn(
+    'w-full px-3 py-2 rounded-lg text-sm font-mono',
+    'border border-surface-border/50',
+    'placeholder:text-content-muted',
+    'focus:outline-none focus:ring-1 focus:ring-accent-600/60',
+  )
+
   return (
     <div className="space-y-6">
 
@@ -75,42 +146,151 @@ export function NvidiaSettingsPanel() {
         </div>
       )}
 
-      {/* Provider selector */}
+      {/* 3-way provider toggle */}
       <div className="space-y-2">
         <label className="text-sm font-medium text-content-primary">
           Inference Backend
         </label>
         <p className="text-xs text-content-muted">
-          LM Studio runs models locally. NVIDIA Build uses the NVIDIA cloud API.
-          Switching requires a restart.
+          LM Studio runs models locally. Ollama connects to Ollama Cloud or a local Ollama
+          instance. NVIDIA Build uses the NVIDIA cloud API. Switching requires a restart.
         </p>
         <div className="flex gap-2 mt-2">
-          {(['lmstudio', 'nvidia'] as BackendProvider[]).map((p) => (
+          {(['lmstudio', 'ollama', 'nvidia'] as BackendProvider[]).map((p) => (
             <button
               key={p}
               onClick={() => update('provider', p)}
               className={cn(
-                'flex-1 py-2 px-3 rounded-lg text-sm font-medium border transition-colors',
+                'flex-1 py-2 px-2 rounded-lg text-sm font-medium border transition-colors',
                 settings.provider === p
                   ? 'bg-accent-950/60 border-accent-700/60 text-accent-300'
                   : 'bg-surface-hover border-surface-border/40 text-content-secondary hover:text-content-primary',
               )}
             >
-              {p === 'lmstudio' ? 'LM Studio' : 'NVIDIA Build'}
+              {PROVIDER_LABELS[p]}
             </button>
           ))}
         </div>
       </div>
 
-      {/* NVIDIA-specific fields — only visible when nvidia is selected */}
-      {settings.provider === 'nvidia' && (
+      {/* ── Ollama fields ──────────────────────────────────────── */}
+      {settings.provider === 'ollama' && (
         <div className="space-y-4 pt-2 border-t border-surface-border/30">
+
+          {/* Base URL */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-content-primary">Base URL</label>
+            <p className="text-xs text-content-muted">
+              Use <span className="font-mono">https://ollama.com</span> for Ollama Cloud,
+              or <span className="font-mono">http://localhost:11434</span> for a local instance.
+            </p>
+            <input
+              type="text"
+              value={settings.ollamaBaseUrl}
+              onChange={(e) => update('ollamaBaseUrl', e.target.value)}
+              placeholder="https://ollama.com"
+              className={inputCls}
+              style={{ background: '#111', color: '#f5f5f5' }}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
 
           {/* API Key */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-content-primary">
-              NVIDIA API Key
-            </label>
+            <label className="text-sm font-medium text-content-primary">API Key</label>
+            <p className="text-xs text-content-muted">
+              Required for Ollama Cloud. Not required for local instances.
+            </p>
+            <div className="relative">
+              <input
+                type={showOllamaKey ? 'text' : 'password'}
+                value={settings.ollamaApiKey}
+                onChange={(e) => update('ollamaApiKey', e.target.value)}
+                placeholder="ollama_…"
+                className={cn(inputCls, 'pr-10')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOllamaKey((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-content-muted hover:text-content-primary transition-colors"
+                tabIndex={-1}
+              >
+                {showOllamaKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Model — dropdown when available, text input as fallback */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-content-primary">Model</label>
+              <button
+                type="button"
+                onClick={() => fetchOllamaModels(settings.ollamaBaseUrl, settings.ollamaApiKey)}
+                disabled={ollamaModelsLoading}
+                className="flex items-center gap-1 text-xs text-content-muted hover:text-content-primary transition-colors disabled:opacity-40"
+              >
+                <RefreshCw size={11} className={ollamaModelsLoading ? 'animate-spin' : ''} />
+                {ollamaModelsLoading ? 'Fetching…' : 'Refresh'}
+              </button>
+            </div>
+
+            {ollamaModels.length > 0 ? (
+              <select
+                value={settings.ollamaModel}
+                onChange={(e) => update('ollamaModel', e.target.value)}
+                className={cn(inputCls, 'cursor-pointer')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+              >
+                {settings.ollamaModel && !ollamaModels.includes(settings.ollamaModel) && (
+                  <option value={settings.ollamaModel}>{settings.ollamaModel}</option>
+                )}
+                {ollamaModels.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={settings.ollamaModel}
+                onChange={(e) => update('ollamaModel', e.target.value)}
+                placeholder={ollamaModelsLoading ? 'Fetching models…' : 'e.g. qwen3:32b'}
+                disabled={ollamaModelsLoading}
+                className={cn(inputCls, ollamaModelsLoading && 'opacity-50')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            )}
+
+            {ollamaModelsError && (
+              <p className="text-xs text-red-400 mt-1">
+                Could not fetch models: {ollamaModelsError}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── NVIDIA fields ──────────────────────────────────────── */}
+      {settings.provider === 'nvidia' && (
+        <div className="space-y-4 pt-2 border-t border-surface-border/30">
+
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-hover border border-surface-border/30">
+            <AlertTriangle size={13} className="text-content-muted flex-shrink-0" />
+            <p className="text-xs text-content-muted">
+              Most free-tier models have been removed or are heavily rate-limited.
+              Ollama is recommended instead.
+            </p>
+          </div>
+
+          {/* API Key */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-content-primary">NVIDIA API Key</label>
             <p className="text-xs text-content-muted">
               Starts with <span className="font-mono">nvapi-</span>. Get one at{' '}
               <button
@@ -118,56 +298,43 @@ export function NvidiaSettingsPanel() {
                 className="text-accent-500 hover:text-accent-400 underline underline-offset-2"
               >
                 build.nvidia.com
-              </button>
-              .
+              </button>.
             </p>
             <div className="relative">
               <input
-                type={showKey ? 'text' : 'password'}
+                type={showNvidiaKey ? 'text' : 'password'}
                 value={settings.nvidiaApiKey}
                 onChange={(e) => update('nvidiaApiKey', e.target.value)}
                 placeholder="nvapi-…"
-                className={cn(
-                  'w-full px-3 py-2 pr-10 rounded-lg text-sm font-mono',
-                  'border border-surface-border/50',
-                  'placeholder:text-content-muted',
-                  'focus:outline-none focus:ring-1 focus:ring-accent-600/60',
-                )}
+                className={cn(inputCls, 'pr-10')}
                 style={{ background: '#111', color: '#f5f5f5' }}
                 spellCheck={false}
                 autoComplete="off"
               />
               <button
                 type="button"
-                onClick={() => setShowKey((v) => !v)}
+                onClick={() => setShowNvidiaKey((v) => !v)}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-content-muted hover:text-content-primary transition-colors"
                 tabIndex={-1}
               >
-                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                {showNvidiaKey ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
           </div>
 
           {/* Model ID */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-content-primary">
-              Model
-            </label>
+            <label className="text-sm font-medium text-content-primary">Model</label>
             <p className="text-xs text-content-muted">
               NVIDIA Build model identifier, e.g.{' '}
-              <span className="font-mono">deepseek-ai/deepseek-v4-pro</span>.
+              <span className="font-mono">mistralai/mistral-medium-3.5-128b</span>.
             </p>
             <input
               type="text"
               value={settings.nvidiaModel}
               onChange={(e) => update('nvidiaModel', e.target.value)}
-              placeholder="deepseek-ai/deepseek-v4-pro"
-              className={cn(
-                'w-full px-3 py-2 rounded-lg text-sm font-mono',
-                'border border-surface-border/50',
-                'placeholder:text-content-muted',
-                'focus:outline-none focus:ring-1 focus:ring-accent-600/60',
-              )}
+              placeholder="mistralai/mistral-medium-3.5-128b"
+              className={inputCls}
               style={{ background: '#111', color: '#f5f5f5' }}
               spellCheck={false}
               autoComplete="off"
@@ -176,7 +343,7 @@ export function NvidiaSettingsPanel() {
         </div>
       )}
 
-      {/* Save button */}
+      {/* Save */}
       <div className="flex items-center gap-3 pt-2">
         <button
           onClick={handleSave}
