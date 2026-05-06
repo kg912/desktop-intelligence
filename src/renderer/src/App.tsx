@@ -28,6 +28,8 @@ export default function App() {
             const backend = await window.api.getBackendSettings()
             if (backend.provider === 'nvidia') {
               if (backend.nvidiaModel) setSelectedModel(backend.nvidiaModel)
+            } else if (backend.provider === 'ollama') {
+              if (backend.ollamaModel) setSelectedModel(backend.ollamaModel)
             } else {
               const cfg = await window.api.getModelConfig()
               if (cfg.modelId) setSelectedModel(cfg.modelId)

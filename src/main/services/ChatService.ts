@@ -513,8 +513,8 @@ export function applyThinkingPrefix(
   model?: string,
   provider?: import("../../shared/types").BackendProvider,
 ): Array<{ role: string; content: string | ContentPart[] }> {
-  // NVIDIA-hosted models do not use /think or /no_think soft-prompt tokens.
-  if (provider === "nvidia") return messages;
+  // NVIDIA-hosted and Ollama models do not use /think or /no_think soft-prompt tokens.
+  if (provider === "nvidia" || provider === "ollama") return messages;
   // Gemma models do not recognise /think or /no_think — they are Qwen/MLX-specific
   // soft-prompt tokens. Injecting them into Gemma messages causes them to be echoed
   // verbatim inside the <think> block, polluting the thought accordion with junk text.
@@ -544,6 +544,70 @@ export function applyThinkingPrefix(
   return result;
 }
 
+/** Shape of a single tool call as returned by Ollama in message.tool_calls */
+interface OllamaToolCall {
+  type: string
+  function: { name: string; arguments: Record<string, unknown> }
+}
+
+/** Shape of one NDJSON chunk from Ollama /api/chat with stream:true */
+interface OllamaStreamChunk {
+  message?: {
+    role?:       string
+    content?:    string
+    thinking?:   string
+    tool_calls?: OllamaToolCall[]
+  }
+  done:                boolean
+  done_reason?:        string
+  eval_count?:         number
+  prompt_eval_count?:  number
+  error?:              string
+}
+
+/**
+ * Converts the OpenAI-wire-format messages produced by buildMessages() into
+ * Ollama /api/chat native format:
+ *  - tool result messages use `tool_name` instead of `tool_call_id`
+ *  - assistant tool_calls have `arguments` as an object (not a JSON string)
+ */
+function buildOllamaMessages(
+  messages: Array<{ role: string; content: unknown }>,
+): Array<Record<string, unknown>> {
+  return messages.map((m, i) => {
+    if (m.role === 'tool') {
+      const wm = m as unknown as WireMessage
+      const toolCallId = wm.tool_call_id ?? ''
+      let toolName = 'unknown_tool'
+      for (let j = i - 1; j >= 0; j--) {
+        const prev = messages[j] as unknown as WireMessage
+        if (prev.role === 'assistant' && prev.tool_calls) {
+          const match = prev.tool_calls.find((tc) => tc.id === toolCallId)
+          if (match) { toolName = match.function.name; break }
+        }
+      }
+      return { role: 'tool', content: m.content, tool_name: toolName }
+    }
+    if (m.role === 'assistant') {
+      const wm = m as unknown as WireMessage
+      if (wm.tool_calls && wm.tool_calls.length > 0) {
+        return {
+          role: 'assistant',
+          content: m.content ?? '',
+          tool_calls: wm.tool_calls.map((tc) => ({
+            type: 'function',
+            function: {
+              name:      tc.function.name,
+              arguments: (() => { try { return JSON.parse(tc.function.arguments) } catch { return {} } })(),
+            },
+          })),
+        }
+      }
+    }
+    return m as Record<string, unknown>
+  })
+}
+
 export class ChatService {
   private controller: AbortController | null = null;
 
@@ -565,19 +629,20 @@ export class ChatService {
     const appSettings = readSettings();
     const provider = appSettings.backendProvider ?? "lmstudio";
     const isNvidia = provider === "nvidia";
+    const isOllama = provider === "ollama";
     const resolvedKey = resolveBraveApiKey();
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
 
     // ── Build base messages ────────────────────────────────────────
     const builtMessages = applyThinkingPrefix(
-      this.buildMessages(payload, isNvidia),
+      this.buildMessages(payload, isNvidia || isOllama),
       payload.thinkingMode,
       payload.model,
       provider,
     );
     if (DEBUG)
       console.log(
-        `🚀 FINAL ${isNvidia ? "NVIDIA" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
+        `🚀 FINAL ${isNvidia ? "NVIDIA" : isOllama ? "OLLAMA" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
         JSON.stringify(builtMessages, null, 2),
       );
 
@@ -724,6 +789,24 @@ export class ChatService {
             stream_options: { include_usage: true },
             ...toolsPayload,
           });
+        } else if (isOllama) {
+          // ── Ollama /api/chat payload ──────────────────────────────────────────
+          // Native NDJSON streaming. `think` activates chain-of-thought — response
+          // carries message.thinking (separate from message.content) which the NDJSON
+          // loop normalises to <think>…</think> inline. Generation params go under
+          // `options`, not at the top level. Tool format is OpenAI-compatible.
+          streamBody = JSON.stringify({
+            model:    modelId,
+            messages: buildOllamaMessages(currentMessages),
+            stream:   true,
+            think:    isThinking,
+            options: {
+              temperature: temperature ?? 0.7,
+              top_p:       topP        ?? 0.95,
+              num_predict: maxOutputTokens ?? 16384,
+            },
+            ...toolsPayload,
+          });
         } else {
           // LM Studio payload — unchanged from original
           const step2ThinkingField = isThinking
@@ -739,7 +822,12 @@ export class ChatService {
           });
         }
 
-        const endpoint = isNvidia ? NVIDIA_ENDPOINT : LMS_ENDPOINT;
+        const ollamaBaseUrl = (appSettings.ollamaBaseUrl ?? "https://ollama.com").replace(/\/$/, "");
+        const endpoint = isNvidia
+          ? NVIDIA_ENDPOINT
+          : isOllama
+            ? `${ollamaBaseUrl}/api/chat`
+            : LMS_ENDPOINT;
         const fetchHeaders: Record<string, string> = {
           "Content-Type": "application/json",
         };
@@ -750,6 +838,10 @@ export class ChatService {
               "NVIDIA API key is not configured. Set it in Settings → Backend.",
             );
           fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
+        } else if (isOllama) {
+          const apiKey = appSettings.ollamaApiKey ?? "";
+          if (apiKey) fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
+          // No error if absent — local Ollama instances don't require a key
         }
 
         if (DEBUG) {
@@ -787,7 +879,7 @@ export class ChatService {
 
         if (!response.ok) {
           const errText = await response.text();
-          const label = isNvidia ? "NVIDIA Build" : "LM Studio";
+          const label = isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : "LM Studio";
           if (DEBUG)
             console.log(
               `[DEBUG][ChatService][Response] ERROR body: ${errText}`,
@@ -797,7 +889,7 @@ export class ChatService {
 
         if (!response.body)
           throw new Error(
-            `${isNvidia ? "NVIDIA Build" : "LM Studio"} returned no response body`,
+            `${isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : "LM Studio"} returned no response body`,
           );
 
         const reader = response.body.getReader();
@@ -831,156 +923,134 @@ export class ChatService {
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
-
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
 
           for (const raw of lines) {
             const line = raw.trim();
-            if (!line.startsWith("data:")) continue;
 
-            const data = line.slice(5).trim();
-            if (data === "[DONE]") break;
+            // ── Normalise each line to deltaContent + deltaReasoning ──────────────────────────
+            // Both branches produce the same two variables; all processing below is shared.
+            let deltaContent   = "";
+            let deltaReasoning = "";
+            let ndjsonDone     = false;
 
-            let parsed: {
-              choices?: Array<{
-                delta?: {
-                  content?: string;
-                  reasoning_content?: string;
-                  tool_calls?: Array<{
-                    id?: string;
-                    function?: { name?: string; arguments?: string };
-                  }>;
+            if (isOllama) {
+              // ── Ollama NDJSON ─────────────────────────────────────────────────────────────
+              if (!line) continue;
+              let ollamaChunk: OllamaStreamChunk;
+              try { ollamaChunk = JSON.parse(line); } catch { continue; }
+              if (ollamaChunk.error) throw new Error(String(ollamaChunk.error));
+
+              deltaContent   = ollamaChunk.message?.content  ?? "";
+              deltaReasoning = ollamaChunk.message?.thinking ?? "";
+
+              if (ollamaChunk.done) {
+                if (ollamaChunk.eval_count)        totalTokens  = ollamaChunk.eval_count;
+                if (ollamaChunk.prompt_eval_count) promptTokens = ollamaChunk.prompt_eval_count;
+                // Ollama delivers structured tool calls on the done chunk, not streaming
+                if (ollamaChunk.message?.tool_calls?.length && !toolCallIntercepted) {
+                  for (const [idx, tc] of ollamaChunk.message.tool_calls.entries()) {
+                    pendingToolCalls.set(idx, {
+                      id:      `call_${Date.now()}_${idx}`,
+                      name:    tc.function.name,
+                      argsRaw: JSON.stringify(tc.function.arguments ?? {}),
+                    });
+                  }
+                }
+                ndjsonDone = true;
+              }
+
+            } else {
+              // ── SSE (LM Studio + NVIDIA) ──────────────────────────────────────────────────────
+              if (!line.startsWith("data:")) continue;
+              const data = line.slice(5).trim();
+              if (data === "[DONE]") break;
+
+              let parsed: {
+                choices?: Array<{
+                  delta?: {
+                    content?: string;
+                    reasoning_content?: string;
+                    tool_calls?: Array<{
+                      id?: string;
+                      function?: { name?: string; arguments?: string };
+                    }>;
+                  };
+                  finish_reason?: string;
+                }>;
+                usage?: {
+                  prompt_tokens?: number;
+                  completion_tokens?: number;
+                  total_tokens?: number;
                 };
-                finish_reason?: string;
-              }>;
-              usage?: {
-                prompt_tokens?: number;
-                completion_tokens?: number;
-                total_tokens?: number;
               };
-            };
-            try {
-              parsed = JSON.parse(data);
-            } catch {
-              continue;
-            }
+              try { parsed = JSON.parse(data); } catch { continue; }
 
-            // Capture server-authoritative token counts when LM Studio sends them
-            // (typically on the final chunk alongside finish_reason).
-            // prompt_tokens = total context sent in this request (all messages + system).
-            // completion_tokens = tokens generated in this response.
-            // These are kept SEPARATE from totalTokens which drives TPS calculation.
-            if (parsed.usage) {
-              if (parsed.usage.prompt_tokens)
-                promptTokens = parsed.usage.prompt_tokens;
-              if (parsed.usage.completion_tokens)
-                totalTokens = parsed.usage.completion_tokens;
-              // Only log the final usage chunk (when choices is empty or stream is ending)
-              // Mistral sends usage on every chunk; logging all of them floods the console.
-              if (DEBUG && !parsed.choices?.length)
-                console.log(
-                  `[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`,
-                );
-            }
+              if (parsed.usage) {
+                if (parsed.usage.prompt_tokens)     promptTokens = parsed.usage.prompt_tokens;
+                if (parsed.usage.completion_tokens) totalTokens  = parsed.usage.completion_tokens;
+                if (DEBUG && !parsed.choices?.length)
+                  console.log(
+                    `[DEBUG][ChatService][Usage] prompt_tokens=${parsed.usage.prompt_tokens} completion_tokens=${parsed.usage.completion_tokens} total_tokens=${parsed.usage.total_tokens}`,
+                  );
+              }
 
-            const deltaContent = parsed.choices?.[0]?.delta?.content ?? "";
-            const deltaReasoning =
-              parsed.choices?.[0]?.delta?.reasoning_content ??
-              ((parsed.choices?.[0]?.delta as Record<string, unknown>)
-                ?.reasoning as string) ??
-              "";
-
-            // ── Native channel token normalisation constants ───────────────
-            const CHAN_OPEN = "<|channel>thought\n";
-            const CHAN_CLOSE = "<channel|>";
-
-            // ── Native tool call accumulation ──────────────────────────────
-            // LM Studio streams function name + arguments across multiple delta events,
-            // potentially across multiple parallel tool call indices in the same response.
-            const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-            if (
-              deltaToolCalls &&
-              deltaToolCalls.length > 0 &&
-              !toolCallIntercepted
-            ) {
-              for (const tc of deltaToolCalls) {
-                const idx = (tc as { index?: number }).index ?? 0;
-                const existing = pendingToolCalls.get(idx);
-                if (!existing) {
-                  pendingToolCalls.set(idx, {
-                    id: tc.id ?? `call_${Date.now()}_${idx}`,
-                    name: tc.function?.name ?? "brave_web_search",
-                    argsRaw: tc.function?.arguments ?? "",
-                  });
-                } else {
-                  existing.argsRaw += tc.function?.arguments ?? "";
+              const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
+              if (deltaToolCalls && deltaToolCalls.length > 0 && !toolCallIntercepted) {
+                for (const tc of deltaToolCalls) {
+                  const idx = (tc as { index?: number }).index ?? 0;
+                  const existing = pendingToolCalls.get(idx);
+                  if (!existing) {
+                    pendingToolCalls.set(idx, {
+                      id:      tc.id ?? `call_${Date.now()}_${idx}`,
+                      name:    tc.function?.name ?? "brave_web_search",
+                      argsRaw: tc.function?.arguments ?? "",
+                    });
+                  } else {
+                    existing.argsRaw += tc.function?.arguments ?? "";
+                  }
                 }
               }
+
+              deltaContent   = parsed.choices?.[0]?.delta?.content ?? "";
+              deltaReasoning =
+                parsed.choices?.[0]?.delta?.reasoning_content ??
+                ((parsed.choices?.[0]?.delta as Record<string, unknown>)?.reasoning as string) ??
+                "";
             }
 
-            // LM Studio 0.4.9+ routes Gemma 4 thinking tokens into reasoning_content rather
-            // than content. Wrap them in <think>...</think> so the existing parseThinkBlocks
-            // pipeline handles them identically to Qwen3 — no other code needs to change.
-            // Qwen3/GLM never emit reasoning_content, so this branch never fires for them.
-            // Route thinking tokens from all three sources into <think>…</think> so
-            // parseThinkBlocks handles every model identically downstream.
-            //
-            // Sources:
-            //  A) reasoning_content delta   — Gemma GGUF, Qwen MLX (LM Studio 0.4.9+)
-            //  B) Native Gemma channel tags — Gemma 4 MLX emits these inline in content
-            //       when activated via assistant prefill: <|channel>thought\n…<channel|>
-            //  C) Plain content             — Qwen3/GLM and all non-thinking models
+            // ── Shared delta processing — identical for both providers ────────────────────────
+            const CHAN_OPEN  = "<|channel>thought\n";
+            const CHAN_CLOSE = "<channel|>";
+
             let delta = "";
             if (deltaReasoning) {
-              // Source A: reasoning_content
-              delta = reasoningOpen
-                ? deltaReasoning
-                : "<think>" + deltaReasoning;
+              delta = reasoningOpen ? deltaReasoning : "<think>" + deltaReasoning;
               reasoningOpen = true;
             } else if (deltaContent) {
               let chunk = deltaContent;
-
-              // Source B: rewrite native Gemma channel tokens before anything else.
-              // A single SSE chunk can contain the open tag, close tag, both, or neither.
               if (chunk.includes(CHAN_OPEN)) {
                 chunk = chunk.replace(CHAN_OPEN, "<think>");
-                reasoningOpen = true;
+                reasoningOpen    = true;
                 inChannelThought = true;
               }
               if (chunk.includes(CHAN_CLOSE)) {
                 chunk = chunk.replace(CHAN_CLOSE, "</think>");
-                reasoningOpen = false;
+                reasoningOpen    = false;
                 inChannelThought = false;
               }
-
-              // Source A→C transition: reasoning_content stopped, content resumed.
-              // reasoningOpen is still true from the last deltaReasoning chunk — inject
-              // </think> before the first answer token.
-              // Guard: inChannelThought prevents this from firing for Source B
-              // mid-thought chunks where reasoningOpen is true but we're still inside
-              // the channel block and have not yet seen CHAN_CLOSE.
-              if (
-                reasoningOpen &&
-                !inChannelThought &&
-                !chunk.includes("</think>")
-              ) {
+              if (reasoningOpen && !inChannelThought && !chunk.includes("</think>")) {
                 chunk = "</think>" + chunk;
                 reasoningOpen = false;
               }
-
               delta = chunk;
             }
 
-            if (!delta) continue;
+            if (!delta) { if (ndjsonDone) break; continue; }
 
-            // 4a — first raw SSE delta diagnostic
-            if (DEBUG && !firstChunkProcessed) {
-              console.log(
-                "[DEBUG] First raw SSE delta:",
-                JSON.stringify(delta),
-              );
-            }
+            if (DEBUG && !firstChunkProcessed)
+              console.log("[DEBUG] First raw delta:", JSON.stringify(delta));
 
             if (firstTokenAt === null) {
               firstTokenAt = Date.now();
@@ -990,38 +1060,28 @@ export class ChatService {
                 );
             }
 
-            const cleanedDelta = firstChunkProcessed
-              ? delta
-              : stripLeadingThinkClose(delta);
+            const cleanedDelta = firstChunkProcessed ? delta : stripLeadingThinkClose(delta);
             firstChunkProcessed = true;
-            if (!cleanedDelta) continue;
+            if (!cleanedDelta) { if (ndjsonDone) break; continue; }
 
             streamBuffer += cleanedDelta;
 
+            // ── Mid-stream text-format tool call interception ─────────────────────────────────────
             if (!toolCallIntercepted && !forceFinalAnswer) {
               const detected = detectMidStreamToolCall(streamBuffer);
               if (detected) {
-                const { query: midQuery, cleanedBuffer: cleanedSoFar } =
-                  detected;
+                const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected;
                 let patchedCleaned = cleanedSoFar;
-                const openCount = (patchedCleaned.match(/<think>/gi) || [])
-                  .length;
-                const closeCount = (patchedCleaned.match(/<\/think>/gi) || [])
-                  .length;
-                if (openCount > closeCount) {
-                  patchedCleaned += "\n</think>\n";
-                }
+                const openCount  = (patchedCleaned.match(/<think>/gi)  || []).length;
+                const closeCount = (patchedCleaned.match(/<\/think>/gi) || []).length;
+                if (openCount > closeCount) patchedCleaned += "\n</think>\n";
 
                 toolCallIntercepted = true;
-                console.log(
-                  `[MCP] \uD83D\uDD0D Brave Search (interception depth ${searchLoopCount + 1}): "${midQuery}"`,
-                );
+                console.log(`[MCP] 🔍 Brave Search (interception depth ${searchLoopCount + 1}): "${midQuery}"`);
 
                 this.abort();
                 loopAborted = true;
 
-                // Notify renderer to start a new search block (no retract needed —
-                // block architecture is append-only).
                 send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: midQuery });
 
                 let midStreamResult: string;
@@ -1029,21 +1089,14 @@ export class ChatService {
                   const results = await braveSearch(midQuery, resolvedKey!, 5);
                   midStreamResult = await augmentAndFormatResults(results);
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                    query: midQuery,
-                    results: results.slice(0, 5).map((r) => ({
-                      title: r.title,
-                      url: r.url,
-                    })),
+                    query:            midQuery,
+                    results:          results.slice(0, 5).map((r) => ({ title: r.title, url: r.url })),
                     formattedContent: midStreamResult,
                   });
                 } catch (err) {
-                  const errMsg =
-                    err instanceof Error ? err.message : String(err);
+                  const errMsg = err instanceof Error ? err.message : String(err);
                   midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`;
-                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
-                    query: midQuery,
-                    error: errMsg,
-                  });
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: midQuery, error: errMsg });
                 }
 
                 const toolCallId = `call_${Date.now()}`;
@@ -1052,16 +1105,11 @@ export class ChatService {
                   {
                     role: "assistant",
                     content: patchedCleaned || (null as unknown as string),
-                    tool_calls: [
-                      {
-                        id: toolCallId,
-                        type: "function",
-                        function: {
-                          name: "brave_web_search",
-                          arguments: JSON.stringify({ query: midQuery }),
-                        },
-                      },
-                    ],
+                    tool_calls: [{
+                      id: toolCallId,
+                      type: "function",
+                      function: { name: "brave_web_search", arguments: JSON.stringify({ query: midQuery }) },
+                    }],
                   } as { role: string; content: string },
                   {
                     role: "tool",
@@ -1071,27 +1119,17 @@ export class ChatService {
                 ];
 
                 this.controller = new AbortController();
-
                 searchLoopCount++;
-                break; // Break out of `for const raw`
+                break;
               }
             }
 
             const chunkToSend = cleanedDelta.replace(/<\|tool_response>/gi, "");
-
             if (chunkToSend) {
               totalTokens += estimateTokens(chunkToSend);
-              // Do NOT forward chunks while a native tool call is being accumulated
-              // (pendingToolCalls non-empty) or while a text-format tool call tag is
-              // open in the buffer.  Once `<tool_call` appears every subsequent chunk
-              // until interception is tool call syntax — sending it renders as visible
-              // XML in the chat window.
               const hasOpenToolCallTag =
                 streamBuffer.includes("<tool_call") ||
                 streamBuffer.includes("<|tool_call>");
-              // Suppress leading whitespace-only chunks before any real content is seen.
-              // DeepSeek-v4-pro emits "\n\n" before tool_calls start; without this guard
-              // it renders as a blank answer block before the search pill.
               if (!pendingToolCalls.size && !hasOpenToolCallTag) {
                 if (chunkToSend.trim() || hasNonWhitespaceContent) {
                   hasNonWhitespaceContent = true;
@@ -1100,36 +1138,32 @@ export class ChatService {
               }
               lineBuffer += chunkToSend;
             }
+
             const newlineIdx = lineBuffer.indexOf("\n");
             if (newlineIdx !== -1) {
               const completedLine = lineBuffer.slice(0, newlineIdx).trim();
               lineBuffer = lineBuffer.slice(newlineIdx + 1);
-
-              if (
-                !reasoningOpen &&
-                completedLine.length > 0 &&
-                completedLine.length <= REPETITION_MAX_LEN
-              ) {
+              if (!reasoningOpen && completedLine.length > 0 && completedLine.length <= REPETITION_MAX_LEN) {
                 if (completedLine === lastLine) {
                   consecutiveCount++;
                   if (consecutiveCount >= REPETITION_WINDOW) {
                     console.warn(
-                      `[ChatService] \uD83D\uDD01 Repetition detected \u2014 "${completedLine}" ` +
-                        `repeated ${consecutiveCount} times. Aborting stream.`,
+                      `[ChatService] 🔁 Repetition detected — "${completedLine}" repeated ${consecutiveCount} times. Aborting stream.`,
                     );
                     this.abort();
                     loopAborted = true;
                     break;
                   }
                 } else {
-                  lastLine = completedLine;
+                  lastLine       = completedLine;
                   consecutiveCount = 1;
                 }
               }
             }
+
+            if (ndjsonDone) break;
           }
         }
-
         if (DEBUG)
           console.log(
             `[Debug][ChatService][ReaderExit] loopAborted=${loopAborted} toolCallIntercepted=${toolCallIntercepted} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} totalTokens=${totalTokens}`,
