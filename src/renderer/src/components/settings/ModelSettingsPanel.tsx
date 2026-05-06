@@ -40,6 +40,7 @@ export function ModelSettingsPanel() {
   const [fetchedGpuOffload,   setFetchedGpuOffload]   = useState(false)
 
   const [isNvidia,    setIsNvidia]    = useState(false)
+  const [isOllama,    setIsOllama]    = useState(false)
   const [nvidiaModel, setNvidiaModel] = useState('')
   void nvidiaModel // consumed via setNvidiaModel; display uses fetchedModel
 
@@ -71,11 +72,17 @@ export function ModelSettingsPanel() {
         const gpu  = cfg.gpuOffload      ?? false
 
         const nvidia = backend.provider === 'nvidia'
+        const ollama = backend.provider === 'ollama'
         setIsNvidia(nvidia)
+        setIsOllama(ollama)
         if (nvidia) setNvidiaModel(backend.nvidiaModel)
 
-        // For NVIDIA, modelId display comes from nvidiaModel, not cfg.modelId
-        const displayModelId = nvidia ? backend.nvidiaModel : cfg.modelId
+        // For cloud backends, modelId display comes from backend settings, not cfg.modelId
+        const displayModelId = nvidia
+          ? backend.nvidiaModel
+          : ollama
+            ? backend.ollamaModel
+            : cfg.modelId
 
         setFetchedCtx(ctx);     setDraftCtx(ctx)
         setFetchedModel(displayModelId); setDraftModel(displayModelId)
@@ -85,7 +92,7 @@ export function ModelSettingsPanel() {
         setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
         setFetchedGpuOffload(gpu); setDraftGpuOffload(gpu)
-        setAvailableModels(nvidia ? [] : models)
+        setAvailableModels(nvidia || ollama ? [] : models)
       })
       .catch(() => {
         setFetchedCtx(32768);   setDraftCtx(32768)
@@ -133,6 +140,36 @@ export function ModelSettingsPanel() {
       setReloading(false)
     }
   }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, setSelectedModel])
+
+  const handleSaveOllama = useCallback(async () => {
+    if (reloading) return
+    setReloading(true)
+    setResult(null)
+    try {
+      await window.api.saveBackendSettings({ ollamaModel: draftModel })
+      await window.api.reloadModel({
+        modelId:         draftModel,
+        contextLength:   draftCtx,
+        temperature:     draftTemp,
+        topP:            draftTopP,
+        maxOutputTokens: draftMaxTokens,
+        repeatPenalty:   draftRepeatPenalty,
+        systemPrompt:    draftSysPrompt,
+        gpuOffload:      false,
+      })
+      setFetchedModel(draftModel)
+      setFetchedTemp(draftTemp)
+      setFetchedTopP(draftTopP)
+      setFetchedMaxTokens(draftMaxTokens)
+      setFetchedRepeatPenalty(draftRepeatPenalty)
+      setFetchedSysPrompt(draftSysPrompt)
+      setResult({ ok: true, msg: 'Settings saved.' })
+    } catch (err) {
+      setResult({ ok: false, msg: (err as Error).message })
+    } finally {
+      setReloading(false)
+    }
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
 
   const handleSaveNvidia = useCallback(async () => {
     if (reloading) return
@@ -234,28 +271,29 @@ export function ModelSettingsPanel() {
           />
           <span className="text-xs text-content-muted">tokens</span>
 
-          {/* Right side: GPU Offload toggle + context label */}
+          {/* Right side: GPU Offload toggle (LM Studio only) + context label */}
           <div className="ml-auto flex items-center gap-4">
-            {/* GPU Offload pill toggle */}
-            <label className="flex items-center gap-2 cursor-pointer select-none" title="Offload all model layers to GPU for maximum throughput (--gpu max)">
-              <span className="text-[10px] text-content-muted tracking-wide whitespace-nowrap">GPU Offload</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={draftGpuOffload}
-                onClick={() => setDraftGpuOffload((v) => !v)}
-                disabled={loading || reloading}
-                className={`relative inline-flex w-7 h-4 rounded-full transition-colors duration-150 focus:outline-none disabled:opacity-40 flex-shrink-0 ${
-                  draftGpuOffload ? 'bg-accent-700' : 'bg-surface-border'
-                }`}
-              >
-                <span
-                  className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform duration-150 ${
-                    draftGpuOffload ? 'translate-x-3.5' : 'translate-x-0.5'
+            {!isNvidia && !isOllama && (
+              <label className="flex items-center gap-2 cursor-pointer select-none" title="Offload all model layers to GPU for maximum throughput (--gpu max)">
+                <span className="text-[10px] text-content-muted tracking-wide whitespace-nowrap">GPU Offload</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={draftGpuOffload}
+                  onClick={() => setDraftGpuOffload((v) => !v)}
+                  disabled={loading || reloading}
+                  className={`relative inline-flex w-7 h-4 rounded-full transition-colors duration-150 focus:outline-none disabled:opacity-40 flex-shrink-0 ${
+                    draftGpuOffload ? 'bg-accent-700' : 'bg-surface-border'
                   }`}
-                />
-              </button>
-            </label>
+                >
+                  <span
+                    className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform duration-150 ${
+                      draftGpuOffload ? 'translate-x-3.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </label>
+            )}
             <span className="text-xs text-content-tertiary whitespace-nowrap">≈ {fmtCtx(draftCtx)} context</span>
           </div>
         </div>
@@ -418,7 +456,7 @@ export function ModelSettingsPanel() {
       </div>
 
       {/* Warning — only shown for LM Studio */}
-      {!isNvidia && (
+      {!isNvidia && !isOllama && (
         <div className="flex gap-2.5 px-3 py-2.5 rounded-lg border border-amber-900/30" style={{ background: 'rgba(120,53,15,0.08)' }}>
           <AlertCircle className="w-3.5 h-3.5 text-amber-600/80 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-amber-600/80 leading-relaxed">
@@ -452,6 +490,25 @@ export function ModelSettingsPanel() {
       {isNvidia ? (
         <button
           onClick={handleSaveNvidia}
+          disabled={!changed || reloading || loading}
+          className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
+            changed && !reloading && !loading
+              ? 'bg-accent-900/40 hover:bg-accent-800/50 active:bg-accent-900/60 border border-accent-800/50 hover:border-accent-700/60 text-accent-400 hover:text-accent-300'
+              : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed opacity-50'
+          }`}
+        >
+          {reloading ? (
+            <>
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-accent-700 border-t-accent-400 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            'Save Settings'
+          )}
+        </button>
+      ) : isOllama ? (
+        <button
+          onClick={handleSaveOllama}
           disabled={!changed || reloading || loading}
           className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
             changed && !reloading && !loading
