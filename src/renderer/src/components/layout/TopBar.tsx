@@ -42,12 +42,14 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [isNvidia,    setIsNvidia]    = useState(false)
   const [isOllama,    setIsOllama]    = useState(false)
+  const [isOpenRouter, setIsOpenRouter] = useState(false)
 
   useEffect(() => {
     window.api.getBackendSettings()
       .then((s) => {
         setIsNvidia(s.provider === 'nvidia')
         setIsOllama(s.provider === 'ollama')
+        setIsOpenRouter(s.provider === 'openrouter')
       })
       .catch(() => {/* non-fatal */})
   }, [])
@@ -143,8 +145,8 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
           </span>
         </motion.div>
 
-        {/* Reload model button — hidden for cloud backends (Ollama, NVIDIA) */}
-        {!isNvidia && !isOllama && (
+        {/* Reload model button — hidden for cloud backends (Ollama, NVIDIA, OpenRouter) */}
+        {!isNvidia && !isOllama && !isOpenRouter && (
           <button
             onClick={handleReload}
             disabled={isBusy}
@@ -210,19 +212,21 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
               )}
             </div>
 
-            {/* Compact button */}
-            <button
-              onClick={handleCompact}
-              disabled={!canCompact}
-              className={
-                canCompact
-                  ? 'no-drag cursor-pointer bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
-                  : 'no-drag cursor-not-allowed bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50'
-              }
-              title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
-            >
-              Compact
-            </button>
+            {/* Compact button — LM Studio only */}
+            {!isNvidia && !isOllama && !isOpenRouter && (
+              <button
+                onClick={handleCompact}
+                disabled={!canCompact}
+                className={
+                  canCompact
+                    ? 'no-drag cursor-pointer bg-accent-900 hover:bg-accent-800 text-white text-xs font-medium px-3 py-1 rounded-md border border-accent-700 transition-all'
+                    : 'no-drag cursor-not-allowed bg-accent-900/30 text-white/40 text-xs font-medium px-3 py-1 rounded-md border border-accent-700/30 opacity-50'
+                }
+                title={canCompact ? 'Summarise conversation to free context' : 'Need ≥ 5,000 tokens used to compact'}
+              >
+                Compact
+              </button>
+            )}
       </div>
     </div>
   )
