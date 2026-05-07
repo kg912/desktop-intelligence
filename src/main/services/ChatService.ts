@@ -1828,7 +1828,7 @@ export class ChatService {
     // contain "mlx" in their LM Studio model ID and must not receive this prefill
     // since they already activate thinking via reasoning_content correctly.
     if (
-      !isNvidia &&
+      !isCloud &&
       payload.thinkingMode === "thinking" &&
       payload.model?.toLowerCase().includes("gemma") &&
       payload.model?.toLowerCase().includes("mlx")
