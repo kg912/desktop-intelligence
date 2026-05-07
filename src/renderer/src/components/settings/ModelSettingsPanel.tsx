@@ -39,9 +39,10 @@ export function ModelSettingsPanel() {
   const [fetchedSysPrompt,    setFetchedSysPrompt]    = useState('')
   const [fetchedGpuOffload,   setFetchedGpuOffload]   = useState(false)
 
-  const [isNvidia,    setIsNvidia]    = useState(false)
-  const [isOllama,    setIsOllama]    = useState(false)
-  const [nvidiaModel, setNvidiaModel] = useState('')
+  const [isNvidia,     setIsNvidia]     = useState(false)
+  const [isOllama,     setIsOllama]     = useState(false)
+  const [isOpenRouter, setIsOpenRouter] = useState(false)
+  const [nvidiaModel,  setNvidiaModel]  = useState('')
   void nvidiaModel // consumed via setNvidiaModel; display uses fetchedModel
 
   const changed = fetchedCtx !== null && (
@@ -71,10 +72,12 @@ export function ModelSettingsPanel() {
         const sp   = cfg.systemPrompt    ?? ''
         const gpu  = cfg.gpuOffload      ?? false
 
-        const nvidia = backend.provider === 'nvidia'
-        const ollama = backend.provider === 'ollama'
+        const nvidia     = backend.provider === 'nvidia'
+        const ollama     = backend.provider === 'ollama'
+        const openrouter = backend.provider === 'openrouter'
         setIsNvidia(nvidia)
         setIsOllama(ollama)
+        setIsOpenRouter(openrouter)
         if (nvidia) setNvidiaModel(backend.nvidiaModel)
 
         // For cloud backends, modelId display comes from backend settings, not cfg.modelId
@@ -82,7 +85,9 @@ export function ModelSettingsPanel() {
           ? backend.nvidiaModel
           : ollama
             ? backend.ollamaModel
-            : cfg.modelId
+            : openrouter
+              ? backend.openrouterModel
+              : cfg.modelId
 
         setFetchedCtx(ctx);     setDraftCtx(ctx)
         setFetchedModel(displayModelId); setDraftModel(displayModelId)
@@ -92,7 +97,7 @@ export function ModelSettingsPanel() {
         setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
         setFetchedGpuOffload(gpu); setDraftGpuOffload(gpu)
-        setAvailableModels(nvidia || ollama ? [] : models)
+        setAvailableModels(nvidia || ollama || openrouter ? [] : models)
       })
       .catch(() => {
         setFetchedCtx(32768);   setDraftCtx(32768)
@@ -203,6 +208,36 @@ export function ModelSettingsPanel() {
     }
   }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
 
+  const handleSaveOpenRouter = useCallback(async () => {
+    if (reloading) return
+    setReloading(true)
+    setResult(null)
+    try {
+      await window.api.saveBackendSettings({ openrouterModel: draftModel })
+      await window.api.reloadModel({
+        modelId:         draftModel,
+        contextLength:   draftCtx,
+        temperature:     draftTemp,
+        topP:            draftTopP,
+        maxOutputTokens: draftMaxTokens,
+        repeatPenalty:   draftRepeatPenalty,
+        systemPrompt:    draftSysPrompt,
+        gpuOffload:      false,
+      })
+      setFetchedModel(draftModel)
+      setFetchedTemp(draftTemp)
+      setFetchedTopP(draftTopP)
+      setFetchedMaxTokens(draftMaxTokens)
+      setFetchedRepeatPenalty(draftRepeatPenalty)
+      setFetchedSysPrompt(draftSysPrompt)
+      setResult({ ok: true, msg: 'Settings saved.' })
+    } catch (err) {
+      setResult({ ok: false, msg: (err as Error).message })
+    } finally {
+      setReloading(false)
+    }
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
+
   return (
     <div className="space-y-6">
       {/* Active model selector */}
@@ -273,7 +308,7 @@ export function ModelSettingsPanel() {
 
           {/* Right side: GPU Offload toggle (LM Studio only) + context label */}
           <div className="ml-auto flex items-center gap-4">
-            {!isNvidia && !isOllama && (
+            {!isNvidia && !isOllama && !isOpenRouter && (
               <label className="flex items-center gap-2 cursor-pointer select-none" title="Offload all model layers to GPU for maximum throughput (--gpu max)">
                 <span className="text-[10px] text-content-muted tracking-wide whitespace-nowrap">GPU Offload</span>
                 <button
@@ -456,7 +491,7 @@ export function ModelSettingsPanel() {
       </div>
 
       {/* Warning — only shown for LM Studio */}
-      {!isNvidia && !isOllama && (
+      {!isNvidia && !isOllama && !isOpenRouter && (
         <div className="flex gap-2.5 px-3 py-2.5 rounded-lg border border-amber-900/30" style={{ background: 'rgba(120,53,15,0.08)' }}>
           <AlertCircle className="w-3.5 h-3.5 text-amber-600/80 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-amber-600/80 leading-relaxed">
@@ -509,6 +544,25 @@ export function ModelSettingsPanel() {
       ) : isOllama ? (
         <button
           onClick={handleSaveOllama}
+          disabled={!changed || reloading || loading}
+          className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
+            changed && !reloading && !loading
+              ? 'bg-accent-900/40 hover:bg-accent-800/50 active:bg-accent-900/60 border border-accent-800/50 hover:border-accent-700/60 text-accent-400 hover:text-accent-300'
+              : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed opacity-50'
+          }`}
+        >
+          {reloading ? (
+            <>
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-accent-700 border-t-accent-400 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            'Save Settings'
+          )}
+        </button>
+      ) : isOpenRouter ? (
+        <button
+          onClick={handleSaveOpenRouter}
           disabled={!changed || reloading || loading}
           className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
             changed && !reloading && !loading
