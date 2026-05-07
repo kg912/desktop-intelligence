@@ -55,8 +55,6 @@ interface ChatItemProps {
 }
 
 function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
-  const [hovered, setHovered] = useState(false)
-
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     onDelete(chat.id)
@@ -72,8 +70,6 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
           ? 'bg-accent-950/60 border border-accent-900/40'
           : 'hover:bg-surface-hover border border-transparent'
       )}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <MessageSquare
         className={cn(
@@ -93,26 +89,19 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
         </p>
       </div>
 
-      {/* Delete button — visible on hover */}
-      <AnimatePresence>
-        {hovered && (
-          <motion.button
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.1 }}
-            onClick={handleDelete}
-            className="absolute right-2 top-1/2 -translate-y-1/2
-                       p-1 rounded-md
-                       text-content-muted hover:text-red-400
-                       hover:bg-red-950/30
-                       transition-colors duration-100"
-            title="Delete chat"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {/* Delete button — visible on group hover via CSS */}
+      <button
+        onClick={handleDelete}
+        className="absolute right-2 top-1/2 -translate-y-1/2
+                   p-1 rounded-md
+                   opacity-0 group-hover:opacity-100
+                   text-content-muted hover:text-red-400
+                   hover:bg-red-950/30
+                   transition-all duration-100"
+        title="Delete chat"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   )
 }
@@ -188,12 +177,13 @@ export function Sidebar({
   return (
     <>
       {/* Sidebar panel */}
-      <motion.aside
-        initial={false}
-        animate={{ width: collapsed ? 0 : sidebarWidth }}
-        transition={{ type: 'spring', damping: 28, stiffness: 260 }}
+      <aside
         className="relative flex-shrink-0 h-full overflow-hidden"
-        style={{ backgroundColor: '#141414' }}
+        style={{
+          backgroundColor: '#141414',
+          width: collapsed ? 0 : sidebarWidth,
+          transition: 'width 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+        }}
       >
         <div
           className="flex flex-col h-full border-r border-surface-border"
@@ -287,7 +277,7 @@ export function Sidebar({
             </button>
           </div>
         </div>
-      </motion.aside>
+      </aside>
 
       {/* Collapsed toggle button — floats when sidebar is closed */}
       <AnimatePresence>

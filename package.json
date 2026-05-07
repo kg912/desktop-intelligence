@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "2.3.0-alpha-18",
+  "version": "2.3.0-alpha-20",
   "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -58,6 +58,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@welldone-software/why-did-you-render": "^10.0.1",
     "autoprefixer": "^10.4.19",
     "cross-env": "^10.1.0",
     "electron": "^31.0.2",
@@ -67,7 +68,8 @@
     "tailwindcss": "^3.4.5",
     "typescript": "^5.5.2",
     "vite": "^5.3.3",
-    "vitest": "^4.1.1"
+    "vitest": "^4.1.1",
+    "ws": "^8.20.0"
   },
   "overrides": {
     "axios": "1.13.6"

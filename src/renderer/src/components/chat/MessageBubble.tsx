@@ -44,12 +44,6 @@ export interface Message {
   blocks?: MessageBlock[]
 }
 
-// ── Animation variant ────────────────────────────────────────────
-const bubbleVariants = {
-  initial: { opacity: 1, y: 0, scale: 1 },
-  animate: { opacity: 1, y: 0, scale: 1 }
-}
-
 // ── User bubble ──────────────────────────────────────────────────
 function UserBubble({ content, attachments }: { content: string; attachments?: MessageAttachment[] }) {
   return (
@@ -309,11 +303,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   }
 
   return (
-    <motion.div
-      variants={bubbleVariants}
-      initial="initial"
-      animate="animate"
-    >
+    <div>
       {message.role === 'user'
         ? <UserBubble content={message.content} attachments={message.attachments} />
         : (
@@ -330,6 +320,6 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
           />
         )
       }
-    </motion.div>
+    </div>
   )
 })

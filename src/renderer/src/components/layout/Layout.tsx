@@ -60,7 +60,6 @@ export function Layout() {
 
   // ── useChat (streaming + DB persistence) ─────────────────────
   const {
-    messages,
     isStreaming,
     sendMessage,
     abort,
@@ -360,7 +359,6 @@ export function Layout() {
 
             <ChatArea
               ref={chatAreaRef}
-              messages={messages}
               activeChatId={activeChatId}
               onSuggest={handleSuggest}
             />

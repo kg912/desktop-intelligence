@@ -4,9 +4,8 @@ import { useSignals, useSignalEffect } from '@preact/signals-react/runtime'
 import { MessageBubble } from '../chat/MessageBubble'
 import { CompactToast } from '../chat/CompactToast'
 import { useModelStore } from '../../store/ModelStore'
-import { streamingBlocks, isStreamingSignal } from '../../signals/chatSignals'
+import { streamingBlocks, completedMessages, streamingMessage } from '../../signals/chatSignals'
 import logoWelcome from '../../assets/logo-welcome.png'
-import type { Message } from '../chat/MessageBubble'
 
 // ----------------------------------------------------------------
 // Empty state — CSS animations so they work in all environments
@@ -66,7 +65,6 @@ function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
 // ChatArea
 // ----------------------------------------------------------------
 interface ChatAreaProps {
-  messages:     Message[]
   activeChatId: string | null
   onSuggest?:   (text: string) => void
 }
@@ -79,11 +77,15 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ messages, activeChatId, onSuggest }, ref) {
+function ChatArea({ activeChatId, onSuggest }, ref) {
   useSignals()
   const { compactToast } = useModelStore()
-  const bottomRef          = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  const completedMsgs = completedMessages.value
+  const streamingMsg  = streamingMessage.value
+  const messages      = streamingMsg ? [...completedMsgs, streamingMsg] : completedMsgs
+  const hasMessages   = messages.length > 0
 
   // true  = user has scrolled up, auto-scroll is paused
   // false = we are at (or near) the bottom, auto-scroll is active
@@ -99,9 +101,10 @@ function ChatArea({ messages, activeChatId, onSuggest }, ref) {
   // ── Imperative handle — lets Layout snap to bottom before async send ──
   useImperativeHandle(ref, () => ({
     scrollToBottom() {
-      userScrolledUp.current     = false
+      userScrolledUp.current       = false
       isProgrammaticScroll.current = true
-      bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' })
+      const el = scrollContainerRef.current
+      if (el) el.scrollTop = el.scrollHeight
     },
   }))
 
@@ -154,11 +157,11 @@ function ChatArea({ messages, activeChatId, onSuggest }, ref) {
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null
       if (userScrolledUp.current) return
-      isProgrammaticScroll.current = true
-      bottomRef.current?.scrollIntoView({
-        behavior: isStreamingSignal.value ? 'instant' : 'smooth',
-        block:    'end',
-      })
+      const el = scrollContainerRef.current
+      if (el) {
+        isProgrammaticScroll.current = true
+        el.scrollTop = el.scrollHeight
+      }
     })
   })
 
@@ -197,8 +200,6 @@ function ChatArea({ messages, activeChatId, onSuggest }, ref) {
     }
   }
 
-  const hasMessages = messages.length > 0
-
   return (
     <div
       ref={scrollContainerRef}
@@ -231,14 +232,12 @@ function ChatArea({ messages, activeChatId, onSuggest }, ref) {
           <div key="messages" className="max-w-[55rem] mx-auto px-6 py-8">
             <ChatIdCtx.Provider value={activeChatId}>
               <div className="space-y-6">
-                <AnimatePresence initial={false}>
-                  {messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} />
-                  ))}
-                </AnimatePresence>
+                {messages.map((msg) => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
               </div>
             </ChatIdCtx.Provider>
-            <div ref={bottomRef} className="h-4" />
+            <div className="h-4" />
           </div>
         )}
       </AnimatePresence>

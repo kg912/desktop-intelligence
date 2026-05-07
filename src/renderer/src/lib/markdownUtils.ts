@@ -135,6 +135,17 @@ function cleanAnswerEcho(rawAnswer: string, thought: string): string {
 }
 
 export function parseThinkBlocks(raw: string, streamEnded = false): ParsedContent {
+  // ── Fast path ─────────────────────────────────────────────────────────────
+  // In the v2.1 block-based architecture, MarkdownRenderer receives pure answer
+  // text — chunkBuffer.ts has already routed <think>…</think> content to
+  // ThinkingBlock elements. If neither think-open marker is present, skip all
+  // subsequent O(n) indexOf / lastIndexOf / slice work and return Case 4 immediately.
+  // This fires for every rAF-tick content update during normal streaming and
+  // eliminates the O(n) per-token cost that grows with response length.
+  if (!raw.includes('<think>') && !raw.includes('<|channel>thought\n')) {
+    return { thought: '', answer: raw, isThinking: false }
+  }
+
   if (DEBUG) {
     console.log('[DEBUG parseThinkBlocks] input len:', raw.length,
       '| hasOpen:', raw.includes('<think>'),

@@ -27,3 +27,8 @@ npm-debug.log*
 
 # ── Claude Code local settings (machine-specific MCP paths) ───
 .claude/
+
+# ── Perf profiling artefacts ──────────────────────────────────
+scripts/perf-*.json
+nvda_plot.py
+open-router-deep-research-report.md
