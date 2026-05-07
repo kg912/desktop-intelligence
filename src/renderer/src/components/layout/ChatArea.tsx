@@ -33,7 +33,7 @@ function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
             Desktop Intelligence
           </h1>
           <p className="text-sm text-content-tertiary mt-1">
-            Local Inference. Zero Latency.
+            One Interface. Every model.
           </p>
         </div>
       </div>
