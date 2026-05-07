@@ -63,7 +63,7 @@ function AboutPanel() {
           Desktop Intelligence
         </h2>
         <p className="text-sm text-content-muted">
-          Local Inference. Zero Latency.
+          One Interface. Every model.
         </p>
       </div>
       <div className="space-y-3 text-sm">

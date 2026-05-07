@@ -1,14 +1,16 @@
 # Desktop Intelligence
 
-> **Local Inference. Zero Latency.**
+> **One Interface. Every model.**
 
-A native macOS desktop chat application that runs large language models entirely on your machine via [LM Studio](https://lmstudio.ai/). No cloud. No API keys. Full privacy.
+A native macOS desktop chat application that connects to local models via [LM Studio](https://lmstudio.ai/) or any cloud inference backend — NVIDIA Build, Ollama, or OpenRouter. Run fully offline for maximum privacy, or connect to a cloud API when you need more firepower.
 
 ---
 
-## ⚠️ Hardware Requirements & Disclaimer
+## ⚠️ Local Inference — Hardware Requirements & Disclaimer
 
-> **This application runs large language models entirely on-device. Memory requirements depend on the model you choose.**
+> **The hardware requirements below apply only when using LM Studio (local inference). Cloud backends — NVIDIA Build, Ollama, OpenRouter — have no special hardware requirements beyond what the app itself needs.**
+>
+> **When running local models, memory requirements depend on the model you choose.**
 >
 > | RAM         | Status                                                                     |
 > | ----------- | -------------------------------------------------------------------------- |
@@ -19,7 +21,7 @@ A native macOS desktop chat application that runs large language models entirely
 >
 > **Apple Silicon (M-series) only.** Intel Macs are not supported.
 
-**Local LLM inference is computationally intensive and generates significant heat.** Running large models puts sustained load on your SoC in ways typical workloads do not. On Apple Silicon MacBooks, lighter models (3B–14B) run warm but manageable; dense 27B+ models cause the machine to run **very hot** with prolonged use. Ensure your machine has adequate ventilation and do not run intensive models on a blocked or poorly ventilated surface for extended periods.
+**Local LLM inference (LM Studio only) is computationally intensive and generates significant heat.** Running large models puts sustained load on your SoC in ways typical workloads do not. On Apple Silicon MacBooks, lighter models (3B–14B) run warm but manageable; dense 27B+ models cause the machine to run **very hot** with prolonged use. Ensure your machine has adequate ventilation and do not run intensive models on a blocked or poorly ventilated surface for extended periods. Cloud backends generate no local heat and have no hardware constraints.
 
 This project was built for **personal use and learning** on the author's own hardware. It is not a polished commercial product and is not recommended unless you understand what you're doing. The author accepts **no responsibility** for hardware damage, thermal throttling, reduced component lifespan, or any other adverse effects resulting from running this software. **Use at your own risk.**
 
@@ -31,11 +33,18 @@ This project was built for **personal use and learning** on the author's own har
 
 ## What is this?
 
-Built for **Apple Silicon** (M-series). Uses **[LM Studio](https://lmstudio.ai/)** as the AI backend — recommended for MLX models and maximum performance on Apple Silicon. Requires the `lms` CLI.
+Built for **Apple Silicon** (M-series). Supports four inference backends — switch between them from Settings at any time:
 
-Works with **any model you have downloaded** in LM Studio — pick it from a dropdown on first launch or switch at any time in Settings. Fully offline — everything runs on your machine.
+| Backend | Description |
+|---|---|
+| **LM Studio** | Local inference via MLX. Fully offline, maximum privacy. Requires the `lms` CLI. |
+| **Ollama** | Local inference via Ollama. Point at any running Ollama instance. |
+| **NVIDIA Build** | Cloud inference via NVIDIA's free API tier. No local model needed. |
+| **OpenRouter** | Cloud inference via OpenRouter — access hundreds of models with one API key. |
 
-Tested with `mlx-community/Qwen3.5-35B-A3B-6bit` via LM Studio, sustaining **~71 tokens/second** on an M5 Pro. Gemma 4 (`google/gemma-4-26b-a4b`) is the current top pick for reasoning and vision.
+![Inference backend selector](app_images/inference_backends.png)
+
+Tested with `mlx-community/Qwen3.5-35B-A3B-6bit` via LM Studio, sustaining **~71 tokens/second** on an M5 Pro. Gemma 4 (`google/gemma-4-26b-a4b`) is the current top pick for local reasoning and vision.
 
 - 📋 **[Full Feature List →](FEATURES.md)** — chat, RAG, visualizations, diagrams, math rendering, thinking mode, web search, and more
 - 🚀 **[Installation Guide →](INSTALLATION.md)** — download LM Studio, grab a model, and get running in minutes
@@ -172,7 +181,7 @@ The packaged app outputs to `dist/Desktop Intelligence-<version>-arm64.dmg`.
 | Diagrams            | Mermaid 11 (native SVG)                                          |
 | Syntax highlighting | highlight.js                                                     |
 | Database            | better-sqlite3 (SQLite)                                          |
-| AI backend          | LM Studio (`/v1/chat/completions`, OpenAI-compatible SSE)        |
+| AI backends         | LM Studio · Ollama · NVIDIA Build · OpenRouter                   |
 | Visualizations      | matplotlib via persistent python3 worker                         |
 | MCP                 | Model Context Protocol (MCP) server manager — form + JSON config |
 | Web search          | Brave Search API (optional MCP tool)                             |
