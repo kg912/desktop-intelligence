@@ -54,6 +54,10 @@ export interface AppSettings {
   ollamaModel?: string
   /** Ollama base URL. Defaults to https://ollama.com. Use http://localhost:11434 for local. */
   ollamaBaseUrl?: string
+  /** OpenRouter API key (sk-or-…). Only used when backendProvider === 'openrouter' */
+  openrouterApiKey?: string
+  /** OpenRouter model slug e.g. "anthropic/claude-sonnet-4" */
+  openrouterModel?:  string
 }
 
 function settingsPath(): string {

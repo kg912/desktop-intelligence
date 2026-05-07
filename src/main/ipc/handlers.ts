@@ -180,14 +180,32 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     if (wc && !wc.isDestroyed()) wc.send(channel, payload)
   }
 
+  const CLOUD_PROVIDERS: readonly string[] = ['nvidia', 'ollama', 'openrouter']
+  const isCloud = (bp: string): boolean => CLOUD_PROVIDERS.includes(bp)
+
   // ── Model Connection ────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, async (): Promise<ConnectionState> => {
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const bp = s.backendProvider ?? 'lmstudio'
-    if (bp === 'nvidia' || bp === 'ollama') {
-      const modelId  = bp === 'nvidia' ? (s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b') : (s.ollamaModel ?? 'ollama')
-      const ownedBy  = bp === 'nvidia' ? 'nvidia' : 'ollama'
+    if (isCloud(bp)) {
+      let modelId: string
+      let ownedBy: string
+      switch (bp) {
+        case 'nvidia':
+          modelId = s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b'
+          ownedBy = 'nvidia'
+          break
+        case 'ollama':
+          modelId = s.ollamaModel ?? 'ollama'
+          ownedBy = 'ollama'
+          break
+        case 'openrouter':
+        default:
+          modelId = s.openrouterModel ?? 'anthropic/claude-sonnet-4'
+          ownedBy = 'openrouter'
+          break
+      }
       return {
         status:         'ready',
         modelInfo:      { id: modelId, object: 'model', created: 0, owned_by: ownedBy },
@@ -203,9 +221,24 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const bp = s.backendProvider ?? 'lmstudio'
-    if (bp === 'nvidia' || bp === 'ollama') {
-      const modelId  = bp === 'nvidia' ? (s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b') : (s.ollamaModel ?? 'ollama')
-      const ownedBy  = bp === 'nvidia' ? 'nvidia' : 'ollama'
+    if (isCloud(bp)) {
+      let modelId: string
+      let ownedBy: string
+      switch (bp) {
+        case 'nvidia':
+          modelId = s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b'
+          ownedBy = 'nvidia'
+          break
+        case 'ollama':
+          modelId = s.ollamaModel ?? 'ollama'
+          ownedBy = 'ollama'
+          break
+        case 'openrouter':
+        default:
+          modelId = s.openrouterModel ?? 'anthropic/claude-sonnet-4'
+          ownedBy = 'openrouter'
+          break
+      }
       return {
         status:         'ready',
         modelInfo:      { id: modelId, object: 'model', created: 0, owned_by: ownedBy },
@@ -224,7 +257,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // ── Daemon ──────────────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
     const { readSettings } = await import('../services/SettingsStore')
-    if (['nvidia', 'ollama'].includes(readSettings().backendProvider ?? 'lmstudio')) {
+    if (isCloud(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
     return lmsDaemonManager.getState()
@@ -232,7 +265,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
     const { readSettings } = await import('../services/SettingsStore')
-    if (['nvidia', 'ollama'].includes(readSettings().backendProvider ?? 'lmstudio')) {
+    if (isCloud(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
     await lmsDaemonManager.retry()
@@ -659,9 +692,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
       const { readSettings: _rs, writeSettings } = await import('../services/SettingsStore')
 
-      // ── NVIDIA guard: skip lms CLI entirely, just persist params ─────
+      // ── Cloud provider guard: skip lms CLI entirely, just persist params ─────
       const currentSettings = _rs()
-      if (['nvidia', 'ollama'].includes(currentSettings.backendProvider ?? 'lmstudio')) {
+      if (isCloud(currentSettings.backendProvider ?? 'lmstudio')) {
         const patch: Record<string, unknown> = {}
         if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
         if (payload.topP            !== undefined) patch.topP            = payload.topP
@@ -861,26 +894,30 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     return {
-      provider:      s.backendProvider ?? 'lmstudio',
-      nvidiaApiKey:  s.nvidiaApiKey    ?? '',
-      nvidiaModel:   s.nvidiaModel     ?? 'mistralai/mistral-medium-3.5-128b',
-      ollamaApiKey:  s.ollamaApiKey    ?? '',
-      ollamaModel:   s.ollamaModel     ?? '',
-      ollamaBaseUrl: s.ollamaBaseUrl   ?? 'https://ollama.com',
+      provider:          s.backendProvider  ?? 'lmstudio',
+      nvidiaApiKey:      s.nvidiaApiKey     ?? '',
+      nvidiaModel:       s.nvidiaModel      ?? 'mistralai/mistral-medium-3.5-128b',
+      ollamaApiKey:      s.ollamaApiKey     ?? '',
+      ollamaModel:       s.ollamaModel      ?? '',
+      ollamaBaseUrl:     s.ollamaBaseUrl    ?? 'https://ollama.com',
+      openrouterApiKey:  s.openrouterApiKey ?? '',
+      openrouterModel:   s.openrouterModel  ?? 'anthropic/claude-sonnet-4',
     }
   })
 
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
-    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string }) => {
+    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string }) => {
       const { writeSettings } = await import('../services/SettingsStore')
       const cleanPatch: Record<string, unknown> = {}
-      if (patch.provider      !== undefined) cleanPatch.backendProvider = patch.provider
-      if (patch.nvidiaApiKey  !== undefined) cleanPatch.nvidiaApiKey    = patch.nvidiaApiKey
-      if (patch.nvidiaModel   !== undefined) cleanPatch.nvidiaModel     = patch.nvidiaModel
-      if (patch.ollamaApiKey  !== undefined) cleanPatch.ollamaApiKey    = patch.ollamaApiKey
-      if (patch.ollamaModel   !== undefined) cleanPatch.ollamaModel     = patch.ollamaModel
-      if (patch.ollamaBaseUrl !== undefined) cleanPatch.ollamaBaseUrl   = patch.ollamaBaseUrl
+      if (patch.provider          !== undefined) cleanPatch.backendProvider  = patch.provider
+      if (patch.nvidiaApiKey      !== undefined) cleanPatch.nvidiaApiKey     = patch.nvidiaApiKey
+      if (patch.nvidiaModel       !== undefined) cleanPatch.nvidiaModel      = patch.nvidiaModel
+      if (patch.ollamaApiKey      !== undefined) cleanPatch.ollamaApiKey     = patch.ollamaApiKey
+      if (patch.ollamaModel       !== undefined) cleanPatch.ollamaModel      = patch.ollamaModel
+      if (patch.ollamaBaseUrl     !== undefined) cleanPatch.ollamaBaseUrl    = patch.ollamaBaseUrl
+      if (patch.openrouterApiKey  !== undefined) cleanPatch.openrouterApiKey = patch.openrouterApiKey
+      if (patch.openrouterModel   !== undefined) cleanPatch.openrouterModel  = patch.openrouterModel
       writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
     },
   )
@@ -900,6 +937,32 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
       const data = await res.json() as { models?: Array<{ name: string }> }
       return { models: (data.models ?? []).map((m) => m.name), error: null }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { models: [], error: msg }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_MODELS, async (_, apiKey?: string) => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    const key = apiKey ?? s.openrouterApiKey ?? ''
+    if (!key) return { models: [], error: 'No API key configured' }
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        return { models: [], error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
+      }
+      const data = await res.json() as { data?: Array<{ id: string }> }
+      const models = (data.data ?? [])
+        .map((m) => m.id)
+        .filter((id) => typeof id === 'string' && id.length > 0)
+        .sort()
+      return { models, error: null }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return { models: [], error: msg }

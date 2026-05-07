@@ -36,6 +36,9 @@ const LMS_ENDPOINT = "http://localhost:1234/v1/chat/completions";
 /** NVIDIA Build OpenAI-compatible completions endpoint. */
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
 
+/** OpenRouter chat completions endpoint. */
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+
 // Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true).
 // __DEV_MODE__ is a compile-time constant injected by Rollup define — see globals.d.ts.
 const DEBUG = __DEV_MODE__;
@@ -513,8 +516,8 @@ export function applyThinkingPrefix(
   model?: string,
   provider?: import("../../shared/types").BackendProvider,
 ): Array<{ role: string; content: string | ContentPart[] }> {
-  // NVIDIA-hosted and Ollama models do not use /think or /no_think soft-prompt tokens.
-  if (provider === "nvidia" || provider === "ollama") return messages;
+  // NVIDIA-hosted, Ollama, and OpenRouter models do not use /think or /no_think soft-prompt tokens.
+  if (provider === "nvidia" || provider === "ollama" || provider === "openrouter") return messages;
   // Gemma models do not recognise /think or /no_think — they are Qwen/MLX-specific
   // soft-prompt tokens. Injecting them into Gemma messages causes them to be echoed
   // verbatim inside the <think> block, polluting the thought accordion with junk text.
@@ -630,19 +633,20 @@ export class ChatService {
     const provider = appSettings.backendProvider ?? "lmstudio";
     const isNvidia = provider === "nvidia";
     const isOllama = provider === "ollama";
+    const isOpenRouter = provider === "openrouter";
     const resolvedKey = resolveBraveApiKey();
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
 
     // ── Build base messages ────────────────────────────────────────
     const builtMessages = applyThinkingPrefix(
-      this.buildMessages(payload, isNvidia || isOllama),
+      this.buildMessages(payload, isNvidia || isOllama || isOpenRouter),
       payload.thinkingMode,
       payload.model,
       provider,
     );
     if (DEBUG)
       console.log(
-        `🚀 FINAL ${isNvidia ? "NVIDIA" : isOllama ? "OLLAMA" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
+        `🚀 FINAL ${isNvidia ? "NVIDIA" : isOllama ? "OLLAMA" : isOpenRouter ? "OPENROUTER" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
         JSON.stringify(builtMessages, null, 2),
       );
 
@@ -814,6 +818,22 @@ export class ChatService {
               ? { tool_choice: "none" }
               : toolsPayload),
           });
+        } else if (isOpenRouter) {
+          const thinkingEnabled = payload.thinkingMode === "thinking";
+          const openRouterMaxTokens = Math.min(maxOutputTokens ?? 32768, 32768);
+          const openRouterTemp = temperature ?? (thinkingEnabled ? 0.6 : 0.7);
+          // Inject reasoning only when thinking is ON — omit field entirely in fast mode.
+          const reasoningParam = thinkingEnabled
+            ? { reasoning: { max_tokens: thinkingBudget } }
+            : {};
+          streamBody = JSON.stringify({
+            ...commonFields,
+            temperature:    openRouterTemp,
+            max_tokens:     openRouterMaxTokens,
+            ...reasoningParam,
+            stream_options: { include_usage: true },
+            ...toolsPayload,
+          });
         } else {
           // LM Studio payload — unchanged from original
           const step2ThinkingField = isThinking
@@ -834,7 +854,9 @@ export class ChatService {
           ? NVIDIA_ENDPOINT
           : isOllama
             ? `${ollamaBaseUrl}/api/chat`
-            : LMS_ENDPOINT;
+            : isOpenRouter
+              ? OPENROUTER_ENDPOINT
+              : LMS_ENDPOINT;
         const fetchHeaders: Record<string, string> = {
           "Content-Type": "application/json",
         };
@@ -849,6 +871,13 @@ export class ChatService {
           const apiKey = appSettings.ollamaApiKey ?? "";
           if (apiKey) fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
           // No error if absent — local Ollama instances don't require a key
+        } else if (isOpenRouter) {
+          const apiKey = appSettings.openrouterApiKey ?? "";
+          if (!apiKey)
+            throw new Error(
+              "OpenRouter API key is not configured. Set it in Settings → Backend.",
+            );
+          fetchHeaders["Authorization"] = `Bearer ${apiKey}`;
         }
 
         if (DEBUG) {
@@ -886,7 +915,7 @@ export class ChatService {
 
         if (!response.ok) {
           const errText = await response.text();
-          const label = isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : "LM Studio";
+          const label = isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : "LM Studio";
           if (DEBUG)
             console.log(
               `[DEBUG][ChatService][Response] ERROR body: ${errText}`,
@@ -896,7 +925,7 @@ export class ChatService {
 
         if (!response.body)
           throw new Error(
-            `${isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : "LM Studio"} returned no response body`,
+            `${isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : "LM Studio"} returned no response body`,
           );
 
         const reader = response.body.getReader();

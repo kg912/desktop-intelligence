@@ -149,6 +149,9 @@ const api = {
   getOllamaModels: (baseUrl?: string, apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, baseUrl, apiKey),
 
+  getOpenRouterModels: (apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_MODELS, apiKey),
+
   restartApp: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
 

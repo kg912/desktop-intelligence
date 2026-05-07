@@ -152,7 +152,7 @@ export type MessageBlock =
 
 export type ThinkingMode = 'thinking' | 'fast'
 
-export type BackendProvider = 'lmstudio' | 'nvidia' | 'ollama'
+export type BackendProvider = 'lmstudio' | 'nvidia' | 'ollama' | 'openrouter'
 
 export interface ChatSendPayload {
   messages:       WireMessage[]
@@ -251,6 +251,7 @@ export const IPC_CHANNELS = {
   SETTINGS_SAVE_BACKEND: 'settings:saveBackend',
   APP_RESTART: 'app:restart',
   SETTINGS_GET_OLLAMA_MODELS: 'settings:getOllamaModels',
+  SETTINGS_GET_OPENROUTER_MODELS: 'settings:getOpenRouterModels',
 
 } as const
 
@@ -295,12 +296,14 @@ export interface ReloadResult {
 }
 
 export interface BackendSettings {
-  provider:       BackendProvider
-  nvidiaApiKey:   string
-  nvidiaModel:    string
-  ollamaApiKey:   string
-  ollamaModel:    string
-  ollamaBaseUrl:  string
+  provider:          BackendProvider
+  nvidiaApiKey:      string
+  nvidiaModel:       string
+  ollamaApiKey:      string
+  ollamaModel:       string
+  ollamaBaseUrl:     string
+  openrouterApiKey:  string
+  openrouterModel:   string
 }
 
 // --- Model selection & first-launch onboarding ---

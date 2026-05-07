@@ -30,6 +30,8 @@ export default function App() {
               if (backend.nvidiaModel) setSelectedModel(backend.nvidiaModel)
             } else if (backend.provider === 'ollama') {
               if (backend.ollamaModel) setSelectedModel(backend.ollamaModel)
+            } else if (backend.provider === 'openrouter') {
+              if (backend.openrouterModel) setSelectedModel(backend.openrouterModel)
             } else {
               const cfg = await window.api.getModelConfig()
               if (cfg.modelId) setSelectedModel(cfg.modelId)

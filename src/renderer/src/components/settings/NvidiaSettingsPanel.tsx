@@ -20,19 +20,22 @@ import type { BackendProvider, BackendSettings } from '../../../../../shared/typ
 let bootProvider: BackendProvider = 'lmstudio'
 
 const PROVIDER_LABELS: Record<BackendProvider, string> = {
-  lmstudio: 'LM Studio',
-  ollama:   'Ollama',
-  nvidia:   'NVIDIA Build',
+  lmstudio:   'LM Studio',
+  ollama:     'Ollama',
+  openrouter: 'OpenRouter',
+  nvidia:     'NVIDIA Build',
 }
 
 export function NvidiaSettingsPanel() {
   const [settings, setSettings] = useState<BackendSettings>({
-    provider:      'lmstudio',
-    nvidiaApiKey:  '',
-    nvidiaModel:   'mistralai/mistral-medium-3.5-128b',
-    ollamaApiKey:  '',
-    ollamaModel:   '',
-    ollamaBaseUrl: 'https://ollama.com',
+    provider:         'lmstudio',
+    nvidiaApiKey:     '',
+    nvidiaModel:      'mistralai/mistral-medium-3.5-128b',
+    ollamaApiKey:     '',
+    ollamaModel:      '',
+    ollamaBaseUrl:    'https://ollama.com',
+    openrouterApiKey: '',
+    openrouterModel:  'anthropic/claude-sonnet-4',
   })
   const [loading, setLoading]           = useState(true)
   const [restartNeeded, setRestartNeeded] = useState(false)
@@ -43,11 +46,18 @@ export function NvidiaSettingsPanel() {
   const [showNvidiaKey, setShowNvidiaKey] = useState(false)
   // Ollama key visibility
   const [showOllamaKey, setShowOllamaKey] = useState(false)
+  // OpenRouter key visibility
+  const [showOpenRouterKey, setShowOpenRouterKey] = useState(false)
 
   // Ollama model list state
   const [ollamaModels, setOllamaModels]               = useState<string[]>([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError]     = useState<string | null>(null)
+
+  // OpenRouter model list state
+  const [openRouterModels, setOpenRouterModels]               = useState<string[]>([])
+  const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false)
+  const [openRouterModelsError, setOpenRouterModelsError]     = useState<string | null>(null)
 
   // Debounce timer ref for auto-fetch on baseUrl/apiKey change
   const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -96,6 +106,38 @@ export function NvidiaSettingsPanel() {
   useEffect(() => {
     if (settings.provider !== 'ollama' || loading) return
     fetchOllamaModels(settings.ollamaBaseUrl, settings.ollamaApiKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.provider, loading])
+
+  // ── Fetch OpenRouter models ───────────────────────────────────
+  const fetchOpenRouterModels = useCallback(async (apiKey: string) => {
+    if (!apiKey) return
+    setOpenRouterModelsLoading(true)
+    setOpenRouterModelsError(null)
+    try {
+      const result = await window.api.getOpenRouterModels(apiKey)
+      if (result.error) {
+        setOpenRouterModelsError(result.error)
+        setOpenRouterModels([])
+      } else {
+        setOpenRouterModels(result.models)
+        setOpenRouterModelsError(null)
+        if (!settings.openrouterModel && result.models.length > 0) {
+          setSettings((prev) => ({ ...prev, openrouterModel: result.models[0] }))
+        }
+      }
+    } catch (err) {
+      setOpenRouterModelsError(err instanceof Error ? err.message : String(err))
+      setOpenRouterModels([])
+    } finally {
+      setOpenRouterModelsLoading(false)
+    }
+  }, [settings.openrouterModel])
+
+  // Auto-fetch when switching to OpenRouter, or after settings load
+  useEffect(() => {
+    if (settings.provider !== 'openrouter' || loading) return
+    fetchOpenRouterModels(settings.openrouterApiKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.provider, loading])
 
@@ -159,7 +201,7 @@ export function NvidiaSettingsPanel() {
           instance. NVIDIA Build uses the NVIDIA cloud API. Switching requires a restart.
         </p>
         <div className="flex gap-2 mt-2">
-          {(['lmstudio', 'ollama', 'nvidia'] as BackendProvider[]).map((p) => (
+          {(['lmstudio', 'ollama', 'openrouter', 'nvidia'] as BackendProvider[]).map((p) => (
             <button
               key={p}
               onClick={() => update('provider', p)}
@@ -273,6 +315,107 @@ export function NvidiaSettingsPanel() {
             {ollamaModelsError && (
               <p className="text-xs text-red-400 mt-1">
                 Could not fetch models: {ollamaModelsError}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── OpenRouter fields ─────────────────────────────────── */}
+      {settings.provider === 'openrouter' && (
+        <div className="space-y-4 pt-2 border-t border-surface-border/30">
+
+          {/* API Key */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-content-primary">OpenRouter API Key</label>
+            <p className="text-xs text-content-muted">
+              Starts with <span className="font-mono">sk-or-</span>. Get one at{' '}
+              <button
+                onClick={() => window.api.openExternal('https://openrouter.ai/keys')}
+                className="text-accent-500 hover:text-accent-400 underline underline-offset-2"
+              >
+                openrouter.ai/keys
+              </button>.{' '}
+              Free tier: 20 RPM / 50 requests per day on free models (<span className="font-mono">:free</span> suffix).
+            </p>
+            <div className="relative">
+              <input
+                type={showOpenRouterKey ? 'text' : 'password'}
+                value={settings.openrouterApiKey}
+                onChange={(e) => update('openrouterApiKey', e.target.value)}
+                placeholder="sk-or-…"
+                className={cn(inputCls, 'pr-10')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOpenRouterKey((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-content-muted hover:text-content-primary transition-colors"
+                tabIndex={-1}
+              >
+                {showOpenRouterKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Model */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-content-primary">Model</label>
+              <button
+                type="button"
+                onClick={() => fetchOpenRouterModels(settings.openrouterApiKey)}
+                disabled={openRouterModelsLoading || !settings.openrouterApiKey}
+                className="flex items-center gap-1 text-xs text-content-muted hover:text-content-primary transition-colors disabled:opacity-40"
+              >
+                <RefreshCw size={11} className={openRouterModelsLoading ? 'animate-spin' : ''} />
+                {openRouterModelsLoading ? 'Fetching…' : 'Refresh'}
+              </button>
+            </div>
+            <p className="text-xs text-content-muted">
+              Enter any model slug, e.g.{' '}
+              <span className="font-mono">anthropic/claude-sonnet-4</span> or{' '}
+              <span className="font-mono">openai/gpt-4.1</span>. Browse at{' '}
+              <button
+                onClick={() => window.api.openExternal('https://openrouter.ai/models')}
+                className="text-accent-500 hover:text-accent-400 underline underline-offset-2"
+              >
+                openrouter.ai/models
+              </button>.
+            </p>
+
+            {openRouterModels.length > 0 ? (
+              <select
+                value={settings.openrouterModel}
+                onChange={(e) => update('openrouterModel', e.target.value)}
+                className={cn(inputCls, 'cursor-pointer')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+              >
+                {settings.openrouterModel && !openRouterModels.includes(settings.openrouterModel) && (
+                  <option value={settings.openrouterModel}>{settings.openrouterModel}</option>
+                )}
+                {openRouterModels.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={settings.openrouterModel}
+                onChange={(e) => update('openrouterModel', e.target.value)}
+                placeholder="anthropic/claude-sonnet-4"
+                className={inputCls}
+                style={{ background: '#111', color: '#f5f5f5' }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            )}
+
+            {openRouterModelsError && (
+              <p className="text-xs text-red-400 mt-1">
+                Could not fetch models: {openRouterModelsError}
               </p>
             )}
           </div>
