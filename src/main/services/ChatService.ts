@@ -1605,7 +1605,7 @@ export class ChatService {
   // LM Studio vision content part shapes
   private buildMessages(
     payload: ChatSendPayload,
-    isNvidia = false,
+    isCloud = false,
   ): Array<{ role: string; content: string | ContentPart[] }> {
     const msgs: Array<{ role: string; content: string | ContentPart[] }> = [];
 
@@ -1638,7 +1638,7 @@ export class ChatService {
     // prompt.  Detection is by model name (only route that is reliable here since
     // we don't yet have content to inspect).
     if (
-      !isNvidia &&
+      !isCloud &&
       payload.thinkingMode === "thinking" &&
       payload.model?.toLowerCase().includes("gemma")
     ) {

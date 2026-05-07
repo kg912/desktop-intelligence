@@ -154,6 +154,19 @@ export function NvidiaSettingsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.ollamaBaseUrl, settings.ollamaApiKey])
 
+  // Debounced re-fetch when API key changes while OpenRouter is selected
+  useEffect(() => {
+    if (settings.provider !== 'openrouter' || loading) return
+    if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+    fetchTimerRef.current = setTimeout(() => {
+      fetchOpenRouterModels(settings.openrouterApiKey)
+    }, 800)
+    return () => {
+      if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.openrouterApiKey])
+
   // ── Save & Restart ───────────────────────────────────────────
   const handleSave = useCallback(async () => {
     await window.api.saveBackendSettings(settings)
