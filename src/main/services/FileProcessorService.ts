@@ -72,6 +72,12 @@ export async function processFile(
 
   // ── Image ────────────────────────────────────────────────────
   if (mimeType.startsWith('image/')) {
+    if (mimeType === 'image/svg+xml' || fileName.toLowerCase().endsWith('.svg')) {
+      throw new Error(
+        `SVG files cannot be sent to vision models — they require raster images. ` +
+        `Please convert "${fileName}" to PNG or JPEG first.`
+      )
+    }
     if (size > MAX_IMAGE_BYTES) {
       throw new Error(
         `Image "${fileName}" is ${(size / 1_048_576).toFixed(1)} MB — exceeds the 5 MB limit.`

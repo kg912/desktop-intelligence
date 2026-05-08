@@ -55,6 +55,9 @@ const DEBUG = __DEV_MODE__;
  */
 export const STOP_SEQUENCES = ["<|im_end|>", "<|endoftext|>"];
 
+const OLLAMA_MAX_TOOL_RESULT_CHARS = 12_000
+const CLOUD_MAX_TOOL_RESULT_CHARS  = 50_000
+
 /**
  * Repetition detector state.
  * Tracks the last N trimmed non-empty lines seen in the stream.
@@ -607,6 +610,27 @@ function buildOllamaMessages(
         }
       }
     }
+    // Convert ContentPart[] to Ollama native format: { content: string, images: string[] }
+    if (Array.isArray(m.content)) {
+      const parts = m.content as ContentPart[]
+      const textContent = parts
+        .filter((p) => p.type === 'text')
+        .map((p) => (p as { type: 'text'; text: string }).text)
+        .join('')
+      const images = parts
+        .filter((p) => p.type === 'image_url')
+        .map((p) => {
+          const url = (p as { type: 'image_url'; image_url: { url: string } }).image_url.url
+          if (url.startsWith('data:')) {
+            const commaIdx = url.indexOf(',')
+            return commaIdx !== -1 ? url.slice(commaIdx + 1) : url
+          }
+          return url
+        })
+      if (images.length > 0) {
+        return { role: m.role, content: textContent, images }
+      }
+    }
     return m as Record<string, unknown>
   })
 }
@@ -634,6 +658,11 @@ export class ChatService {
     const isNvidia = provider === "nvidia";
     const isOllama = provider === "ollama";
     const isOpenRouter = provider === "openrouter";
+    const getToolResultLimit = (): number | null => {
+      if (isOllama)                return OLLAMA_MAX_TOOL_RESULT_CHARS
+      if (isNvidia || isOpenRouter) return CLOUD_MAX_TOOL_RESULT_CHARS
+      return null  // LM Studio: no limit
+    }
     const resolvedKey = resolveBraveApiKey();
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
 
@@ -1152,6 +1181,10 @@ export class ChatService {
                 }
 
                 const toolCallId = `call_${Date.now()}`;
+                const limit = getToolResultLimit()
+                const toolContent = limit && typeof midStreamResult === 'string' && midStreamResult.length > limit
+                  ? midStreamResult.slice(0, limit) + `\n\n[Result truncated at ${limit.toLocaleString()} chars to fit provider limit.]`
+                  : midStreamResult
                 currentMessages = [
                   ...currentMessages,
                   {
@@ -1166,7 +1199,7 @@ export class ChatService {
                   {
                     role: "tool",
                     tool_call_id: toolCallId,
-                    content: midStreamResult,
+                    content: toolContent,
                   } as { role: string; content: string },
                 ];
 
@@ -1374,9 +1407,13 @@ export class ChatService {
                   });
                 }
 
+                const limit = getToolResultLimit()
+                const toolContent = limit && typeof toolResult === 'string' && toolResult.length > limit
+                  ? toolResult.slice(0, limit) + `\n\n[Result truncated at ${limit.toLocaleString()} chars to fit provider limit.]`
+                  : toolResult
                 currentMessages = [
                   ...currentMessages,
-                  { role: "tool", tool_call_id: id, content: toolResult } as {
+                  { role: "tool", tool_call_id: id, content: toolContent } as {
                     role: string;
                     content: string;
                   },
