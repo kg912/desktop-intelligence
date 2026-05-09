@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "2.3.3",
+  "version": "2.3.4",
   "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -25,6 +25,7 @@
     "better-sqlite3": "^12.8.0",
     "clsx": "^2.1.1",
     "duck-duck-scrape": "^2.2.7",
+    "@tanstack/react-virtual": "^3.11.0",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "fix-path": "^3.0.0",

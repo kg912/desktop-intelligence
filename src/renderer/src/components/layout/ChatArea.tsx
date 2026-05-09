@@ -1,6 +1,7 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useSignals, useSignalEffect } from '@preact/signals-react/runtime'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageBubble } from '../chat/MessageBubble'
 import { CompactToast } from '../chat/CompactToast'
 import { useModelStore } from '../../store/ModelStore'
@@ -87,6 +88,19 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
   const messages      = streamingMsg ? [...completedMsgs, streamingMsg] : completedMsgs
   const hasMessages   = messages.length > 0
 
+  // ── Virtualizer ──────────────────────────────────────────────
+  // Replaces the flat messages.map() with a virtual list so only
+  // the visible (plus overscan) rows are in the DOM. This eliminates
+  // the scroll-freeze on M1 Pro caused by hundreds of MessageBubble
+  // DOM nodes.
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 200,
+    measureElement: true,
+    overscan: 3,
+  })
+
   // true  = user has scrolled up, auto-scroll is paused
   // false = we are at (or near) the bottom, auto-scroll is active
   // Stored in a ref so toggling it never causes a re-render.
@@ -104,7 +118,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       userScrolledUp.current       = false
       isProgrammaticScroll.current = true
       const el = scrollContainerRef.current
-      if (el) el.scrollTop = el.scrollHeight
+      if (el) el.scrollTop = virtualizer.getTotalSize()
     },
   }))
 
@@ -129,15 +143,16 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       // does not mount until the empty-state exit animation finishes (~150ms).
       // During that window bottomRef.current is null and scrollIntoView does nothing.
       // scrollContainerRef is always mounted — it is the outermost div and never
-      // unmounts.  Setting scrollTop = scrollHeight is synchronous and reliable.
+      // unmounts.  Setting scrollTop = virtualizer.getTotalSize() is synchronous
+      // and reliable because the inner messages div has height = getTotalSize().
       // Double-rAF ensures execution after both the React commit phase AND the
-      // browser layout/paint, so scrollHeight reflects the newly added messages.
+      // browser layout/paint, so the virtualizer has updated its total size.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const el = scrollContainerRef.current
           if (el) {
             isProgrammaticScroll.current = true
-            el.scrollTop = el.scrollHeight
+            el.scrollTop = virtualizer.getTotalSize()
           }
         })
       })
@@ -160,10 +175,25 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       const el = scrollContainerRef.current
       if (el) {
         isProgrammaticScroll.current = true
-        el.scrollTop = el.scrollHeight
+        el.scrollTop = virtualizer.getTotalSize()
       }
     })
   })
+
+  // ── Re-measure streaming message height on every block change ────
+  // During streaming the last message grows on every token.  The virtualizer
+  // caches the measured height; if we don't force a re-measure it uses the
+  // stale height from the first measurement and the scroll position drifts.
+  // This effect fires on every blocks-array change of the last message and
+  // calls virtualizer.measureElement to update the cached size immediately.
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1]
+    if (lastMsg?.isStreaming) {
+      const idx = messages.length - 1
+      const el = scrollContainerRef.current?.querySelector(`[data-index="${idx}"]`)
+      if (el) virtualizer.measureElement(el)
+    }
+  }, [messages[messages.length - 1]?.blocks])
 
   // ── Pause auto-scroll when user scrolls UP ───────────────────────
   // onWheel fires for real trackpad / mouse-wheel gestures only; it does
@@ -229,15 +259,29 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
             <EmptyState onSuggest={onSuggest ?? (() => {})} />
           </motion.div>
         ) : (
-          <div key="messages" className="max-w-[55rem] mx-auto px-6 py-8">
+          <div
+            key="messages"
+            className="max-w-[55rem] mx-auto px-6 py-8"
+            style={{ position: 'relative', height: virtualizer.getTotalSize() }}
+          >
             <ChatIdCtx.Provider value={activeChatId}>
-              <div className="space-y-6">
-                {messages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} />
-                ))}
-              </div>
+              {virtualizer.getVirtualItems().map((virtualItem) => (
+                <div
+                  key={virtualItem.key}
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  <MessageBubble message={messages[virtualItem.index]} />
+                </div>
+              ))}
             </ChatIdCtx.Provider>
-            <div className="h-4" />
           </div>
         )}
       </AnimatePresence>
