@@ -98,6 +98,8 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => 200,
     overscan: 3,
+    paddingStart: 32, // replicates py-8 top (absolute children ignore CSS padding)
+    paddingEnd: 32,   // replicates py-8 bottom
   })
 
   // true  = user has scrolled up, auto-scroll is paused
