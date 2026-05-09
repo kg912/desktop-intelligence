@@ -955,6 +955,37 @@ function CodeBlock({ className, children }: CodeProps) {
   const lang    = match?.[1]
   const kind    = classifyCodeBlock(lang)
 
+  // Async syntax highlighting — null until scheduleIdle fires after first paint.
+  // Avoids blocking the main thread with synchronous hljs work during virtualizer
+  // remounts (chat switching, scrolling through code-heavy chats).
+  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Only run for blocks that reach the hljs render path — skip special kinds
+    // that return their own component (Mermaid, Matplotlib, ECharts, SVG).
+    if (
+      !isBlock ||
+      kind === 'mermaid' ||
+      kind === 'matplotlib' ||
+      kind === 'svg' ||
+      kind === 'echarts' ||
+      (lang === 'python' && isPlottingPython(rawCode))
+    ) return
+    // Reset to plain text immediately so the old highlighted content is never
+    // shown for a different code string while the new idle task is pending.
+    setHighlightedHtml(null)
+    const cancel = scheduleIdle(() => {
+      let result = rawCode
+      try {
+        result = hljs.highlight(rawCode, { language: lang!, ignoreIllegals: true }).value
+      } catch {
+        try { result = hljs.highlightAuto(rawCode).value } catch { /* use raw */ }
+      }
+      setHighlightedHtml(result)
+    })
+    return cancel
+  }, [rawCode, lang, isBlock, kind])
+
   // ── Inline code ──
   if (!isBlock) {
     return <code className={className}>{children}</code>
@@ -1001,14 +1032,8 @@ function CodeBlock({ className, children }: CodeProps) {
   }
 
   // ── Syntax-highlighted code block (highlight.js) ──
-  let highlighted = rawCode
-  try {
-    highlighted = hljs.highlight(rawCode, { language: lang!, ignoreIllegals: true }).value
-  } catch {
-    try {
-      highlighted = hljs.highlightAuto(rawCode).value
-    } catch { /* use raw */ }
-  }
+  // Highlighting is deferred to an idle callback (see useEffect above).
+  // Plain text is shown immediately on mount so layout/paint is never blocked.
 
   return (
     <div
@@ -1029,13 +1054,19 @@ function CodeBlock({ className, children }: CodeProps) {
         <CopyButton text={rawCode} />
       </div>
 
-      {/* Code body */}
+      {/* Code body — switches from plain text to highlighted HTML once idle cb fires */}
       <div className="overflow-x-auto">
         <pre className="p-4 m-0 text-[13px] leading-relaxed font-mono">
-          <code
-            className={lang ? `hljs language-${lang}` : 'hljs'}
-            dangerouslySetInnerHTML={{ __html: highlighted }}
-          />
+          {highlightedHtml !== null ? (
+            <code
+              className={lang ? `hljs language-${lang}` : 'hljs'}
+              dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+            />
+          ) : (
+            <code className={lang ? `hljs language-${lang}` : 'hljs'}>
+              {rawCode}
+            </code>
+          )}
         </pre>
       </div>
     </div>
