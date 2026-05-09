@@ -1,7 +1,7 @@
 {
   "name": "desktop-intelligence",
-  "version": "2.3.6",
-  "description": "Production-grade Electron orchestration layer for local LLM (Qwen via LM Studio)",
+  "version": "2.3.7",
+  "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
   "private": true,
