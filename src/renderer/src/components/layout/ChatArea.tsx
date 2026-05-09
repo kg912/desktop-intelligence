@@ -97,7 +97,6 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
     count: messages.length,
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => 200,
-    measureElement: true,
     overscan: 3,
   })
 
@@ -118,7 +117,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       userScrolledUp.current       = false
       isProgrammaticScroll.current = true
       const el = scrollContainerRef.current
-      if (el) el.scrollTop = virtualizer.getTotalSize()
+      if (el) el.scrollTop = el.scrollHeight
     },
   }))
 
@@ -152,7 +151,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
           const el = scrollContainerRef.current
           if (el) {
             isProgrammaticScroll.current = true
-            el.scrollTop = virtualizer.getTotalSize()
+            el.scrollTop = el.scrollHeight
           }
         })
       })
@@ -175,7 +174,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       const el = scrollContainerRef.current
       if (el) {
         isProgrammaticScroll.current = true
-        el.scrollTop = virtualizer.getTotalSize()
+        el.scrollTop = el.scrollHeight
       }
     })
   })
@@ -193,7 +192,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       const el = scrollContainerRef.current?.querySelector(`[data-index="${idx}"]`)
       if (el) virtualizer.measureElement(el)
     }
-  }, [messages[messages.length - 1]?.blocks])
+  }, [messages[messages.length - 1]?.blocks, messages[messages.length - 1]?.content])
 
   // ── Pause auto-scroll when user scrolls UP ───────────────────────
   // onWheel fires for real trackpad / mouse-wheel gestures only; it does
@@ -276,6 +275,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
                     left: 0,
                     width: '100%',
                     transform: `translateY(${virtualItem.start}px)`,
+                    paddingBottom: '24px',
                   }}
                 >
                   <MessageBubble message={messages[virtualItem.index]} />
