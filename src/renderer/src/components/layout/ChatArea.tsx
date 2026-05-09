@@ -142,10 +142,10 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       // does not mount until the empty-state exit animation finishes (~150ms).
       // During that window bottomRef.current is null and scrollIntoView does nothing.
       // scrollContainerRef is always mounted — it is the outermost div and never
-      // unmounts.  Setting scrollTop = virtualizer.getTotalSize() is synchronous
-      // and reliable because the inner messages div has height = getTotalSize().
+      // unmounts.  el.scrollHeight is used (not virtualizer.getTotalSize()) because
+      // the messages container has py-8 padding that getTotalSize() does not include.
       // Double-rAF ensures execution after both the React commit phase AND the
-      // browser layout/paint, so the virtualizer has updated its total size.
+      // browser layout/paint, so scrollHeight reflects the fully laid-out content.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const el = scrollContainerRef.current
