@@ -829,6 +829,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { readSettings: readInitSettings, writeSettings } = await import('../services/SettingsStore')
       writeSettings({ modelId, contextLength })
 
+      // ── Cloud provider guard: skip lms CLI, settings already saved above ─────
+      const _initSettings = readInitSettings()
+      if (isCloud(_initSettings.backendProvider ?? 'lmstudio')) {
+        console.log(`[App] Cloud provider (${_initSettings.backendProvider}) — skipping lms CLI`)
+        return { success: true, confirmedCtx: contextLength }
+      }
+
       // Read back gpuOffload from saved settings (set before first-launch in edge cases)
       const { gpuOffload: initGpuOffload } = readInitSettings()
 
