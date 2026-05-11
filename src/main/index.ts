@@ -130,6 +130,22 @@ function createWindow(): void {
 // App lifecycle
 // ----------------------------------------------------------------
 app.whenReady().then(async () => {
+  // Load React DevTools in DEV builds using electron-devtools-installer,
+  // which downloads the correct extension version for this Electron/Chromium
+  // build automatically — avoiding the version incompatibility that caused
+  // the raw loadExtension approach to crash the extension renderer process.
+  if (DEV_MODE) {
+    try {
+      const { default: installExtension, REACT_DEVELOPER_TOOLS } = await import('electron-devtools-installer')
+      const name = await installExtension(REACT_DEVELOPER_TOOLS, {
+        loadExtensionOptions: { allowFileAccess: true },
+        forceDownload: false,
+      })
+      console.log(`[DevTools] Loaded: ${name}`)
+    } catch (err) {
+      console.warn('[DevTools] Failed to load React DevTools:', err)
+    }
+  }
   // IPC handlers are registered ONCE here, not inside createWindow.
   // On macOS, closing the window with ✕ keeps the app running; clicking the
   // Dock icon calls createWindow() again via 'activate'. Registering handlers

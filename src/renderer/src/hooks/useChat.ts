@@ -734,14 +734,16 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   }, [setContextUsage]);
 
   // ── Derive return values from signals ─────────────────────────
-  // Reading signal.value here subscribes the calling component to changes
-  // (via useSignals() above). allMessages is a computed that only recomputes
-  // on message-level events, not on every streaming token.
-  const messages   = allMessages.value;
+  // Only isStreamingSignal is read here — it changes twice per conversation
+  // (stream start / stream end) so Layout re-renders exactly twice, not on
+  // every token. allMessages is intentionally NOT read here: Layout does not
+  // consume messages, and reading allMessages.value would subscribe Layout to
+  // every rAF-tick signal update, cascading 700+ re-renders through the entire
+  // tree (sidebar, table cells, everything) on every streaming token.
+  // ChatArea reads completedMessages + streamingMessage signals directly.
   const isStreaming = isStreamingSignal.value;
 
   return {
-    messages,
     isStreaming,
     isSearching: false, // kept for API compatibility; block arch tracks this per-message
     sendMessage,
