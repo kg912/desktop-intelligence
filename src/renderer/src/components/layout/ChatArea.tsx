@@ -262,7 +262,7 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
         ) : (
           <div
             key="messages"
-            className="max-w-[55rem] mx-auto px-6 py-8"
+            className="max-w-[55rem] mx-auto py-8"
             style={{ position: 'relative', height: virtualizer.getTotalSize() }}
           >
             <ChatIdCtx.Provider value={activeChatId}>
@@ -277,6 +277,8 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
                     left: 0,
                     width: '100%',
                     transform: `translateY(${virtualItem.start}px)`,
+                    paddingLeft: '1.5rem',
+                    paddingRight: '1.5rem',
                     paddingBottom: '24px',
                   }}
                 >
