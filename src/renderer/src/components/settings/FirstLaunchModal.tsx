@@ -11,7 +11,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Cpu, RefreshCw, AlertCircle, ChevronDown } from 'lucide-react'
+import { RefreshCw, AlertCircle, ChevronDown } from 'lucide-react'
+import appIcon from '../../assets/icon_256x256.png'
 import type { AvailableModel } from '../../../../shared/types'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -166,7 +167,11 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
   const [listError,       setListError]       = useState<string | null>(null)
   const [selectedId,      setSelectedId]      = useState<string>('')
   const [lmsNotInstalled, setLmsNotInstalled] = useState(false)
-  const notInstalledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const notInstalledTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Ensures we fire at most one re-fetch when the daemon signals ready.
+  // Without this guard, a partial model list (LMS still loading) would never
+  // be refreshed because loadingList and listError are both false.
+  const hasRefreshedOnReadyRef  = useRef(false)
 
   // ── Ollama state ──────────────────────────────────────────────
   const [ollamaBaseUrl,        setOllamaBaseUrl]        = useState('https://ollama.com')
@@ -237,16 +242,23 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
       })
   }, [fetchModels])
 
-  // ── Daemon subscription: auto-retry model fetch on daemon ready ─
+  // ── Daemon subscription: re-fetch model list once when daemon is ready ───
+  // Guard: use a ref (not state) so the effect doesn't re-subscribe on every
+  // render. Fires unconditionally on 'ready' — the initial fetch may have
+  // returned a partial list (LMS still loading models) with no listError set,
+  // so the old `loadingList || listError` guard was incorrectly blocking the
+  // refresh in that case.
   useEffect(() => {
     if (selectedProvider !== 'lmstudio') return
+    hasRefreshedOnReadyRef.current = false   // reset on every provider switch to lmstudio
     const unsub = window.api.onDaemonStateChange((state) => {
-      if (state.phase === 'ready' && (loadingList || listError)) {
+      if (state.phase === 'ready' && !saving && !hasRefreshedOnReadyRef.current) {
+        hasRefreshedOnReadyRef.current = true
         fetchModels()
       }
     })
     return unsub
-  }, [selectedProvider, loadingList, listError, fetchModels])
+  }, [selectedProvider, saving, fetchModels])
 
   // ── LMS not-installed detection (5-second timer after fetch error) ─
   useEffect(() => {
@@ -442,20 +454,17 @@ export function FirstLaunchModal({ onComplete }: FirstLaunchModalProps) {
             background:     '#141414',
           }}
         >
-          <div
+          <img
+            src={appIcon}
+            alt="Desktop Intelligence"
             style={{
-              width:      '48px',
-              height:     '48px',
+              width:        '48px',
+              height:       '48px',
               borderRadius: '12px',
-              display:    'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(139,0,0,0.2)',
-              boxShadow:  '0 0 20px rgba(220,38,38,0.3)',
+              objectFit:    'cover',
+              boxShadow:    '0 0 20px rgba(220,38,38,0.3)',
             }}
-          >
-            <Cpu className="w-6 h-6 text-red-500" />
-          </div>
+          />
           <div>
             <h1 style={{ fontSize: '18px', fontWeight: 600, color: '#ffffff', margin: 0 }}>
               Welcome to Desktop Intelligence
