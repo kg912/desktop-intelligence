@@ -4,7 +4,7 @@ import { useSignals, useSignalEffect } from '@preact/signals-react/runtime'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageBubble } from '../chat/MessageBubble'
 import { CompactToast } from '../chat/CompactToast'
-import { useModelStore } from '../../store/ModelStore'
+import { useModelRuntime } from '../../store/ModelStore'
 import { streamingBlocks, completedMessages, streamingMessage } from '../../signals/chatSignals'
 import logoWelcome from '../../assets/logo-welcome.png'
 
@@ -80,7 +80,7 @@ export interface ChatAreaHandle {
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
 function ChatArea({ activeChatId, onSuggest }, ref) {
   useSignals()
-  const compactToast = useModelStore(s => s.compactToast)
+  const { compactToast } = useModelRuntime()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const completedMsgs = completedMessages.value

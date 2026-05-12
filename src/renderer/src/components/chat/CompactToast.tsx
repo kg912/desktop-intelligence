@@ -22,9 +22,9 @@ export function CompactToast({ tokensBefore, tokensAfter, hasDocuments }: Props)
         <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
         <span>
           Compacted{' '}
-          <span className="text-content-primary font-medium">{tokensBefore.toLocaleString()}</span>
+          <span className="text-content-primary font-medium">{(tokensBefore ?? 0).toLocaleString()}</span>
           {' → '}
-          <span className="text-content-primary font-medium">{tokensAfter.toLocaleString()}</span>
+          <span className="text-content-primary font-medium">{(tokensAfter ?? 0).toLocaleString()}</span>
           {' tokens'}
         </span>
       </div>
