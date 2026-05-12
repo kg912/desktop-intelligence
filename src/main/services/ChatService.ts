@@ -317,6 +317,63 @@ function extractQueryFromCodeFenceToolCall(content: string): string | null {
   return null;
 }
 
+/**
+ * Parse DeepSeek DSML tool call format emitted inline in delta.content.
+ *
+ * DeepSeek V4 models (and potentially others) may bypass the structured
+ * delta.tool_calls path and instead emit tool calls as text using a
+ * proprietary XML-like syntax where tag delimiters are fullwidth vertical
+ * bars (｜, U+FF5C) or regular pipes with surrounding spaces.
+ *
+ * Observed format:
+ *   <｜DSML｜tool_calls>
+ *     <｜DSML｜invoke name="serverName__toolName">
+ *       <｜DSML｜parameter name="key" string="true">value</｜DSML｜parameter>
+ *     </｜DSML｜invoke>
+ *   </｜DSML｜tool_calls>
+ *
+ * Returns an array of { id, name, argsRaw } objects ready to populate
+ * pendingToolCalls, which the existing post-stream handler then executes.
+ * Returns [] if no complete DSML block is found.
+ */
+export function parseDsmlToolCalls(
+  buffer: string,
+): Array<{ id: string; name: string; argsRaw: string }> {
+  // Normalise: fullwidth bar ｜ (U+FF5C) → | and collapse whitespace around pipes.
+  const norm = buffer
+    .replace(/\uFF5C/g, "|")
+    .replace(/\s*\|\s*/g, "|");
+
+  const results: Array<{ id: string; name: string; argsRaw: string }> = [];
+
+  // Match each <|DSML|invoke name="...">...</|DSML|invoke> block,
+  // capturing the inner content for parameter extraction.
+  const invokeCapture =
+    /<\|DSML\|invoke\s+name="([^"]+)">(\s*[\s\S]*?)<\/\|DSML\|invoke>/gi;
+  let invokeMatch: RegExpExecArray | null;
+  while ((invokeMatch = invokeCapture.exec(norm)) !== null) {
+    const toolName = invokeMatch[1].trim();
+    const innerContent = invokeMatch[2];
+
+    // Extract <|DSML|parameter name="key">value</|DSML|parameter> entries.
+    const args: Record<string, string> = {};
+    const paramRe =
+      /<\|DSML\|parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/\|DSML\|parameter>/gi;
+    let paramMatch: RegExpExecArray | null;
+    while ((paramMatch = paramRe.exec(innerContent)) !== null) {
+      args[paramMatch[1].trim()] = paramMatch[2].trim();
+    }
+
+    results.push({
+      id:      `call_dsml_${Date.now()}_${results.length}`,
+      name:    toolName,
+      argsRaw: JSON.stringify(args),
+    });
+  }
+
+  return results;
+}
+
 // FALLBACK ONLY: handles models that ignore the tools array and
 // emit tool call syntax as raw text. With LM Studio native tool
 // calling active this path should rarely fire. Do not remove —
@@ -1209,12 +1266,44 @@ export class ChatService {
               }
             }
 
+            // ── DSML tool call detection (DeepSeek V4 inline format) ───────────────────────
+            // DeepSeek models on OpenRouter may emit tool calls directly in
+            // delta.content using their DSML format rather than delta.tool_calls.
+            // When a complete </｜DSML｜tool_calls> block lands in the buffer, parse
+            // it into pendingToolCalls and strip it so nothing leaks to the UI.
+            // The existing post-stream pendingToolCalls handler executes the calls.
+            if (!toolCallIntercepted && !forceFinalAnswer) {
+              const normBuf = streamBuffer
+                .replace(/\uFF5C/g, "|")
+                .replace(/\s*\|\s*/g, "|");
+              if (normBuf.includes("</|DSML|tool_calls>")) {
+                const dsmlParsed = parseDsmlToolCalls(streamBuffer);
+                if (dsmlParsed.length > 0) {
+                  dsmlParsed.forEach((tc, idx) => pendingToolCalls.set(idx, tc));
+                  if (DEBUG)
+                    console.log(
+                      `[DEBUG][ChatService][DSML] Parsed ${dsmlParsed.length} DSML tool call(s):`,
+                      dsmlParsed.map((t) => t.name).join(", "),
+                    );
+                  // Strip the DSML block from streamBuffer to prevent it reaching the UI.
+                  streamBuffer = streamBuffer
+                    .replace(/<\uFF5CDSML\uFF5Ctool_calls>[\s\S]*?<\/\uFF5CDSML\uFF5Ctool_calls>/g, "")
+                    .replace(/<\|DSML\|tool_calls>[\s\S]*?<\/\|DSML\|tool_calls>/g, "")
+                    .trim();
+                }
+              }
+            }
+
             const chunkToSend = cleanedDelta.replace(/<\|tool_response>/gi, "");
             if (chunkToSend) {
               totalTokens += estimateTokens(chunkToSend);
               const hasOpenToolCallTag =
                 streamBuffer.includes("<tool_call") ||
-                streamBuffer.includes("<|tool_call>");
+                streamBuffer.includes("<|tool_call>") ||
+                // DSML: suppress rendering while a DeepSeek tool call block is accumulating
+                // (before the close tag arrives). Check raw fullwidth-bar form and normalised ASCII.
+                streamBuffer.includes("\uFF5CDSML\uFF5C") ||
+                streamBuffer.replace(/\uFF5C/g, "|").replace(/\s*\|\s*/g, "|").includes("<|DSML|");
               if (!pendingToolCalls.size && !hasOpenToolCallTag) {
                 if (chunkToSend.trim() || hasNonWhitespaceContent) {
                   hasNonWhitespaceContent = true;

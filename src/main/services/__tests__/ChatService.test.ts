@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks, parseRawToolCall, detectMidStreamToolCall } from '../ChatService'
+import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks, parseRawToolCall, detectMidStreamToolCall, parseDsmlToolCalls } from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
 type Msg = { role: string; content: string | ContentPart[] }
@@ -439,5 +439,157 @@ describe('detectMidStreamToolCall — Qwen3 partial format', () => {
     const result = detectMidStreamToolCall(buffer)
     expect(result).not.toBeNull()
     expect(result!.cleanedBuffer).toBe('Here is what I found:')
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// parseDsmlToolCalls — DeepSeek V4 inline DSML format
+// ────────────────────────────────────────────────────────────────────────────
+
+// Helpers: build DSML blocks with fullwidth bars (｜, U+FF5C) as DeepSeek emits
+const FB = '\uFF5C' // fullwidth vertical bar
+function dsmlBlock(...invokes: string[]): string {
+  return `<${FB}DSML${FB}tool_calls>\n${invokes.join('\n')}\n</${FB}DSML${FB}tool_calls>`
+}
+function dsmlInvoke(name: string, params: Record<string, string>): string {
+  const paramLines = Object.entries(params)
+    .map(([k, v]) => `  <${FB}DSML${FB}parameter name="${k}" string="true">${v}</${FB}DSML${FB}parameter>`)
+    .join('\n')
+  return `<${FB}DSML${FB}invoke name="${name}">\n${paramLines}\n</${FB}DSML${FB}invoke>`
+}
+
+describe('parseDsmlToolCalls — single tool call', () => {
+  it('parses one invoke with one parameter (fullwidth-bar form)', () => {
+    const buf = dsmlBlock(dsmlInvoke('filesystem__search_files', { path: '/Users/karan/project' }))
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('filesystem__search_files')
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args.path).toBe('/Users/karan/project')
+  })
+
+  it('parses one invoke with multiple parameters', () => {
+    const buf = dsmlBlock(
+      dsmlInvoke('filesystem__search_files', {
+        path:    '/Users/karan/desktop-intelligence',
+        pattern: 'app.commandLine|disable-gpu',
+      }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args.path).toBe('/Users/karan/desktop-intelligence')
+    expect(args.pattern).toBe('app.commandLine|disable-gpu')
+  })
+
+  it('id is a non-empty string', () => {
+    const buf = dsmlBlock(dsmlInvoke('brave_web_search', { query: 'electron shadow macOS' }))
+    const result = parseDsmlToolCalls(buf)
+    expect(result[0].id.length).toBeGreaterThan(0)
+  })
+
+  it('argsRaw is valid JSON', () => {
+    const buf = dsmlBlock(dsmlInvoke('filesystem__read_text_file', { path: '/src/main/index.ts' }))
+    const result = parseDsmlToolCalls(buf)
+    expect(() => JSON.parse(result[0].argsRaw)).not.toThrow()
+  })
+})
+
+describe('parseDsmlToolCalls — multiple parallel tool calls', () => {
+  it('returns one entry per invoke block', () => {
+    const buf = dsmlBlock(
+      dsmlInvoke('filesystem__read_text_file', { path: '/src/a.ts' }),
+      dsmlInvoke('filesystem__read_text_file', { path: '/src/b.ts' }),
+      dsmlInvoke('filesystem__read_text_file', { path: '/src/c.ts' }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(3)
+    expect(result[0].name).toBe('filesystem__read_text_file')
+    expect(result[1].name).toBe('filesystem__read_text_file')
+    expect(result[2].name).toBe('filesystem__read_text_file')
+  })
+
+  it('each entry carries its own args', () => {
+    const buf = dsmlBlock(
+      dsmlInvoke('filesystem__read_text_file', { path: '/src/a.ts' }),
+      dsmlInvoke('filesystem__search_files', { path: '/src', pattern: '*.ts' }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(JSON.parse(result[0].argsRaw).path).toBe('/src/a.ts')
+    expect(JSON.parse(result[1].argsRaw).pattern).toBe('*.ts')
+  })
+
+  it('each entry gets a unique id', () => {
+    const buf = dsmlBlock(
+      dsmlInvoke('brave_web_search', { query: 'query A' }),
+      dsmlInvoke('brave_web_search', { query: 'query B' }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(result[0].id).not.toBe(result[1].id)
+  })
+})
+
+describe('parseDsmlToolCalls — edge cases and robustness', () => {
+  it('returns [] for an empty string', () => {
+    expect(parseDsmlToolCalls('')).toHaveLength(0)
+  })
+
+  it('returns [] when no DSML markup is present (plain answer text)', () => {
+    expect(parseDsmlToolCalls('The answer is 42.')).toHaveLength(0)
+  })
+
+  it('returns [] when only the open tag is present — no close tag yet', () => {
+    // Simulates a mid-stream buffer that has not yet received </｜DSML｜tool_calls>
+    const partial = `<${FB}DSML${FB}tool_calls>\n<${FB}DSML${FB}invoke name="filesystem__read_text_file">\n  <${FB}DSML${FB}parameter name="path" string="true">/src`
+    expect(parseDsmlToolCalls(partial)).toHaveLength(0)
+  })
+
+  it('handles tool names with double-underscore namespacing (serverName__toolName)', () => {
+    const buf = dsmlBlock(dsmlInvoke('my_server__my_tool', { arg1: 'value1' }))
+    const result = parseDsmlToolCalls(buf)
+    expect(result[0].name).toBe('my_server__my_tool')
+  })
+
+  it('tolerates preceding answer text before the DSML block', () => {
+    const preamble = 'Let me look that up for you.\n'
+    const buf = preamble + dsmlBlock(dsmlInvoke('filesystem__read_text_file', { path: '/x' }))
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('filesystem__read_text_file')
+  })
+
+  it('handles parameter values containing pipe characters without confusion', () => {
+    // Pattern values in filesystem__search_files often contain | as regex alternation
+    const buf = dsmlBlock(
+      dsmlInvoke('filesystem__search_files', { path: '/src', pattern: 'foo|bar|baz' }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(JSON.parse(result[0].argsRaw).pattern).toBe('foo|bar|baz')
+  })
+
+  it('normalised ASCII-pipe form also parses correctly', () => {
+    // Some tokenisers may emit regular | instead of fullwidth ｜
+    const asciiDsml =
+      '<|DSML|tool_calls>\n' +
+      '  <|DSML|invoke name="brave_web_search">\n' +
+      '    <|DSML|parameter name="query" string="true">electron window shadow</|DSML|parameter>\n' +
+      '  </|DSML|invoke>\n' +
+      '</|DSML|tool_calls>'
+    const result = parseDsmlToolCalls(asciiDsml)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('brave_web_search')
+    expect(JSON.parse(result[0].argsRaw).query).toBe('electron window shadow')
+  })
+})
+
+describe('parseDsmlToolCalls — does not disturb non-DSML tool call paths', () => {
+  it('returns [] for a standard <tool_call> text-format block', () => {
+    const buf = '<tool_call>brave_web_search {"query": "test"}</tool_call>'
+    expect(parseDsmlToolCalls(buf)).toHaveLength(0)
+  })
+
+  it('returns [] for a pipe-delimited <|tool_call> block', () => {
+    const buf = '<|tool_call>call:brave_web_search{"query":"test"}<tool_call|>'
+    expect(parseDsmlToolCalls(buf)).toHaveLength(0)
   })
 })
