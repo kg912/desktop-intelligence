@@ -4,9 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useModelStore } from '../../store/ModelStore'
 import type { AvailableModel } from '../../../../shared/types'
 
-const PRESETS = [4096, 8192, 16384, 32768, 65536, 131072]
+const PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288]
 const MIN_CTX = 4096
-const MAX_CTX = 131072
+const MAX_CTX = 524288
 
 function fmtCtx(n: number): string {
   if (n >= 1024) return `${Math.round(n / 1024)}K`
@@ -345,9 +345,10 @@ export function ModelSettingsPanel() {
         />
         <div className="flex justify-between mt-1">
           <span className="text-[10px] text-content-muted">4K</span>
-          <span className="text-[10px] text-content-muted">32K</span>
           <span className="text-[10px] text-content-muted">64K</span>
           <span className="text-[10px] text-content-muted">128K</span>
+          <span className="text-[10px] text-content-muted">256K</span>
+          <span className="text-[10px] text-content-muted">512K</span>
         </div>
         <div className="flex flex-wrap gap-2 mt-4">
           {PRESETS.map((p) => (
@@ -419,11 +420,11 @@ export function ModelSettingsPanel() {
               <span className="text-xs text-content-secondary">Max Output Tokens</span>
             </div>
             <input
-              type="number" min={512} max={65536} step={512}
+              type="number" min={512} max={draftCtx} step={512}
               value={draftMaxTokens}
               disabled={loading || reloading}
               onChange={(e) => {
-                const v = Math.max(512, Math.min(65536, Number(e.target.value) || 512))
+                const v = Math.max(512, Math.min(draftCtx, Number(e.target.value) || 512))
                 setDraftMaxTokens(v)
               }}
               className="w-full px-3 py-2 rounded-lg text-sm font-mono text-center focus:outline-none disabled:opacity-40 transition-colors duration-100"
@@ -431,7 +432,7 @@ export function ModelSettingsPanel() {
             />
             <div className="flex justify-between mt-0.5">
               <span className="text-[10px] text-content-muted">512</span>
-              <span className="text-[10px] text-content-muted">65536</span>
+              <span className="text-[10px] text-content-muted">{fmtCtx(draftCtx)}</span>
             </div>
           </div>
 
