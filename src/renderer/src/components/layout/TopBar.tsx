@@ -20,9 +20,10 @@ const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boo
 interface TopBarProps {
   activeChatId:      string | null
   onCompactComplete: () => void
+  sidebarCollapsed?: boolean
 }
 
-export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
+export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false }: TopBarProps) {
   useSignals()
   const {
     selectedModel,
@@ -129,8 +130,7 @@ export function TopBar({ activeChatId, onCompactComplete }: TopBarProps) {
   }
 
   return (
-    <div className="drag-region flex-shrink-0 flex items-center justify-between
-                    px-8 h-[52px] border-b border-surface-border/50 relative">
+    <div className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${sidebarCollapsed ? 'pl-20 pr-8' : 'px-8'}`}>
 
       {/* Left: model name + reload button */}
       <div className="no-drag flex items-center gap-1.5">

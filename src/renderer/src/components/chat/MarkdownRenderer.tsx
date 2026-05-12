@@ -17,6 +17,7 @@
 import 'katex/dist/katex.min.css'
 
 import {
+  memo,
   useState,
   useCallback,
   useEffect,
@@ -1159,7 +1160,7 @@ interface MarkdownRendererProps {
   variant?:    'assistant' | 'user'   // default: 'assistant'
 }
 
-export function MarkdownRenderer({ content, isStreaming = false, variant = 'assistant' }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStreaming = false, variant = 'assistant' }: MarkdownRendererProps) {
   // ── Hooks that must run unconditionally (before any early return) ─────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const userComponents = useMemo(() => buildComponents(), [])
@@ -1261,4 +1262,4 @@ export function MarkdownRenderer({ content, isStreaming = false, variant = 'assi
     </div>
     </StreamingCtx.Provider>
   )
-}
+})

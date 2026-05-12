@@ -80,7 +80,7 @@ export interface ChatAreaHandle {
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
 function ChatArea({ activeChatId, onSuggest }, ref) {
   useSignals()
-  const { compactToast } = useModelStore()
+  const compactToast = useModelStore(s => s.compactToast)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const completedMsgs = completedMessages.value

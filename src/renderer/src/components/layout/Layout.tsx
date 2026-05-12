@@ -192,7 +192,8 @@ export function Layout() {
       const isImage = file.type.startsWith('image/')
       if (isImage && file.size > MAX_IMAGE_BYTES) return
 
-      const filePath = (file as File & { path?: string }).path ?? ''
+      // file.path was removed in Electron 32 — use webUtils bridge via preload
+      const filePath = window.api.getFilePath(file)
       setAttachments((prev) => {
         // Phase 8 (Bug 1): dedup — skip if a file with the same name AND size
         // is already in the list (catches re-drops of the same file).
@@ -355,7 +356,7 @@ export function Layout() {
               />
             )}
 
-            <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} />
+            <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} sidebarCollapsed={sidebarCollapsed} />
 
             <ChatArea
               ref={chatAreaRef}
