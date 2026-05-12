@@ -157,8 +157,8 @@ export const InputBar = memo(function InputBar({
 
     setSizeError(null)
 
-    // file.path is injected by Electron's File object; empty string in browser mock
-    const filePath = (file as File & { path?: string }).path ?? ''
+    // file.path was removed in Electron 32 — use webUtils.getPathForFile bridged via preload
+    const filePath = window.api.getFilePath(file)
 
     setAttachments((prev) => {
       // Skip if a file with the same name AND size is already in the list.

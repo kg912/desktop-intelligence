@@ -2,7 +2,7 @@
  * Preload — contextBridge surface exposed as window.api
  * Every method typed; no raw ipcRenderer exposed.
  */
-import { contextBridge, ipcRenderer, shell } from 'electron'
+import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import type {
   ConnectionState,
@@ -195,6 +195,10 @@ const api = {
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
+
+  // Electron 32+ removed File.path from the renderer — use webUtils.getPathForFile
+  // bridged through the preload instead. Called synchronously before IPC send.
+  getFilePath: (file: File): string => webUtils.getPathForFile(file),
 
   // ── RAG (Phase 5 stubs) ──────────────────────────────────────
   ingestFile: (filePath: string): Promise<void> =>
