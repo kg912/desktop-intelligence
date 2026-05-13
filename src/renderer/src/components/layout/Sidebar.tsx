@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
   MessageSquarePlus,
   ChevronLeft,
@@ -280,26 +279,20 @@ export function Sidebar({
       </aside>
 
       {/* Collapsed toggle button — floats when sidebar is closed */}
-      <AnimatePresence>
-        {collapsed && (
-          <motion.button
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -8 }}
-            transition={{ duration: 0.2 }}
-            onClick={onToggle}
-            className="absolute left-3 top-[54px] z-10
-                       p-1.5 rounded-lg
-                       bg-surface-DEFAULT border border-surface-border
-                       text-content-tertiary hover:text-content-secondary
-                       hover:bg-surface-hover
-                       transition-colors duration-100
-                       no-drag"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {collapsed && (
+        <button
+          onClick={onToggle}
+          className="absolute left-3 top-[54px] z-10
+                     p-1.5 rounded-lg
+                     bg-surface-DEFAULT border border-surface-border
+                     text-content-tertiary hover:text-content-secondary
+                     hover:bg-surface-hover
+                     transition-colors duration-100
+                     no-drag"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      )}
     </>
   )
 }

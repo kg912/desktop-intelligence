@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
 import { SettingsPage } from '../settings/SettingsPage'
@@ -321,32 +320,24 @@ export function Layout() {
             onDragOver={(e) => e.preventDefault()}
           >
             {/* Window-level drag overlay */}
-            <AnimatePresence>
-              {isDragging && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute inset-0 z-50 flex items-center justify-center
-                             bg-black/40 border-2 border-dashed border-red-700
-                             rounded-none pointer-events-none"
-                >
-                  <p className="text-sm text-red-400 font-medium select-none">
-                    Drop files to attach
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {isDragging && (
+              <div
+                className="absolute inset-0 z-50 flex items-center justify-center
+                           bg-black/40 border-2 border-dashed border-red-700
+                           rounded-none pointer-events-none"
+              >
+                <p className="text-sm text-red-400 font-medium select-none">
+                  Drop files to attach
+                </p>
+              </div>
+            )}
 
-            {/* Compaction / reload blocking overlay — sits over the entire main column */}
-            <AnimatePresence>
-              {(isCompacting || isReloading) && (
-                <CompactProgressOverlay
-                  label={isReloading ? 'Reloading model…' : 'Compacting context…'}
-                />
-              )}
-            </AnimatePresence>
+            {/* Compaction / reload blocking overlay */}
+            {(isCompacting || isReloading) && (
+              <CompactProgressOverlay
+                label={isReloading ? 'Reloading model…' : 'Compacting context…'}
+              />
+            )}
 
             {/* MCP tool permission dialog */}
             {mcpPermissionRequest && (

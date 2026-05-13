@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
 import { useSignals } from '@preact/signals-react/runtime'
 import { Zap, RotateCw } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
@@ -134,16 +133,12 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
 
       {/* Left: model name + reload button */}
       <div className="no-drag flex items-center gap-1.5">
-        <motion.div
-          initial={{ opacity: 0, y: -4 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-1.5"
-        >
+        <div className="flex items-center gap-1.5">
           <Zap className="w-3 h-3 text-accent-500" />
           <span className="text-[12px] font-mono text-content-tertiary tracking-wide truncate max-w-[360px]">
             {selectedModel}
           </span>
-        </motion.div>
+        </div>
 
         {/* Reload model button — hidden for cloud backends (Ollama, NVIDIA, OpenRouter) */}
         {!isNvidia && !isOllama && !isOpenRouter && (

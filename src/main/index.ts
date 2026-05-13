@@ -15,14 +15,6 @@ import { mcpServerManager } from './services/McpServerManager'
 import { IPC_CHANNELS } from '../shared/types'
 import type { McpServerRuntimeInfo, McpToolPermissionRequest } from '../shared/types'
 
-// Disable GPU compositing for Apple Silicon (M1/M2/M3) compatibility.
-// Chromium's GPU compositor has a known synchronisation bottleneck on M1-family
-// chips that causes hover lag, scroll stutter, and typing jank even at low CPU/GPU
-// usage. Software compositing eliminates this bottleneck and is measurably faster
-// for 2D UI workloads on these chips. See: electron/electron#48311
-// Must be called before app.whenReady().
-app.commandLine.appendSwitch('disable-gpu-compositing')
-
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
 const DEV_MODE = __DEV_MODE__

@@ -1,5 +1,5 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
 import { useSignals, useSignalEffect } from '@preact/signals-react/runtime'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageBubble } from '../chat/MessageBubble'
@@ -238,7 +238,6 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto relative no-drag"
     >
-      {/* Compaction result toast */}
       <AnimatePresence>
         {compactToast && (
           <CompactToast
@@ -249,22 +248,16 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
         )}
       </AnimatePresence>
 
-      <AnimatePresence mode="wait">
-        {!hasMessages ? (
-          <motion.div
-            key="empty"
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: 0.15 } }}
-            className="h-full"
-          >
-            <EmptyState onSuggest={onSuggest ?? (() => {})} />
-          </motion.div>
-        ) : (
-          <div
-            key="messages"
-            className="max-w-[55rem] mx-auto py-8"
-            style={{ position: 'relative', height: virtualizer.getTotalSize() }}
-          >
+      {!hasMessages ? (
+        <div key="empty" className="h-full">
+          <EmptyState onSuggest={onSuggest ?? (() => {})} />
+        </div>
+      ) : (
+        <div
+          key="messages"
+          className="max-w-[55rem] mx-auto py-8"
+          style={{ position: 'relative', height: virtualizer.getTotalSize() }}
+        >
             <ChatIdCtx.Provider value={activeChatId}>
               {virtualizer.getVirtualItems().map((virtualItem) => (
                 <div
@@ -288,7 +281,6 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
             </ChatIdCtx.Provider>
           </div>
         )}
-      </AnimatePresence>
     </div>
   )
 })
