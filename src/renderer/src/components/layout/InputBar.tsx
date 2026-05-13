@@ -8,7 +8,6 @@ import {
   type ChangeEvent,
   type DragEvent
 } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { useSignals } from '@preact/signals-react/runtime'
 import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -39,12 +38,8 @@ function AttachmentBadge({
   const Icon = attachment.type === 'image' ? ImageIcon : FileText
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, scale: 0.85, y: 4 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.85 }}
-      transition={{ duration: 0.15 }}
+    <div
+      style={{ animation: 'fadeScaleIn 0.15s ease forwards' }}
       className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
                  bg-surface-DEFAULT border border-surface-border
                  text-xs text-content-secondary max-w-[180px]"
@@ -57,7 +52,7 @@ function AttachmentBadge({
       >
         <X className="w-3 h-3" />
       </button>
-    </motion.div>
+    </div>
   )
 }
 
@@ -95,6 +90,20 @@ export const InputBar = memo(function InputBar({
   const [sizeError, setSizeError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Inject @keyframes once into document.head
+  useEffect(() => {
+    if (document.querySelector('[data-inputbar-styles]')) return
+    const s = document.createElement('style')
+    s.setAttribute('data-inputbar-styles', 'true')
+    s.textContent = `
+      @keyframes fadeScaleIn {
+        from { opacity: 0; transform: scale(0.85) translateY(4px); }
+        to   { opacity: 1; transform: scale(1) translateY(0); }
+      }
+    `
+    document.head.appendChild(s)
+  }, [])
 
   // Use controlled (external) list if provided, else local state
   const attachments    = externalAttachments ?? localAttachments
@@ -223,60 +232,55 @@ export const InputBar = memo(function InputBar({
         }}
       >
         {/* Drag-over overlay */}
-        <AnimatePresence>
-          {isDraggingOver && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 z-10 rounded-2xl flex items-center justify-center
-                         bg-accent-950/40 border-2 border-dashed border-accent-700/60 pointer-events-none"
-            >
-              <p className="text-sm text-accent-400 font-medium">Drop files here</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {isDraggingOver && (
+          <div
+            className="absolute inset-0 z-10 rounded-2xl flex items-center justify-center
+                       bg-accent-950/40 border-2 border-dashed border-accent-700/60 pointer-events-none
+                       transition-opacity duration-150"
+            style={{ opacity: isDraggingOver ? 1 : 0 }}
+          >
+            <p className="text-sm text-accent-400 font-medium">Drop files here</p>
+          </div>
+        )}
 
         {/* Size error */}
-        <AnimatePresence>
-          {sizeError && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="px-4 pt-3 flex items-center gap-2 overflow-hidden"
+        <div
+          className="overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out"
+          style={{
+            maxHeight: sizeError ? '200px' : '0px',
+            opacity:   sizeError ? 1 : 0,
+          }}
+        >
+          <div className="px-4 pt-3 flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-red-500" />
+            <span className="text-xs text-red-400">{sizeError}</span>
+            <button
+              onClick={() => setSizeError(null)}
+              className="ml-auto text-content-muted hover:text-content-secondary"
             >
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-red-500" />
-              <span className="text-xs text-red-400">{sizeError}</span>
-              <button
-                onClick={() => setSizeError(null)}
-                className="ml-auto text-content-muted hover:text-content-secondary"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
 
         {/* Attachment badges */}
-        <AnimatePresence>
-          {attachments.length > 0 && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="px-4 pt-3 flex flex-wrap gap-2 overflow-hidden"
-            >
-              {attachments.map((a) => (
-                <AttachmentBadge
-                  key={a.id}
-                  attachment={a}
-                  onRemove={(id) => setAttachments((prev) => prev.filter((x) => x.id !== id))}
-                />
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div
+          className="overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out"
+          style={{
+            maxHeight: attachments.length > 0 ? '200px' : '0px',
+            opacity:   attachments.length > 0 ? 1 : 0,
+          }}
+        >
+          <div className="px-4 pt-3 flex flex-wrap gap-2">
+            {attachments.map((a) => (
+              <AttachmentBadge
+                key={a.id}
+                attachment={a}
+                onRemove={(id) => setAttachments((prev) => prev.filter((x) => x.id !== id))}
+              />
+            ))}
+          </div>
+        </div>
 
         {/* Input row */}
         <div className="flex items-end gap-2 px-3 py-3">
@@ -327,14 +331,13 @@ export const InputBar = memo(function InputBar({
           />
 
           {/* Send / Stop button */}
-          <motion.button
-            layout
+          <button
             onClick={isStreaming ? onAbort : handleSend}
             disabled={!isStreaming && !canSend}
             className={cn(
               'flex-shrink-0 flex items-center justify-center',
               'w-8 h-8 rounded-xl self-end mb-px',
-              'transition-all duration-150',
+              'transition-all duration-150 transition-transform duration-100 active:scale-95',
               'focus:outline-none focus:ring-2 focus:ring-accent-700/50',
               isStreaming
                 ? 'bg-surface-active border border-surface-border text-content-secondary hover:text-content-primary'
@@ -347,32 +350,17 @@ export const InputBar = memo(function InputBar({
                 ? { boxShadow: '0 0 12px rgba(185,28,28,0.35)' }
                 : undefined
             }
-            whileTap={canSend || isStreaming ? { scale: 0.92 } : undefined}
           >
-            <AnimatePresence mode="wait" initial={false}>
-              {isStreaming ? (
-                <motion.div
-                  key="stop"
-                  initial={{ opacity: 0, scale: 0.7 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.7 }}
-                  transition={{ duration: 0.12 }}
-                >
-                  <Square className="w-3 h-3 fill-current" />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="send"
-                  initial={{ opacity: 0, scale: 0.7 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.7 }}
-                  transition={{ duration: 0.12 }}
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.button>
+            {/* Icon crossfade: always render both, swap via opacity */}
+            <div className="relative w-4 h-4">
+              <div style={{ opacity: isStreaming ? 1 : 0, position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.12s' }}>
+                <Square className="w-3 h-3 fill-current" />
+              </div>
+              <div style={{ opacity: isStreaming ? 0 : 1, position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.12s' }}>
+                <ArrowUp className="w-4 h-4" />
+              </div>
+            </div>
+          </button>
         </div>
 
         {/* Helper row: thinking mode toggle (left) + mcp activity + keyboard hints (right) */}
