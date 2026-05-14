@@ -33,7 +33,6 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { useSignals } from "@preact/signals-react/runtime";
 import { useModelStore } from "../store/ModelStore";
 import { v4 as uuid } from "uuid";
 import type {
@@ -90,10 +89,6 @@ interface UseChatOptions {
 }
 
 export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
-  // Enable signal subscriptions — the calling component re-renders when any
-  // signal read inside this hook changes.
-  useSignals();
-
   const { selectedModel, thinkingMode, setContextUsage } = useModelStore();
 
   const assistantIdRef = useRef<string | null>(null);

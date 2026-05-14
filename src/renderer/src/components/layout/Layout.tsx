@@ -8,17 +8,14 @@ import type { ChatAreaHandle } from './ChatArea'
 import { InputBar } from './InputBar'
 import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
-import { useModelStore, isCompactingSignal } from '../../store/ModelStore'
-import { useSignals } from '@preact/signals-react/runtime'
-import { CompactProgressOverlay } from '../chat/CompactProgressOverlay'
+import { useModelStore } from '../../store/ModelStore'
+import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  useSignals()
   const { setThinkingMode, setContextUsage, isReloading } = useModelStore()
-  const isCompacting = isCompactingSignal.value
   const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
@@ -65,6 +62,14 @@ export function Layout() {
     loadMessages,
     clearMessages,
   } = useChat({ chatId: activeChatId, onChatCreated: handleChatCreated })
+
+  // Stable refs so handleSend/handleSuggest never need to be recreated when
+  // sendMessage/abort change identity (e.g. after a useChat internal update).
+  // This prevents handleSend's useCallback from invalidating InputBar's memo.
+  const sendMessageRef = useRef(sendMessage)
+  useEffect(() => { sendMessageRef.current = sendMessage }, [sendMessage])
+  const abortRef = useRef(abort)
+  useEffect(() => { abortRef.current = abort }, [abort])
 
   // ── Sidebar: select an existing chat ─────────────────────────
   const handleSelectChat = useCallback(async (chatId: string) => {
@@ -278,13 +283,13 @@ export function Layout() {
 
     setAttachments([])
     // Pass preChatId so useChat skips its own chat-creation step (avoiding double rows).
-    sendMessage(text, processed.length ? processed : undefined, preChatId)
-  }, [activeChatId, sendMessage, handleChatCreated])
+    sendMessageRef.current(text, processed.length ? processed : undefined, preChatId)
+  }, [activeChatId, handleChatCreated])
 
   // Suggestion pill clicked → pre-fill and send immediately
   const handleSuggest = useCallback((text: string) => {
-    sendMessage(text)
-  }, [sendMessage])
+    sendMessageRef.current(text)
+  }, [])
 
   // After compaction: only reset the context bar.
   // Message history in the UI is intentionally preserved — the compacted summary
@@ -332,12 +337,9 @@ export function Layout() {
               </div>
             )}
 
-            {/* Compaction / reload blocking overlay */}
-            {(isCompacting || isReloading) && (
-              <CompactProgressOverlay
-                label={isReloading ? 'Reloading model…' : 'Compacting context…'}
-              />
-            )}
+            {/* Compaction / reload blocking overlay — isolated in its own
+                signal subscriber so Layout itself is not a signal subscriber */}
+            <CompactingGate isReloading={isReloading} />
 
             {/* MCP tool permission dialog */}
             {mcpPermissionRequest && (
@@ -357,7 +359,7 @@ export function Layout() {
 
             <InputBar
               onSend={handleSend}
-              onAbort={abort}
+              onAbort={() => abortRef.current()}
               attachments={attachments}
               onAttachments={setAttachments}
               mcpActivity={mcpActivity}
