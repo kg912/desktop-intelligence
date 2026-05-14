@@ -8,14 +8,15 @@ import type { ChatAreaHandle } from './ChatArea'
 import { InputBar } from './InputBar'
 import type { Attachment } from './InputBar'
 import { useChat } from '../../hooks/useChat'
-import { useModelStore } from '../../store/ModelStore'
+import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode, setContextUsage, isReloading } = useModelStore()
+  const { setThinkingMode } = useModelConfig()
+  const { setContextUsage, isReloading } = useModelRuntime()
   const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
