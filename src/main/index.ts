@@ -12,7 +12,7 @@ import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
-import { observabilityService } from './services/ObservabilityService'
+import './services/ObservabilityService'
 import { IPC_CHANNELS } from '../shared/types'
 import type { McpServerRuntimeInfo, McpToolPermissionRequest } from '../shared/types'
 

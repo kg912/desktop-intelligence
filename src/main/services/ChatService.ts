@@ -770,6 +770,7 @@ export class ChatService {
     let lineBuffer = "";
     let lastLine = "";
     let consecutiveCount = 0;
+    let capturedFinishReason = 'unknown';
 
     const send = (channel: string, data: unknown): void => {
       if (!wc.isDestroyed()) wc.send(channel, data);
@@ -1176,6 +1177,8 @@ export class ChatService {
                 parsed.choices?.[0]?.delta?.reasoning_content ??
                 ((parsed.choices?.[0]?.delta as Record<string, unknown>)?.reasoning as string) ??
                 "";
+              const chunkFinishReason = parsed.choices?.[0]?.finish_reason;
+              if (chunkFinishReason) capturedFinishReason = chunkFinishReason;
             }
 
             // ── Shared delta processing — identical for both providers ────────────────────────
@@ -1644,7 +1647,7 @@ export class ChatService {
       this._obsCapture({
         type: 'session_end',
         payload: {
-          finishReason:  'unknown',
+          finishReason:  capturedFinishReason,
           durationMs:    Date.now() - startTime,
           promptTokens:  promptTokens,
           outputTokens:  totalTokens,
