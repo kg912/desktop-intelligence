@@ -93,6 +93,7 @@ const TOOL_RESULT_LIMIT = 8000
 export class ObservabilityService {
   private readonly logsDir: string
   private readonly sessions = new Map<string, SessionBuffer>()
+  private activeSessionId = ''
 
   constructor() {
     this.logsDir = path.join(app.getPath('userData'), 'observability-logs')
@@ -143,6 +144,7 @@ export class ObservabilityService {
       codeArtifacts:  [],
       chartImages:    [],
     })
+    this.activeSessionId = sessionId
     return sessionId
   }
 
@@ -212,7 +214,8 @@ export class ObservabilityService {
     if (!sessionId) return
     const buf = this.sessions.get(sessionId)
     if (!buf) return
-    this.sessions.delete(sessionId)
+    // Note: sessions.delete() is deferred to _writeSession so renderer artifacts
+    // arriving in the same tick (e.g. chart captures) can still be buffered.
     console.log(
       `[ObservabilityService] Session ${sessionId} ended —`,
       `${buf.answerBuf.length} answer chars,`,
@@ -224,11 +227,18 @@ export class ObservabilityService {
         console.error('[ObservabilityService] Write failed:', err)
       )
     })
+    this.activeSessionId = ''
   }
 
   /** @internal — test use only */
   _getBuffer(sessionId: string): SessionBuffer | undefined {
     return this.sessions.get(sessionId)
+  }
+
+  captureArtifact(event: ObsEvent): void {
+    if (!this.isEnabled()) return
+    if (!this.activeSessionId) return
+    this.capture(this.activeSessionId, event)
   }
 
   // --- Helpers ---
@@ -527,6 +537,7 @@ export class ObservabilityService {
     } else {
       await this.writeSessionPlain(sessionId, buf)
     }
+    this.sessions.delete(sessionId)
     console.log(`[ObservabilityService] Wrote session ${sessionId} (hasImages=${buf.hasImages})`)
   }
 

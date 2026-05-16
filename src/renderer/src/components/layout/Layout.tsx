@@ -283,6 +283,28 @@ export function Layout() {
     }
 
     setAttachments([])
+
+    // Observability artifact capture for image attachments — fire-and-forget
+    if (processed.length > 0) {
+      window.api.obsGetPrefs()
+        .then((prefs) => {
+          if (prefs.observabilityEnabled && prefs.includeImages) {
+            for (const attachment of processed) {
+              if (attachment.kind === 'image' && attachment.dataUrl) {
+                const base64 = attachment.dataUrl.split(',')[1] ?? ''
+                const ext = attachment.name.split('.').pop() ?? 'png'
+                void window.api.obsCaptureArtifact({
+                  type: 'image_artifact',
+                  payload: { label: attachment.name, ext, base64 },
+                  ts: Date.now(),
+                })
+              }
+            }
+          }
+        })
+        .catch(() => { /* non-fatal */ })
+    }
+
     // Pass preChatId so useChat skips its own chat-creation step (avoiding double rows).
     sendMessageRef.current(text, processed.length ? processed : undefined, preChatId)
   }, [activeChatId, handleChatCreated])

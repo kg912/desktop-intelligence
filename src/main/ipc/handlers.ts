@@ -1151,4 +1151,11 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     observabilityService.getTotalSizeBytes()
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.OBS_CAPTURE_ARTIFACT,
+    (_, event: import('../services/ObservabilityService').ObsEvent): void => {
+      observabilityService.captureArtifact(event)
+    }
+  )
+
 }

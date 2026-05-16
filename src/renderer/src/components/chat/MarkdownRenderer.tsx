@@ -867,6 +867,23 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
             window.api.storePlot({ chatId, code, imageBase64: result.imageBase64, caption: String(extractedCaption) })
               .catch(err => console.warn('[MatplotlibBlock] Could not store plot:', err))
           }
+
+          // Observability artifact capture — fire-and-forget, never blocks render path
+          window.api.obsGetPrefs()
+            .then((prefs) => {
+              if (prefs.observabilityEnabled && prefs.includeImages && result.imageBase64) {
+                void window.api.obsCaptureArtifact({
+                  type: 'chart_image',
+                  payload: {
+                    label:    'matplotlib_chart',
+                    base64:   result.imageBase64,
+                    pySource: code,
+                  },
+                  ts: Date.now(),
+                })
+              }
+            })
+            .catch(() => { /* non-fatal */ })
         } else {
           setError(result.error ?? 'matplotlib render failed')
           setImageBase64(null)

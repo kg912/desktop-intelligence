@@ -25,7 +25,7 @@ import type {
   McpToolPermissionRequest,
   BackendSettings,
 } from '../shared/types'
-import type { DebugPrefs, SessionEntry } from '../main/services/ObservabilityService'
+import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
 
 const api = {
   // ── Model Connection ────────────────────────────────────────
@@ -218,6 +218,9 @@ const api = {
 
   obsTotalSize: (): Promise<number> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_TOTAL_SIZE),
+
+  obsCaptureArtifact: (event: ObsEvent): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_CAPTURE_ARTIFACT, event),
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),

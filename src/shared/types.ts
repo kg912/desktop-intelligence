@@ -254,7 +254,8 @@ export const IPC_CHANNELS = {
   OBS_DELETE_SESSION: 'obs:deleteSession',
   OBS_CLEAR_ALL:      'obs:clearAll',
   OBS_GET_LOGS_DIR:   'obs:getLogsDir',
-  OBS_TOTAL_SIZE:     'obs:totalSize',
+  OBS_TOTAL_SIZE:          'obs:totalSize',
+  OBS_CAPTURE_ARTIFACT:    'obs:captureArtifact',
   MCP_SET_TOOL_ENABLED:        'mcp:setToolEnabled',          // renderer→main
 
   SETTINGS_GET_BACKEND:  'settings:getBackend',
