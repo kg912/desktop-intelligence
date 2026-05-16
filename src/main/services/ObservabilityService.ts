@@ -85,6 +85,9 @@ interface SessionMeta {
   filePath:   string
 }
 
+const THINKING_LIMIT    = 50000
+const TOOL_RESULT_LIMIT = 8000
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export class ObservabilityService {
@@ -228,11 +231,33 @@ export class ObservabilityService {
     return this.sessions.get(sessionId)
   }
 
+  // --- Helpers ---
+
+  // Fix 5: truncate each message's content field individually before serialising
+  private truncateMessages(messages: unknown[]): unknown[] {
+    return messages.map((msg) => {
+      if (typeof msg !== 'object' || msg === null) return msg
+      const m = msg as Record<string, unknown>
+      if (typeof m['content'] === 'string' && m['content'].length > 2000) {
+        return {
+          ...m,
+          content: m['content'].slice(0, 2000) + '\n[… truncated]',
+        }
+      }
+      return m
+    })
+  }
+
+  // Fix 4: truncate long buffers with suffix
+  private truncateBuf(text: string): string {
+    if (text.length <= THINKING_LIMIT) return text
+    return text.slice(0, THINKING_LIMIT) + `\n[… truncated at ${THINKING_LIMIT} chars]`
+  }
+
   // --- File writer ---
 
   private async writeSessionPlain(sessionId: string, buf: SessionBuffer): Promise<void> {
     const lines: string[] = []
-
     const hr = '─'.repeat(72)
 
     lines.push(`SESSION  ${sessionId}`)
@@ -264,19 +289,21 @@ export class ObservabilityService {
       }
     }
 
+    // Fix 5: use truncateMessages helper; no whole-JSON slice
     if (buf.messagesSent.length > 0) {
       lines.push(hr)
       lines.push(`MESSAGES SENT  (${buf.messagesSent.length})`)
       lines.push(hr)
-      lines.push(JSON.stringify(buf.messagesSent, null, 2).slice(0, 16000))
+      lines.push(JSON.stringify(this.truncateMessages(buf.messagesSent), null, 2))
       lines.push('')
     }
 
+    // Fix 4: 50K limit with suffix
     if (buf.thinkingBuf) {
       lines.push(hr)
       lines.push('THINKING')
       lines.push(hr)
-      lines.push(buf.thinkingBuf.slice(0, 32000))
+      lines.push(this.truncateBuf(buf.thinkingBuf))
       lines.push('')
     }
 
@@ -284,10 +311,11 @@ export class ObservabilityService {
       lines.push(hr)
       lines.push('ANSWER')
       lines.push(hr)
-      lines.push(buf.answerBuf.slice(0, 32000))
+      lines.push(this.truncateBuf(buf.answerBuf))
       lines.push('')
     }
 
+    // Fix 3: inline truncation at 8K with suffix
     if (buf.toolCalls.length > 0) {
       lines.push(hr)
       lines.push(`TOOL CALLS  (${buf.toolCalls.length})`)
@@ -296,7 +324,10 @@ export class ObservabilityService {
         lines.push(`Tool: ${tc.toolName}`)
         lines.push(`Args: ${JSON.stringify(tc.args)}`)
         if (tc.result !== undefined) {
-          lines.push(`Result: ${tc.result.slice(0, 2000)}`)
+          const result = tc.result.length > TOOL_RESULT_LIMIT
+            ? tc.result.slice(0, TOOL_RESULT_LIMIT) + `\n[… truncated at ${TOOL_RESULT_LIMIT} chars]`
+            : tc.result
+          lines.push(`Result: ${result}`)
         }
         lines.push('')
       }
@@ -372,33 +403,55 @@ export class ObservabilityService {
       }
     }
 
+    // Fix 2: Messages Sent section (after RAG chunks, before Thinking)
+    // Fix 5: use truncateMessages helper
+    if (buf.messagesSent.length > 0) {
+      mdLines.push(`## Messages Sent (${buf.messagesSent.length})`)
+      mdLines.push('')
+      mdLines.push('```json')
+      mdLines.push(JSON.stringify(this.truncateMessages(buf.messagesSent), null, 2))
+      mdLines.push('```')
+      mdLines.push('')
+    }
+
+    // Fix 4: 50K limit with suffix
     if (buf.thinkingBuf) {
       mdLines.push('## Thinking')
       mdLines.push('')
-      mdLines.push(buf.thinkingBuf.slice(0, 32000))
+      mdLines.push(this.truncateBuf(buf.thinkingBuf))
       mdLines.push('')
     }
 
     if (buf.answerBuf) {
       mdLines.push('## Answer')
       mdLines.push('')
-      mdLines.push(buf.answerBuf.slice(0, 32000))
+      mdLines.push(this.truncateBuf(buf.answerBuf))
       mdLines.push('')
     }
 
+    // Fix 3: image tool results — inline ≤ 8K, sidecar > 8K
     if (buf.toolCalls.length > 0) {
       mdLines.push(`## Tool Calls (${buf.toolCalls.length})`)
       mdLines.push('')
+      let tcIdx = 0
       for (const tc of buf.toolCalls) {
+        const n = tcIdx++
         mdLines.push(`### ${tc.toolName}`)
         mdLines.push('```json')
         mdLines.push(JSON.stringify(tc.args, null, 2))
         mdLines.push('```')
         if (tc.result !== undefined) {
-          mdLines.push('**Result:**')
-          mdLines.push('```')
-          mdLines.push(tc.result.slice(0, 2000))
-          mdLines.push('```')
+          if (tc.result.length <= TOOL_RESULT_LIMIT) {
+            mdLines.push('**Result:**')
+            mdLines.push('```')
+            mdLines.push(tc.result)
+            mdLines.push('```')
+          } else {
+            const sidecarName = `tool_result_${tc.toolName}_${n}.txt`
+            const sidecarPath = path.join(sessionDir, sidecarName)
+            await fs.writeFile(sidecarPath, tc.result, 'utf8')
+            mdLines.push(`**Result:** [view full result](./${sidecarName})`)
+          }
         }
         mdLines.push('')
       }
@@ -419,28 +472,30 @@ export class ObservabilityService {
     // Write image sidecars
     let imgIdx = 0
     for (const img of buf.imageArtifacts) {
-      const fname = `image_${imgIdx++}_${img.label || 'artifact'}.${img.ext || 'png'}`
-      const imgPath = path.join(sessionDir, fname)
-      await fs.writeFile(imgPath, Buffer.from(img.base64, 'base64'))
+      const n = imgIdx++
+      const fname = `image_${n}_${img.label || 'artifact'}.${img.ext || 'png'}`
+      await fs.writeFile(path.join(sessionDir, fname), Buffer.from(img.base64, 'base64'))
       mdLines.push(`## Image: ${img.label || fname}`)
       mdLines.push('')
       mdLines.push(`![${img.label}](./${fname})`)
       mdLines.push('')
     }
 
+    // Fix 6: write .py sidecar instead of inline fenced code block
     let chartIdx = 0
     for (const chart of buf.chartImages) {
-      const fname = `chart_${chartIdx++}_${chart.label || 'chart'}.png`
-      const chartPath = path.join(sessionDir, fname)
-      await fs.writeFile(chartPath, Buffer.from(chart.base64, 'base64'))
-      mdLines.push(`## Chart: ${chart.label || fname}`)
+      const n = chartIdx++
+      const label = chart.label || 'chart'
+      const pngFname = `chart_${n}_${label}.png`
+      await fs.writeFile(path.join(sessionDir, pngFname), Buffer.from(chart.base64, 'base64'))
+      mdLines.push(`## Chart: ${label}`)
       mdLines.push('')
-      mdLines.push(`![${chart.label}](./${fname})`)
+      mdLines.push(`![${label}](./${pngFname})`)
       mdLines.push('')
       if (chart.pySource) {
-        mdLines.push('```python')
-        mdLines.push(chart.pySource)
-        mdLines.push('```')
+        const pyFname = `chart_${n}_${label}.py`
+        await fs.writeFile(path.join(sessionDir, pyFname), chart.pySource, 'utf8')
+        mdLines.push(`**Source:** [${pyFname}](./${pyFname})`)
         mdLines.push('')
       }
     }
@@ -460,7 +515,7 @@ export class ObservabilityService {
       startedAt: buf.startedAt,
       hasImages: true,
       sizeBytes,
-      filePath:  mdPath,
+      filePath:  sessionDir,  // Fix 1: folder path so shell.openPath opens Finder
     }
     await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8')
   }
@@ -484,7 +539,6 @@ export class ObservabilityService {
 
       for (const entry of entries) {
         if (entry.isFile() && entry.name.endsWith('.meta.json') && !entry.name.startsWith('.')) {
-          // Plain session meta
           try {
             const raw = await fs.readFile(path.join(this.logsDir, entry.name), 'utf8')
             results.push(JSON.parse(raw) as SessionMeta)
@@ -492,7 +546,6 @@ export class ObservabilityService {
             // corrupt meta — skip
           }
         } else if (entry.isDirectory()) {
-          // Image session dir
           const metaPath = path.join(this.logsDir, entry.name, 'session.meta.json')
           try {
             const raw = await fs.readFile(metaPath, 'utf8')
@@ -511,17 +564,11 @@ export class ObservabilityService {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    // Try plain files first
     const logPath  = path.join(this.logsDir, `${sessionId}.log`)
     const metaPath = path.join(this.logsDir, `${sessionId}.meta.json`)
-    try {
-      await fs.unlink(logPath)
-    } catch { /* not found */ }
-    try {
-      await fs.unlink(metaPath)
-    } catch { /* not found */ }
+    try { await fs.unlink(logPath)  } catch { /* not found */ }
+    try { await fs.unlink(metaPath) } catch { /* not found */ }
 
-    // Try image dir
     const sessionDir = path.join(this.logsDir, sessionId)
     try {
       await fs.rm(sessionDir, { recursive: true, force: true })
