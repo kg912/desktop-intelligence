@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { FolderOpen, Trash2 } from 'lucide-react'
+import type { SessionEntry } from '../../../../main/services/ObservabilityService'
 
 function Toggle({
   checked,
@@ -67,19 +68,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function truncateModel(modelId: string): string {
+  return modelId.length > 28 ? modelId.slice(0, 28) + '…' : modelId
+}
+
 export function DebugSettings() {
   const [observabilityEnabled, setObservabilityEnabled] = useState(false)
   const [includeImages,        setIncludeImages]        = useState(false)
+  const [sessions,             setSessions]             = useState<SessionEntry[]>([])
   const [sessionCount,         setSessionCount]         = useState(0)
   const [totalBytes,           setTotalBytes]           = useState(0)
   const [confirmClear,         setConfirmClear]         = useState(false)
 
   const refreshStats = useCallback(async () => {
-    const [sessions, bytes] = await Promise.all([
+    const [list, bytes] = await Promise.all([
       window.api.obsListSessions(),
       window.api.obsTotalSize(),
     ])
-    setSessionCount(sessions.length)
+    setSessions(list)
+    setSessionCount(list.length)
     setTotalBytes(bytes)
   }, [])
 
@@ -96,6 +103,7 @@ export function DebugSettings() {
   const handleObsToggle = (v: boolean) => {
     setObservabilityEnabled(v)
     window.api.obsSetPrefs({ observabilityEnabled: v }).catch(console.error)
+    void refreshStats()
   }
 
   const handleImagesToggle = (v: boolean) => {
@@ -111,6 +119,23 @@ export function DebugSettings() {
       console.error('[DebugSettings] openDir failed:', err)
     }
   }
+
+  const handleOpenSession = useCallback(async (filePath: string) => {
+    try {
+      await window.api.obsOpenSession(filePath)
+    } catch (err) {
+      console.error('[DebugSettings] openSession failed:', err)
+    }
+  }, [])
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    try {
+      await window.api.obsDeleteSession(sessionId)
+      await refreshStats()
+    } catch (err) {
+      console.error('[DebugSettings] deleteSession failed:', err)
+    }
+  }, [refreshStats])
 
   const handleClearAll = async () => {
     if (!confirmClear) {
@@ -172,13 +197,65 @@ export function DebugSettings() {
           className="rounded-xl border border-surface-border/40 overflow-hidden"
           style={{ background: '#111' }}
         >
-          {/* Empty state — always shown in Phase 1 */}
-          <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
-            <p className="text-sm text-content-muted mb-1">No logs yet.</p>
-            <p className="text-xs text-content-muted/60 leading-relaxed">
-              Enable Observability and run a chat to capture a log.
-            </p>
-          </div>
+          {sessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+              <p className="text-sm text-content-muted mb-1">No logs yet.</p>
+              <p className="text-xs text-content-muted/60 leading-relaxed">
+                Enable Observability and run a chat to capture a log.
+              </p>
+            </div>
+          ) : (
+            sessions.map((entry, idx) => (
+              <div
+                key={entry.sessionId}
+                onClick={() => void handleOpenSession(entry.filePath)}
+                className={`group flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-hover transition-colors duration-100 ${
+                  idx < sessions.length - 1 ? 'border-b border-surface-border/20' : ''
+                }`}
+              >
+                {/* Date / time */}
+                <span className="text-xs text-content-secondary whitespace-nowrap flex-shrink-0">
+                  {new Date(entry.startedAt).toLocaleString()}
+                </span>
+
+                {/* Model */}
+                <span className="text-xs font-mono text-content-primary flex-1 min-w-0 truncate">
+                  {truncateModel(entry.modelId)}
+                </span>
+
+                {/* Provider pill */}
+                <span className="text-xs text-content-muted border border-surface-border/60 rounded px-1.5 py-0.5 flex-shrink-0">
+                  {entry.provider}
+                </span>
+
+                {/* Type badge */}
+                {entry.hasImages ? (
+                  <span className="text-xs text-content-secondary border border-accent-900/60 rounded px-1.5 py-0.5 flex-shrink-0">
+                    +images
+                  </span>
+                ) : (
+                  <span className="text-xs text-content-muted border border-surface-border/40 rounded px-1.5 py-0.5 flex-shrink-0">
+                    plain
+                  </span>
+                )}
+
+                {/* Size */}
+                <span className="text-xs text-content-muted flex-shrink-0 w-16 text-right">
+                  {formatBytes(entry.sizeBytes)}
+                </span>
+
+                {/* Delete button — hover-reveal */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); void handleDeleteSession(entry.sessionId) }}
+                  className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-1 rounded
+                             text-content-muted hover:text-red-400 transition-all duration-100"
+                  aria-label="Delete session"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Clear all */}
