@@ -20,6 +20,8 @@ import type {
   WireMessage,
 } from "../../shared/types";
 import { readSettings } from "./SettingsStore";
+import { observabilityService } from "./ObservabilityService";
+import type { ObsEvent } from "./ObservabilityService";
 import {
   braveSearch,
   augmentAndFormatResults,
@@ -694,6 +696,7 @@ function buildOllamaMessages(
 
 export class ChatService {
   private controller: AbortController | null = null;
+  private obsSessionId = '';
 
   // ----------------------------------------------------------------
   // Public API
@@ -720,6 +723,9 @@ export class ChatService {
       if (isNvidia || isOpenRouter) return CLOUD_MAX_TOOL_RESULT_CHARS
       return null  // LM Studio: no limit
     }
+    // 5i — session_start
+    this.obsSessionId = observabilityService.startSession(payload.chatId ?? '', modelId, provider)
+
     const resolvedKey = resolveBraveApiKey();
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
 
@@ -730,6 +736,17 @@ export class ChatService {
       payload.model,
       provider,
     );
+    // 5b — system_prompt capture
+    const _obsSysMsg = builtMessages.find((m) => m.role === 'system')
+    this._obsCapture({ type: 'system_prompt', payload: { text: typeof _obsSysMsg?.content === 'string' ? _obsSysMsg.content : '' }, ts: Date.now() })
+    // 5c — rag_chunks capture (from RAG/inject system messages added in handlers.ts)
+    const _obsRagChunks = payload.messages
+      .filter((m) => m.role === 'system' && typeof m.content === 'string' &&
+        (m.content.includes('[SYSTEM DIRECTIVE: You are equipped') ||
+         m.content.includes('[DOCUMENT CONTENT — READ THIS CAREFULLY')))
+      .map((m) => ({ source: 'rag', content: m.content as string }))
+    this._obsCapture({ type: 'rag_chunks', payload: { chunks: _obsRagChunks }, ts: Date.now() })
+
     if (DEBUG)
       console.log(
         `🚀 FINAL ${isNvidia ? "NVIDIA" : isOllama ? "OLLAMA" : isOpenRouter ? "OPENROUTER" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
@@ -986,6 +1003,9 @@ export class ChatService {
           );
         }
 
+        // 5d — messages_sent capture
+        this._obsCapture({ type: 'messages_sent', payload: { messages: messagesForRequest }, ts: Date.now() })
+
         const response = await net.fetch(endpoint, {
           method: "POST",
           headers: fetchHeaders,
@@ -1204,6 +1224,15 @@ export class ChatService {
 
             streamBuffer += cleanedDelta;
 
+            // 5e/5f — thinking_delta / answer_delta capture
+            if (deltaReasoning) {
+              this._obsCapture({ type: 'thinking_delta', payload: { text: deltaReasoning }, ts: Date.now() })
+            } else if (reasoningOpen) {
+              this._obsCapture({ type: 'thinking_delta', payload: { text: cleanedDelta }, ts: Date.now() })
+            } else {
+              this._obsCapture({ type: 'answer_delta', payload: { text: cleanedDelta }, ts: Date.now() })
+            }
+
             // ── Mid-stream text-format tool call interception ─────────────────────────────────────
             if (!toolCallIntercepted && !forceFinalAnswer) {
               const detected = detectMidStreamToolCall(streamBuffer);
@@ -1216,6 +1245,8 @@ export class ChatService {
 
                 toolCallIntercepted = true;
                 console.log(`[MCP] 🔍 Brave Search (interception depth ${searchLoopCount + 1}): "${midQuery}"`);
+                // 5g — tool_call capture (mid-stream fallback path)
+                this._obsCapture({ type: 'tool_call', payload: { toolName: 'brave_web_search', args: { query: midQuery } }, ts: Date.now() })
 
                 this.abort();
                 loopAborted = true;
@@ -1236,6 +1267,8 @@ export class ChatService {
                   midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`;
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: midQuery, error: errMsg });
                 }
+                // 5h — tool_result capture (mid-stream fallback path)
+                this._obsCapture({ type: 'tool_result', payload: { toolName: 'brave_web_search', result: midStreamResult }, ts: Date.now() })
 
                 const toolCallId = `call_${Date.now()}`;
                 const limit = getToolResultLimit()
@@ -1435,6 +1468,15 @@ export class ChatService {
                 query: uiLabel,
                 toolName,
               });
+              // 5g — tool_call capture (native tool path)
+              this._obsCapture({
+                type: 'tool_call',
+                payload: {
+                  toolName,
+                  args: (() => { try { return JSON.parse(argsRaw || '{}') as Record<string, unknown> } catch { return query ? { query } : {} } })(),
+                },
+                ts: Date.now(),
+              })
 
               try {
                 let toolResult: string;
@@ -1495,6 +1537,8 @@ export class ChatService {
                     formattedContent: toolResult,
                   });
                 }
+                // 5h — tool_result capture (native tool path)
+                this._obsCapture({ type: 'tool_result', payload: { toolName, result: toolResult }, ts: Date.now() })
 
                 const limit = getToolResultLimit()
                 const toolContent = limit && typeof toolResult === 'string' && toolResult.length > limit
@@ -1596,6 +1640,19 @@ export class ChatService {
       return;
     } finally {
       this.controller = null;
+      // 5i — session_end capture + flush
+      this._obsCapture({
+        type: 'session_end',
+        payload: {
+          finishReason:  'unknown',
+          durationMs:    Date.now() - startTime,
+          promptTokens:  promptTokens,
+          outputTokens:  totalTokens,
+        },
+        ts: Date.now(),
+      })
+      await observabilityService.endSession(this.obsSessionId)
+      this.obsSessionId = ''
     }
 
     if (DEBUG)
@@ -1963,6 +2020,11 @@ export class ChatService {
     }
 
     return msgs;
+  }
+
+  private _obsCapture(event: ObsEvent): void {
+    if (!this.obsSessionId) return
+    observabilityService.capture(this.obsSessionId, event)
   }
 
   private buildStats(
