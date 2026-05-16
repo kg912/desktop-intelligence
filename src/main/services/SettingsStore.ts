@@ -58,6 +58,10 @@ export interface AppSettings {
   openrouterApiKey?: string
   /** OpenRouter model slug e.g. "anthropic/claude-sonnet-4" */
   openrouterModel?:  string
+  /** When true, full session logs are captured to disk. Default: false */
+  observabilityEnabled?: boolean
+  /** When true, rendered charts/images are embedded in log folders. Default: false */
+  includeImages?: boolean
 }
 
 function settingsPath(): string {

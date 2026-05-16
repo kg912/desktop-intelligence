@@ -25,6 +25,7 @@ import type {
   McpToolPermissionRequest,
   BackendSettings,
 } from '../shared/types'
+import type { DebugPrefs, SessionEntry } from '../main/services/ObservabilityService'
 
 const api = {
   // ── Model Connection ────────────────────────────────────────
@@ -192,6 +193,31 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
   },
+
+  // ── Observability ────────────────────────────────────────────
+  obsGetPrefs: (): Promise<DebugPrefs> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_GET_PREFS),
+
+  obsSetPrefs: (patch: Partial<DebugPrefs>): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_SET_PREFS, patch),
+
+  obsListSessions: (): Promise<SessionEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_LIST_SESSIONS),
+
+  obsOpenSession: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_SESSION, sessionId),
+
+  obsDeleteSession: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_DELETE_SESSION, sessionId),
+
+  obsClearAll: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_CLEAR_ALL),
+
+  obsGetLogsDir: (): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_GET_LOGS_DIR),
+
+  obsTotalSize: (): Promise<number> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_TOTAL_SIZE),
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),

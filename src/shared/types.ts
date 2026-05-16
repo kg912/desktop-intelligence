@@ -245,6 +245,16 @@ export const IPC_CHANNELS = {
   MCP_TOOL_PERMISSION_REQUEST:  'mcp:toolPermissionRequest',   // main→renderer
   MCP_TOOL_PERMISSION_RESPONSE: 'mcp:toolPermissionResponse',  // renderer→main
   MCP_SERVER_STATUS_CHANGED:    'mcp:serverStatusChanged',     // main→renderer push
+
+  // ── Observability ──────────────────────────────────────────
+  OBS_GET_PREFS:      'obs:getPrefs',
+  OBS_SET_PREFS:      'obs:setPrefs',
+  OBS_LIST_SESSIONS:  'obs:listSessions',
+  OBS_OPEN_SESSION:   'obs:openSession',
+  OBS_DELETE_SESSION: 'obs:deleteSession',
+  OBS_CLEAR_ALL:      'obs:clearAll',
+  OBS_GET_LOGS_DIR:   'obs:getLogsDir',
+  OBS_TOTAL_SIZE:     'obs:totalSize',
   MCP_SET_TOOL_ENABLED:        'mcp:setToolEnabled',          // renderer→main
 
   SETTINGS_GET_BACKEND:  'settings:getBackend',

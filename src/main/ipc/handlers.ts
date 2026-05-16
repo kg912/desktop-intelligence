@@ -1,4 +1,4 @@
-import { ipcMain, WebContents } from 'electron'
+import { ipcMain, shell, WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
 import { modelConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
@@ -7,6 +7,8 @@ import { processFile } from '../services/FileProcessorService'
 
 import { pythonWorker } from '../services/PythonWorkerService'
 import { savePlot, searchPlots } from '../services/PlotStore'
+import { observabilityService } from '../services/ObservabilityService'
+import type { DebugPrefs } from '../services/ObservabilityService'
 import {
   getDB,
   getAllChats,
@@ -1106,6 +1108,47 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { mcpServerManager } = await import('../services/McpServerManager')
       mcpServerManager.resolvePermission(requestId, approved, alwaysAllow)
     }
+  )
+
+  // ── Observability ─────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.OBS_GET_PREFS, (): DebugPrefs =>
+    observabilityService.getPrefs()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_SET_PREFS, (_, patch: Partial<DebugPrefs>): void =>
+    observabilityService.setPrefs(patch)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_LIST_SESSIONS, async () =>
+    observabilityService.listSessions()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_OPEN_SESSION, async (_, sessionIdOrPath: string): Promise<void> => {
+    // If passed an absolute path (e.g. the logs directory itself), open it directly.
+    if (sessionIdOrPath.startsWith('/') || /^[A-Za-z]:\\/.test(sessionIdOrPath)) {
+      await shell.openPath(sessionIdOrPath)
+      return
+    }
+    const sessions = await observabilityService.listSessions()
+    const entry = sessions.find((s) => s.sessionId === sessionIdOrPath)
+    if (entry) await shell.openPath(entry.filePath)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.OBS_DELETE_SESSION, async (_, sessionId: string): Promise<void> =>
+    observabilityService.deleteSession(sessionId)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_CLEAR_ALL, async (): Promise<void> =>
+    observabilityService.clearAllSessions()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_GET_LOGS_DIR, (): string =>
+    observabilityService.getLogsDir()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_TOTAL_SIZE, async (): Promise<number> =>
+    observabilityService.getTotalSizeBytes()
   )
 
 }
