@@ -89,17 +89,22 @@ export class ObservabilityService {
   private readonly logsDir: string
   private readonly sessions = new Map<string, SessionBuffer>()
   private activeSessionId = ''
+  private _enabled      = false
+  private _includeImages = false
 
   constructor() {
     this.logsDir = path.join(app.getPath('userData'), 'observability-logs')
+    const s = readSettings()
+    this._enabled       = s.observabilityEnabled ?? false
+    this._includeImages = s.includeImages ?? false
   }
 
   isEnabled(): boolean {
-    return readSettings().observabilityEnabled ?? false
+    return this._enabled
   }
 
   includeImages(): boolean {
-    return this.isEnabled() && (readSettings().includeImages ?? false)
+    return this._enabled && this._includeImages
   }
 
   getLogsDir(): string {
@@ -116,6 +121,13 @@ export class ObservabilityService {
 
   setPrefs(patch: Partial<DebugPrefs>): void {
     writeSettings(patch)
+    // Keep in-memory cache in sync — avoids readSettings() on next isEnabled() call
+    if (patch.observabilityEnabled !== undefined) {
+      this._enabled = patch.observabilityEnabled
+    }
+    if (patch.includeImages !== undefined) {
+      this._includeImages = patch.includeImages
+    }
   }
 
   // --- Capture API ---
