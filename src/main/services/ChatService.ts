@@ -1221,7 +1221,10 @@ export class ChatService {
                 );
             }
 
-            const cleanedDelta = firstChunkProcessed ? delta : stripLeadingThinkClose(delta);
+            // Strip Qwen3 internal template tokens that occasionally leak into
+            // the content stream and corrupt code blocks or fence syntax.
+            const cleanedDelta = (firstChunkProcessed ? delta : stripLeadingThinkClose(delta))
+              .replace(/<\|mask_(?:start|end)\|>/gi, "");
             firstChunkProcessed = true;
             if (!cleanedDelta) { if (ndjsonDone) break; continue; }
 

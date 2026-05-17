@@ -32,7 +32,7 @@
  * fall back to the in-memory mock that main.tsx already injected.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useModelStore } from "../store/ModelStore";
 import { v4 as uuid } from "uuid";
 import type {
@@ -125,6 +125,13 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
   // Tracks the thinking mode used for the previous turn (divider insertion).
   const prevThinkingModeRef = useRef<"thinking" | "fast">("fast");
+
+  // ── isStreaming React state ───────────────────────────────────
+  // isStreamingSignal alone won't trigger a Layout re-render (Layout has no
+  // useSignals()). This useState mirrors the signal so Layout's handleSelectChat
+  // guard ('if (isStreaming) return') sees the correct value after stream end,
+  // preventing the post-stream chat-switching freeze.
+  const [isStreamingState, setIsStreamingState] = useState(false);
 
   useEffect(() => {
     currentChatIdRef.current = chatId;
@@ -436,6 +443,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       streamingMessage.value  = null;
       streamingBlocks.value   = [];
       isStreamingSignal.value = false;
+      setIsStreamingState(false);
 
       // Context utilisation bar — preserve exact existing logic
       if (stats.promptTokens) {
@@ -529,6 +537,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       streamingMessage.value  = null;
       streamingBlocks.value   = [];
       isStreamingSignal.value = false;
+      setIsStreamingState(false);
     });
 
     return () => {
@@ -614,6 +623,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       streamingMessage.value  = assistantMsg;
       streamingBlocks.value   = [];
       isStreamingSignal.value = true;
+      setIsStreamingState(true);
 
       let activeChatId = overrideChatId ?? currentChatIdRef.current;
 
@@ -672,6 +682,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         streamingMessage.value  = null;
         streamingBlocks.value   = [];
         isStreamingSignal.value = false;
+        setIsStreamingState(false);
         assistantIdRef.current        = null;
         streamingContentRef.current   = "";
       }
@@ -697,6 +708,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     streamingMessage.value  = null;
     streamingBlocks.value   = [];
     isStreamingSignal.value = false;
+    setIsStreamingState(false);
     assistantIdRef.current        = null;
     streamingContentRef.current   = "";
     currentBlocksRef.current      = [];
@@ -712,6 +724,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     streamingMessage.value  = null;
     streamingBlocks.value   = [];
     isStreamingSignal.value = false;
+    setIsStreamingState(false);
     setContextUsage({ used: 0, total: 0 });
     assistantIdRef.current        = null;
     streamingContentRef.current   = "";
@@ -736,7 +749,10 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   // every rAF-tick signal update, cascading 700+ re-renders through the entire
   // tree (sidebar, table cells, everything) on every streaming token.
   // ChatArea reads completedMessages + streamingMessage signals directly.
-  const isStreaming = isStreamingSignal.value;
+  // isStreamingState is the React-state mirror of isStreamingSignal — the
+  // signal drives reactive components (ChatArea scroll, InputBar send-gate)
+  // while the state drives Layout re-renders (sidebar chat-switch guard).
+  const isStreaming = isStreamingState;
 
   return {
     isStreaming,
