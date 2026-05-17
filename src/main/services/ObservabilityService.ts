@@ -43,11 +43,12 @@ export interface ObsEvent {
 
 // ── Internal buffer types (not exported) ─────────────────────────────────────
 
-interface ToolCallEntry {
-  toolName: string
-  args:     Record<string, unknown>
-  result?:  string
-}
+type TraceEvent =
+  | { kind: 'thinking';       text: string }
+  | { kind: 'text';           text: string }
+  | { kind: 'tool_call';      toolName: string; args: Record<string, unknown>; result?: string }
+  | { kind: 'chart_image';    label: string; base64: string; pySource?: string }
+  | { kind: 'image_artifact'; label: string; ext: string; base64: string }
 
 interface SessionBuffer {
   chatId:       string
@@ -60,13 +61,7 @@ interface SessionBuffer {
   ragChunks:    Array<{ source: string; content: string }>
   messagesSent: unknown[]
 
-  thinkingBuf:  string
-  answerBuf:    string
-  toolCalls:    ToolCallEntry[]
-
-  imageArtifacts: Array<{ label: string; ext: string; base64: string }>
-  codeArtifacts:  Array<{ label: string; language: string; code: string }>
-  chartImages:    Array<{ label: string; base64: string; pySource?: string }>
+  trace: TraceEvent[]
 
   finishReason?: string
   durationMs?:   number
@@ -132,17 +127,12 @@ export class ObservabilityService {
       chatId,
       modelId,
       provider,
-      startedAt:      new Date().toISOString(),
-      hasImages:      this.includeImages(),
-      systemPrompt:   '',
-      ragChunks:      [],
-      messagesSent:   [],
-      thinkingBuf:    '',
-      answerBuf:      '',
-      toolCalls:      [],
-      imageArtifacts: [],
-      codeArtifacts:  [],
-      chartImages:    [],
+      startedAt:    new Date().toISOString(),
+      hasImages:    this.includeImages(),
+      systemPrompt: '',
+      ragChunks:    [],
+      messagesSent: [],
+      trace:        [],
     })
     this.activeSessionId = sessionId
     return sessionId
@@ -167,45 +157,60 @@ export class ObservabilityService {
         buf.messagesSent = (event.payload.messages as unknown[]) ?? []
         break
 
-      case 'thinking_delta':
-        buf.thinkingBuf += String(event.payload.text ?? '')
+      case 'thinking_delta': {
+        const delta = String(event.payload.text ?? '')
+        if (!delta) break
+        const last = buf.trace[buf.trace.length - 1]
+        if (last?.kind === 'thinking') {
+          last.text += delta
+        } else {
+          buf.trace.push({ kind: 'thinking', text: delta })
+        }
         break
+      }
 
-      case 'answer_delta':
-        buf.answerBuf += String(event.payload.text ?? '')
+      case 'answer_delta': {
+        const delta = String(event.payload.text ?? '')
+        if (!delta) break
+        const last = buf.trace[buf.trace.length - 1]
+        if (last?.kind === 'text') {
+          last.text += delta
+        } else {
+          buf.trace.push({ kind: 'text', text: delta })
+        }
         break
+      }
 
       case 'tool_call':
-        buf.toolCalls.push({
+        buf.trace.push({
+          kind:     'tool_call',
           toolName: String(event.payload.toolName ?? ''),
           args:     (event.payload.args as Record<string, unknown>) ?? {},
         })
         break
 
       case 'tool_result': {
-        const entry = [...buf.toolCalls].reverse()
-          .find((t) => t.toolName === String(event.payload.toolName ?? '') && t.result === undefined)
+        const name = String(event.payload.toolName ?? '')
+        const entry = [...buf.trace]
+          .reverse()
+          .find((e): e is Extract<TraceEvent, { kind: 'tool_call' }> =>
+            e.kind === 'tool_call' && e.toolName === name && e.result === undefined
+          )
         if (entry) entry.result = String(event.payload.result ?? '')
         break
       }
-
-      case 'code_artifact':
-        buf.codeArtifacts.push({
-          label:    String(event.payload.label ?? ''),
-          language: String(event.payload.language ?? ''),
-          code:     String(event.payload.code ?? ''),
-        })
-        break
-
-      case 'image_artifact':
-      case 'chart_image':
-        break
 
       case 'session_end':
         buf.finishReason  = String(event.payload.finishReason ?? '')
         buf.durationMs    = Number(event.payload.durationMs ?? 0)
         buf.promptTokens  = Number(event.payload.promptTokens ?? 0)
         buf.outputTokens  = Number(event.payload.outputTokens ?? 0)
+        break
+
+      // chart_image and image_artifact pushed via captureArtifact (renderer IPC)
+      case 'chart_image':
+      case 'image_artifact':
+      case 'code_artifact':
         break
     }
   }
@@ -214,20 +219,13 @@ export class ObservabilityService {
     if (!sessionId) return
     const buf = this.sessions.get(sessionId)
     if (!buf) return
-    // Note: sessions.delete() is deferred to _writeSession so renderer artifacts
-    // arriving in the same tick (e.g. chart captures) can still be buffered.
-    console.log(
-      `[ObservabilityService] Session ${sessionId} ended —`,
-      `${buf.answerBuf.length} answer chars,`,
-      `${buf.toolCalls.length} tool calls,`,
-      `${buf.thinkingBuf.length} thinking chars`
-    )
+    console.log(`[ObservabilityService] Session ${sessionId} ended — ${buf.trace.length} trace events`)
     setImmediate(() => {
       this._writeSession(sessionId, buf).catch((err) =>
         console.error('[ObservabilityService] Write failed:', err)
       )
     })
-    this.activeSessionId = ''
+    // activeSessionId cleared inside _writeSession after write completes
   }
 
   /** @internal — test use only */
@@ -238,27 +236,43 @@ export class ObservabilityService {
   captureArtifact(event: ObsEvent): void {
     if (!this.isEnabled()) return
     if (!this.activeSessionId) return
-    this.capture(this.activeSessionId, event)
+    if (!this.sessions.has(this.activeSessionId)) return
+    const buf = this.sessions.get(this.activeSessionId)
+    if (!buf) return
+
+    switch (event.type) {
+      case 'chart_image':
+        buf.trace.push({
+          kind:     'chart_image',
+          label:    String(event.payload.label ?? 'chart'),
+          base64:   String(event.payload.base64 ?? ''),
+          pySource: event.payload.pySource as string | undefined,
+        })
+        break
+      case 'image_artifact':
+        buf.trace.push({
+          kind:   'image_artifact',
+          label:  String(event.payload.label ?? 'image'),
+          ext:    String(event.payload.ext ?? 'png'),
+          base64: String(event.payload.base64 ?? ''),
+        })
+        break
+    }
   }
 
   // --- Helpers ---
 
-  // Fix 5: truncate each message's content field individually before serialising
   private truncateMessages(messages: unknown[]): unknown[] {
     return messages.map((msg) => {
       if (typeof msg !== 'object' || msg === null) return msg
       const m = msg as Record<string, unknown>
       if (typeof m['content'] === 'string' && m['content'].length > 2000) {
-        return {
-          ...m,
-          content: m['content'].slice(0, 2000) + '\n[… truncated]',
-        }
+        return { ...m, content: m['content'].slice(0, 2000) + '\n[… truncated]' }
       }
       return m
     })
   }
 
-  // Fix 4: truncate long buffers with suffix
   private truncateBuf(text: string): string {
     if (text.length <= THINKING_LIMIT) return text
     return text.slice(0, THINKING_LIMIT) + `\n[… truncated at ${THINKING_LIMIT} chars]`
@@ -268,88 +282,87 @@ export class ObservabilityService {
 
   private async writeSessionPlain(sessionId: string, buf: SessionBuffer): Promise<void> {
     const lines: string[] = []
-    const hr = '─'.repeat(72)
+    const OUTER = '='.repeat(80)
+    const section = (title: string) =>
+      `── ${title} ${'─'.repeat(Math.max(0, 76 - title.length))}`
 
-    lines.push(`SESSION  ${sessionId}`)
-    lines.push(`Chat     ${buf.chatId}`)
-    lines.push(`Model    ${buf.modelId}`)
-    lines.push(`Provider ${buf.provider}`)
-    lines.push(`Started  ${buf.startedAt}`)
-    lines.push(`Finish   ${buf.finishReason ?? ''}`)
-    lines.push(`Duration ${buf.durationMs ?? 0} ms`)
-    lines.push(`Tokens   prompt=${buf.promptTokens ?? 0}  output=${buf.outputTokens ?? 0}`)
+    lines.push(OUTER)
+    lines.push('DESKTOP INTELLIGENCE — OBSERVABILITY LOG')
+    lines.push(`Session : ${sessionId}`)
+    lines.push(`Chat    : ${buf.chatId}`)
+    lines.push(`Model   : ${buf.modelId}  (${buf.provider})`)
+    lines.push(`Started : ${buf.startedAt}`)
+    lines.push(`Finish  : ${buf.finishReason ?? ''}`)
+    lines.push(`Tokens  : ${buf.promptTokens ?? 0} in / ${buf.outputTokens ?? 0} out`)
+    lines.push(`Duration: ${buf.durationMs ?? 0} ms`)
+    lines.push(OUTER)
     lines.push('')
 
     if (buf.systemPrompt) {
-      lines.push(hr)
-      lines.push('SYSTEM PROMPT')
-      lines.push(hr)
+      lines.push(section('SYSTEM PROMPT'))
       lines.push(buf.systemPrompt.slice(0, 8000))
       lines.push('')
     }
 
     if (buf.ragChunks.length > 0) {
-      lines.push(hr)
-      lines.push(`RAG CHUNKS  (${buf.ragChunks.length})`)
-      lines.push(hr)
-      for (const chunk of buf.ragChunks) {
-        lines.push(`[${chunk.source}]`)
+      lines.push(section('RAG CONTEXT'))
+      for (let i = 0; i < buf.ragChunks.length; i++) {
+        const chunk = buf.ragChunks[i]
+        lines.push(`[Chunk ${i} | source: ${chunk.source}]`)
         lines.push(chunk.content.slice(0, 2000))
         lines.push('')
       }
     }
 
-    // Fix 5: use truncateMessages helper; no whole-JSON slice
     if (buf.messagesSent.length > 0) {
-      lines.push(hr)
-      lines.push(`MESSAGES SENT  (${buf.messagesSent.length})`)
-      lines.push(hr)
+      lines.push(section(`MESSAGES SENT (${buf.messagesSent.length})`))
       lines.push(JSON.stringify(this.truncateMessages(buf.messagesSent), null, 2))
       lines.push('')
     }
 
-    // Fix 4: 50K limit with suffix
-    if (buf.thinkingBuf) {
-      lines.push(hr)
-      lines.push('THINKING')
-      lines.push(hr)
-      lines.push(this.truncateBuf(buf.thinkingBuf))
+    if (buf.trace.length > 0) {
+      lines.push(section('TRACE'))
       lines.push('')
-    }
 
-    if (buf.answerBuf) {
-      lines.push(hr)
-      lines.push('ANSWER')
-      lines.push(hr)
-      lines.push(this.truncateBuf(buf.answerBuf))
-      lines.push('')
-    }
+      for (const event of buf.trace) {
+        switch (event.kind) {
+          case 'thinking':
+            lines.push('▶ THINKING')
+            lines.push(this.truncateBuf(event.text))
+            break
 
-    // Fix 3: inline truncation at 8K with suffix
-    if (buf.toolCalls.length > 0) {
-      lines.push(hr)
-      lines.push(`TOOL CALLS  (${buf.toolCalls.length})`)
-      lines.push(hr)
-      for (const tc of buf.toolCalls) {
-        lines.push(`Tool: ${tc.toolName}`)
-        lines.push(`Args: ${JSON.stringify(tc.args)}`)
-        if (tc.result !== undefined) {
-          const result = tc.result.length > TOOL_RESULT_LIMIT
-            ? tc.result.slice(0, TOOL_RESULT_LIMIT) + `\n[… truncated at ${TOOL_RESULT_LIMIT} chars]`
-            : tc.result
-          lines.push(`Result: ${result}`)
+          case 'text':
+            lines.push('▶ OUTPUT')
+            lines.push(this.truncateBuf(event.text))
+            break
+
+          case 'tool_call': {
+            lines.push(`▶ TOOL CALL  ${event.toolName}`)
+            lines.push(`Args: ${JSON.stringify(event.args)}`)
+            if (event.result === undefined) {
+              lines.push('Result: [no result captured]')
+            } else if (event.result.length > TOOL_RESULT_LIMIT) {
+              lines.push(`Result: ${event.result.slice(0, TOOL_RESULT_LIMIT)}\n[… truncated at ${TOOL_RESULT_LIMIT} chars]`)
+            } else {
+              lines.push(`Result: ${event.result}`)
+            }
+            break
+          }
+
+          case 'chart_image':
+            lines.push(`▶ CHART  ${event.label}`)
+            lines.push('[Chart image — enable "Include Images" to capture]')
+            if (event.pySource) {
+              lines.push('[Python source below]')
+              lines.push(event.pySource)
+            }
+            break
+
+          case 'image_artifact':
+            lines.push(`▶ IMAGE  ${event.label}.${event.ext}`)
+            lines.push('[Image — enable "Include Images" to capture]')
+            break
         }
-        lines.push('')
-      }
-    }
-
-    if (buf.codeArtifacts.length > 0) {
-      lines.push(hr)
-      lines.push(`CODE ARTIFACTS  (${buf.codeArtifacts.length})`)
-      lines.push(hr)
-      for (const ca of buf.codeArtifacts) {
-        lines.push(`[${ca.label}] (${ca.language})`)
-        lines.push(ca.code.slice(0, 8000))
         lines.push('')
       }
     }
@@ -380,17 +393,16 @@ export class ObservabilityService {
 
     const mdLines: string[] = []
 
-    mdLines.push(`# Session ${sessionId}`)
+    mdLines.push(`# Observability Log — ${sessionId}`)
     mdLines.push('')
-    mdLines.push(`| Field | Value |`)
-    mdLines.push(`|---|---|`)
-    mdLines.push(`| Chat | ${buf.chatId} |`)
-    mdLines.push(`| Model | ${buf.modelId} |`)
-    mdLines.push(`| Provider | ${buf.provider} |`)
+    mdLines.push('| Field | Value |')
+    mdLines.push('|----------|-------|')
+    mdLines.push(`| Chat | \`${buf.chatId}\` |`)
+    mdLines.push(`| Model | \`${buf.modelId}\` (\`${buf.provider}\`) |`)
     mdLines.push(`| Started | ${buf.startedAt} |`)
     mdLines.push(`| Finish | ${buf.finishReason ?? ''} |`)
+    mdLines.push(`| Tokens | ${buf.promptTokens ?? 0} in / ${buf.outputTokens ?? 0} out |`)
     mdLines.push(`| Duration | ${buf.durationMs ?? 0} ms |`)
-    mdLines.push(`| Tokens | prompt=${buf.promptTokens ?? 0} output=${buf.outputTokens ?? 0} |`)
     mdLines.push('')
 
     if (buf.systemPrompt) {
@@ -403,20 +415,19 @@ export class ObservabilityService {
     }
 
     if (buf.ragChunks.length > 0) {
-      mdLines.push(`## RAG Chunks (${buf.ragChunks.length})`)
+      mdLines.push('## RAG Context')
       mdLines.push('')
-      for (const chunk of buf.ragChunks) {
-        mdLines.push(`**[${chunk.source}]**`)
+      for (let i = 0; i < buf.ragChunks.length; i++) {
+        const chunk = buf.ragChunks[i]
+        mdLines.push(`### Chunk ${i} — ${chunk.source}`)
         mdLines.push('')
         mdLines.push(chunk.content.slice(0, 2000))
         mdLines.push('')
       }
     }
 
-    // Fix 2: Messages Sent section (after RAG chunks, before Thinking)
-    // Fix 5: use truncateMessages helper
     if (buf.messagesSent.length > 0) {
-      mdLines.push(`## Messages Sent (${buf.messagesSent.length})`)
+      mdLines.push('## Messages Sent')
       mdLines.push('')
       mdLines.push('```json')
       mdLines.push(JSON.stringify(this.truncateMessages(buf.messagesSent), null, 2))
@@ -424,88 +435,87 @@ export class ObservabilityService {
       mdLines.push('')
     }
 
-    // Fix 4: 50K limit with suffix
-    if (buf.thinkingBuf) {
-      mdLines.push('## Thinking')
+    if (buf.trace.length > 0) {
+      mdLines.push('## Trace')
       mdLines.push('')
-      mdLines.push(this.truncateBuf(buf.thinkingBuf))
-      mdLines.push('')
-    }
 
-    if (buf.answerBuf) {
-      mdLines.push('## Answer')
-      mdLines.push('')
-      mdLines.push(this.truncateBuf(buf.answerBuf))
-      mdLines.push('')
-    }
+      let chartN = 0
+      let imgN   = 0
+      let tcN    = 0
 
-    // Fix 3: image tool results — inline ≤ 8K, sidecar > 8K
-    if (buf.toolCalls.length > 0) {
-      mdLines.push(`## Tool Calls (${buf.toolCalls.length})`)
-      mdLines.push('')
-      let tcIdx = 0
-      for (const tc of buf.toolCalls) {
-        const n = tcIdx++
-        mdLines.push(`### ${tc.toolName}`)
-        mdLines.push('```json')
-        mdLines.push(JSON.stringify(tc.args, null, 2))
-        mdLines.push('```')
-        if (tc.result !== undefined) {
-          if (tc.result.length <= TOOL_RESULT_LIMIT) {
-            mdLines.push('**Result:**')
+      for (let i = 0; i < buf.trace.length; i++) {
+        const event = buf.trace[i]
+
+        switch (event.kind) {
+          case 'thinking':
+            mdLines.push('### 🧠 Thinking')
+            mdLines.push('')
+            mdLines.push(this.truncateBuf(event.text))
+            break
+
+          case 'text':
+            mdLines.push('### 💬 Output')
+            mdLines.push('')
+            mdLines.push(this.truncateBuf(event.text))
+            break
+
+          case 'tool_call': {
+            const n = tcN++
+            mdLines.push(`### 🔧 Tool Call — ${event.toolName}`)
+            mdLines.push('')
+            mdLines.push('Args:')
+            mdLines.push('```json')
+            mdLines.push(JSON.stringify(event.args, null, 2))
             mdLines.push('```')
-            mdLines.push(tc.result)
-            mdLines.push('```')
-          } else {
-            const sidecarName = `tool_result_${tc.toolName}_${n}.txt`
-            const sidecarPath = path.join(sessionDir, sidecarName)
-            await fs.writeFile(sidecarPath, tc.result, 'utf8')
-            mdLines.push(`**Result:** [view full result](./${sidecarName})`)
+            if (event.result === undefined) {
+              mdLines.push('Result: [no result captured]')
+            } else if (event.result.length <= TOOL_RESULT_LIMIT) {
+              mdLines.push('Result:')
+              mdLines.push('```')
+              mdLines.push(event.result)
+              mdLines.push('```')
+            } else {
+              const sidecarName = `tool_result_${event.toolName}_${n}.txt`
+              await fs.writeFile(path.join(sessionDir, sidecarName), event.result, 'utf8')
+              mdLines.push(`Result: [view full result](./${sidecarName})`)
+            }
+            break
+          }
+
+          case 'chart_image': {
+            const n      = chartN++
+            const label  = event.label || 'chart'
+            const pngFname = `chart_${n}_${label}.png`
+            await fs.writeFile(path.join(sessionDir, pngFname), Buffer.from(event.base64, 'base64'))
+            mdLines.push(`### 📊 Chart — ${label}`)
+            mdLines.push('')
+            mdLines.push(`![${label}](./${pngFname})`)
+            if (event.pySource) {
+              const pyFname = `chart_${n}_${label}.py`
+              await fs.writeFile(path.join(sessionDir, pyFname), event.pySource, 'utf8')
+              mdLines.push('')
+              mdLines.push(`**Source:** [${pyFname}](./${pyFname})`)
+            }
+            break
+          }
+
+          case 'image_artifact': {
+            const n      = imgN++
+            const label  = event.label || 'image'
+            const fname  = `image_${n}_${label}.${event.ext || 'png'}`
+            await fs.writeFile(path.join(sessionDir, fname), Buffer.from(event.base64, 'base64'))
+            mdLines.push(`### 🖼 Image — ${label}`)
+            mdLines.push('')
+            mdLines.push(`![${label}](./${fname})`)
+            break
           }
         }
-        mdLines.push('')
-      }
-    }
 
-    if (buf.codeArtifacts.length > 0) {
-      mdLines.push(`## Code Artifacts (${buf.codeArtifacts.length})`)
-      mdLines.push('')
-      for (const ca of buf.codeArtifacts) {
-        mdLines.push(`### ${ca.label || 'Untitled'}`)
-        mdLines.push(`\`\`\`${ca.language}`)
-        mdLines.push(ca.code.slice(0, 8000))
-        mdLines.push('```')
-        mdLines.push('')
-      }
-    }
-
-    // Write image sidecars
-    let imgIdx = 0
-    for (const img of buf.imageArtifacts) {
-      const n = imgIdx++
-      const fname = `image_${n}_${img.label || 'artifact'}.${img.ext || 'png'}`
-      await fs.writeFile(path.join(sessionDir, fname), Buffer.from(img.base64, 'base64'))
-      mdLines.push(`## Image: ${img.label || fname}`)
-      mdLines.push('')
-      mdLines.push(`![${img.label}](./${fname})`)
-      mdLines.push('')
-    }
-
-    // Fix 6: write .py sidecar instead of inline fenced code block
-    let chartIdx = 0
-    for (const chart of buf.chartImages) {
-      const n = chartIdx++
-      const label = chart.label || 'chart'
-      const pngFname = `chart_${n}_${label}.png`
-      await fs.writeFile(path.join(sessionDir, pngFname), Buffer.from(chart.base64, 'base64'))
-      mdLines.push(`## Chart: ${label}`)
-      mdLines.push('')
-      mdLines.push(`![${label}](./${pngFname})`)
-      mdLines.push('')
-      if (chart.pySource) {
-        const pyFname = `chart_${n}_${label}.py`
-        await fs.writeFile(path.join(sessionDir, pyFname), chart.pySource, 'utf8')
-        mdLines.push(`**Source:** [${pyFname}](./${pyFname})`)
+        // Separator between trace events (not after the last one)
+        if (i < buf.trace.length - 1) {
+          mdLines.push('')
+          mdLines.push('---')
+        }
         mdLines.push('')
       }
     }
@@ -525,7 +535,7 @@ export class ObservabilityService {
       startedAt: buf.startedAt,
       hasImages: true,
       sizeBytes,
-      filePath:  sessionDir,  // Fix 1: folder path so shell.openPath opens Finder
+      filePath:  sessionDir,
     }
     await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8')
   }
@@ -538,6 +548,9 @@ export class ObservabilityService {
       await this.writeSessionPlain(sessionId, buf)
     }
     this.sessions.delete(sessionId)
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = ''
+    }
     console.log(`[ObservabilityService] Wrote session ${sessionId} (hasImages=${buf.hasImages})`)
   }
 
