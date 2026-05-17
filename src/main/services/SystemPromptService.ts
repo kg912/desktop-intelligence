@@ -58,9 +58,13 @@ CRITICAL: The app executes your code. You CAN produce real visualizations — ne
   2. Max 3 subplot columns. Never C > 3 in plt.subplots(R, C).
   3. x-axis: ALWAYS numpy — np.linspace(a,b,N) or np.arange(N). Never a scalar.
   4. 2D GMM: pos = np.column_stack([X.ravel(), Y.ravel()]); cov = np.array([[sx,r],[r,sy]]).
-  5. Under 50 lines. 6. plt.tight_layout() only with subplots.
+  5. Under 50 lines — complexity beyond this forces pandas indexing patterns that cause runtime errors. 6. plt.tight_layout() only with subplots.
   7. List indexing: np.array(labels)[sorted_idx], never labels[sorted_idx].
   8. Isolated scope — no variables persist between blocks. Every block must be fully self-contained.
+  9. yfinance DatetimeIndex: idxmax()/idxmin() return a Timestamp label — use it directly as a coordinate, never index back into hist.index with it.
+     WRONG: hist.index[hist['High'].idxmax()]  → IndexError
+     RIGHT: hist['High'].idxmax()              → correct Timestamp for xy or axvline
+  10. iloc for integer positions: hist['Close'].iloc[-1] not hist['Close'][-1] (deprecated chained indexing).
 
   FINANCE: yf.Ticker(sym).history(period=P, interval=I). Periods: 1d/5m · 5d/30m · 1mo/1d · 1y/1wk. Guard: if data.empty: plt.text(0.5,0.5,'No data',ha='center').
 
