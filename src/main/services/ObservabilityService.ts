@@ -80,7 +80,6 @@ interface SessionMeta {
   filePath:   string
 }
 
-const THINKING_LIMIT    = 50000
 const TOOL_RESULT_LIMIT = 8000
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -288,19 +287,7 @@ export class ObservabilityService {
   // --- Helpers ---
 
   private truncateMessages(messages: unknown[]): unknown[] {
-    return messages.map((msg) => {
-      if (typeof msg !== 'object' || msg === null) return msg
-      const m = msg as Record<string, unknown>
-      if (typeof m['content'] === 'string' && m['content'].length > 2000) {
-        return { ...m, content: m['content'].slice(0, 2000) + '\n[… truncated]' }
-      }
-      return m
-    })
-  }
-
-  private truncateBuf(text: string): string {
-    if (text.length <= THINKING_LIMIT) return text
-    return text.slice(0, THINKING_LIMIT) + `\n[… truncated at ${THINKING_LIMIT} chars]`
+    return messages
   }
 
   // --- File writer ---
@@ -325,7 +312,7 @@ export class ObservabilityService {
 
     if (buf.systemPrompt) {
       lines.push(section('SYSTEM PROMPT'))
-      lines.push(buf.systemPrompt.slice(0, 8000))
+      lines.push(buf.systemPrompt)
       lines.push('')
     }
 
@@ -353,12 +340,12 @@ export class ObservabilityService {
         switch (event.kind) {
           case 'thinking':
             lines.push('▶ THINKING')
-            lines.push(this.truncateBuf(event.text))
+            lines.push(event.text)
             break
 
           case 'text':
             lines.push('▶ OUTPUT')
-            lines.push(this.truncateBuf(event.text))
+            lines.push(event.text)
             break
 
           case 'tool_call': {
@@ -434,7 +421,7 @@ export class ObservabilityService {
       mdLines.push('## System Prompt')
       mdLines.push('')
       mdLines.push('```')
-      mdLines.push(buf.systemPrompt.slice(0, 8000))
+      mdLines.push(buf.systemPrompt)
       mdLines.push('```')
       mdLines.push('')
     }
@@ -475,13 +462,13 @@ export class ObservabilityService {
           case 'thinking':
             mdLines.push('### 🧠 Thinking')
             mdLines.push('')
-            mdLines.push(this.truncateBuf(event.text))
+            mdLines.push(event.text)
             break
 
           case 'text':
             mdLines.push('### 💬 Output')
             mdLines.push('')
-            mdLines.push(this.truncateBuf(event.text))
+            mdLines.push(event.text)
             break
 
           case 'tool_call': {

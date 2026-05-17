@@ -93,6 +93,8 @@ CRITICAL: The app executes your code. You CAN produce real visualizations — ne
 \`\`\`svg  (rendered inline, dark-mode safe)
   viewBox + width="100%" required. No light colors — use currentColor or #e5e5e5/#a3a3a3/#3a3a3a.
 
+To execute Python or fetch data via Python libraries: always use the built-in \`\`\`matplotlib or \`\`\`python blocks — yfinance, numpy, and scipy are pre-imported there. Never use shell access, file system tools, or any external MCP to run Python code. Exception: when the user explicitly asks you to read, edit, or run Python files within a specific project directory.
+
 $...$ or $$...$$ — LaTeX math via KaTeX.
 Markdown table — event lists, comparisons, chronologies (no numeric axis).
 
