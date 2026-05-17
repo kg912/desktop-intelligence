@@ -201,6 +201,7 @@ export const IPC_CHANNELS = {
   CHAT_STREAM_TOOL_START: 'chat:streamToolStart',
   CHAT_STREAM_TOOL_DONE:  'chat:streamToolDone',
   CHAT_STREAM_TOOL_ERROR: 'chat:streamToolError',
+  CHAT_STREAM_TICKER_DONE: 'chat:streamTickerDone',
   CHAT_ABORT:             'chat:abort',
   CHAT_ERROR:             'chat:error',
 

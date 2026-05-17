@@ -96,6 +96,28 @@ const BRAVE_SEARCH_TOOL = {
   },
 } as const;
 
+const TICKER_TOOL = {
+  type: "function",
+  function: {
+    name: "get_ticker_price",
+    description:
+      "Get the current price and key stats for a stock ticker symbol. " +
+      "Use this to retrieve exact, up-to-date price data (current price, open, high, low, " +
+      "volume, % change, market cap) for any publicly traded equity. " +
+      "Always prefer this over web search when the user wants a specific stock price or quote.",
+    parameters: {
+      type: "object",
+      properties: {
+        symbol: {
+          type: "string",
+          description: "The ticker symbol, e.g. NVDA, AAPL, MSFT.",
+        },
+      },
+      required: ["symbol"],
+    },
+  },
+} as const;
+
 function buildWebSearchAddendum(maxSearchRounds: number): string {
   return `
 You have access to a real-time web search tool: brave_web_search.
@@ -694,6 +716,95 @@ function buildOllamaMessages(
   })
 }
 
+/**
+ * Fetches current price data for a ticker from Yahoo Finance's public JSON API.
+ * Uses Electron's net.fetch — no Python, no shell, no external dependencies.
+ * Returns a human-readable string suitable for injection into the model context.
+ */
+async function fetchTickerPrice(symbol: string): Promise<string> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+  try {
+    const resp = await net.fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+      },
+    });
+
+    if (!resp.ok) {
+      return `[Ticker lookup failed for ${symbol}: HTTP ${resp.status}]`;
+    }
+
+    const data = await resp.json() as {
+      chart?: {
+        result?: Array<{
+          meta?: {
+            regularMarketPrice?: number;
+            chartPreviousClose?: number;
+            regularMarketOpen?: number;
+            regularMarketDayHigh?: number;
+            regularMarketDayLow?: number;
+            regularMarketVolume?: number;
+            marketCap?: number;
+            currency?: string;
+            exchangeName?: string;
+            regularMarketTime?: number;
+          };
+        }>;
+        error?: { description?: string };
+      };
+    };
+
+    const err = data?.chart?.error;
+    if (err) return `[Ticker lookup failed for ${symbol}: ${err.description ?? "unknown error"}]`;
+
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (!meta) return `[No data returned for ${symbol}]`;
+
+    const price    = meta.regularMarketPrice;
+    const prev     = meta.chartPreviousClose;
+    const open     = meta.regularMarketOpen;
+    const high     = meta.regularMarketDayHigh;
+    const low      = meta.regularMarketDayLow;
+    const volume   = meta.regularMarketVolume;
+    const mktCap   = meta.marketCap;
+    const currency = meta.currency ?? "USD";
+    const exchange = meta.exchangeName ?? "";
+
+    const pct = price != null && prev != null && prev !== 0
+      ? (((price - prev) / prev) * 100).toFixed(2)
+      : null;
+
+    const fmt = (n?: number, decimals = 2) =>
+      n != null ? n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : "N/A";
+
+    const fmtVol = (n?: number) => {
+      if (n == null) return "N/A";
+      if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+      if (n >= 1_000_000)     return `${(n / 1_000_000).toFixed(2)}M`;
+      return n.toLocaleString("en-US");
+    };
+
+    const changeStr = pct != null
+      ? ` (${Number(pct) >= 0 ? "+" : ""}${pct}% vs prev close)`
+      : "";
+
+    return [
+      `[Ticker: ${symbol.toUpperCase()} | ${exchange} | ${currency}]`,
+      `Price:   ${fmt(price)}${changeStr}`,
+      `Open:    ${fmt(open)}`,
+      `High:    ${fmt(high)}`,
+      `Low:     ${fmt(low)}`,
+      `Prev:    ${fmt(prev)}`,
+      `Volume:  ${fmtVol(volume)}`,
+      `Mkt Cap: ${fmtVol(mktCap)}`,
+    ].join("\n");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `[Ticker lookup failed for ${symbol}: ${msg}]`;
+  }
+}
+
 export class ChatService {
   private controller: AbortController | null = null;
   private obsSessionId = '';
@@ -847,6 +958,7 @@ export class ChatService {
           const mcpTools = mcpServerManager.getToolSchemas();
           const allTools = [
             ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
+            TICKER_TOOL,
             ...mcpTools,
           ];
           if (DEBUG) {
@@ -1457,10 +1569,11 @@ export class ChatService {
             const allResultLinks: Array<{ title: string; url: string }> = [];
             const resultSections: string[] = [];
             for (const { id, name: toolName, query, argsRaw } of queries) {
-              // Dispatch: Brave Search vs. MCP custom tool (namespaced as serverName__toolName)
+              // Dispatch: Ticker, Brave Search, or MCP custom tool (namespaced as serverName__toolName)
+              const isTicker = toolName === "get_ticker_price";
               const isBrave = toolName === "brave_web_search";
-              const mcpParts = !isBrave ? toolName.split("__") : null;
-              const isMcp = !isBrave && mcpParts && mcpParts.length === 2;
+              const mcpParts = !isBrave && !isTicker ? toolName.split("__") : null;
+              const isMcp = !isBrave && !isTicker && mcpParts && mcpParts.length === 2;
               if (DEBUG)
                 console.log(
                   `[Debug][ChatService][ToolDispatch] toolName=${toolName} query="${query}" isBrave=${isBrave} isMcp=${!isBrave && !!mcpParts && mcpParts.length === 2}`,
@@ -1487,7 +1600,25 @@ export class ChatService {
               try {
                 let toolResult: string;
 
-                if (isBrave) {
+                if (isTicker) {
+                  // ── Built-in ticker price fetch via Yahoo Finance ──────────
+                  const symbol = ((() => { try { return JSON.parse(argsRaw) } catch { return {} } })() as Record<string, string>).symbol ?? query;
+                  const tickerResult = await fetchTickerPrice(symbol);
+                  toolResult = tickerResult;
+
+                  send(IPC_CHANNELS.CHAT_STREAM_TICKER_DONE, {
+                    symbol,
+                    formattedContent: tickerResult,
+                  });
+
+                  // Also emit a TOOL_DONE so the search pill renders (re-use query field as symbol)
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query: symbol,
+                    toolName,
+                    results: [],
+                    formattedContent: tickerResult,
+                  });
+                } else if (isBrave) {
                   // ── Existing Brave Search path — DO NOT MODIFY ────────────
                   const results = await braveSearch(query, resolvedKey!, 5);
                   const formatted = await augmentAndFormatResults(results);
