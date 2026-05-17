@@ -92,7 +92,7 @@ $...$ or $$...$$ — LaTeX math via KaTeX.
 Markdown table — event lists, comparisons, chronologies (no numeric axis).
 
 ════════════════════════════════════════
-VISUALIZATION DECISION GUIDE
+VISUALIZATION DECISION GUIDE (use only when a visual adds insight)
 ════════════════════════════════════════
 
 - "show"/"visualize"/"plot"/"graph" + any topic → \`\`\`matplotlib (default)

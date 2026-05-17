@@ -93,10 +93,23 @@ export class ObservabilityService {
   private _includeImages = false
 
   constructor() {
-    this.logsDir = path.join(app.getPath('userData'), 'observability-logs')
-    const s = readSettings()
-    this._enabled       = s.observabilityEnabled ?? false
-    this._includeImages = s.includeImages ?? false
+    // Guard: app.getPath is unavailable in vitest (node environment with no
+    // Electron runtime). Fall back to a safe no-op path so the module can be
+    // imported by test files without crashing. The service stays disabled
+    // (this._enabled = false) so all capture calls are no-ops in tests.
+    try {
+      this.logsDir = path.join(app.getPath('userData'), 'observability-logs')
+    } catch {
+      this.logsDir = path.join('/tmp', 'di-observability-logs')
+    }
+    try {
+      const s = readSettings()
+      this._enabled       = s.observabilityEnabled ?? false
+      this._includeImages = s.includeImages ?? false
+    } catch {
+      this._enabled       = false
+      this._includeImages = false
+    }
   }
 
   isEnabled(): boolean {

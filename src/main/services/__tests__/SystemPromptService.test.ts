@@ -24,7 +24,7 @@ import { BASE_SYSTEM_PROMPT } from '../SystemPromptService'
 /** Soft character-count ceiling for the base system prompt.
  *  Update this constant (and the comment below) whenever the limit is
  *  intentionally raised — keeps the test name and assertion in sync. */
-const MAX_PROMPT_CHARS = 5_000
+const MAX_PROMPT_CHARS = 7_000
 
 describe('BASE_SYSTEM_PROMPT', () => {
   it('is a non-empty string', () => {
@@ -94,6 +94,9 @@ describe('BASE_SYSTEM_PROMPT', () => {
     //   3000 → 3500 (THINKING RULE added to suppress CoT leaking outside <think>).
     //   3500 → 4500 (SECURITY RULES block added — prompt-injection defence for document uploads).
     //   4500 → 5000 (SVG rendering capability added).
+    //   5000 → 7000 (AGENT LOOP section added — goal/sufficiency check/tool decision/error-recovery
+    //               cognitive primitives instilled as model behaviour; built-in renderers
+    //               reframed as first-class execution primitives rather than markdown conventions).
     expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(MAX_PROMPT_CHARS)
   })
 
