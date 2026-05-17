@@ -96,7 +96,8 @@ const BRAVE_SEARCH_TOOL = {
   },
 } as const;
 
-const WEB_SEARCH_SYSTEM_ADDENDUM = `
+function buildWebSearchAddendum(maxSearchRounds: number): string {
+  return `
 You have access to a real-time web search tool: brave_web_search.
 
 SEARCH ONLY when the question genuinely requires it:
@@ -109,9 +110,7 @@ DO NOT search for:
 - Information that is unlikely to have changed in a meaningful way
 - Topics where you have solid knowledge and the user has not asked for current data
 
-ONE SEARCH IS THE DEFAULT. Do your search, read the results, then write your answer.
-A second search is only permitted if the first results were genuinely insufficient — missing key data the user needs — and a different, more specific query would fill that gap. Do not search again simply to be thorough or to add more detail.
-A third or fourth search requires the same justification. Do not chain searches speculatively.
+You may call brave_web_search at most ${maxSearchRounds} time(s) per turn. After each result, re-run the sufficiency check (step 4 of the agent loop). If you have enough to answer — write the answer. If the budget is exhausted, produce the best answer from what is already in context and say so plainly.
 
 CRITICAL — DATA INTEGRITY:
 - Your answer must be grounded in what the search results actually say.
@@ -129,8 +128,9 @@ When you have received web search results:
 HEURISTIC SEARCH STRATEGY:
  1. ENTITY PAIRING: If the query contains [Company/Entity] + [Noun], search for "[Entity] [Noun]" specifically — do not treat the noun as a generic concept.
  2. DISAMBIGUATION: If a term has dual meanings, your first query must include the entity name to disambiguate.
- 3. PIVOT: If results are clearly off-topic, one follow-up query is permitted to correct course.
+ 3. PIVOT: If results are clearly off-topic, one follow-up query is permitted to correct course — this counts against the budget.
 `.trim();
+}
 
 const WEB_SEARCH_DISABLED_ADDENDUM = `
 Web search is currently disabled. You do not have access to real-time information.
@@ -1818,7 +1818,7 @@ export class ChatService {
     )}, ${_now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}.`;
 
     const systemParts: string[] = [BASE_SYSTEM_PROMPT, DATE_INJECTION];
-    if (braveEnabled) systemParts.push(WEB_SEARCH_SYSTEM_ADDENDUM);
+    if (braveEnabled) systemParts.push(buildWebSearchAddendum(appSettings.maxSearchLoops ?? 4));
     if (!braveEnabled) systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM);
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt);
 
