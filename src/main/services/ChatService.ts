@@ -749,6 +749,8 @@ async function fetchTickerPrice(symbol: string): Promise<string> {
             currency?: string;
             exchangeName?: string;
             regularMarketTime?: number;
+            preMarketPrice?: number;
+            postMarketPrice?: number;
           };
         }>;
         error?: { description?: string };
@@ -761,15 +763,17 @@ async function fetchTickerPrice(symbol: string): Promise<string> {
     const meta = data?.chart?.result?.[0]?.meta;
     if (!meta) return `[No data returned for ${symbol}]`;
 
-    const price    = meta.regularMarketPrice;
-    const prev     = meta.chartPreviousClose;
-    const open     = meta.regularMarketOpen;
-    const high     = meta.regularMarketDayHigh;
-    const low      = meta.regularMarketDayLow;
-    const volume   = meta.regularMarketVolume;
-    const mktCap   = meta.marketCap;
-    const currency = meta.currency ?? "USD";
-    const exchange = meta.exchangeName ?? "";
+    const price         = meta.regularMarketPrice;
+    const prev          = meta.chartPreviousClose;
+    const open          = meta.regularMarketOpen;
+    const high          = meta.regularMarketDayHigh;
+    const low           = meta.regularMarketDayLow;
+    const volume        = meta.regularMarketVolume;
+    const mktCap        = meta.marketCap;
+    const currency      = meta.currency ?? "USD";
+    const exchange      = meta.exchangeName ?? "";
+    const preMarketPrice  = (meta as Record<string, unknown>).preMarketPrice as number | undefined;
+    const postMarketPrice = (meta as Record<string, unknown>).postMarketPrice as number | undefined;
 
     const pct = price != null && prev != null && prev !== 0
       ? (((price - prev) / prev) * 100).toFixed(2)
@@ -789,16 +793,21 @@ async function fetchTickerPrice(symbol: string): Promise<string> {
       ? ` (${Number(pct) >= 0 ? "+" : ""}${pct}% vs prev close)`
       : "";
 
-    return [
+    const lines = [
       `[Ticker: ${symbol.toUpperCase()} | ${exchange} | ${currency}]`,
       `Price:   ${fmt(price)}${changeStr}`,
+    ];
+    if (preMarketPrice != null)  lines.push(`Pre-Mkt: ${fmt(preMarketPrice)}`);
+    if (postMarketPrice != null) lines.push(`Aft-Mkt: ${fmt(postMarketPrice)}`);
+    lines.push(
       `Open:    ${fmt(open)}`,
       `High:    ${fmt(high)}`,
       `Low:     ${fmt(low)}`,
       `Prev:    ${fmt(prev)}`,
       `Volume:  ${fmtVol(volume)}`,
       `Mkt Cap: ${fmtVol(mktCap)}`,
-    ].join("\n");
+    );
+    return lines.join("\n");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return `[Ticker lookup failed for ${symbol}: ${msg}]`;
