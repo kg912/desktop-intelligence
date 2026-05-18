@@ -17,7 +17,16 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { applyThinkingPrefix, STOP_SEQUENCES, stubMatplotlibBlocks, parseRawToolCall, detectMidStreamToolCall, parseDsmlToolCalls } from '../ChatService'
+import {
+  applyThinkingPrefix,
+  STOP_SEQUENCES,
+  stubMatplotlibBlocks,
+  parseRawToolCall,
+  detectMidStreamToolCall,
+  parseDsmlToolCalls,
+  CODE_FENCE_TOOL_NAMES,
+  buildUnregisteredToolMessage,
+} from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
 type Msg = { role: string; content: string | ContentPart[] }
@@ -591,5 +600,185 @@ describe('parseDsmlToolCalls — does not disturb non-DSML tool call paths', () 
   it('returns [] for a pipe-delimited <|tool_call> block', () => {
     const buf = '<|tool_call>call:brave_web_search{"query":"test"}<tool_call|>'
     expect(parseDsmlToolCalls(buf)).toHaveLength(0)
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// CODE_FENCE_TOOL_NAMES
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('CODE_FENCE_TOOL_NAMES', () => {
+  it('is a Set', () => {
+    expect(CODE_FENCE_TOOL_NAMES).toBeInstanceOf(Set)
+  })
+
+  it('contains "matplotlib"', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('matplotlib')).toBe(true)
+  })
+
+  it('contains "python"', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('python')).toBe(true)
+  })
+
+  it('contains "python3"', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('python3')).toBe(true)
+  })
+
+  it('contains "echarts"', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('echarts')).toBe(true)
+  })
+
+  it('contains "mermaid"', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('mermaid')).toBe(true)
+  })
+
+  it('contains "svg"', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('svg')).toBe(true)
+  })
+
+  it('does NOT contain "brave_web_search" (it is a real callable tool)', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('brave_web_search')).toBe(false)
+  })
+
+  it('does NOT contain "get_ticker_price" (it is a real callable tool)', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('get_ticker_price')).toBe(false)
+  })
+
+  it('has no empty string entry (empty entry would match every blank tool name)', () => {
+    expect(CODE_FENCE_TOOL_NAMES.has('')).toBe(false)
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// buildUnregisteredToolMessage — code-fence pseudo-tools
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('buildUnregisteredToolMessage — code-fence pseudo-tools', () => {
+  const validNames = new Set(['brave_web_search', 'get_ticker_price'])
+
+  it('matplotlib: message contains the tool name', () => {
+    const msg = buildUnregisteredToolMessage('matplotlib', validNames)
+    expect(msg).toContain('matplotlib')
+  })
+
+  it('matplotlib: message mentions "code fence"', () => {
+    const msg = buildUnregisteredToolMessage('matplotlib', validNames)
+    expect(msg.toLowerCase()).toContain('code fence')
+  })
+
+  it('matplotlib: message contains the backtick code fence syntax', () => {
+    const msg = buildUnregisteredToolMessage('matplotlib', validNames)
+    expect(msg).toContain('```matplotlib')
+  })
+
+  it('matplotlib: message does NOT list registered tool names (code-fence path uses targeted hint instead)', () => {
+    const msg = buildUnregisteredToolMessage('matplotlib', validNames)
+    expect(msg).not.toContain('brave_web_search')
+    expect(msg).not.toContain('get_ticker_price')
+  })
+
+  it('python: message contains "```python" code fence syntax', () => {
+    const msg = buildUnregisteredToolMessage('python', validNames)
+    expect(msg).toContain('```python')
+  })
+
+  it('python3: message contains "```python3" code fence syntax', () => {
+    const msg = buildUnregisteredToolMessage('python3', validNames)
+    expect(msg).toContain('```python3')
+  })
+
+  it('echarts: message contains "```echarts" code fence syntax', () => {
+    const msg = buildUnregisteredToolMessage('echarts', validNames)
+    expect(msg).toContain('```echarts')
+  })
+
+  it('mermaid: message contains "```mermaid" code fence syntax', () => {
+    const msg = buildUnregisteredToolMessage('mermaid', validNames)
+    expect(msg).toContain('```mermaid')
+  })
+
+  it('svg: message contains "```svg" code fence syntax', () => {
+    const msg = buildUnregisteredToolMessage('svg', validNames)
+    expect(msg).toContain('```svg')
+  })
+
+  it('code-fence path is case-sensitive — "Matplotlib" (wrong case) does NOT get code-fence hint', () => {
+    const msg = buildUnregisteredToolMessage('Matplotlib', validNames)
+    // Should fall through to generic path and list registered tools instead
+    expect(msg).not.toContain('```Matplotlib')
+    expect(msg).toContain('Registered tools')
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// buildUnregisteredToolMessage — generic unregistered tools
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('buildUnregisteredToolMessage — generic unregistered tools', () => {
+  it('message contains the attempted tool name', () => {
+    const msg = buildUnregisteredToolMessage('nonexistent_tool', new Set(['brave_web_search']))
+    expect(msg).toContain('nonexistent_tool')
+  })
+
+  it('message lists each registered tool name', () => {
+    const valid = new Set(['brave_web_search', 'get_ticker_price', 'memory__search_nodes'])
+    const msg = buildUnregisteredToolMessage('fake_tool', valid)
+    expect(msg).toContain('brave_web_search')
+    expect(msg).toContain('get_ticker_price')
+    expect(msg).toContain('memory__search_nodes')
+  })
+
+  it('message contains "Registered tools" label', () => {
+    const msg = buildUnregisteredToolMessage('fake_tool', new Set(['brave_web_search']))
+    expect(msg).toContain('Registered tools')
+  })
+
+  it('falls back to "(none)" when validNames is empty', () => {
+    const msg = buildUnregisteredToolMessage('ghost_tool', new Set())
+    expect(msg).toContain('(none)')
+  })
+
+  it('does NOT contain code-fence syntax for a generic unknown tool', () => {
+    const msg = buildUnregisteredToolMessage('ghost_tool', new Set(['brave_web_search']))
+    expect(msg).not.toContain('```')
+  })
+
+  it('MCP-style namespaced tool name (serverName__toolName) is handled without error', () => {
+    // A registered MCP tool passes the screen; an unregistered one gets generic message
+    const msg = buildUnregisteredToolMessage('my_server__missing_tool', new Set(['brave_web_search']))
+    expect(msg).toContain('my_server__missing_tool')
+    expect(msg).toContain('Registered tools')
+  })
+
+  it('message instructs the model not to call the tool again', () => {
+    const msg = buildUnregisteredToolMessage('ghost_tool', new Set())
+    expect(msg.toLowerCase()).toContain('do not call')
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// buildUnregisteredToolMessage — regression: real tools are never unregistered
+//
+// These tests confirm that the names the screen PASSES (brave_web_search,
+// get_ticker_price) produce a clear generic message if — hypothetically —
+// they were ever passed to the function. This guards against the set of
+// CODE_FENCE_TOOL_NAMES accidentally absorbing a real tool name in future.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('buildUnregisteredToolMessage — real tool names are not in CODE_FENCE_TOOL_NAMES', () => {
+  it('brave_web_search is not a code-fence tool — produces generic message, not code-fence hint', () => {
+    const msg = buildUnregisteredToolMessage('brave_web_search', new Set())
+    // Must NOT produce the code-fence hint path
+    expect(msg).not.toContain('```brave_web_search')
+    expect(msg).not.toContain('code fence')
+    // Must produce the generic path
+    expect(msg).toContain('brave_web_search')
+    expect(msg).toContain('Registered tools')
+  })
+
+  it('get_ticker_price is not a code-fence tool — produces generic message', () => {
+    const msg = buildUnregisteredToolMessage('get_ticker_price', new Set())
+    expect(msg).not.toContain('code fence')
+    expect(msg).toContain('get_ticker_price')
   })
 })

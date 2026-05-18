@@ -57,6 +57,50 @@ const DEBUG = __DEV_MODE__;
  */
 export const STOP_SEQUENCES = ["<|im_end|>", "<|endoftext|>"];
 
+/**
+ * CODE_FENCE_TOOL_NAMES
+ *
+ * Names the model may mistakenly call as structured tool_calls when they are
+ * actually code-fence execution primitives intercepted by the renderer.
+ * Used by buildUnregisteredToolMessage to return a targeted corrective hint.
+ */
+export const CODE_FENCE_TOOL_NAMES = new Set([
+  'matplotlib', 'python', 'python3', 'echarts', 'mermaid', 'svg',
+])
+
+/**
+ * buildUnregisteredToolMessage
+ *
+ * Returns the corrective tool-result string injected into the message history
+ * when the model attempts to call a tool name that is not in the session
+ * registry. Pure function — no side effects, no IPC, fully unit-testable.
+ *
+ * Two cases:
+ *  - Code-fence pseudo-tool (matplotlib, python, echarts, …): explains the
+ *    model must write a code fence in its text response, not call a function.
+ *  - Any other unregistered name: lists the actual registered tool names so
+ *    the model can self-correct on the next iteration.
+ */
+export function buildUnregisteredToolMessage(
+  toolName: string,
+  validNames: ReadonlySet<string>,
+): string {
+  if (CODE_FENCE_TOOL_NAMES.has(toolName)) {
+    return (
+      `"${toolName}" is not a callable tool and cannot be invoked via tool_calls. ` +
+      `To produce ${toolName} output, write a \`\`\`${toolName} code fence directly ` +
+      `in your response text — the app intercepts and executes it natively. ` +
+      `Do not attempt to call "${toolName}" as a function again.`
+    )
+  }
+  const registered = [...validNames].join(', ') || '(none)'
+  return (
+    `"${toolName}" is not registered in the tool schema for this session and cannot ` +
+    `be called. Do not call it again. ` +
+    `Registered tools for this session: ${registered}.`
+  )
+}
+
 const OLLAMA_MAX_TOOL_RESULT_CHARS = 12_000
 const CLOUD_MAX_TOOL_RESULT_CHARS  = 50_000
 
@@ -962,6 +1006,10 @@ export class ChatService {
         };
 
         // Tools payload — same logic for both providers
+        // Snapshot of tool names sent to the model this iteration — used by the
+        // registry screen below. Built from the same allTools array so disable/enable
+        // state from McpServerManager is automatically respected.
+        const validToolNames = new Set<string>()
         const toolsPayload = (() => {
           if (forceFinalAnswer) return {}; // strip tools — force synthesis pass
           const mcpTools = mcpServerManager.getToolSchemas();
@@ -970,6 +1018,7 @@ export class ChatService {
             TICKER_TOOL,
             ...mcpTools,
           ];
+          allTools.forEach((t) => validToolNames.add(t.function.name))
           if (DEBUG) {
             console.log(
               `[DEBUG] Tools sent (${allTools.length}):`,
@@ -1578,6 +1627,30 @@ export class ChatService {
             const allResultLinks: Array<{ title: string; url: string }> = [];
             const resultSections: string[] = [];
             for (const { id, name: toolName, query, argsRaw } of queries) {
+              // ── Tool registry screen ────────────────────────────────────────────────────
+              // Reject any tool call whose name is not in validToolNames (the set of tools
+              // actually sent to the model this iteration). Blocked calls:
+              //   - produce no UI pill (no TOOL_START / TOOL_DONE events)
+              //   - produce no obsCapture event
+              //   - inject a corrective role:tool message into the history so the model
+              //     understands it must not retry the same unregistered call
+              //   - preserve wire-format validity (every tool_call_id gets a tool result)
+              if (!validToolNames.has(toolName)) {
+                const correction = buildUnregisteredToolMessage(toolName, validToolNames)
+                console.warn(
+                  `[ChatService] ⛔ Tool registry screen blocked "${toolName}" — not in session schema. Correction fed back to model.`,
+                )
+                currentMessages = [
+                  ...currentMessages,
+                  { role: 'tool', tool_call_id: id, content: correction } as {
+                    role: string
+                    content: string
+                  },
+                ]
+                continue
+              }
+              // ── End registry screen ─────────────────────────────────────────────────────
+
               // Dispatch: Ticker, Brave Search, or MCP custom tool (namespaced as serverName__toolName)
               const isTicker = toolName === "get_ticker_price";
               const isBrave = toolName === "brave_web_search";
