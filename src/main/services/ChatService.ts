@@ -101,6 +101,25 @@ export function buildUnregisteredToolMessage(
   )
 }
 
+/**
+ * partialContentOrNull
+ *
+ * Returns the trimmed stream buffer as the `content` field of an assistant
+ * message that also carries tool_calls, or null if the buffer is empty/
+ * whitespace-only (the normal case for pure tool-call turns).
+ *
+ * Used in the native tool call path to preserve text the model streamed
+ * before emitting tool_calls in the same turn — preventing the model from
+ * losing memory of its own partial output and restarting from scratch on
+ * the next loop iteration.
+ *
+ * Matches the existing mid-stream path pattern: `patchedCleaned || null`.
+ * Pure function — no side effects, fully unit-testable.
+ */
+export function partialContentOrNull(streamBuffer: string): string | null {
+  return streamBuffer.trim() || null
+}
+
 const OLLAMA_MAX_TOOL_RESULT_CHARS = 12_000
 const CLOUD_MAX_TOOL_RESULT_CHARS  = 50_000
 
@@ -1618,7 +1637,7 @@ export class ChatService {
               ...currentMessages,
               {
                 role: "assistant",
-                content: null as unknown as string,
+                content: partialContentOrNull(streamBuffer) as unknown as string,
                 tool_calls: assistantToolCalls,
               } as { role: string; content: string },
             ];

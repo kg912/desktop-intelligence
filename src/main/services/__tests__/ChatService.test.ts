@@ -26,6 +26,7 @@ import {
   parseDsmlToolCalls,
   CODE_FENCE_TOOL_NAMES,
   buildUnregisteredToolMessage,
+  partialContentOrNull,
 } from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
@@ -780,5 +781,103 @@ describe('buildUnregisteredToolMessage — real tool names are not in CODE_FENCE
     const msg = buildUnregisteredToolMessage('get_ticker_price', new Set())
     expect(msg).not.toContain('code fence')
     expect(msg).toContain('get_ticker_price')
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// partialContentOrNull
+//
+// Guards the partial-content preservation fix for the native tool call path.
+// If this function regresses to always returning null, the model loses memory
+// of its partial output on mixed (text + tool_calls) turns and produces
+// double responses.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('partialContentOrNull', () => {
+  // ── Returns null for empty / whitespace-only buffers ────────────────────
+
+  it('returns null for an empty string (pure tool-call turn — no text streamed)', () => {
+    expect(partialContentOrNull('')).toBeNull()
+  })
+
+  it('returns null for a whitespace-only string (leading/trailing spaces)', () => {
+    expect(partialContentOrNull('   ')).toBeNull()
+  })
+
+  it('returns null for a newline-only string', () => {
+    expect(partialContentOrNull('\n\n\n')).toBeNull()
+  })
+
+  it('returns null for a tab-only string', () => {
+    expect(partialContentOrNull('\t')).toBeNull()
+  })
+
+  // ── Returns trimmed string for non-empty content ─────────────────────────
+
+  it('returns the text when buffer has non-whitespace content', () => {
+    const buf = 'Great question — this is how agent harnesses work.'
+    expect(partialContentOrNull(buf)).toBe(buf)
+  })
+
+  it('trims leading whitespace from non-empty content', () => {
+    expect(partialContentOrNull('   hello')).toBe('hello')
+  })
+
+  it('trims trailing whitespace from non-empty content', () => {
+    expect(partialContentOrNull('hello   ')).toBe('hello')
+  })
+
+  it('trims both ends', () => {
+    expect(partialContentOrNull('\n  hello world  \n')).toBe('hello world')
+  })
+
+  it('preserves internal whitespace — only trims the ends', () => {
+    const inner = 'line one\n\nline two'
+    expect(partialContentOrNull(`  ${inner}  `)).toBe(inner)
+  })
+
+  // ── Think-block content is preserved as-is ───────────────────────────────
+  // Think blocks in streamBuffer are stripped later by buildMessages →
+  // stripThinkBlocks when the message is serialised for the next request.
+  // partialContentOrNull must NOT strip them — stripping is not its job.
+
+  it('preserves <think>…</think> blocks in the content (stripping is handled downstream)', () => {
+    const buf = '<think>reasoning here</think>Here is the actual answer.'
+    expect(partialContentOrNull(buf)).toBe(buf)
+  })
+
+  it('preserves a partial (unclosed) think block', () => {
+    const buf = '<think>still thinking…'
+    expect(partialContentOrNull(buf)).toBe(buf)
+  })
+
+  // ── Type contract ─────────────────────────────────────────────────────────
+
+  it('returns null (not empty string) for empty input — null signals "no content" to the wire format', () => {
+    expect(partialContentOrNull('')).toBeNull()
+    expect(partialContentOrNull('')).not.toBe('')
+  })
+
+  it('return type is string for non-empty input — never undefined', () => {
+    const result = partialContentOrNull('some text')
+    expect(typeof result).toBe('string')
+    expect(result).not.toBeUndefined()
+  })
+
+  // ── Regression: matches existing mid-stream path behaviour ───────────────
+  // The mid-stream path uses: `patchedCleaned || null`
+  // partialContentOrNull must be semantically identical so both paths
+  // produce the same content shape.
+
+  it('empty string → null matches "patchedCleaned || null" pattern (mid-stream path equivalence)', () => {
+    const patchedCleaned = ''
+    const midStreamResult = patchedCleaned || null
+    expect(partialContentOrNull(patchedCleaned)).toBe(midStreamResult)
+  })
+
+  it('non-empty string → string matches "patchedCleaned || null" pattern', () => {
+    const patchedCleaned = 'partial answer text'
+    const midStreamResult = patchedCleaned || null
+    expect(partialContentOrNull(patchedCleaned)).toBe(midStreamResult)
   })
 })
