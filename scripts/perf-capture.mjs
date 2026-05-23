@@ -233,6 +233,8 @@ async function main() {
   await cdp.send('Runtime.enable')
   await cdp.send('Page.enable')
   await cdp.send('Profiler.enable')
+  console.log('[Perf] 🚀 Activating 20x CPU Slowdown via Emulation.setCPUThrottlingRate...')
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 20 })
   await cdp.send('Profiler.setSamplingInterval', { interval: 100 }) // sample every 100µs
 
   // Click the suggestion button to trigger a real LLM streaming response

@@ -166,6 +166,19 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
   // replaces the old useEffect([messages[last].content, ...]) dep array,
   // which required a full re-render before scroll could fire.
   const scrollRafRef = useRef<number | null>(null)
+  const scrollEventRafRef = useRef<number | null>(null)
+
+  // Clean up scheduled animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current)
+      }
+      if (scrollEventRafRef.current !== null) {
+        cancelAnimationFrame(scrollEventRafRef.current)
+      }
+    }
+  }, [])
   useSignalEffect(() => {
     void streamingBlocks.value  // subscribe: fires on every block update
     if (userScrolledUp.current) return
@@ -209,7 +222,8 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
   // ── Re-enable auto-scroll when user scrolls back to the bottom ──
   // We skip any onScroll event that was caused by our own scrollIntoView
   // so that programmatic scrolls never accidentally clear userScrolledUp.
-  // Only genuine user-driven scrolls are evaluated here.
+  // Only genuine user-driven scrolls are evaluated here. Throttled via rAF
+  // to avoid layout thrashing during scroll events.
   function handleScroll() {
     // Absorb the one onScroll that every scrollIntoView fires and return.
     if (isProgrammaticScroll.current) {
@@ -218,17 +232,22 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
     }
     // Already at the bottom — nothing to re-enable, skip the layout read.
     if (!userScrolledUp.current) return
-    const el = scrollContainerRef.current
-    if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    // Use 20% of the visible container height as the re-enable threshold.
-    // This is zoom-independent: scrolling to within the bottom 20% of the
-    // visible area re-enables auto-scroll regardless of OS/browser zoom level.
-    // Capped at 300px so very tall monitors don't create an oversized zone.
-    const threshold = Math.min(el.clientHeight * 0.20, 300)
-    if (distanceFromBottom <= threshold) {
-      userScrolledUp.current = false
-    }
+
+    if (scrollEventRafRef.current !== null) return // already scheduled
+    scrollEventRafRef.current = requestAnimationFrame(() => {
+      scrollEventRafRef.current = null
+      const el = scrollContainerRef.current
+      if (!el) return
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+      // Use 20% of the visible container height as the re-enable threshold.
+      // This is zoom-independent: scrolling to within the bottom 20% of the
+      // visible area re-enables auto-scroll regardless of OS/browser zoom level.
+      // Capped at 300px so very tall monitors don't create an oversized zone.
+      const threshold = Math.min(el.clientHeight * 0.20, 300)
+      if (distanceFromBottom <= threshold) {
+        userScrolledUp.current = false
+      }
+    })
   }
 
   return (

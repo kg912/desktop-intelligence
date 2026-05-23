@@ -90,6 +90,7 @@ export const InputBar = memo(function InputBar({
   const [sizeError, setSizeError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const resizeRafRef = useRef<number | null>(null)
 
   // Inject @keyframes once into document.head
   useEffect(() => {
@@ -105,6 +106,15 @@ export const InputBar = memo(function InputBar({
     document.head.appendChild(s)
   }, [])
 
+  // Clean up scheduled animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current)
+      }
+    }
+  }, [])
+
   // Use controlled (external) list if provided, else local state
   const attachments    = externalAttachments ?? localAttachments
   const setAttachments = useCallback((updater: Attachment[] | ((prev: Attachment[]) => Attachment[])) => {
@@ -116,12 +126,27 @@ export const InputBar = memo(function InputBar({
   const canSend = (text.trim().length > 0 || attachments.length > 0) && !disabled
 
   // ── Auto-resize textarea ──────────────────────────────────────
+  // We throttle layout read/write to the next animation frame, keeping
+  // keypress execution instant. We also only perform style writes if the
+  // target height is different from the current style height.
   const resize = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
-    el.style.height = `${MIN_TEXTAREA_HEIGHT}px`
-    const scrollH = el.scrollHeight
-    el.style.height = `${Math.min(scrollH, MAX_TEXTAREA_HEIGHT)}px`
+    if (resizeRafRef.current !== null) {
+      cancelAnimationFrame(resizeRafRef.current)
+    }
+    resizeRafRef.current = requestAnimationFrame(() => {
+      resizeRafRef.current = null
+      const prevHeight = el.style.height
+      el.style.height = `${MIN_TEXTAREA_HEIGHT}px`
+      const scrollH = el.scrollHeight
+      const targetHeight = `${Math.min(scrollH, MAX_TEXTAREA_HEIGHT)}px`
+      if (prevHeight !== targetHeight) {
+        el.style.height = targetHeight
+      } else {
+        el.style.height = prevHeight
+      }
+    })
   }, [])
 
   useEffect(() => { resize() }, [text, resize])

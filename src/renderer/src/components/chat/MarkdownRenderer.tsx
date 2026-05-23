@@ -126,6 +126,9 @@ mermaid.initialize({
 // Monotonically-increasing counter → unique, stable DOM ids per block.
 let _mermaidIdCounter = 0
 
+// Cache Map for highlighted HTML to avoid hljs re-run on scroll remounts.
+const HIGHLIGHT_CACHE = new Map<string, string>()
+
 
 // ----------------------------------------------------------------
 // Streaming context
@@ -973,10 +976,12 @@ function CodeBlock({ className, children }: CodeProps) {
   const lang    = match?.[1]
   const kind    = classifyCodeBlock(lang)
 
-  // Async syntax highlighting — null until scheduleIdle fires after first paint.
-  // Avoids blocking the main thread with synchronous hljs work during virtualizer
-  // remounts (chat switching, scrolling through code-heavy chats).
-  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
+  const cacheKey = `${lang ?? 'auto'}::${rawCode}`
+  const cachedHtml = HIGHLIGHT_CACHE.get(cacheKey)
+
+  // Async syntax highlighting — initialized to cached value if available,
+  // avoiding any delay or re-render upon remounting during scroll.
+  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(cachedHtml ?? null)
 
   useEffect(() => {
     // Only run for blocks that reach the hljs render path — skip special kinds
@@ -989,6 +994,16 @@ function CodeBlock({ className, children }: CodeProps) {
       kind === 'echarts' ||
       (lang === 'python' && isPlottingPython(rawCode))
     ) return
+
+    // If already cached and state matches, skip running highlight.js
+    if (cachedHtml && highlightedHtml === cachedHtml) return
+
+    // If cached but state doesn't match, update immediately
+    if (cachedHtml) {
+      setHighlightedHtml(cachedHtml)
+      return
+    }
+
     // Reset to plain text immediately so the old highlighted content is never
     // shown for a different code string while the new idle task is pending.
     setHighlightedHtml(null)
@@ -999,10 +1014,11 @@ function CodeBlock({ className, children }: CodeProps) {
       } catch {
         try { result = hljs.highlightAuto(rawCode).value } catch { /* use raw */ }
       }
+      HIGHLIGHT_CACHE.set(cacheKey, result)
       setHighlightedHtml(result)
     })
     return cancel
-  }, [rawCode, lang, isBlock, kind])
+  }, [rawCode, lang, isBlock, kind, cachedHtml, highlightedHtml, cacheKey])
 
   // ── Inline code ──
   if (!isBlock) {

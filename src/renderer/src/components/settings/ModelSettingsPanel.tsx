@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { RefreshCw, AlertCircle, CheckCircle2, ChevronRight, ChevronDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useModelStore } from '../../store/ModelStore'
@@ -11,6 +11,71 @@ const MAX_CTX = 524288
 function fmtCtx(n: number): string {
   if (n >= 1024) return `${Math.round(n / 1024)}K`
   return String(n)
+}
+
+interface DebouncedSliderProps {
+  min: number
+  max: number
+  step: number
+  value: number
+  disabled: boolean
+  onChange: (v: number) => void
+  className?: string
+  style?: React.CSSProperties
+}
+
+function DebouncedSlider({
+  min,
+  max,
+  step,
+  value,
+  disabled,
+  onChange,
+  className,
+  style
+}: DebouncedSliderProps) {
+  const [localVal, setLocalVal] = useState(value)
+  const debounceRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    setLocalVal(value)
+  }, [value])
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current !== null) {
+        clearTimeout(debounceRef.current)
+      }
+    }
+  }, [])
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = Number(e.target.value)
+    setLocalVal(v)
+
+    if (debounceRef.current !== null) {
+      clearTimeout(debounceRef.current)
+    }
+
+    debounceRef.current = window.setTimeout(() => {
+      debounceRef.current = null
+      onChange(v)
+    }, 50)
+  }
+
+  return (
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={step}
+      value={localVal}
+      disabled={disabled}
+      onChange={handleChange}
+      className={className}
+      style={style}
+    />
+  )
 }
 
 export function ModelSettingsPanel() {
@@ -332,14 +397,13 @@ export function ModelSettingsPanel() {
             <span className="text-xs text-content-tertiary whitespace-nowrap">≈ {fmtCtx(draftCtx)} context</span>
           </div>
         </div>
-        <input
-          type="range"
+        <DebouncedSlider
           min={MIN_CTX}
           max={MAX_CTX}
           step={1024}
           value={draftCtx}
           disabled={loading || reloading}
-          onChange={(e) => setDraftCtx(Number(e.target.value))}
+          onChange={setDraftCtx}
           className="w-full accent-red-700 disabled:opacity-40"
           style={{ cursor: reloading || loading ? 'not-allowed' : 'pointer' }}
         />
@@ -380,11 +444,11 @@ export function ModelSettingsPanel() {
               <span className="text-xs text-content-secondary">Temperature</span>
               <span className="text-xs text-content-secondary font-mono">{draftTemp.toFixed(2)}</span>
             </div>
-            <input
-              type="range" min={0} max={2} step={0.05}
+            <DebouncedSlider
+              min={0} max={2} step={0.05}
               value={draftTemp}
               disabled={loading || reloading}
-              onChange={(e) => setDraftTemp(Number(e.target.value))}
+              onChange={setDraftTemp}
               className="w-full accent-red-700 disabled:opacity-40"
               style={{ cursor: loading || reloading ? 'not-allowed' : 'pointer' }}
             />
@@ -400,11 +464,11 @@ export function ModelSettingsPanel() {
               <span className="text-xs text-content-secondary">Top P</span>
               <span className="text-xs text-content-secondary font-mono">{draftTopP.toFixed(2)}</span>
             </div>
-            <input
-              type="range" min={0} max={1} step={0.01}
+            <DebouncedSlider
+              min={0} max={1} step={0.01}
               value={draftTopP}
               disabled={loading || reloading}
-              onChange={(e) => setDraftTopP(Number(e.target.value))}
+              onChange={setDraftTopP}
               className="w-full accent-red-700 disabled:opacity-40"
               style={{ cursor: loading || reloading ? 'not-allowed' : 'pointer' }}
             />
@@ -442,11 +506,11 @@ export function ModelSettingsPanel() {
               <span className="text-xs text-content-secondary">Repeat Penalty</span>
               <span className="text-xs text-content-secondary font-mono">{draftRepeatPenalty.toFixed(2)}</span>
             </div>
-            <input
-              type="range" min={1.0} max={1.5} step={0.01}
+            <DebouncedSlider
+              min={1.0} max={1.5} step={0.01}
               value={draftRepeatPenalty}
               disabled={loading || reloading}
-              onChange={(e) => setDraftRepeatPenalty(Number(e.target.value))}
+              onChange={setDraftRepeatPenalty}
               className="w-full accent-red-700 disabled:opacity-40"
               style={{ cursor: loading || reloading ? 'not-allowed' : 'pointer' }}
             />
