@@ -344,7 +344,7 @@ export class McpServerManager extends EventEmitter {
 
       const client = new Client(
         { name: 'desktop-intelligence', version: '1.0.0' },
-        { capabilities: { tools: {} } },
+        { capabilities: {} },
       )
 
       await this._withTimeout(

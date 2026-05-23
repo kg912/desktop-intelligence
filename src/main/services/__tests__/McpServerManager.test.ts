@@ -4,8 +4,8 @@ import type { McpServerSettings } from '../../../shared/types'
 
 const { fsMock, sdkMocks } = vi.hoisted(() => {
   const fsMock = {
-    existsSync:    vi.fn<[string], boolean>().mockReturnValue(false),
-    readFileSync:  vi.fn<[string, string], string>().mockReturnValue('{}'),
+    existsSync:    vi.fn<(path: string) => boolean>().mockReturnValue(false),
+    readFileSync:  vi.fn<(path: string, options?: any) => string>().mockReturnValue('{}'),
     writeFileSync: vi.fn(),
   }
   const sdkMocks = {
