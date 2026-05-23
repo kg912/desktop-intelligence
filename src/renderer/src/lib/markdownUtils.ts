@@ -403,3 +403,36 @@ export function prepareUserContent(raw: string): string {
   }
   return out.join('\n')
 }
+
+/**
+ * Splits a markdown answer string by blank lines (\n\n) outside active code blocks,
+ * allowing the renderer to memoize completed blocks and only re-parse the growing active one.
+ */
+export function splitMarkdownIntoBlocks(markdown: string): string[] {
+  if (!markdown) return []
+  const lines = markdown.split('\n')
+  const blocks: string[] = []
+  let currentBlock: string[] = []
+  let inCodeBlock = false
+
+  for (const line of lines) {
+    if (/^\s*`{3,}/.test(line)) {
+      inCodeBlock = !inCodeBlock
+    }
+
+    if (!inCodeBlock && line.trim() === '') {
+      if (currentBlock.length > 0) {
+        blocks.push(currentBlock.join('\n'))
+        currentBlock = []
+      }
+    } else {
+      currentBlock.push(line)
+    }
+  }
+
+  if (currentBlock.length > 0) {
+    blocks.push(currentBlock.join('\n'))
+  }
+
+  return blocks
+}

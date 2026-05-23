@@ -959,6 +959,19 @@ export class ChatService {
       if (!wc.isDestroyed()) wc.send(channel, data);
     };
 
+    let accumulatedChunks: string[] = [];
+    let lastFlushTime = Date.now();
+    const FLUSH_INTERVAL = 50; // ms
+
+    const flushChunkBuffer = (): void => {
+      if (accumulatedChunks.length > 0) {
+        const consolidated = accumulatedChunks.join("");
+        send(IPC_CHANNELS.CHAT_STREAM_CHUNK, consolidated);
+        accumulatedChunks = [];
+        lastFlushTime = Date.now();
+      }
+    };
+
     let currentMessages = [...builtMessages];
 
     // Accumulates the full raw stream output across all search loops.
@@ -1445,6 +1458,7 @@ export class ChatService {
 
                 this.abort();
                 loopAborted = true;
+                flushChunkBuffer();
 
                 send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: midQuery });
 
@@ -1535,7 +1549,11 @@ export class ChatService {
               if (!pendingToolCalls.size && !hasOpenToolCallTag) {
                 if (chunkToSend.trim() || hasNonWhitespaceContent) {
                   hasNonWhitespaceContent = true;
-                  send(IPC_CHANNELS.CHAT_STREAM_CHUNK, chunkToSend);
+                  accumulatedChunks.push(chunkToSend);
+                  const now = Date.now();
+                  if (now - lastFlushTime >= FLUSH_INTERVAL) {
+                    flushChunkBuffer();
+                  }
                 }
               }
               lineBuffer += chunkToSend;
@@ -1566,6 +1584,7 @@ export class ChatService {
             if (ndjsonDone) break;
           }
         }
+        flushChunkBuffer();
         if (DEBUG)
           console.log(
             `[Debug][ChatService][ReaderExit] loopAborted=${loopAborted} toolCallIntercepted=${toolCallIntercepted} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} totalTokens=${totalTokens}`,
@@ -1877,6 +1896,7 @@ export class ChatService {
       send(IPC_CHANNELS.CHAT_STREAM_END, stats);
       return;
     } finally {
+      flushChunkBuffer();
       this.controller = null;
       // 5i — session_end capture + flush
       this._obsCapture({

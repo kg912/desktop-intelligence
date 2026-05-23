@@ -982,3 +982,45 @@ describe('deduplicateFencedCodeBlocks', () => {
     expect(answer.split('plt.plot').length - 1).toBe(1)
   })
 })
+
+// ── Suite: splitMarkdownIntoBlocks ──────────────────────────────────────────
+
+import { splitMarkdownIntoBlocks } from '../markdownUtils'
+
+describe('splitMarkdownIntoBlocks', () => {
+  it('returns empty array for empty inputs', () => {
+    expect(splitMarkdownIntoBlocks('')).toEqual([])
+  })
+
+  it('splits simple paragraphs by blank lines', () => {
+    const md = 'Hello world\n\nThis is paragraph two.\n\nAnd three.'
+    const blocks = splitMarkdownIntoBlocks(md)
+    expect(blocks).toEqual([
+      'Hello world',
+      'This is paragraph two.',
+      'And three.'
+    ])
+  })
+
+  it('does not split inside fenced code blocks', () => {
+    const md = 'Paragraph one\n\n```python\ndef test():\n    print("line 1")\n\n    print("line 2")\n```\n\nParagraph two'
+    const blocks = splitMarkdownIntoBlocks(md)
+    expect(blocks).toEqual([
+      'Paragraph one',
+      '```python\ndef test():\n    print("line 1")\n\n    print("line 2")\n```',
+      'Paragraph two'
+    ])
+  })
+
+  it('handles multiple code blocks and standard paragraphs', () => {
+    const md = 'Start\n\n```js\nconsole.log(1)\n```\n\nMiddle\n\n```html\n<div>\n\n</div>\n```\n\nEnd'
+    const blocks = splitMarkdownIntoBlocks(md)
+    expect(blocks).toEqual([
+      'Start',
+      '```js\nconsole.log(1)\n```',
+      'Middle',
+      '```html\n<div>\n\n</div>\n```',
+      'End'
+    ])
+  })
+})

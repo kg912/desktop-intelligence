@@ -43,6 +43,7 @@ import {
   isValidMermaidSyntax,
   escapeCurrencyDollars,
   prepareUserContent,
+  splitMarkdownIntoBlocks,
 } from '../../lib/markdownUtils'
 import { ChatIdCtx } from '../layout/ChatArea'
 
@@ -287,8 +288,8 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   if (!svg) {
     return (
       <div
-        className="my-4 rounded-xl border border-surface-border/60 px-4 py-6 flex justify-center"
-        style={{ background: '#141414' }}
+        className="my-4 rounded-xl border border-surface-border/60 flex items-center justify-center"
+        style={{ background: '#141414', minHeight: '280px' }}
       >
         <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
       </div>
@@ -674,7 +675,7 @@ function EchartsBlock({ code }: EchartsBlockProps) {
         </div>
       ) : !renderOption ? (
         // Shown while: (a) still streaming/debouncing, (b) idle-scheduled, (c) error
-        <div className="px-4 py-6 flex justify-center" style={{ height: '80px' }}>
+        <div className="flex items-center justify-center" style={{ height: '360px' }}>
           <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
         </div>
       ) : (
@@ -924,7 +925,7 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
 
       {/* Body */}
       {(running || (!imageBase64 && !error && (isStreaming || Boolean(code)))) ? (
-        <div className="px-4 py-6 flex items-center justify-center gap-3" style={{ minHeight: '80px' }}>
+        <div className="px-4 py-6 flex items-center justify-center gap-3" style={{ minHeight: '300px' }}>
           <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
           <span className="text-xs text-content-muted">{running ? 'Running Python…' : 'Rendering…'}</span>
         </div>
@@ -1107,6 +1108,36 @@ function CodeBlock({ className, children }: CodeProps) {
   )
 }
 
+interface MarkdownBlockProps {
+  content: string
+  isLast: boolean
+  isStreaming: boolean
+  components: Components
+}
+
+const MarkdownBlock = memo(
+  function MarkdownBlock({ content, isLast, isStreaming, components }: MarkdownBlockProps) {
+    return (
+      <StreamingCtx.Provider value={isStreaming}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex]}
+          components={components}
+        >
+          {content}
+        </ReactMarkdown>
+      </StreamingCtx.Provider>
+    )
+  },
+  (prev, next) => {
+    return (
+      prev.content === next.content &&
+      prev.isLast === next.isLast &&
+      prev.isStreaming === next.isStreaming
+    )
+  }
+)
+
 // ----------------------------------------------------------------
 // Component map — created ONCE per MarkdownRenderer instance.
 //
@@ -1228,6 +1259,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStre
   // Escape currency dollar signs ($164.65 → \$164.65) before remarkMath sees
   // the content, so price strings are never fed to KaTeX as inline math.
   const answer = useMemo(() => escapeCurrencyDollars(rawAnswer), [rawAnswer])
+  const answerBlocks = useMemo(() => splitMarkdownIntoBlocks(answer), [answer])
   const hasThought = thought.length > 0
 
   // buildComponents() has no deps — created once, never recreated.
@@ -1278,14 +1310,21 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStre
       )}
 
       {/* ── Main answer ───────────────────────────────────────── */}
-      {answer && (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[rehypeKatex]}
-          components={components}
-        >
-          {answer}
-        </ReactMarkdown>
+      {answerBlocks.length > 0 && (
+        <div className="space-y-4">
+          {answerBlocks.map((block, index) => {
+            const isLastBlock = index === answerBlocks.length - 1
+            return (
+              <MarkdownBlock
+                key={index}
+                content={block}
+                isLast={isLastBlock}
+                isStreaming={isStreaming && isLastBlock}
+                components={components}
+              />
+            )
+          })}
+        </div>
       )}
 
       {/* Blinking cursor while streaming (shown during thinking OR answer) */}

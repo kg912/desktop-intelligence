@@ -35,10 +35,13 @@ function DebouncedSlider({
   style
 }: DebouncedSliderProps) {
   const [localVal, setLocalVal] = useState(value)
+  const isDraggingRef = useRef(false)
   const debounceRef = useRef<number | null>(null)
 
   useEffect(() => {
-    setLocalVal(value)
+    if (!isDraggingRef.current) {
+      setLocalVal(value)
+    }
   }, [value])
 
   useEffect(() => {
@@ -63,6 +66,19 @@ function DebouncedSlider({
     }, 50)
   }
 
+  const handleStart = () => {
+    isDraggingRef.current = true
+  }
+
+  const handleEnd = () => {
+    isDraggingRef.current = false
+    if (debounceRef.current !== null) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+    onChange(localVal)
+  }
+
   return (
     <input
       type="range"
@@ -72,6 +88,10 @@ function DebouncedSlider({
       value={localVal}
       disabled={disabled}
       onChange={handleChange}
+      onMouseDown={handleStart}
+      onMouseUp={handleEnd}
+      onTouchStart={handleStart}
+      onTouchEnd={handleEnd}
       className={className}
       style={style}
     />

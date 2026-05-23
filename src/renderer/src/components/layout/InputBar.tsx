@@ -91,6 +91,8 @@ export const InputBar = memo(function InputBar({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const resizeRafRef = useRef<number | null>(null)
+  const prevTextLengthRef = useRef(0)
+  const prevNewlineCountRef = useRef(0)
 
   // Inject @keyframes once into document.head
   useEffect(() => {
@@ -132,18 +134,40 @@ export const InputBar = memo(function InputBar({
   const resize = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
+
     if (resizeRafRef.current !== null) {
       cancelAnimationFrame(resizeRafRef.current)
     }
+
+    const currentText = el.value
+    const prevLength = prevTextLengthRef.current
+    const prevNewlines = prevNewlineCountRef.current
+    const newlines = (currentText.match(/\n/g) || []).length
+
+    prevTextLengthRef.current = currentText.length
+    prevNewlineCountRef.current = newlines
+
+    // Only reset height to MIN to measure a potential shrink if:
+    // - Text was deleted/shrunk in length
+    // - Newlines decreased
+    const needsShrinkCheck = currentText.length < prevLength || newlines < prevNewlines || currentText === ''
+
     resizeRafRef.current = requestAnimationFrame(() => {
       resizeRafRef.current = null
       const prevHeight = el.style.height
-      el.style.height = `${MIN_TEXTAREA_HEIGHT}px`
+
+      if (needsShrinkCheck) {
+        // Reset height to MIN to measure the true scrollHeight (shrink)
+        el.style.height = `${MIN_TEXTAREA_HEIGHT}px`
+      }
+
       const scrollH = el.scrollHeight
       const targetHeight = `${Math.min(scrollH, MAX_TEXTAREA_HEIGHT)}px`
+
       if (prevHeight !== targetHeight) {
         el.style.height = targetHeight
-      } else {
+      } else if (needsShrinkCheck) {
+        // Restore original height if no change after shrink reset
         el.style.height = prevHeight
       }
     })
