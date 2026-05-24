@@ -29,25 +29,29 @@ function TabItem({
     <button
       onClick={onClick}
       className={cn(
-        "group relative flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg cursor-pointer",
-        "transition-colors duration-100 text-left",
+        "group relative flex items-center gap-2.5 w-full px-3 py-[11px] rounded-lg cursor-pointer",
+        "text-left overflow-hidden",
         active
           ? "bg-accent-950/60 border border-accent-900/40"
-          : "hover:bg-surface-hover border border-transparent",
+          : "border border-transparent bg-transparent before:content-[''] before:absolute before:inset-0 before:bg-surface-hover before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-100 before:pointer-events-none before:rounded-lg before:z-0 before:will-change-[opacity]",
       )}
     >
       <span
         className={cn(
-          "flex-shrink-0 w-3.5 h-3.5",
-          active ? "text-accent-500" : "text-content-muted",
+          "relative z-10 flex-shrink-0 w-3.5 h-3.5",
+          active
+            ? "text-accent-500"
+            : "text-content-muted group-hover:text-content-secondary transition-colors duration-100",
         )}
       >
         {icon}
       </span>
       <span
         className={cn(
-          "text-sm font-medium",
-          active ? "text-content-primary" : "text-content-secondary",
+          "relative z-10 text-sm font-medium",
+          active
+            ? "text-content-primary"
+            : "text-content-secondary group-hover:text-content-primary transition-colors duration-100",
         )}
       >
         {label}
@@ -138,7 +142,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
           </button>
         </div>
         {/* Nav items — same top offset as content panel */}
-        <nav className="space-y-0.5 px-2" style={{ paddingTop: 160 }}>
+        <nav className="px-2" style={{ paddingTop: 160 }}>
           <TabItem
             icon={<Settings size={15} />}
             label="Model"

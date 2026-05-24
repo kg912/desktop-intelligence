@@ -63,23 +63,23 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
     <div
       onClick={() => onSelect(chat.id)}
       className={cn(
-        'group relative flex items-start gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer',
-        'transition-colors duration-100',
+        'group relative flex items-start gap-2.5 px-3 py-[11px] rounded-lg cursor-pointer',
+        'text-left overflow-hidden',
         isActive
           ? 'bg-accent-950/60 border border-accent-900/40'
-          : 'hover:bg-surface-hover border border-transparent'
+          : "border border-transparent bg-transparent before:content-[''] before:absolute before:inset-0 before:bg-surface-hover before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-100 before:pointer-events-none before:rounded-lg before:z-0 before:will-change-[opacity]"
       )}
     >
       <MessageSquare
         className={cn(
-          'mt-0.5 flex-shrink-0 w-3.5 h-3.5',
-          isActive ? 'text-accent-500' : 'text-content-muted'
+          'relative z-10 mt-0.5 flex-shrink-0 w-3.5 h-3.5',
+          isActive ? 'text-accent-500' : 'text-content-muted group-hover:text-content-secondary transition-colors duration-100'
         )}
       />
-      <div className="flex-1 min-w-0">
+      <div className="relative z-10 flex-1 min-w-0">
         <p className={cn(
           'text-sm truncate font-medium leading-tight',
-          isActive ? 'text-content-primary' : 'text-content-secondary'
+          isActive ? 'text-content-primary' : 'text-content-secondary group-hover:text-content-primary transition-colors duration-100'
         )}>
           {chat.title}
         </p>
@@ -91,7 +91,7 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
       {/* Delete button — visible on group hover via CSS */}
       <button
         onClick={handleDelete}
-        className="absolute right-2 top-1/2 -translate-y-1/2
+        className="absolute right-2 top-1/2 -translate-y-1/2 z-20
                    p-1 rounded-md
                    opacity-0 group-hover:opacity-100
                    text-content-muted hover:text-red-400
@@ -122,7 +122,7 @@ function ChatGroup({
       <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest uppercase text-content-muted">
         {label}
       </p>
-      <div className="space-y-0.5">
+      <div>
         {chats.map((chat) => (
           <ChatItem
             key={chat.id}
