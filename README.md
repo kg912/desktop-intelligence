@@ -148,6 +148,16 @@ A toast pill confirms how many tokens were freed. The context bar resets and the
 
 ---
 
+### Observability Logs
+
+![Observability logs in debug settings](app_images/observability_logs.png)
+
+Desktop Intelligence features a complete session-tracing observability system. Enabled from the Settings panel under the Debug tab, this system compiles deep traces for each conversation. Every log tracks the raw system prompt, RAG retrieved context, model thinking blocks, tool calls and their results, messages sent, and the final answer.
+
+With the optional image capture setting, rendered charts and base64 images from the chat are captured and saved as individual files alongside a linked Markdown log of the session. Logs are stored 100% locally on your machine, ensuring full privacy while providing full transparency into the inner workings of your models.
+
+---
+
 ## Quick Start (Development)
 
 > **End users: see [INSTALLATION.md](INSTALLATION.md) instead.**
@@ -187,6 +197,7 @@ The packaged app outputs to `dist/Desktop Intelligence-<version>-arm64.dmg`.
 | Web search          | Brave Search API (optional MCP tool)                             |
 | PDF parsing         | pdf-parse                                                        |
 | Packaging           | electron-builder (macOS arm64 DMG)                               |
+| Observability       | Session tracer writing plain and image logs locally              |
 
 ---
 
@@ -233,6 +244,6 @@ Key sentinel log lines:
 
 ---
 
-_2.2.0-alpha-6 — 2026-04-21_
+_2.6.0-alpha-6 (2026-05-24)_
 
 Built with [Claude Code](https://claude.ai/claude-code)
