@@ -154,9 +154,22 @@ app.whenReady().then(async () => {
   // handler" and crashes the main process.
   registerIpcHandlers(() => mainWindow?.webContents ?? null)
 
-  // App restart — save is already handled by SETTINGS_SAVE_BACKEND before this fires.
-  // Shuts down the LMS daemon cleanly then relaunches the app.
+  // ── Fullscreen state bridge ───────────────────────────────────
+  // Renderer needs to know fullscreen state so TopBar can conditionally
+  // add padding for the macOS traffic light buttons.
   const { ipcMain } = await import('electron')
+
+  ipcMain.handle('window:isFullscreen', () => mainWindow?.isFullscreen() ?? false)
+
+  // Forward enter/leave fullscreen events to the renderer
+  app.on('browser-window-created', (_, win) => {
+    win.on('enter-full-screen', () => {
+      win.webContents.send('window:fullscreenChange', true)
+    })
+    win.on('leave-full-screen', () => {
+      win.webContents.send('window:fullscreenChange', false)
+    })
+  })
   ipcMain.handle(IPC_CHANNELS.APP_RESTART, async () => {
     try {
       await lmsDaemonManager.shutdown()

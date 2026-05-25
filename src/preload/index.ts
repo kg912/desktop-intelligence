@@ -232,6 +232,16 @@ const api = {
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
 
+  // ── Window state ─────────────────────────────────────────────
+  isFullscreen: (): Promise<boolean> =>
+    ipcRenderer.invoke('window:isFullscreen'),
+
+  onFullscreenChange: (cb: (isFullscreen: boolean) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, val: boolean): void => cb(val)
+    ipcRenderer.on('window:fullscreenChange', h)
+    return () => ipcRenderer.removeListener('window:fullscreenChange', h)
+  },
+
   // Electron 32+ removed File.path from the renderer — use webUtils.getPathForFile
   // bridged through the preload instead. Called synchronously before IPC send.
   getFilePath: (file: File): string => webUtils.getPathForFile(file),

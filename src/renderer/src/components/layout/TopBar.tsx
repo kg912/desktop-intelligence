@@ -44,6 +44,14 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
   const [isNvidia,    setIsNvidia]    = useState(false)
   const [isOllama,    setIsOllama]    = useState(false)
   const [isOpenRouter, setIsOpenRouter] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    // Track fullscreen so we know whether to leave room for macOS traffic lights
+    window.api.isFullscreen?.().then(setIsFullscreen).catch(() => {})
+    const unsub = window.api.onFullscreenChange?.(setIsFullscreen)
+    return () => { unsub?.() }
+  }, [])
 
   useEffect(() => {
     window.api.getBackendSettings()
@@ -130,7 +138,11 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
   }
 
   return (
-    <div className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${sidebarCollapsed ? 'pl-4 pr-8' : 'px-8'}`}>
+    <div className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${
+      sidebarCollapsed
+        ? isFullscreen ? 'pl-4 pr-8' : 'pl-[80px] pr-8'
+        : 'px-8'
+    }`}>
 
       {/* Left: sidebar toggle (collapsed only) + model name + reload button */}
       <div className="no-drag flex items-center gap-1.5">

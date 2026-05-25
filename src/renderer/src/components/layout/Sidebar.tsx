@@ -193,14 +193,6 @@ export function Sidebar({
             <span className="no-drag text-[13px] font-semibold text-content-secondary tracking-wide">
               Chats
             </span>
-            <button
-              onClick={onToggle}
-              className="no-drag p-1.5 rounded-lg text-content-tertiary
-                         hover:text-content-secondary hover:bg-surface-hover
-                         transition-colors duration-100"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
           </div>
 
           {/* ── New Chat button ── */}
