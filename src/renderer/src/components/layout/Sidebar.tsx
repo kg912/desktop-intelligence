@@ -278,21 +278,7 @@ export function Sidebar({
         </div>
       </aside>
 
-      {/* Collapsed toggle button — floats when sidebar is closed */}
-      {collapsed && (
-        <button
-          onClick={onToggle}
-          className="absolute left-3 top-[54px] z-10
-                     p-1.5 rounded-lg
-                     bg-surface-DEFAULT border border-surface-border
-                     text-content-tertiary hover:text-content-secondary
-                     hover:bg-surface-hover
-                     transition-colors duration-100
-                     no-drag"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
-      )}
+      {/* Collapsed toggle button removed — now lives in TopBar */}
     </>
   )
 }

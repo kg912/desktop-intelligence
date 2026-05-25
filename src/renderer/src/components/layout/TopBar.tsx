@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSignals } from '@preact/signals-react/runtime'
-import { Zap, RotateCw } from 'lucide-react'
+import { Zap, RotateCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
 
 const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
@@ -20,9 +20,10 @@ interface TopBarProps {
   activeChatId:      string | null
   onCompactComplete: () => void
   sidebarCollapsed?: boolean
+  onSidebarToggle?:  () => void
 }
 
-export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false }: TopBarProps) {
+export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle }: TopBarProps) {
   useSignals()
   const {
     selectedModel,
@@ -129,10 +130,24 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
   }
 
   return (
-    <div className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${sidebarCollapsed ? 'pl-20 pr-8' : 'px-8'}`}>
+    <div className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${sidebarCollapsed ? 'pl-4 pr-8' : 'px-8'}`}>
 
-      {/* Left: model name + reload button */}
+      {/* Left: sidebar toggle (collapsed only) + model name + reload button */}
       <div className="no-drag flex items-center gap-1.5">
+        {/* Sidebar toggle — ChevronRight when collapsed, ChevronLeft when expanded */}
+        {onSidebarToggle && (
+          <button
+            onClick={onSidebarToggle}
+            className="p-1.5 rounded-lg text-content-tertiary
+                       hover:text-content-secondary hover:bg-surface-hover
+                       transition-colors duration-100 mr-1"
+            title={sidebarCollapsed ? 'Open sidebar' : 'Close sidebar'}
+          >
+            {sidebarCollapsed
+              ? <ChevronRight className="w-4 h-4" />
+              : <ChevronLeft className="w-4 h-4" />}
+          </button>
+        )}
         <div className="flex items-center gap-1.5">
           <Zap className="w-3 h-3 text-accent-500" />
           <span className="text-[12px] font-mono text-content-tertiary tracking-wide truncate max-w-[360px]">

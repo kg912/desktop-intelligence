@@ -372,7 +372,7 @@ export function Layout() {
               />
             )}
 
-            <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} sidebarCollapsed={sidebarCollapsed} />
+            <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={() => setSidebarCollapsed((v) => !v)} />
 
             <ChatArea
               ref={chatAreaRef}
