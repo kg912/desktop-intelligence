@@ -222,6 +222,13 @@ const api = {
   obsCaptureArtifact: (event: ObsEvent): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_CAPTURE_ARTIFACT, event),
 
+  // ── Suggestion cards ─────────────────────────────────────────
+  getSuggestions: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_SUGGESTIONS),
+
+  saveSuggestions: (cards: string[]): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE_SUGGESTIONS, cards),
+
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
 

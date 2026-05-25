@@ -6,61 +6,7 @@ import { MessageBubble } from '../chat/MessageBubble'
 import { CompactToast } from '../chat/CompactToast'
 import { useModelRuntime } from '../../store/ModelStore'
 import { streamingBlocks, completedMessages, streamingMessage } from '../../signals/chatSignals'
-import logoWelcome from '../../assets/logo-welcome.png'
-
-// ----------------------------------------------------------------
-// Empty state — CSS animations so they work in all environments
-// ----------------------------------------------------------------
-const SUGGESTIONS = [
-  'Explain the math behind transformer self-attention',
-  'Write a Rust async file watcher using tokio',
-  'Compare RLHF vs DPO for fine-tuning LLMs',
-  'Design a RAG pipeline for a 10M-document corpus',
-]
-
-function EmptyState({ onSuggest }: { onSuggest: (s: string) => void }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full px-8 select-none">
-      {/* Hero — CSS fade-in, no Framer Motion initial:0 */}
-      <div className="mb-8 flex flex-col items-center gap-4 animate-fade-in">
-        <img
-          src={logoWelcome}
-          alt="Desktop Intelligence"
-          className="w-14 h-14"
-          draggable={false}
-        />
-        <div className="text-center">
-          <h1 className="text-xl font-semibold text-content-primary tracking-tight">
-            Desktop Intelligence
-          </h1>
-          <p className="text-sm text-content-tertiary mt-1">
-            One Interface. Every model.
-          </p>
-        </div>
-      </div>
-
-      {/* Suggestion grid */}
-      <div className="grid grid-cols-2 gap-2 w-full max-w-xl animate-slide-up">
-        {SUGGESTIONS.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => onSuggest(s)}
-            style={{ animationDelay: `${i * 60}ms` }}
-            className="text-left px-4 py-3 rounded-xl animate-fade-in
-                       bg-surface-DEFAULT hover:bg-surface-hover active:bg-surface-active
-                       border border-surface-border hover:border-surface-border/80
-                       text-[13px] text-content-secondary hover:text-content-primary
-                       transition-all duration-150 leading-snug
-                       focus:outline-none focus:ring-1 focus:ring-accent-900/50
-                       no-drag"
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
+import { EmptyState } from './EmptyState'
 
 // ----------------------------------------------------------------
 // ChatArea

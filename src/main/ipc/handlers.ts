@@ -922,6 +922,25 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     hasEnvKey: !!(process.env.BRAVE_SEARCH_API_KEY?.trim()),
   }))
 
+  // ── settings:getSuggestions / settings:saveSuggestions ───────────
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_SUGGESTIONS, async (): Promise<string[]> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    return s.suggestionCards ?? []   // [] means "use client-side defaults"
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_SAVE_SUGGESTIONS,
+    async (_, cards: string[]): Promise<void> => {
+      const { writeSettings } = await import('../services/SettingsStore')
+      // Only persist non-empty, trimmed strings — max 4
+      const clean = cards
+        .filter((c) => typeof c === 'string' && c.trim().length > 0)
+        .slice(0, 4)
+      writeSettings({ suggestionCards: clean })
+    }
+  )
+
   // ── settings:getBackend / settings:saveBackend ────────────────────
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_BACKEND, async () => {
     const { readSettings } = await import('../services/SettingsStore')

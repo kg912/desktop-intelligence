@@ -265,6 +265,10 @@ export const IPC_CHANNELS = {
   SETTINGS_GET_OLLAMA_MODELS: 'settings:getOllamaModels',
   SETTINGS_GET_OPENROUTER_MODELS: 'settings:getOpenRouterModels',
 
+  // ── Suggestion cards ───────────────────────────────────────────
+  SETTINGS_GET_SUGGESTIONS:  'settings:getSuggestions',
+  SETTINGS_SAVE_SUGGESTIONS: 'settings:saveSuggestions',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
