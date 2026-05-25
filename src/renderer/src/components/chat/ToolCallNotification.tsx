@@ -163,9 +163,7 @@ export function ToolCallNotification({
               ))}
               {hasText && (
                 <pre className="text-xs font-mono text-content-secondary bg-black/30 rounded-md px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-surface-border/20 max-h-48 overflow-y-auto mt-2">
-                  {formattedContent!.length > 2000
-                    ? formattedContent!.slice(0, 2000) + '\n…'
-                    : formattedContent}
+                  {formattedContent}
                 </pre>
               )}
             </div>

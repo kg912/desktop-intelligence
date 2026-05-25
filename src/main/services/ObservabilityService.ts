@@ -80,7 +80,7 @@ interface SessionMeta {
   filePath:   string
 }
 
-const TOOL_RESULT_LIMIT = 8000
+// No truncation limit — observability logs capture full content
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -321,7 +321,7 @@ export class ObservabilityService {
       for (let i = 0; i < buf.ragChunks.length; i++) {
         const chunk = buf.ragChunks[i]
         lines.push(`[Chunk ${i} | source: ${chunk.source}]`)
-        lines.push(chunk.content.slice(0, 2000))
+        lines.push(chunk.content)
         lines.push('')
       }
     }
@@ -353,8 +353,6 @@ export class ObservabilityService {
             lines.push(`Args: ${JSON.stringify(event.args)}`)
             if (event.result === undefined) {
               lines.push('Result: [no result captured]')
-            } else if (event.result.length > TOOL_RESULT_LIMIT) {
-              lines.push(`Result: ${event.result.slice(0, TOOL_RESULT_LIMIT)}\n[… truncated at ${TOOL_RESULT_LIMIT} chars]`)
             } else {
               lines.push(`Result: ${event.result}`)
             }
@@ -433,7 +431,7 @@ export class ObservabilityService {
         const chunk = buf.ragChunks[i]
         mdLines.push(`### Chunk ${i} — ${chunk.source}`)
         mdLines.push('')
-        mdLines.push(chunk.content.slice(0, 2000))
+        mdLines.push(chunk.content)
         mdLines.push('')
       }
     }
@@ -481,15 +479,11 @@ export class ObservabilityService {
             mdLines.push('```')
             if (event.result === undefined) {
               mdLines.push('Result: [no result captured]')
-            } else if (event.result.length <= TOOL_RESULT_LIMIT) {
+            } else {
               mdLines.push('Result:')
               mdLines.push('```')
               mdLines.push(event.result)
               mdLines.push('```')
-            } else {
-              const sidecarName = `tool_result_${event.toolName}_${n}.txt`
-              await fs.writeFile(path.join(sessionDir, sidecarName), event.result, 'utf8')
-              mdLines.push(`Result: [view full result](./${sidecarName})`)
             }
             break
           }
