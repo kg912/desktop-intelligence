@@ -730,17 +730,28 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
       try {
         // ── Step 1: unload all running models ───────────────────
+        // CRITICAL: must confirm unload succeeded before proceeding to load.
+        // Silently swallowing unload errors was the root cause of double-load
+        // RAM spikes — if unload fails for any reason other than "nothing loaded",
+        // we abort rather than load a second model on top of the existing one.
         console.log('[Settings] Running: lms unload --all')
         try {
           await runLmsArgs(lmsBin, ['unload', '--all'], 15_000)
           console.log('[Settings] lms unload --all completed')
         } catch (err) {
-          // Non-fatal: "nothing loaded" errors are expected on a fresh boot.
-          console.warn('[Settings] lms unload --all warning (may be fine if nothing was loaded):',
-            (err as Error).message)
+          const msg = (err as Error).message
+          // The only safe-to-ignore failure is "nothing is loaded" — lms exits
+          // non-zero in that case with a message containing "no model" or similar.
+          // Any other failure means the old model may still be in memory: abort.
+          const isNothingLoaded = /no.*(model|loaded)|nothing.*load|not.*load/i.test(msg)
+          if (!isNothingLoaded) {
+            console.error('[Settings] lms unload --all failed — aborting reload to prevent double-load RAM spike:', msg)
+            return { success: false, error: `Failed to unload current model: ${msg}. Please unload manually in LM Studio before switching models.` }
+          }
+          console.warn('[Settings] lms unload --all: nothing was loaded (safe to continue):', msg)
         }
 
-        await new Promise((r) => setTimeout(r, 1_500))
+        await new Promise((r) => setTimeout(r, 2_500))
 
         // ── Step 2: load with requested context length (+ GPU offload flag) ─
         // lms accepts both the full HuggingFace path and the short key.
