@@ -72,9 +72,9 @@ export function resolveBraveApiKey(): string | null {
 
 // ── Page-fetch augmentation ─────────────────────────────────────────────────
 //
-// For results with very short snippets, we attempt to fetch the page directly
-// and extract plain text — giving the model substantially more context than
-// the 1-2 sentence Brave snippet alone.
+// All results are fetched unconditionally (unless on the skip list).
+// Brave snippets are 1-2 sentence SEO excerpts — low information density.
+// Full page text gives the model substantially more context.
 //
 // Domains known to return JS-shell pages or hard paywalls are skipped
 // immediately so we don't waste the 5s timeout budget on them.
@@ -113,8 +113,6 @@ function extractTextFromHtml(html: string): string {
     .trim()
     .slice(0, 3000)
 }
-
-const SNIPPET_MIN_LENGTH = 80  // below this, snippet is too short to be useful
 
 async function fetchPageText(
   url: string,
@@ -169,15 +167,9 @@ export async function augmentAndFormatResults(
 ): Promise<string> {
   if (results.length === 0) return 'No results found.'
 
-  // Identify results with weak snippets that are worth fetching
-  const fetchTargets = results
-    .map((r, i) => ({ r, i, needsFetch: r.description.length < SNIPPET_MIN_LENGTH && !shouldSkipFetch(r.url) }))
-
-  // Fetch all weak-snippet results in parallel
+  // Fetch all results in parallel — skip only blocklisted domains
   const fetched = await Promise.allSettled(
-    fetchTargets.map(t =>
-      t.needsFetch ? fetchPageText(t.r.url) : Promise.resolve(null)
-    )
+    results.map(r => fetchPageText(r.url))
   )
 
   const sanitise = (s: string): string =>
@@ -193,7 +185,7 @@ export async function augmentAndFormatResults(
         ? fetchResult.value
         : null
 
-      // Use fetched page text if snippet was weak and fetch succeeded
+      // Use fetched page text if available, fall back to Brave snippet
       const body = pageText
         ? pageText
         : sanitise(r.description)
