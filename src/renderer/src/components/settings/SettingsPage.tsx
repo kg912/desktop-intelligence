@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Settings, Globe, Info, Plug, Server, Bug } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
@@ -12,6 +12,9 @@ type SettingsTab = "model" | "websearch" | "tools" | "backend" | "debug" | "abou
 
 interface SettingsPageProps {
   onClose: () => void;
+  // Called by ModelSettingsPanel to report that a reload is in-flight,
+  // so the X button is blocked while lms unload→load is running.
+  onReloadingChange?: (reloading: boolean) => void;
 }
 
 function TabItem({
@@ -96,8 +99,20 @@ function AboutPanel() {
   );
 }
 
-export function SettingsPage({ onClose }: SettingsPageProps) {
+export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("model");
+  // Track whether ModelSettingsPanel is mid-reload so we block the X.
+  const [isReloading, setIsReloading] = useState(false);
+
+  const handleReloadingChange = useCallback((r: boolean) => {
+    setIsReloading(r);
+    onReloadingChange?.(r);
+  }, [onReloadingChange]);
+
+  const safeClose = useCallback(() => {
+    if (isReloading) return;
+    onClose();
+  }, [isReloading, onClose]);
 
   const paddingTop = tab === "about" ? 160 : tab === "tools" ? 40 : tab === "backend" ? 60 : tab === "debug" ? 60 : 60;
 
@@ -133,9 +148,13 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
             Settings
           </span>
           <button
-            onClick={onClose}
-            className="text-content-muted hover:text-white transition-colors text-lg leading-none"
-            aria-label="Close settings"
+            onClick={safeClose}
+            disabled={isReloading}
+            className={isReloading
+              ? "text-content-muted/30 cursor-not-allowed text-lg leading-none"
+              : "text-content-muted hover:text-white transition-colors text-lg leading-none"}
+            aria-label={isReloading ? "Cannot close while reloading model" : "Close settings"}
+            title={isReloading ? "Wait for model reload to finish" : undefined}
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           >
             ✕
@@ -188,7 +207,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
           className="mx-auto px-12 pb-8 w-full"
           style={{ maxWidth: 720, paddingTop }}
         >
-          {tab === "model"     && <ModelSettingsPanel />}
+          {tab === "model"     && <ModelSettingsPanel onReloadingChange={handleReloadingChange} />}
           {tab === "websearch" && <MCPSettingsPanel />}
           {tab === "tools"     && <McpToolsPanel />}
           {tab === "backend"   && <NvidiaSettingsPanel />}

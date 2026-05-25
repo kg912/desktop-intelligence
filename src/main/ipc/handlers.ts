@@ -686,9 +686,19 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── settings:reloadModel ─────────────────────────────────────────
   // Uses lms CLI: unload --all → load <id> --context-length <N> → ps to confirm.
+  // Concurrency lock: if a reload is already in-flight, reject immediately.
+  // This prevents double-loading (RAM spike) if the user triggers TopBar reload
+  // concurrently with a settings reload.
+  let reloadInFlight = false
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_RELOAD,
     async (_, payload: ReloadModelPayload): Promise<ReloadResult> => {
+      if (reloadInFlight) {
+        console.warn('[Settings] Reload already in-flight — rejecting concurrent request')
+        return { success: false, error: 'A model reload is already in progress. Please wait.' }
+      }
+      reloadInFlight = true
+      try {
       const { modelId, contextLength, gpuOffload } = payload
       console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength} gpuOffload=${gpuOffload ?? false}`)
 
@@ -784,6 +794,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         const msg = (err as Error).message
         console.error('[Settings] reload error:', msg)
         return { success: false, error: msg }
+      }
+      } finally {
+        reloadInFlight = false
       }
     }
   )

@@ -98,7 +98,13 @@ function DebouncedSlider({
   )
 }
 
-export function ModelSettingsPanel() {
+interface ModelSettingsPanelProps {
+  // Notifies parent (SettingsPage) whenever a reload starts/finishes,
+  // so the X close button can be disabled during the lms unload→load cycle.
+  onReloadingChange?: (reloading: boolean) => void;
+}
+
+export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProps) {
   const { setSelectedModel } = useModelStore()
 
   const [fetchedCtx,          setFetchedCtx]          = useState<number | null>(null)
@@ -129,6 +135,11 @@ export function ModelSettingsPanel() {
   const [isOpenRouter, setIsOpenRouter] = useState(false)
   const [nvidiaModel,  setNvidiaModel]  = useState('')
   void nvidiaModel // consumed via setNvidiaModel; display uses fetchedModel
+
+  const setReloadingWithCb = useCallback((v: boolean) => {
+    setReloading(v)
+    onReloadingChange?.(v)
+  }, [onReloadingChange])
 
   const changed = fetchedCtx !== null && (
     draftCtx           !== fetchedCtx           ||
@@ -194,7 +205,7 @@ export function ModelSettingsPanel() {
 
   const handleReload = useCallback(async () => {
     if (!changed || reloading) return
-    setReloading(true)
+    setReloadingWithCb(true)
     setResult(null)
     try {
       const res = await window.api.reloadModel({
@@ -227,13 +238,13 @@ export function ModelSettingsPanel() {
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
-      setReloading(false)
+      setReloadingWithCb(false)
     }
-  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, setSelectedModel])
+  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, setSelectedModel, setReloadingWithCb])
 
   const handleSaveOllama = useCallback(async () => {
     if (reloading) return
-    setReloading(true)
+    setReloadingWithCb(true)
     setResult(null)
     try {
       await window.api.saveBackendSettings({ ollamaModel: draftModel })
@@ -257,13 +268,13 @@ export function ModelSettingsPanel() {
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
-      setReloading(false)
+      setReloadingWithCb(false)
     }
-  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setReloadingWithCb])
 
   const handleSaveNvidia = useCallback(async () => {
     if (reloading) return
-    setReloading(true)
+    setReloadingWithCb(true)
     setResult(null)
     try {
       await window.api.saveBackendSettings({ nvidiaModel: draftModel })
@@ -289,13 +300,13 @@ export function ModelSettingsPanel() {
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
-      setReloading(false)
+      setReloadingWithCb(false)
     }
-  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setReloadingWithCb])
 
   const handleSaveOpenRouter = useCallback(async () => {
     if (reloading) return
-    setReloading(true)
+    setReloadingWithCb(true)
     setResult(null)
     try {
       await window.api.saveBackendSettings({ openrouterModel: draftModel })
@@ -319,9 +330,9 @@ export function ModelSettingsPanel() {
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
-      setReloading(false)
+      setReloadingWithCb(false)
     }
-  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt])
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setReloadingWithCb])
 
   return (
     <div className="space-y-6">
