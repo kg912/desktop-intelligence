@@ -368,7 +368,14 @@ export function Layout() {
             {mcpPermissionRequest && (
               <McpPermissionDialog
                 request={mcpPermissionRequest}
-                onDismiss={() => setMcpPermissionRequest(null)}
+                onRespond={async (response) => {
+                  try {
+                    await window.api.mcpRespondToPermission(response)
+                  } catch (err) {
+                    console.warn('[Layout] mcpRespondToPermission failed:', err)
+                  }
+                  setMcpPermissionRequest(null)
+                }}
               />
             )}
 

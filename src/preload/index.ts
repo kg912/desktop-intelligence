@@ -176,8 +176,14 @@ const api = {
   mcpRemoveServer: (name: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_REMOVE_SERVER, name),
 
-  mcpRespondToPermission: (r: { requestId: string; approved: boolean; alwaysAllow: boolean }): Promise<void> =>
+  mcpRespondToPermission: (r: import('../shared/types').McpToolPermissionResponse): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE, r),
+
+  setBypassPermissions: (bypass: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_BYPASS_PERMISSIONS_CHANGED, bypass),
+
+  setServerApprovalMode: (serverName: string, requiresApproval: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MCP_SET_SERVER_APPROVAL_MODE, { serverName, requiresApproval }),
 
   mcpSetToolEnabled: (serverName: string, toolName: string, enabled: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_SET_TOOL_ENABLED, { serverName, toolName, enabled }),

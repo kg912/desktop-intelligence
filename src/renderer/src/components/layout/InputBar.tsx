@@ -9,7 +9,7 @@ import {
   type DragEvent
 } from 'react'
 import { useSignals } from '@preact/signals-react/runtime'
-import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug } from 'lucide-react'
+import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug, Shield, ShieldOff } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
 import { isStreamingSignal } from '../../signals/chatSignals'
@@ -57,6 +57,38 @@ function AttachmentBadge({
 }
 
 // ----------------------------------------------------------------
+// Bypass permissions toggle button (exported for tests)
+// ----------------------------------------------------------------
+export function BypassPermissionsButton({
+  active,
+  onToggle,
+}: {
+  active:   boolean
+  onToggle: (next: boolean) => void
+}) {
+  return (
+    <button
+      onClick={() => onToggle(!active)}
+      title={active ? 'Permissions bypassed — click to re-enable' : 'Click to bypass all tool permissions'}
+      className={cn(
+        'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+        'text-[10px] font-medium transition-all duration-150',
+        'focus:outline-none',
+        active
+          ? 'bg-accent-950/70 text-accent-400 border border-accent-800/50'
+          : 'text-content-muted hover:text-content-secondary'
+      )}
+    >
+      {active
+        ? <ShieldOff className="w-3 h-3" />
+        : <Shield    className="w-3 h-3" />
+      }
+      <span>{active ? 'Bypassed' : 'Permissions'}</span>
+    </button>
+  )
+}
+
+// ----------------------------------------------------------------
 // InputBar
 // ----------------------------------------------------------------
 export interface InputBarProps {
@@ -88,6 +120,7 @@ export const InputBar = memo(function InputBar({
   const [localAttachments, setLocalAttachments] = useState<Attachment[]>([])
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [sizeError, setSizeError] = useState<string | null>(null)
+  const [bypassPermissions, setBypassPermissions] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const resizeRafRef = useRef<number | null>(null)
@@ -126,6 +159,13 @@ export const InputBar = memo(function InputBar({
   }, [attachments, onAttachments])
 
   const canSend = (text.trim().length > 0 || attachments.length > 0) && !disabled
+
+  const handleBypassToggle = useCallback((next: boolean) => {
+    setBypassPermissions(next)
+    window.api.setBypassPermissions(next).catch((err: unknown) =>
+      console.warn('[InputBar] setBypassPermissions failed:', err)
+    )
+  }, [])
 
   // ── Auto-resize textarea ──────────────────────────────────────
   // We throttle layout read/write to the next animation frame, keeping
@@ -435,6 +475,9 @@ export const InputBar = memo(function InputBar({
             }
             <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
           </button>
+
+          {/* Bypass permissions toggle */}
+          <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
 
           <div className="flex items-center gap-2">
             {/* MCP activity pill */}
