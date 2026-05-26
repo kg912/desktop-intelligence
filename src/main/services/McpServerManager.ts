@@ -207,11 +207,12 @@ export class McpServerManager extends EventEmitter {
 
   getServerStatus(): McpServerRuntimeInfo[] {
     return [...this.servers.values()].map((e) => ({
-      name:          e.name,
-      status:        e.status,
-      tools:         e.tools,
-      error:         e.error,
-      disabledTools: e.config.disabledTools ?? [],
+      name:             e.name,
+      status:           e.status,
+      tools:            e.tools,
+      error:            e.error,
+      disabledTools:    e.config.disabledTools ?? [],
+      requiresApproval: e.requiresApproval,
     }))
   }
 
@@ -639,11 +640,12 @@ export class McpServerManager extends EventEmitter {
     const entry = this.servers.get(name)
     if (!entry) return
     this.emit('statusChanged', {
-      name:          entry.name,
-      status:        entry.status,
-      tools:         entry.tools,
-      error:         entry.error,
-      disabledTools: entry.config.disabledTools ?? [],
+      name:             entry.name,
+      status:           entry.status,
+      tools:            entry.tools,
+      error:            entry.error,
+      disabledTools:    entry.config.disabledTools ?? [],
+      requiresApproval: entry.requiresApproval,
     } as McpServerRuntimeInfo)
   }
 

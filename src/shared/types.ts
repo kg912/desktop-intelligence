@@ -409,11 +409,12 @@ export interface McpServerSettings {
 export type McpServerStatus = 'starting' | 'running' | 'error' | 'stopped'
 
 export interface McpServerRuntimeInfo {
-  name:   string
-  status: McpServerStatus
-  tools:  string[]    // tool names exposed by this server
-  error?: string      // last error message if status === 'error'
-  disabledTools: string[] // currently disabled tools for this server
+  name:          string
+  status:        McpServerStatus
+  tools:         string[]    // tool names exposed by this server
+  error?:        string      // last error message if status === 'error'
+  disabledTools: string[]    // currently disabled tools for this server
+  requiresApproval: boolean  // whether tool calls require user approval
 }
 
 /** Tool permission request — shown as approval dialog in renderer */

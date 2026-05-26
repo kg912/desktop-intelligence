@@ -66,13 +66,14 @@ function StatusBadge({ status }: { status: McpServerRuntimeInfo['status'] }) {
 // ── Single server card ───────────────────────────────────────────
 
 interface ServerCardProps {
-  info:        McpServerRuntimeInfo
-  onRestart:   (name: string) => void
-  onRemove:    (name: string) => void
-  onToggleTool: (serverName: string, toolName: string, enabled: boolean) => void
+  info:              McpServerRuntimeInfo
+  onRestart:         (name: string) => void
+  onRemove:          (name: string) => void
+  onToggleTool:      (serverName: string, toolName: string, enabled: boolean) => void
+  onToggleApproval:  (serverName: string, requiresApproval: boolean) => void
 }
 
-function ServerCard({ info, onRestart, onRemove, onToggleTool }: ServerCardProps) {
+function ServerCard({ info, onRestart, onRemove, onToggleTool, onToggleApproval }: ServerCardProps) {
   const [expanded,   setExpanded]   = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [removing,   setRemoving]   = useState(false)
@@ -103,6 +104,30 @@ function ServerCard({ info, onRestart, onRemove, onToggleTool }: ServerCardProps
         <Plug className="w-3.5 h-3.5 text-accent-500 flex-shrink-0" />
         <span className="flex-1 text-sm font-medium text-content-primary truncate">{info.name}</span>
         <StatusBadge status={info.status} />
+        {/* Permission mode toggle */}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-1.5 ml-1"
+          title={info.requiresApproval ? 'Ask permission before each tool call — click to always allow' : 'Always allow tool calls — click to require permission'}
+        >
+          <span className="text-[10px] text-content-muted hidden sm:block">
+            {info.requiresApproval ? 'Ask' : 'Allow'}
+          </span>
+          <button
+            onClick={() => onToggleApproval(info.name, !info.requiresApproval)}
+            className={cn(
+              'relative inline-flex h-4 w-7 items-center rounded-full transition-colors duration-200 focus:outline-none flex-shrink-0',
+              info.requiresApproval ? 'bg-surface-border' : 'bg-red-700'
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform duration-200',
+                info.requiresApproval ? 'translate-x-0.5' : 'translate-x-3.5'
+              )}
+            />
+          </button>
+        </div>
         {/* Action buttons — stop propagation so they don't toggle expand */}
         <button
           onClick={(e) => { e.stopPropagation(); handleRestart() }}
@@ -556,6 +581,19 @@ export function McpToolsPanel() {
     }
   }, [refreshStatus])
 
+  const handleToggleApproval = useCallback(async (serverName: string, requiresApproval: boolean) => {
+    // Optimistic update
+    setServers(prev => prev.map(s =>
+      s.name === serverName ? { ...s, requiresApproval } : s
+    ))
+    try {
+      await window.api.setServerApprovalMode(serverName, requiresApproval)
+    } catch (err) {
+      console.error('[McpToolsPanel] Failed to toggle approval mode:', err)
+      refreshStatus()
+    }
+  }, [refreshStatus])
+
   useEffect(() => {
     refreshStatus().finally(() => setLoading(false))
 
@@ -603,6 +641,7 @@ export function McpToolsPanel() {
             onRestart={() => window.api.mcpRestartServer(s.name)}
             onRemove={() => window.api.mcpRemoveServer(s.name)}
             onToggleTool={handleToggleTool}
+            onToggleApproval={handleToggleApproval}
           />
         ))}
       </div>
