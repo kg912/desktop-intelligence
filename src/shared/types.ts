@@ -421,7 +421,8 @@ export interface McpToolPermissionRequest {
   serverName: string
   toolName:   string
   args:       Record<string, unknown>
-  requestId:  string   // UUID — used to correlate approval/denial IPC response
+  requestId:  string
+  chatId:     string   // active chat — used for session-scoped allow list key
 }
 
 export interface McpToolPermissionResponse {

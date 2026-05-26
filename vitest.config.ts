@@ -14,6 +14,9 @@ export default defineConfig({
       'src/main/**/__tests__/**/*.test.ts',
       // Renderer pure-function utilities (no React/DOM dependencies)
       'src/renderer/src/lib/__tests__/**/*.test.ts',
+      // HITL feature tests (fail with import errors until production code exists)
+      'src/tests/hitl/**/*.test.ts',
+      'src/tests/hitl/**/*.test.tsx',
     ],
     globals: true,
     // Each test file gets its own isolated module registry — critical because
