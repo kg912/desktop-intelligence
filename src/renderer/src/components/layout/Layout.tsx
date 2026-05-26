@@ -337,8 +337,15 @@ export function Layout() {
               onSelectChat={handleSelectChat}
               onNewChat={handleNewChat}
               onDeleteChat={handleDeleteChat}
-              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenSettings={() => { if (!isStreaming) setSettingsOpen(true) }}
             />
+            {/* Streaming lock — blocks all sidebar interactions while a response is in flight */}
+            {isStreaming && (
+              <div
+                className="absolute inset-0 z-40 cursor-not-allowed"
+                title="Cannot switch chats while a response is streaming"
+              />
+            )}
           </div>
 
           {/* ── Main column ── */}
