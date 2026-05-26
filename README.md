@@ -132,6 +132,36 @@ When the model decides to use an MCP tool during a conversation, the call is ren
 
 Tool invocations are handled transparently: the app sends the request to the MCP server, captures the result, and feeds it back into the model's context. The user sees a clean, structured representation of each tool call and its output.
 
+### Human In The Loop (HITL) — MCP Tool Approval
+
+Desktop Intelligence gives you complete control over what MCP tools the model can call, and when. The Human In The Loop system sits between the model and every tool invocation, letting you approve, review, or block calls before they execute. This is particularly important for tools that write files, send messages, or interact with external services — actions that can have real-world consequences and should not happen silently.
+
+**Tool approval popup during chat:**
+
+![HITL tool approval popup appearing inline during a conversation](app_images/HITL_demo_tool_permission_popup.png)
+
+When a tool call requires approval, a popup appears inline in the chat showing the tool name, the server it belongs to, and the full arguments the model intends to pass. You can approve the call to let it proceed, deny it to cancel the invocation and inform the model, or choose to allow all future calls from that server for the rest of the session. The popup is non-blocking for the rest of the UI and resolves the moment you make a choice, keeping the conversation flow as smooth as possible.
+
+**Per-server permission controls in Settings:**
+
+![Per-server HITL permission controls in Settings](app_images/HITL_demo_per_server_controls.png)
+
+Each MCP server has its own permission mode, configurable from the Settings panel. You can set a server to require approval for every tool call, allow all calls automatically, or block the server entirely. These preferences persist across sessions, so frequently used read-only servers can be trusted once while more sensitive servers always pause for review.
+
+**Per-chat override — requiring permissions for the current session:**
+
+![Chat-level button to require permissions for all MCP tools](app_images/HITL_demo_chat_require_permissions_button.png)
+
+A dedicated button in the chat toolbar lets you enforce approval for all MCP tool calls within the current conversation, regardless of the server-level setting. This is useful when you want stricter oversight for a specific task without changing your global configuration. The toggle is visible and easy to reach so you can flip it at any point mid-conversation.
+
+**Per-chat override — bypassing permissions for the current session:**
+
+![Chat-level button to bypass permissions for all MCP tools](app_images/HITL_demo_bypass_permissions_button.png)
+
+The inverse is also available. If you have a trusted server set to require approval and you want to run a long agentic task without interruption, you can bypass permission checks for the duration of the conversation. The bypass is scoped to the current chat only and resets when you start a new conversation, so your default settings are never permanently changed.
+
+---
+
 ### Context Compaction
 
 ![Context bar with Compact button enabled](app_images/context_compacting_option.png)
