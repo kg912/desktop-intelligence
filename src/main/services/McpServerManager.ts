@@ -33,8 +33,26 @@ import { isHttpMcpConfig } from '../../shared/types'
 // ── MCP tool call result ─────────────────────────────────────────
 
 export interface McpToolResult {
-  text:   string
-  images: Array<{ mimeType: string; data: string }>
+  text:    string
+  images:  Array<{ mimeType: string; data: string }>
+  userNote: string
+}
+
+export class McpDeniedError extends Error {
+  constructor(public readonly userNote: string) {
+    super('Tool call denied by user')
+    this.name = 'McpDeniedError'
+  }
+}
+
+export function buildApprovedToolResult(result: string, userNote: string): string {
+  if (!userNote) return result
+  return `[User note: "${userNote}"]\n\n${result}`
+}
+
+export function buildDeniedToolMessage(userNote: string): string {
+  const reasonLine = userNote ? `\nUser reason: "${userNote}"` : ''
+  return `Tool call denied by user.${reasonLine}\nDo not attempt this tool call again in this conversation.`
 }
 
 // ── LM Studio tool schema shape (matches BRAVE_SEARCH_TOOL in ChatService) ──
@@ -93,7 +111,9 @@ interface ServerEntry {
 
 interface PendingPermission {
   serverName: string
-  resolve:    (approved: boolean) => void
+  toolName:   string
+  chatId:     string
+  resolve:    (result: { approved: boolean; userNote: string }) => void
   timer:      ReturnType<typeof setTimeout>
 }
 
@@ -102,6 +122,8 @@ interface PendingPermission {
 export class McpServerManager extends EventEmitter {
   private servers            = new Map<string, ServerEntry>()
   private pendingPermissions = new Map<string, PendingPermission>()
+  private sessionAllowList     = new Set<string>()
+  private bypassAllPermissions = false
 
   // ── Config helpers ───────────────────────────────────────────
 
@@ -217,17 +239,15 @@ export class McpServerManager extends EventEmitter {
     serverName: string,
     toolName:   string,
     args:       Record<string, unknown>,
+    chatId:     string = '',
   ): Promise<McpToolResult> {
     const entry = this.servers.get(serverName)
     if (!entry || entry.status !== 'running' || !entry.client) {
       throw new Error(`MCP server "${serverName}" is not running`)
     }
 
-    // Permission check
-    if (entry.requiresApproval) {
-      const approved = await this._requestPermission(serverName, toolName, args)
-      if (!approved) throw new Error('Tool call denied by user')
-    }
+    const perm = await this._requestPermission(serverName, toolName, args, chatId)
+    if (!perm.approved) throw new McpDeniedError(perm.userNote)
 
     // Meta-MCP translation: if this server uses a TOOL_LIST/TOOL_CALL proxy
     // layer, the model was given expanded tool names (e.g. "TIME_SERIES_DAILY").
@@ -263,23 +283,42 @@ export class McpServerManager extends EventEmitter {
       .filter((c) => c.type === 'image' && c.data)
       .map((c) => ({ mimeType: c.mimeType ?? 'image/png', data: c.data! }))
 
-    return { text, images }
+    return { text, images, userNote: perm.userNote }
   }
 
   // ── Permission resolution (called by IPC handler) ────────────
 
-  resolvePermission(requestId: string, approved: boolean, alwaysAllow: boolean): void {
-    const pending = this.pendingPermissions.get(requestId)
+  resolvePermission(response: import('../../shared/types').McpToolPermissionResponse): void {
+    const pending = this.pendingPermissions.get(response.requestId)
     if (!pending) return
     clearTimeout(pending.timer)
-    this.pendingPermissions.delete(requestId)
-
-    if (alwaysAllow) {
+    this.pendingPermissions.delete(response.requestId)
+    if (response.approved && response.alwaysAllow === 'forever') {
+      this._persistServerApprovalMode(pending.serverName, false)
       const entry = this.servers.get(pending.serverName)
       if (entry) entry.requiresApproval = false
+    } else if (response.approved && response.alwaysAllow === 'session') {
+      this.sessionAllowList.add(`${pending.chatId}__${pending.serverName}__${pending.toolName}`)
     }
+    pending.resolve({ approved: response.approved, userNote: response.userNote })
+  }
 
-    pending.resolve(approved)
+  setBypassPermissions(bypass: boolean): void {
+    this.bypassAllPermissions = bypass
+  }
+
+  setServerApprovalMode(serverName: string, requiresApproval: boolean): void {
+    const entry = this.servers.get(serverName)
+    if (entry) entry.requiresApproval = requiresApproval
+    this._persistServerApprovalMode(serverName, requiresApproval)
+  }
+
+  drainPendingPermissions(): void {
+    for (const [id, pending] of this.pendingPermissions.entries()) {
+      clearTimeout(pending.timer)
+      pending.resolve({ approved: false, userNote: '' })
+      this.pendingPermissions.delete(id)
+    }
   }
 
   // ── Private: start one server ────────────────────────────────
@@ -292,7 +331,7 @@ export class McpServerManager extends EventEmitter {
       this.servers.set(name, {
         name, config, client: null,
         status: 'stopped', tools: [], schemas: [], error: undefined,
-        requiresApproval: false,
+        requiresApproval: config.requiresApproval ?? true,
       })
       return
     }
@@ -300,7 +339,7 @@ export class McpServerManager extends EventEmitter {
     const entry: ServerEntry = {
       name, config, client: null,
       status: 'starting', tools: [], schemas: [], error: undefined,
-      requiresApproval: false,  // permission dialog not yet implemented — allow all calls
+      requiresApproval: config.requiresApproval ?? true,
     }
     this.servers.set(name, entry)
     this._emitStatus(name)
@@ -465,23 +504,40 @@ export class McpServerManager extends EventEmitter {
 
   // ── Private: permission request ──────────────────────────────
 
-  private _requestPermission(
+  protected async _requestPermission(
     serverName: string,
     toolName:   string,
     args:       Record<string, unknown>,
-  ): Promise<boolean> {
-    const requestId = randomUUID()
+    chatId:     string,
+  ): Promise<{ approved: boolean; userNote: string }> {
+    if (this.bypassAllPermissions) return { approved: true, userNote: '' }
+    const entry = this.servers.get(serverName)
+    if (!entry?.requiresApproval) return { approved: true, userNote: '' }
+    const sessionKey = `${chatId}__${serverName}__${toolName}`
+    if (this.sessionAllowList.has(sessionKey)) return { approved: true, userNote: '' }
+    return this._awaitPermissionDialog(serverName, toolName, args, chatId)
+  }
 
-    return new Promise<boolean>((resolve) => {
+  async _awaitPermissionDialog(
+    serverName: string,
+    toolName:   string,
+    args:       Record<string, unknown>,
+    chatId:     string,
+  ): Promise<{ approved: boolean; userNote: string }> {
+    const requestId = randomUUID()
+    return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pendingPermissions.delete(requestId)
-        resolve(false) // timeout = implicit denial
+        resolve({ approved: false, userNote: '' })
       }, 60_000)
-
-      this.pendingPermissions.set(requestId, { serverName, resolve, timer })
-
-      // The handlers.ts listener on 'permissionRequest' forwards this to the renderer
-      this.emit('permissionRequest', { serverName, toolName, args, requestId })
+      this.pendingPermissions.set(requestId, {
+        serverName,
+        toolName,
+        chatId,
+        resolve,
+        timer,
+      })
+      this.emit('permissionRequest', { serverName, toolName, args, requestId, chatId })
     })
   }
 
@@ -590,6 +646,93 @@ export class McpServerManager extends EventEmitter {
       disabledTools: entry.config.disabledTools ?? [],
     } as McpServerRuntimeInfo)
   }
+
+  private _persistServerApprovalMode(serverName: string, requiresApproval: boolean): void {
+    this.readConfig().then((config) => {
+      if (config[serverName]) {
+        config[serverName].requiresApproval = requiresApproval
+        this.writeConfig(config).catch((err) =>
+          console.error('[McpServerManager] Failed to persist approval mode:', err)
+        )
+      }
+    }).catch(() => {})
+  }
 }
 
 export const mcpServerManager = new McpServerManager()
+
+export class McpServerManagerTestable extends McpServerManager {
+  // Override configPath so tests never touch the real mcp.json on disk
+  protected configPath(): string { return '' }
+
+  // Seed a fake running server entry for tests — no real process or client
+  seedServer(name: string, opts: { requiresApproval?: boolean }): void {
+    (this as unknown as { servers: Map<string, unknown> }).servers.set(name, {
+      name,
+      config: { command: 'test', enabled: true, requiresApproval: opts.requiresApproval ?? true },
+      client: null,
+      status: 'running',
+      tools: [],
+      schemas: [],
+      error: undefined,
+      requiresApproval: opts.requiresApproval ?? true,
+    })
+  }
+
+  // Queue a response for the next _awaitPermissionDialog call
+  private _nextDialogResponse: {
+    approved:    boolean
+    alwaysAllow?: 'session' | 'forever' | false
+    userNote:    string
+  } | null = null
+
+  mockNextDialogResponse(r: {
+    approved:    boolean
+    alwaysAllow?: 'session' | 'forever' | false
+    userNote:    string
+  }): void {
+    this._nextDialogResponse = r
+  }
+
+  // Override dialog to return the mocked response synchronously
+  async _awaitPermissionDialog(
+    serverName: string,
+    toolName:   string,
+    _args:      Record<string, unknown>,
+    chatId:     string,
+  ): Promise<{ approved: boolean; userNote: string }> {
+    const r = this._nextDialogResponse ?? { approved: false, userNote: '' }
+    this._nextDialogResponse = null
+    if (r.approved && r.alwaysAllow === 'forever') {
+      const entry = (this as unknown as { servers: Map<string, { requiresApproval: boolean }> }).servers.get(serverName)
+      if (entry) entry.requiresApproval = false
+    } else if (r.approved && r.alwaysAllow === 'session') {
+      this.getSessionAllowList().add(`${chatId}__${serverName}__${toolName}`)
+    }
+    return { approved: r.approved, userNote: r.userNote }
+  }
+
+  // Expose _requestPermission for direct testing
+  async testRequestPermission(
+    serverName: string,
+    toolName:   string,
+    args:       Record<string, unknown>,
+    chatId:     string,
+  ): Promise<{ approved: boolean; userNote: string }> {
+    return this._requestPermission(serverName, toolName, args, chatId)
+  }
+
+  // Accessors for private state
+  getBypassFlag(): boolean {
+    return (this as unknown as { bypassAllPermissions: boolean }).bypassAllPermissions
+  }
+  getSessionAllowList(): Set<string> {
+    return (this as unknown as { sessionAllowList: Set<string> }).sessionAllowList
+  }
+  getServerRequiresApproval(name: string): boolean {
+    return (this as unknown as { servers: Map<string, { requiresApproval: boolean }> }).servers.get(name)?.requiresApproval ?? true
+  }
+  getPendingCount(): number {
+    return (this as unknown as { pendingPermissions: Map<string, unknown> }).pendingPermissions.size
+  }
+}

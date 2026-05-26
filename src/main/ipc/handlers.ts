@@ -1147,9 +1147,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(
     IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE,
-    async (_, { requestId, approved, alwaysAllow }: { requestId: string; approved: boolean; alwaysAllow: boolean }) => {
+    async (_, response: import('../../shared/types').McpToolPermissionResponse) => {
       const { mcpServerManager } = await import('../services/McpServerManager')
-      mcpServerManager.resolvePermission(requestId, approved, alwaysAllow)
+      mcpServerManager.resolvePermission(response)
     }
   )
 
