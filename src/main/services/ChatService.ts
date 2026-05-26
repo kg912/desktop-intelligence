@@ -27,7 +27,7 @@ import {
   augmentAndFormatResults,
   resolveBraveApiKey,
 } from "./BraveSearchService";
-import { mcpServerManager } from "./McpServerManager";
+import { mcpServerManager, McpDeniedError, buildApprovedToolResult, buildDeniedToolMessage } from "./McpServerManager";
 import { BASE_SYSTEM_PROMPT } from "./SystemPromptService";
 import { countTokens } from "./tokenUtils";
 import { getCompactedSummary, clearCompactedSummary } from "./DatabaseService";
@@ -1775,8 +1775,9 @@ export class ChatService {
                     serverName,
                     mcpToolName,
                     args,
+                    payload.chatId ?? '',
                   );
-                  toolResult = mcpResult.text;
+                  toolResult = buildApprovedToolResult(mcpResult.text, mcpResult.userNote);
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                     query: uiLabel,
                     toolName,
@@ -1810,17 +1811,23 @@ export class ChatService {
                 ];
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
-                  query: uiLabel,
-                  toolName,
-                  error: errMsg,
-                });
+                const deniedContent = err instanceof McpDeniedError
+                  ? buildDeniedToolMessage(err.userNote)
+                  : `Tool failed: ${errMsg}. Use training knowledge.`;
+                // Only emit TOOL_ERROR for actual failures, not user denials
+                if (!(err instanceof McpDeniedError)) {
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
+                    query: uiLabel,
+                    toolName,
+                    error: errMsg,
+                  });
+                }
                 currentMessages = [
                   ...currentMessages,
                   {
                     role: "tool",
                     tool_call_id: id,
-                    content: `Tool failed: ${errMsg}. Use training knowledge.`,
+                    content: deniedContent,
                   } as { role: string; content: string },
                 ];
               }
@@ -1996,6 +2003,7 @@ export class ChatService {
       this.controller.abort();
       this.controller = null;
     }
+    mcpServerManager.drainPendingPermissions();
   }
 
   // ----------------------------------------------------------------

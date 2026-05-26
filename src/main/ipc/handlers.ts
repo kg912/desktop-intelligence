@@ -1153,6 +1153,22 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_BYPASS_PERMISSIONS_CHANGED,
+    async (_, bypass: boolean) => {
+      const { mcpServerManager } = await import('../services/McpServerManager')
+      mcpServerManager.setBypassPermissions(bypass)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_SET_SERVER_APPROVAL_MODE,
+    async (_, { serverName, requiresApproval }: { serverName: string; requiresApproval: boolean }) => {
+      const { mcpServerManager } = await import('../services/McpServerManager')
+      mcpServerManager.setServerApprovalMode(serverName, requiresApproval)
+    }
+  )
+
   // ── Observability ─────────────────────────────────────────────────
 
   ipcMain.handle(IPC_CHANNELS.OBS_GET_PREFS, (): DebugPrefs =>
