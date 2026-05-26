@@ -470,7 +470,7 @@ export class ObservabilityService {
             break
 
           case 'tool_call': {
-            const n = tcN++
+            tcN++
             mdLines.push(`### 🔧 Tool Call — ${event.toolName}`)
             mdLines.push('')
             mdLines.push('Args:')

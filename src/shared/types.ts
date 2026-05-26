@@ -245,6 +245,8 @@ export const IPC_CHANNELS = {
   MCP_REMOVE_SERVER:            'mcp:removeServer',
   MCP_TOOL_PERMISSION_REQUEST:  'mcp:toolPermissionRequest',   // main→renderer
   MCP_TOOL_PERMISSION_RESPONSE: 'mcp:toolPermissionResponse',  // renderer→main
+  MCP_BYPASS_PERMISSIONS_CHANGED: 'mcp:bypassPermissionsChanged',
+  MCP_SET_SERVER_APPROVAL_MODE:   'mcp:setServerApprovalMode',
   MCP_SERVER_STATUS_CHANGED:    'mcp:serverStatusChanged',     // main→renderer push
 
   // ── Observability ──────────────────────────────────────────
@@ -372,6 +374,7 @@ export interface StdioMcpServerConfig {
   args?: string[]
   env?: Record<string, string>
   disabledTools?: string[]
+  requiresApproval?: boolean
 }
 
 /**
@@ -387,6 +390,7 @@ export interface HttpMcpServerConfig {
   url: string
   headers?: Record<string, string>
   disabledTools?: string[]
+  requiresApproval?: boolean
 }
 
 export type McpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig
@@ -418,4 +422,11 @@ export interface McpToolPermissionRequest {
   toolName:   string
   args:       Record<string, unknown>
   requestId:  string   // UUID — used to correlate approval/denial IPC response
+}
+
+export interface McpToolPermissionResponse {
+  requestId:   string
+  approved:    boolean
+  alwaysAllow: 'session' | 'forever' | false
+  userNote:    string
 }

@@ -159,7 +159,7 @@ app.whenReady().then(async () => {
   // add padding for the macOS traffic light buttons.
   const { ipcMain } = await import('electron')
 
-  ipcMain.handle('window:isFullscreen', () => mainWindow?.isFullscreen() ?? false)
+  ipcMain.handle('window:isFullscreen', () => mainWindow?.isFullScreen() ?? false)
 
   // Forward enter/leave fullscreen events to the renderer
   app.on('browser-window-created', (_, win) => {
