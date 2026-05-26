@@ -69,7 +69,10 @@ export function BypassPermissionsButton({
   return (
     <button
       onClick={() => onToggle(!active)}
-      title={active ? 'Permissions bypassed — click to re-enable' : 'Click to bypass all tool permissions'}
+      title={active
+        ? 'Permissions bypassed — click to require'
+        : 'Permissions required — click to bypass'
+      }
       className={cn(
         'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
         'text-[10px] font-medium transition-all duration-150',
@@ -83,7 +86,7 @@ export function BypassPermissionsButton({
         ? <ShieldOff className="w-3 h-3" />
         : <Shield    className="w-3 h-3" />
       }
-      <span>{active ? 'Bypassed' : 'Permissions'}</span>
+      <span>{active ? 'Bypass Permissions' : 'Require Permissions'}</span>
     </button>
   )
 }
@@ -452,32 +455,35 @@ export const InputBar = memo(function InputBar({
           </button>
         </div>
 
-        {/* Helper row: thinking mode toggle (left) + mcp activity + keyboard hints (right) */}
+        {/* Helper row: mode toggles (left) + mcp activity + keyboard hints (right) */}
         <div className="px-3 pb-2.5 flex items-center justify-between">
-          {/* Thinking / Fast mode toggle */}
-          <button
-            onClick={() => setThinkingMode(thinkingMode === 'thinking' ? 'fast' : 'thinking')}
-            title={thinkingMode === 'thinking'
-              ? 'Thinking mode — click to switch to Fast'
-              : 'Fast mode — click to switch to Thinking'}
-            className={cn(
-              'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
-              'text-[10px] font-medium transition-all duration-150',
-              'focus:outline-none',
-              thinkingMode === 'thinking'
-                ? 'bg-accent-950/70 text-accent-400 border border-accent-800/50'
-                : 'text-content-muted hover:text-content-secondary'
-            )}
-          >
-            {thinkingMode === 'thinking'
-              ? <Brain className="w-3 h-3" />
-              : <Zap  className="w-3 h-3" />
-            }
-            <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
-          </button>
+          {/* Left group: mode toggles */}
+          <div className="flex items-center gap-1.5">
+            {/* Thinking / Fast mode toggle */}
+            <button
+              onClick={() => setThinkingMode(thinkingMode === 'thinking' ? 'fast' : 'thinking')}
+              title={thinkingMode === 'thinking'
+                ? 'Thinking mode — click to switch to Fast'
+                : 'Fast mode — click to switch to Thinking'}
+              className={cn(
+                'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+                'text-[10px] font-medium transition-all duration-150',
+                'focus:outline-none',
+                thinkingMode === 'thinking'
+                  ? 'bg-accent-950/70 text-accent-400 border border-accent-800/50'
+                  : 'text-content-muted hover:text-content-secondary'
+              )}
+            >
+              {thinkingMode === 'thinking'
+                ? <Brain className="w-3 h-3" />
+                : <Zap  className="w-3 h-3" />
+              }
+              <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
+            </button>
 
-          {/* Bypass permissions toggle */}
-          <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
+            {/* Bypass permissions toggle */}
+            <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
+          </div>
 
           <div className="flex items-center gap-2">
             {/* MCP activity pill */}

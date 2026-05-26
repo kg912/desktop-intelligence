@@ -5,11 +5,11 @@ import { BypassPermissionsButton } from '../../renderer/src/components/layout/In
 describe('BypassPermissionsButton', () => {
   it('renders in off state by default', () => {
     render(<BypassPermissionsButton active={false} onToggle={vi.fn()} />)
-    expect(screen.getByText('Permissions')).toBeTruthy()
+    expect(screen.getByText('Require Permissions')).toBeTruthy()
   })
   it('shows Bypassed label when active=true', () => {
     render(<BypassPermissionsButton active={true} onToggle={vi.fn()} />)
-    expect(screen.getByText('Bypassed')).toBeTruthy()
+    expect(screen.getByText('Bypass Permissions')).toBeTruthy()
   })
   it('calls onToggle with true when clicked in off state', () => {
     const onToggle = vi.fn()
