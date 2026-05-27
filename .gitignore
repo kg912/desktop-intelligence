@@ -32,3 +32,5 @@ npm-debug.log*
 scripts/perf-*.json
 nvda_plot.py
 open-router-deep-research-report.md
+
+coverage/

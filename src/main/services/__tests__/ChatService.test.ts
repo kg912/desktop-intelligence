@@ -16,7 +16,40 @@
  * network mocks and is covered by integration / manual DMG testing).
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+// Mock SettingsStore, BraveSearchService, and DatabaseService for hermetic unit tests
+export const mockReadSettings = vi.fn().mockReturnValue({})
+vi.mock('../SettingsStore', () => ({
+  readSettings: () => mockReadSettings(),
+  writeSettings: vi.fn(),
+}))
+
+export const mockResolveBraveApiKey = vi.fn()
+vi.mock('../BraveSearchService', () => ({
+  resolveBraveApiKey: () => mockResolveBraveApiKey(),
+  buildWebSearchAddendum: (loops: number) => `[Web Search Addendum: loops=${loops}]`,
+  braveSearch: vi.fn(),
+  augmentAndFormatResults: vi.fn(),
+}))
+
+export const mockGetCompactedSummary = vi.fn().mockReturnValue(null)
+vi.mock('../DatabaseService', () => ({
+  getCompactedSummary: () => mockGetCompactedSummary(),
+  clearCompactedSummary: vi.fn(),
+  saveMessage: vi.fn(),
+  getChatMessages: vi.fn().mockReturnValue([]),
+}))
+
+// Mock Electron net.fetch
+export const mockNetFetch = vi.fn()
+vi.mock('electron', () => ({
+  app: { getPath: () => '/mock/userData' },
+  net: {
+    fetch: (...args: any[]) => mockNetFetch(...args),
+  },
+}))
+
 import {
   applyThinkingPrefix,
   STOP_SEQUENCES,
@@ -27,6 +60,10 @@ import {
   CODE_FENCE_TOOL_NAMES,
   buildUnregisteredToolMessage,
   partialContentOrNull,
+  extractQueryFromCodeFenceToolCall,
+  buildOllamaMessages,
+  fetchTickerPrice,
+  chatService,
 } from '../ChatService'
 
 // ── Type alias matching the ChatService internal shape ────────────────────────
@@ -881,3 +918,631 @@ describe('partialContentOrNull', () => {
     expect(partialContentOrNull(patchedCleaned)).toBe(midStreamResult)
   })
 })
+
+// ── Suite: parseRawToolCall — Additional Formats ────────────────────────────────
+
+describe('parseRawToolCall — Additional Formats', () => {
+  it('parses Format F (Gemma 4 pipe format) with standard query object', () => {
+    const input = '<|tool_call>call:brave_web_search{"query":"gemma search"}<tool_call|>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('gemma search')
+  })
+
+  it('parses Format F (Gemma 4 pipe format) with queries array', () => {
+    const input = '<|tool_call>call:brave_web_search{"queries":["gemma array query"]}<tool_call|>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('gemma array query')
+  })
+
+  it('parses Format F (Gemma 4 pipe format) with malformed arguments gracefully', () => {
+    const input = '<|tool_call>call:brave_web_search{bad_json}<tool_call|>'
+    const result = parseRawToolCall(input)
+    expect(result).toBeNull()
+  })
+
+  it('returns null if there is no tool call match at all', () => {
+    expect(parseRawToolCall('Just a plain text response with no tool calls.')).toBeNull()
+  })
+
+  it('returns name with empty args if function name matches but no parameter parsed', () => {
+    const input = '<tool_call>brave_web_search</tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args).toEqual({})
+  })
+
+  it('returns null if tool tag is empty', () => {
+    expect(parseRawToolCall('<tool_call>  </tool_call>')).toBeNull()
+  })
+
+  it('parses Format A (XML tags)', () => {
+    const input = '<tool_call>brave_web_search<arg_key>query</arg_key><arg_value>XML query</arg_value></tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('XML query')
+  })
+
+  it('parses Format B (unquoted key=value)', () => {
+    const input = '<tool_call>brave_web_search query=unquoted_text count=5</tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('unquoted_text')
+    expect(result!.args.count).toBe('5')
+  })
+
+  it('parses Format C (quoted key="value")', () => {
+    const input = '<tool_call>brave_web_search query="quoted string" count="10"</tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('quoted string')
+    expect(result!.args.count).toBe('10')
+  })
+
+  it('parses Format D (JSON object)', () => {
+    const input = '<tool_call>brave_web_search {"query": "json query", "count": 3}</tool_call>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('brave_web_search')
+    expect(result!.args.query).toBe('json query')
+    expect(result!.args.count).toBe('3')
+  })
+})
+
+// ── Suite: extractQueryFromCodeFenceToolCall ──────────────────────────────────
+
+describe('extractQueryFromCodeFenceToolCall', () => {
+  it('extracts query from fenced code block with array payload', () => {
+    const input = '```brave_web_search\n[{"query":"cupertino weather"}]\n```'
+    expect(extractQueryFromCodeFenceToolCall(input)).toBe('cupertino weather')
+  })
+
+  it('extracts query from fenced code block with object payload', () => {
+    const input = '```brave_web_search\n{"query":"san jose news"}\n```'
+    expect(extractQueryFromCodeFenceToolCall(input)).toBe('san jose news')
+  })
+
+  it('extracts query from bare JSON array payload', () => {
+    const input = '[{"query":"bare array query"}]'
+    expect(extractQueryFromCodeFenceToolCall(input)).toBe('bare array query')
+  })
+
+  it('extracts query from bare JSON object payload', () => {
+    const input = '{"query":"bare object query"}'
+    expect(extractQueryFromCodeFenceToolCall(input)).toBe('bare object query')
+  })
+
+  it('returns null on invalid JSON payload', () => {
+    const input = '```brave_web_search\n{invalid json}\n```'
+    expect(extractQueryFromCodeFenceToolCall(input)).toBeNull()
+  })
+
+  it('returns null if query property is missing', () => {
+    const input = '{"count":5}'
+    expect(extractQueryFromCodeFenceToolCall(input)).toBeNull()
+  })
+})
+
+// ── Suite: detectMidStreamToolCall ───────────────────────────────────────────
+
+describe('detectMidStreamToolCall — Additional Cases', () => {
+  it('Case 5: Closed pipe-delimited tag', () => {
+    const buffer = 'Let me look up: <|tool_call>call:brave_web_search{"query":"pipe closed"}<tool_call|>'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('pipe closed')
+    expect(result!.cleanedBuffer).toBe('Let me look up:')
+  })
+
+  it('Case 6: Unclosed pipe-delimited tag ending in JSON', () => {
+    const buffer = '<|tool_call>call:brave_web_search{"query":"pipe unclosed"}'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('pipe unclosed')
+    expect(result!.cleanedBuffer).toBe('')
+  })
+
+  it('Case 3: Closed code fence', () => {
+    const buffer = 'Here we go:\n```brave_web_search\n{"query":"fence closed"}\n```'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('fence closed')
+    expect(result!.cleanedBuffer).toBe('Here we go:')
+  })
+
+  it('Case 4: Unclosed code fence ending in JSON', () => {
+    const buffer = '```brave_web_search\n{"query":"fence unclosed"}'
+    const result = detectMidStreamToolCall(buffer)
+    expect(result).not.toBeNull()
+    expect(result!.query).toBe('fence unclosed')
+    expect(result!.cleanedBuffer).toBe('')
+  })
+})
+
+// ── Suite: buildOllamaMessages ────────────────────────────────────────────────
+
+describe('buildOllamaMessages', () => {
+  it('translates standard tool messages using previous assistant tool_calls', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'I will call a tool.',
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'calculator__add', arguments: '{"a":1}' } }]
+      },
+      {
+        role: 'tool',
+        content: 'Result: 2',
+        tool_call_id: 'call-1'
+      }
+    ]
+
+    const result = buildOllamaMessages(messages)
+    expect(result).toHaveLength(2)
+    expect(result[0].role).toBe('assistant')
+    expect(result[1].role).toBe('tool')
+    expect(result[1].tool_name).toBe('calculator__add')
+  })
+
+  it('defaults tool_name to unknown_tool if no matching tool_call found in history', () => {
+    const messages = [
+      {
+        role: 'tool',
+        content: 'Orphaned tool result',
+        tool_call_id: 'call-unknown'
+      }
+    ]
+
+    const result = buildOllamaMessages(messages)
+    expect(result[0].tool_name).toBe('unknown_tool')
+  })
+
+  it('translates assistant messages with JSON string tool arguments into parsed JSON objects', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: '{"q":"weather"}' } }]
+      }
+    ]
+
+    const result = buildOllamaMessages(messages)
+    const tc: any = result[0].tool_calls
+    expect(tc).toHaveLength(1)
+    expect(tc[0].function.arguments).toEqual({ q: 'weather' })
+  })
+
+  it('handles assistant messages with bad JSON tool arguments safely', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: '{bad_json}' } }]
+      }
+    ]
+
+    const result = buildOllamaMessages(messages)
+    const tc: any = result[0].tool_calls
+    expect(tc[0].function.arguments).toEqual({})
+  })
+
+  it('translates user ContentPart array with base64 image data correctly', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Analyze this image: ' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0K' } },
+          { type: 'image_url', image_url: { url: 'http://example.com/external.jpg' } }
+        ]
+      }
+    ]
+
+    const result = buildOllamaMessages(messages)
+    expect(result[0].content).toBe('Analyze this image: ')
+    expect(result[0].images).toEqual(['iVBORw0K', 'http://example.com/external.jpg'])
+  })
+
+  it('passes standard text messages through cleanly', () => {
+    const messages = [{ role: 'user', content: 'Plain text user message' }]
+    const result = buildOllamaMessages(messages)
+    expect(result[0]).toEqual(messages[0])
+  })
+})
+
+// ── Suite: fetchTickerPrice ──────────────────────────────────────────────────
+
+describe('fetchTickerPrice', () => {
+  it('returns formatted ticker data on successful Yahoo Finance fetch', async () => {
+    mockNetFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        chart: {
+          result: [{
+            meta: {
+              regularMarketPrice: 220.5,
+              chartPreviousClose: 218.0,
+              regularMarketOpen: 219.0,
+              regularMarketDayHigh: 222.0,
+              regularMarketDayLow: 217.5,
+              regularMarketVolume: 12000000,
+              marketCap: 3000000000,
+              currency: 'USD',
+              exchangeName: 'NYSE',
+              preMarketPrice: 219.5,
+              postMarketPrice: 221.0,
+            }
+          }]
+        }
+      })
+    })
+
+    const result = await fetchTickerPrice('AAPL')
+    expect(result).toContain('[Ticker: AAPL | NYSE | USD]')
+    expect(result).toContain('Price:   220.50 (+1.15% vs prev close)')
+    expect(result).toContain('Pre-Mkt: 219.50')
+    expect(result).toContain('Aft-Mkt: 221.00')
+    expect(result).toContain('Volume:  12.00M')
+    expect(result).toContain('Mkt Cap: 3.00B')
+  })
+
+  it('returns failure string on HTTP non-ok status code', async () => {
+    mockNetFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    })
+
+    const result = await fetchTickerPrice('INVALID')
+    expect(result).toBe('[Ticker lookup failed for INVALID: HTTP 404]')
+  })
+
+  it('returns failure string when Yahoo Finance returns an error payload', async () => {
+    mockNetFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        chart: {
+          error: { description: 'Symbol not found' }
+        }
+      })
+    })
+
+    const result = await fetchTickerPrice('GHOST')
+    expect(result).toBe('[Ticker lookup failed for GHOST: Symbol not found]')
+  })
+
+  it('returns failure string when response has empty error payload', async () => {
+    mockNetFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        chart: {
+          error: {}
+        }
+      })
+    })
+
+    const result = await fetchTickerPrice('GHOST')
+    expect(result).toBe('[Ticker lookup failed for GHOST: unknown error]')
+  })
+
+  it('returns no-data message when meta field is missing', async () => {
+    mockNetFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        chart: {
+          result: [{}]
+        }
+      })
+    })
+
+    const result = await fetchTickerPrice('NODATA')
+    expect(result).toBe('[No data returned for NODATA]')
+  })
+
+  it('handles missing volume or volume under 1M formatting correctly', async () => {
+    mockNetFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        chart: {
+          result: [{
+            meta: {
+              regularMarketPrice: 5.5,
+              chartPreviousClose: 5.0,
+              regularMarketVolume: 500,
+              marketCap: undefined,
+            }
+          }]
+        }
+      })
+    })
+
+    const result = await fetchTickerPrice('PENNY')
+    expect(result).toContain('Volume:  500')
+    expect(result).toContain('Mkt Cap: N/A')
+  })
+
+  it('returns failure message on network / json parsing errors', async () => {
+    mockNetFetch.mockRejectedValueOnce(new Error('Network disconnected'))
+
+    const result = await fetchTickerPrice('NETERR')
+    expect(result).toBe('[Ticker lookup failed for NETERR: Network disconnected]')
+  })
+})
+
+// ── Suite: parseRawToolCall — Format F (custom arguments) ──────────────────────
+
+describe('parseRawToolCall — Format F (custom arguments)', () => {
+  it('parses custom arguments from pipe-delimited Gemma 4 JSON format', () => {
+    const input = '<|tool_call>call:brave_web_search{"queries":["oracle stock"],"count":3,"custom_key":"custom_val"}<tool_call|>'
+    const result = parseRawToolCall(input)
+    expect(result).not.toBeNull()
+    expect(result!.args.query).toBe('oracle stock')
+    expect(result!.args.count).toBe('3')
+    expect(result!.args.custom_key).toBe('custom_val')
+  })
+})
+
+// ── Suite: parseDsmlToolCalls ───────────────────────────────────────────────
+
+describe('parseDsmlToolCalls', () => {
+  it('parses normal ASCII DSML blocks with single invoke and single parameter', () => {
+    const input = '<|DSML|tool_calls>\n<|DSML|invoke name="brave_web_search">\n<|DSML|parameter name="query">tesla stock</|DSML|parameter>\n</|DSML|invoke>\n</|DSML|tool_calls>'
+    const result = parseDsmlToolCalls(input)
+    expect(result.length).toBe(1)
+    expect(result[0].name).toBe('brave_web_search')
+    expect(JSON.parse(result[0].argsRaw)).toEqual({ query: 'tesla stock' })
+  })
+
+  it('parses fullwidth bar format and collapses whitespace around pipes', () => {
+    const input = '<\uFF5CDSML\uFF5Ctool_calls>\n<\uFF5CDSML\uFF5Cinvoke name="brave_web_search">\n<\uFF5CDSML\uFF5Cparameter name="query">nio stock</\uFF5CDSML\uFF5Cparameter>\n</\uFF5CDSML\uFF5Cinvoke>\n</\uFF5CDSML\uFF5Ctool_calls>'
+    const result = parseDsmlToolCalls(input)
+    expect(result.length).toBe(1)
+    expect(result[0].name).toBe('brave_web_search')
+    expect(JSON.parse(result[0].argsRaw)).toEqual({ query: 'nio stock' })
+  })
+
+  it('parses multiple invoke blocks and multiple parameters within a single DSML block', () => {
+    const input = '<|DSML|tool_calls>\n<|DSML|invoke name="calculator__add">\n<|DSML|parameter name="a">2</|DSML|parameter>\n<|DSML|parameter name="b">3</|DSML|parameter>\n</|DSML|invoke>\n</|DSML|tool_calls>'
+    const result = parseDsmlToolCalls(input)
+    expect(result.length).toBe(1)
+    expect(result[0].name).toBe('calculator__add')
+    expect(JSON.parse(result[0].argsRaw)).toEqual({ a: '2', b: '3' })
+  })
+
+  it('returns empty array if no complete DSML block is present', () => {
+    const input = '<|DSML|tool_calls>\n<|DSML|invoke name="brave_web_search">\n<|DSML|parameter name="query">tesla stock'
+    const result = parseDsmlToolCalls(input)
+    expect(result).toEqual([])
+  })
+})
+
+// ── Suite: stripThinkBlocks ─────────────────────────────────────────────────
+
+describe('stripThinkBlocks (private helper)', () => {
+  it('strips closed Qwen-style <think> blocks correctly', () => {
+    const input = '<think>some reasoning</think>actual answer'
+    const result = (chatService as any).stripThinkBlocks(input)
+    expect(result).toBe('actual answer')
+  })
+
+  it('strips unclosed Qwen-style <think> blocks by slicing to start', () => {
+    const input = '<think>some reasoning that never closes'
+    const result = (chatService as any).stripThinkBlocks(input)
+    expect(result).toBe('')
+  })
+
+  it('strips closed Gemma 4 thought channels correctly', () => {
+    const input = '<|channel>thought\nsome Gemma reasoning<channel|>actual Gemma answer'
+    const result = (chatService as any).stripThinkBlocks(input)
+    expect(result).toBe('actual Gemma answer')
+  })
+
+  it('strips unclosed Gemma 4 thought channels correctly', () => {
+    const input = '<|channel>thought\nsome Gemma reasoning that never closes'
+    const result = (chatService as any).stripThinkBlocks(input)
+    expect(result).toBe('')
+  })
+})
+
+// ── Suite: cleanAssistantHistory ─────────────────────────────────────────────
+
+describe('cleanAssistantHistory (private helper)', () => {
+  it('strips [System Note: ...] injected prefixes', () => {
+    const input = '[System Note: tool call succeeded] Actual answer content'
+    const result = (chatService as any).cleanAssistantHistory(input)
+    expect(result).toBe('Actual answer content')
+  })
+})
+
+// ── Suite: telemetry _obsCapture early return ─────────────────────────────────
+
+describe('_obsCapture telemetry', () => {
+  it('returns early when obsSessionId is empty', () => {
+    // Assert no error is thrown
+    expect(() => {
+      (chatService as any)._obsCapture({ type: 'answer_delta', payload: { text: 'test' } })
+    }).not.toThrow()
+  })
+})
+
+// ── Suite: buildMessages ────────────────────────────────────────────────────
+
+describe('buildMessages (private helper)', () => {
+  it('injects optional custom system prompt', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+    })
+    const payload = {
+      chatId: 'chat-uuid-build-msgs',
+      messages: [{ role: 'user', content: 'Hello' }],
+      systemPrompt: 'My custom instruction override',
+    }
+    const result = (chatService as any).buildMessages(payload)
+    const sysMsg = result.find((m: any) => m.role === 'system')
+    expect(sysMsg).toBeDefined()
+    expect(sysMsg.content).toContain('My custom instruction override')
+  })
+
+  it('truncates previous search results when keepSearchResultsInContext is false', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+      keepSearchResultsInContext: false,
+    })
+    const payload = {
+      chatId: 'chat-uuid-keep-search',
+      messages: [
+        { role: 'user', content: 'First query' },
+        { role: 'tool', content: 'Detailed search result containing lots of text' },
+        { role: 'user', content: 'Second query' },
+      ],
+    }
+    const result = (chatService as any).buildMessages(payload)
+    const toolMsg = result.find((m: any) => m.role === 'tool')
+    expect(toolMsg).toBeDefined()
+    expect(toolMsg.content).toBe('[Previous Search Results for query]')
+  })
+
+  it('preserves previous search results when keepSearchResultsInContext is true', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+      keepSearchResultsInContext: true,
+    })
+    const payload = {
+      chatId: 'chat-uuid-keep-search-true',
+      messages: [
+        { role: 'user', content: 'First query' },
+        { role: 'tool', content: 'Detailed search result containing lots of text' },
+        { role: 'user', content: 'Second query' },
+      ],
+    }
+    const result = (chatService as any).buildMessages(payload)
+    const toolMsg = result.find((m: any) => m.role === 'tool')
+    expect(toolMsg).toBeDefined()
+    expect(toolMsg.content).toBe('Detailed search result containing lots of text')
+  })
+
+  it('truncates old assistant messages with tool calls if they are not the most recent turn', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+    })
+    const longContent = 'A very long assistant explanation that exceeds one hundred and fifty characters to trigger the truncation logic properly in our coverage run and tests...'.repeat(2)
+    const payload = {
+      chatId: 'chat-uuid-trunc-assistant',
+      messages: [
+        {
+          role: 'assistant',
+          content: longContent,
+          tool_calls: [{ id: 'call_1', function: { name: 'search' } }]
+        },
+        { role: 'user', content: 'Follow up question' },
+        { role: 'assistant', content: 'Most recent assistant response' },
+      ],
+    }
+    const result = (chatService as any).buildMessages(payload)
+    const firstAssistant = result.find((m: any) => m.role === 'assistant')
+    expect(firstAssistant).toBeDefined()
+    expect(firstAssistant.content).toContain('[previous answer truncated]')
+    expect(firstAssistant.content.length).toBeLessThan(longContent.length)
+
+    // Check that tool_calls field is preserved
+    expect(firstAssistant.tool_calls).toBeDefined()
+    expect(firstAssistant.tool_calls[0].id).toBe('call_1')
+  })
+
+  it('does not truncate old assistant messages with tool calls if they are shorter than 150 characters', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+    })
+    const shortContent = 'Short assistant answer.'
+    const payload = {
+      chatId: 'chat-uuid-no-trunc-assistant',
+      messages: [
+        {
+          role: 'assistant',
+          content: shortContent,
+          tool_calls: [{ id: 'call_1', function: { name: 'search' } }]
+        },
+        { role: 'user', content: 'Follow up question' },
+        { role: 'assistant', content: 'Most recent assistant response' },
+      ],
+    }
+    const result = (chatService as any).buildMessages(payload)
+    const firstAssistant = result.find((m: any) => m.role === 'assistant')
+    expect(firstAssistant).toBeDefined()
+    expect(firstAssistant.content).toBe(shortContent)
+  })
+
+  it('preserves tool_calls and tool_call_id fields on standard messages', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+    })
+    const payload = {
+      chatId: 'chat-uuid-tool-pair',
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Running search...',
+          tool_calls: [{ id: 'tc_1', type: 'function', function: { name: 'brave_web_search', arguments: '{}' } }]
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tc_1',
+          content: 'Search results here.'
+        }
+      ]
+    }
+    const result = (chatService as any).buildMessages(payload)
+    
+    const assistantMsg = result.find((m: any) => m.role === 'assistant')
+    expect(assistantMsg.tool_calls).toBeDefined()
+    expect(assistantMsg.tool_calls[0].id).toBe('tc_1')
+
+    const toolMsg = result.find((m: any) => m.role === 'tool')
+    expect(toolMsg.tool_call_id).toBe('tc_1')
+    expect(toolMsg.content).toBe('Search results here.')
+  })
+
+  it('preserves tool_calls and tool_call_id on vision/multimodal messages', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+    })
+    const payload = {
+      chatId: 'chat-uuid-multimodal-tool',
+      messages: [
+        {
+          role: 'user',
+          content: 'What is this?',
+          tool_calls: [{ id: 'tc_2', type: 'function', function: { name: 'some_tool' } }],
+          tool_call_id: 'tc_2'
+        }
+      ],
+      attachments: [{ kind: 'image', dataUrl: 'data:image/png;base64,iVBORw0K', name: 'image.png' }]
+    }
+    const result = (chatService as any).buildMessages(payload)
+    const userMsg = result.find((m: any) => m.role === 'user')
+    expect(userMsg).toBeDefined()
+    expect(userMsg.tool_calls).toBeDefined()
+    expect(userMsg.tool_calls[0].id).toBe('tc_2')
+    expect(userMsg.tool_call_id).toBe('tc_2')
+  })
+
+  it('appends gemma thought prefill channel if model is gemma mlx in thinking mode', () => {
+    mockReadSettings.mockReturnValue({
+      braveSearchEnabled: false,
+    })
+    const payload = {
+      chatId: 'chat-uuid-gemma-mlx',
+      messages: [{ role: 'user', content: 'Gemma mlx prompt' }],
+      model: 'google/gemma-4-mlx-version',
+      thinkingMode: 'thinking',
+    }
+    const result = (chatService as any).buildMessages(payload, false) // isCloud = false
+    const lastMsg = result[result.length - 1]
+    expect(lastMsg.role).toBe('assistant')
+    expect(lastMsg.content).toBe('<|channel>thought\n')
+  })
+})
+

@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -13,6 +13,7 @@
     "package:dev": "cross-env DEV_MODE=true electron-vite build && electron-builder --config.productName=\"[DEV] Desktop Intelligence\" --config.appId=\"com.local.desktopintelligence.dev\"",
     "test": "npm rebuild better-sqlite3 && vitest run",
     "test:watch": "npm rebuild better-sqlite3 && vitest",
+    "test:coverage": "npm rebuild better-sqlite3 && vitest run --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "postinstall": "electron-builder install-app-deps",
     "prepackage": "electron-builder install-app-deps"
@@ -61,6 +62,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^4.1.7",
     "autoprefixer": "^10.4.19",
     "cross-env": "^10.1.0",
     "electron": "^33.0.0",

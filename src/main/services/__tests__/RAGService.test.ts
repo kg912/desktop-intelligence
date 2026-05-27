@@ -363,6 +363,27 @@ describe('retrieveContext', () => {
     // (it may appear if chronological fallback fires, but signal must be there)
     expect(ctx).toContain('[Document: signal.pdf')
   })
+
+  it('falls back to chronological retrieval if FTS5 MATCH fails/throws', async () => {
+    await ingestDocument('notes.pdf', 'Introduction to Neural Networks', 'chat-1')
+    
+    // Spy on testDb.prepare to throw error when MATCH query is used
+    const originalPrepare = testDb.prepare.bind(testDb)
+    const spyPrepare = vi.spyOn(testDb, 'prepare').mockImplementation((sql: string) => {
+      if (sql.includes('MATCH')) {
+        throw new Error('Simulated FTS5 query error')
+      }
+      return originalPrepare(sql)
+    })
+    
+    try {
+      const ctx = await retrieveContext('Neural Networks', 'chat-1')
+      expect(ctx).toContain('Introduction to Neural Networks')
+      expect(spyPrepare).toHaveBeenCalled()
+    } finally {
+      spyPrepare.mockRestore()
+    }
+  })
 })
 
 // ── Suite: sanitizeFts5Query ──────────────────────────────────────────────────

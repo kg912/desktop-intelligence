@@ -371,7 +371,7 @@ export function parseRawToolCall(
  *
  * Returns the first query string found, or null.
  */
-function extractQueryFromCodeFenceToolCall(content: string): string | null {
+export function extractQueryFromCodeFenceToolCall(content: string): string | null {
   // Match fenced code blocks with tool-related language tags
   const fencePattern =
     /```(?:brave_web_search|BRAVE_WEB_SEARCH|tool_call|TOOL_CALL)\n([\s\S]*?)```/i;
@@ -721,7 +721,7 @@ interface OllamaStreamChunk {
  *  - tool result messages use `tool_name` instead of `tool_call_id`
  *  - assistant tool_calls have `arguments` as an object (not a JSON string)
  */
-function buildOllamaMessages(
+export function buildOllamaMessages(
   messages: Array<{ role: string; content: unknown }>,
 ): Array<Record<string, unknown>> {
   return messages.map((m, i) => {
@@ -784,7 +784,7 @@ function buildOllamaMessages(
  * Uses Electron's net.fetch — no Python, no shell, no external dependencies.
  * Returns a human-readable string suitable for injection into the model context.
  */
-async function fetchTickerPrice(symbol: string): Promise<string> {
+export async function fetchTickerPrice(symbol: string): Promise<string> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
   try {
     const resp = await net.fetch(url, {
@@ -1442,9 +1442,15 @@ export class ChatService {
             }
 
             // ── Mid-stream text-format tool call interception ─────────────────────────────────────
-            if (!toolCallIntercepted && !forceFinalAnswer) {
+            if (!toolCallIntercepted) {
               const detected = detectMidStreamToolCall(streamBuffer);
               if (detected) {
+                if (forceFinalAnswer) {
+                  toolCallIntercepted = true;
+                  this.abort();
+                  loopAborted = true;
+                  break;
+                }
                 const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected;
                 let patchedCleaned = cleanedSoFar;
                 const openCount  = (patchedCleaned.match(/<think>/gi)  || []).length;

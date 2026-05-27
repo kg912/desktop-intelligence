@@ -25,8 +25,14 @@
  * target Pattern 3 in isolation therefore use "online/web/internet/news".
  */
 
-import { describe, it, expect } from 'vitest'
-import { detectSearchIntent } from '../WebSearchService'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { detectSearchIntent, performWebSearch } from '../WebSearchService'
+
+export const mockDdgSearch = vi.fn()
+vi.mock('duck-duck-scrape', () => ({
+  SafeSearchType: { MODERATE: 'moderate' },
+  search: (...args: any[]) => mockDdgSearch(...args),
+}))
 
 // ─── Pattern 1 — Explicit search commands ────────────────────────────────────
 //
@@ -426,5 +432,103 @@ describe('plain conversation — no trigger phrase present returns null', () => 
 
   it('returns null for a casual request with no search trigger words', () => {
     expect(detectSearchIntent('Can you write me a sorting algorithm?')).toBeNull()
+  })
+})
+
+describe('performWebSearch and fetchTopSnippets', () => {
+  let mockWc: any
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockWc = {
+      isDestroyed: vi.fn().mockReturnValue(false),
+      send: vi.fn(),
+    }
+  })
+
+  it('performs DDG search, formats top-3 snippets and pushes IPC status updates', async () => {
+    mockDdgSearch.mockResolvedValue({
+      results: [
+        { title: 'Title A', description: 'Desc A', url: 'http://a' },
+        { title: 'Title B', description: 'Desc B', url: 'http://b' },
+        { title: 'Title C', description: 'Desc C', url: 'http://c' },
+      ],
+    })
+
+    const result = await performWebSearch('orcl price', mockWc)
+
+    expect(mockDdgSearch).toHaveBeenCalledWith('orcl price', { safeSearch: 'moderate' })
+    expect(result).toContain('Title A')
+    expect(result).toContain('Desc B')
+    expect(result).toContain('http://c')
+    expect(result).toContain('[Web Search Results for "orcl price":\n\n1. **Title A**')
+
+    // WebSearchStatus updates pushed
+    expect(mockWc.send).toHaveBeenCalledTimes(2)
+    expect(mockWc.send).toHaveBeenNthCalledWith(1, 'web:searchStatus', {
+      phase: 'searching',
+      query: 'orcl price',
+    })
+    expect(mockWc.send).toHaveBeenNthCalledWith(2, 'web:searchStatus', {
+      phase: 'done',
+      query: 'orcl price',
+    })
+  })
+
+  it('returns custom message when no results are found', async () => {
+    mockDdgSearch.mockResolvedValue({ results: [] })
+
+    const result = await performWebSearch('nonexistentquery12345', mockWc)
+
+    expect(result).toBe('[Web Search Results for "nonexistentquery12345": No results found.]')
+    expect(mockWc.send).toHaveBeenNthCalledWith(2, 'web:searchStatus', {
+      phase: 'done',
+      query: 'nonexistentquery12345',
+    })
+  })
+
+  it('returns timeout message on failure or network error', async () => {
+    mockDdgSearch.mockRejectedValue(new Error('Network error'))
+
+    const result = await performWebSearch('fail query', mockWc)
+
+    expect(result).toBe('[System: Web search failed or timed out.]')
+    expect(mockWc.send).toHaveBeenNthCalledWith(2, 'web:searchStatus', {
+      phase: 'error',
+      query: 'fail query',
+      error: 'Web search failed or timed out.',
+    })
+  })
+
+  it('returns timeout message when search exceeds 5 seconds', async () => {
+    vi.useFakeTimers()
+    
+    // Promise that never resolves, simulating a slow network response
+    mockDdgSearch.mockReturnValue(new Promise(() => {}))
+
+    const promise = performWebSearch('slow query', mockWc)
+
+    // Advance vitest fake timers by 5000ms to trigger the timeout
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const result = await promise
+
+    expect(result).toBe('[System: Web search failed or timed out.]')
+    expect(mockWc.send).toHaveBeenNthCalledWith(2, 'web:searchStatus', {
+      phase: 'error',
+      query: 'slow query',
+      error: 'Web search failed or timed out.',
+    })
+
+    vi.useRealTimers()
+  })
+
+  it('skips pushing IPC events if WebContents is destroyed', async () => {
+    mockWc.isDestroyed.mockReturnValue(true)
+    mockDdgSearch.mockResolvedValue({ results: [] })
+
+    await performWebSearch('destroyed test', mockWc)
+
+    expect(mockWc.send).not.toHaveBeenCalled()
   })
 })
