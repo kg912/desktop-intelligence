@@ -1817,11 +1817,23 @@ export class ChatService {
                 ];
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                const deniedContent = err instanceof McpDeniedError
-                  ? buildDeniedToolMessage(err.userNote)
+                const isDenied = err instanceof McpDeniedError;
+                const deniedContent = isDenied
+                  ? buildDeniedToolMessage((err as McpDeniedError).userNote)
                   : `Tool failed: ${errMsg}. Use training knowledge.`;
-                // Only emit TOOL_ERROR for actual failures, not user denials
-                if (!(err instanceof McpDeniedError)) {
+                if (isDenied) {
+                  // Permission denied — emit TOOL_DONE (not TOOL_ERROR) so the pill
+                  // transitions out of the "searching" spinner. Without this the pill
+                  // stays stuck on phase="searching" forever because TOOL_START was
+                  // already emitted but no resolution event ever arrives.
+                  const deniedNote = (err as McpDeniedError).userNote ?? 'Permission denied by user.';
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query: uiLabel,
+                    toolName,
+                    results: [],
+                    formattedContent: `[Denied] ${deniedNote}`,
+                  });
+                } else {
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
                     query: uiLabel,
                     toolName,
