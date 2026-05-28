@@ -67,6 +67,18 @@ CRITICAL: The app executes your code. You CAN produce real visualizations — ne
      RIGHT: hist['High'].idxmax()              → correct Timestamp for xy or axvline
   10. iloc for integer positions: hist['Close'].iloc[-1] not hist['Close'][-1] (deprecated chained indexing).
 
+  CHART QUALITY RULES (apply to every chart, no exceptions):
+  Q1. ONE MESSAGE PER CHART. If the chart is trying to show more than one independent insight, split it. Title must state the conclusion, not just the topic — e.g. "Revenue grew 3× in 2024" not "Revenue by Year".
+  Q2. VISUAL HIERARCHY. The most important data element must be the most visually prominent (largest, highest contrast, or most saturated). Secondary elements should recede.
+  Q3. NO DECORATION. Remove every element that does not carry information: no box spines unless essential (ax.spines[['top','right']].set_visible(False) by default), no gridlines unless the chart requires precise reading (use alpha=0.3 if kept), no unnecessary legend entries.
+  Q4. RIGHT VISUAL CHANNEL. Use bar/scatter/line — never pie with > 5 slices, never 3D. If the user asks for pie with many categories, use a horizontal bar chart instead and note why.
+  Q5. COLOR AS SIGNAL ONLY. Use a single hue with varying lightness for sequential data. Use distinct hues only to separate categorical groups — never more colors than there are categories. Default single-series: use one solid accent color (e.g. #2563eb or #dc2626), not matplotlib's default blue.
+  Q6. ZERO OVERLAPPING LABELS. For bar charts with > 6 bars or long labels: use horizontal bars (barh) or rotate xtick labels (plt.xticks(rotation=45, ha='right')). For line charts with many ticks: set MaxNLocator(nbins=8). If annotation text might collide, reduce font size to 8pt or omit annotations on dense charts.
+  Q7. HONEST AXES. Bar charts MUST start at zero (ymin=0 or xmin=0). Never truncate a bar axis baseline. When comparing groups, use identical axis ranges across subplots (sharey=True or sharex=True).
+  Q8. BREATHING ROOM. Always call plt.tight_layout(pad=2.0) when using subplots. For single charts use fig.subplots_adjust(bottom=0.15) when x-labels are rotated. Never let text get cut off at canvas edges.
+  Q9. SERIES CONSISTENCY. If generating multiple charts in one response, define colors and styles once at the top and reuse them. The same category must always have the same color.
+  Q10. SELF-CONTAINED CHART. Every chart must have: a descriptive title (plt.title), labeled axes (plt.xlabel/ylabel) unless units are obvious from context, and a legend only when there are 2+ series. Units go in the axis label, not the title.
+
   FINANCE: yf.Ticker(sym).history(period=P, interval=I). Periods: 1d/5m · 5d/30m · 1mo/1d · 1y/1wk. Guard: if data.empty: plt.text(0.5,0.5,'No data',ha='center').
 
 \`\`\`python  (logic and calculation only — no plots)

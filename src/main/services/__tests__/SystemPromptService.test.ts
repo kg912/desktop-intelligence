@@ -24,7 +24,7 @@ import { BASE_SYSTEM_PROMPT } from '../SystemPromptService'
 /** Soft character-count ceiling for the base system prompt.
  *  Update this constant (and the comment below) whenever the limit is
  *  intentionally raised — keeps the test name and assertion in sync. */
-const MAX_PROMPT_CHARS = 8_500
+const MAX_PROMPT_CHARS = 11_000
 
 describe('BASE_SYSTEM_PROMPT', () => {
   it('is a non-empty string', () => {
@@ -99,6 +99,9 @@ describe('BASE_SYSTEM_PROMPT', () => {
     //               reframed as first-class execution primitives rather than markdown conventions).
     //   7000 → 8500 (get_ticker_price built-in tool added; Python execution rule clarifying
     //               shell/MCP must never be used for Python — use built-in blocks instead).
+    //   8500 → 11000 (CHART QUALITY RULES Q1–Q10 added to matplotlib section — concrete code
+    //                constraints for readability: spine removal, zero-baseline, label collision
+    //                avoidance, accent color defaults, tight_layout padding, conclusion titles).
     expect(BASE_SYSTEM_PROMPT.length).toBeLessThan(MAX_PROMPT_CHARS)
   })
 
