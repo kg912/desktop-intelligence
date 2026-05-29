@@ -90,7 +90,15 @@ Ask the model to plot anything — distributions, decision boundaries, neural ne
 
 ![Model settings — model selection, context length and generation parameters](app_images/settings_screen_model_selection_and_context_length.png)
 
-Change your active model, adjust the context window, and tune generation parameters (Temperature, Top P, Max Output Tokens, Repeat Penalty) — all from the Settings panel (⚙️). Set a **custom system prompt** to give the model persistent instructions. All choices persist across restarts.
+Change your active model, adjust the context window, and tune generation parameters (Temperature, Top P, Max Output Tokens, Repeat Penalty) — all from the Settings panel (⚙️). Set a **custom system prompt** to give the model persistent instructions across all chats. All choices persist across restarts.
+
+### Chat-Level System Instructions
+
+![Chat-level system instructions panel](app_images/chat_level_system_instructions.png)
+
+Every chat can have its own set of instructions, separate from the global system prompt. Click the scroll icon in the top bar to open the panel, type your instructions, then click anywhere to dismiss. They save automatically.
+
+Instructions stack on top of the global system prompt in this order: the app base prompt, your global settings prompt, then the chat instructions. The chat-level instructions go last, so they take priority on any conflict. This lets you scope a chat to a specific task or context without touching your global configuration. Instructions persist until the chat is deleted.
 
 ### Settings — MCP (Model Context Protocol)
 

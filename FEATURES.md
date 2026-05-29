@@ -203,6 +203,19 @@ Click ⚙️ in the sidebar to open the full-screen settings panel. Two tabs:
 - Use it to give the model a persistent persona, formatting rules, or domain focus
 - Leave blank to use the app's built-in base prompt
 
+**Chat-Level System Instructions**
+
+- Each chat can have its own system instructions, set independently of the global system prompt
+- Click the scroll icon in the top bar next to the model name to open the instructions panel for the current chat
+- Instructions are saved automatically when you close the panel — no save button required
+- They stack on top of the global system prompt: base prompt first, global settings prompt second, chat instructions last. More specific context wins on any conflict.
+- Useful for scoping a chat to a specific task without changing your global settings — for example: "You are reviewing Python code only. Be terse." or "All responses should be in Spanish."
+- Instructions persist for the life of the chat and are removed when the chat is deleted
+- When instructions are active, the scroll icon turns red. The empty state screen also updates to confirm instructions are loaded before your first message.
+- The button is always available regardless of whether a chat exists yet
+
+![Chat-level system instructions panel](app_images/chat_level_system_instructions.png)
+
 **Full GPU Offload** (pill toggle) — passes `--gpu max` to every `lms load` call, routing all model weights to the GPU for maximum throughput. Disabled by default; enable on machines where VRAM headroom allows it.
 
 **Reload Model** button — active only when any setting differs from the current loaded value. Reloading takes 30–60 seconds; all chat history is preserved.
@@ -312,4 +325,4 @@ Features that are designed but not yet implemented:
 
 ---
 
-_Last updated: 2026-04-21 — 2.2.0-alpha-6_
+_Last updated: 2026-05-29_
