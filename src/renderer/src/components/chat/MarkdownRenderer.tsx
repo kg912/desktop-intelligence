@@ -62,64 +62,62 @@ import { ChatIdCtx } from '../layout/ChatArea'
 mermaid.initialize({
   startOnLoad:   false,
   securityLevel: 'loose',
-  theme:         'base',
+  theme:         'dark',
   themeVariables: {
     // ── Backgrounds ──────────────────────────────────────
     background:            '#0f0f0f',
-    mainBkg:               '#1a1a1a',
-    nodeBkg:               '#1a1a1a',
-    secondaryColor:        '#1a1a1a',
-    tertiaryColor:         '#1a1a1a',
-    // ── Text ─────────────────────────────────────────────
-    primaryTextColor:      '#f5f5f5',
-    secondaryTextColor:    '#f5f5f5',
-    tertiaryTextColor:     '#f5f5f5',
-    titleColor:            '#f5f5f5',
-    nodeTextColor:         '#f5f5f5',
-    textColor:             '#f5f5f5',
+    mainBkg:               '#1e1e1e',
+    nodeBkg:               '#1e1e1e',
+    secondaryColor:        '#252525',
+    tertiaryColor:         '#252525',
+    // ── Text — explicit on every role so cScale nodes also inherit ──
+    primaryTextColor:      '#f0f0f0',
+    secondaryTextColor:    '#f0f0f0',
+    tertiaryTextColor:     '#f0f0f0',
+    titleColor:            '#f0f0f0',
+    nodeTextColor:         '#f0f0f0',
+    textColor:             '#f0f0f0',
     // ── Borders / lines ──────────────────────────────────
-    primaryBorderColor:    '#3a3a3a',
-    secondaryBorderColor:  '#3a3a3a',
-    tertiaryBorderColor:   '#3a3a3a',
-    clusterBorder:         '#3a3a3a',
-    lineColor:             '#525252',
-    edgeLabelBackground:   '#141414',
+    primaryBorderColor:    '#444',
+    secondaryBorderColor:  '#444',
+    tertiaryBorderColor:   '#444',
+    clusterBorder:         '#444',
+    lineColor:             '#666',
+    edgeLabelBackground:   '#1a1a1a',
     // ── Primary accent (dark red) ─────────────────────────
-    primaryColor:          '#2d0a0a',
+    primaryColor:          '#3d1010',
     // ── Cluster / subgraph ───────────────────────────────
-    clusterBkg:            '#141414',
-    // ── cScale: alternate fill colours for multi-colour diagrams
-    //    (pie slices, quadrant nodes, subgraphs, etc.).
-    //    Rules: dark enough for #f5f5f5 white text to pass WCAG AA,
-    //    but with clearly distinct hues so slices are visually separable.
-    cScale0:  '#2d0a0a',  // dark red     (matches primary accent)
-    cScale1:  '#0a2d0a',  // dark green
-    cScale2:  '#0a0a2d',  // dark blue
-    cScale3:  '#2d2400',  // dark amber / yellow
-    cScale4:  '#1e0a2d',  // dark purple
-    cScale5:  '#002d2d',  // dark teal
-    cScale6:  '#2d1400',  // dark orange-brown
-    cScale7:  '#002d1a',  // dark cyan-green
-    cScale8:  '#2d0a1a',  // dark rose
-    cScale9:  '#14002d',  // dark indigo
-    cScale10: '#002800',  // deep forest green
-    cScale11: '#2d2000',  // dark gold
+    clusterBkg:            '#181818',
+    // ── cScale: mid-dark fills — light enough to look distinct,
+    //    dark enough that #f0f0f0 text passes WCAG AA (≥4.5:1).
+    cScale0:  '#3d1010',  // dark red
+    cScale1:  '#103d10',  // dark green
+    cScale2:  '#10103d',  // dark blue
+    cScale3:  '#3d3000',  // dark amber
+    cScale4:  '#28103d',  // dark purple
+    cScale5:  '#003d3d',  // dark teal
+    cScale6:  '#3d1c00',  // dark orange
+    cScale7:  '#003d22',  // dark cyan-green
+    cScale8:  '#3d1025',  // dark rose
+    cScale9:  '#1c003d',  // dark indigo
+    cScale10: '#003800',  // deep forest
+    cScale11: '#3d2c00',  // dark gold
     // ── Sequence diagram ─────────────────────────────────
-    actorBkg:              '#1a1a1a',
-    actorBorder:           '#3a3a3a',
-    actorTextColor:        '#f5f5f5',
-    actorLineColor:        '#525252',
-    signalColor:           '#a3a3a3',
-    signalTextColor:       '#f5f5f5',
-    labelBoxBkgColor:      '#1a1a1a',
-    labelBoxBorderColor:   '#3a3a3a',
-    labelTextColor:        '#f5f5f5',
-    loopTextColor:         '#f5f5f5',
+    actorBkg:              '#1e1e1e',
+    actorBorder:           '#444',
+    actorTextColor:        '#f0f0f0',
+    actorLineColor:        '#666',
+    signalColor:           '#a0a0a0',
+    signalTextColor:       '#f0f0f0',
+    labelBoxBkgColor:      '#1e1e1e',
+    labelBoxBorderColor:   '#444',
+    labelTextColor:        '#f0f0f0',
+    loopTextColor:         '#f0f0f0',
     activationBorderColor: '#8b0000',
     activationBkgColor:    '#3d0000',
-    noteBkgColor:          '#1f1f1f',
-    noteBorderColor:       '#3a3a3a',
-    noteTextColor:         '#a3a3a3',
+    noteBkgColor:          '#222',
+    noteBorderColor:       '#444',
+    noteTextColor:         '#b0b0b0',
   },
   flowchart: { curve: 'basis', htmlLabels: true },
 })
@@ -675,14 +673,14 @@ function EchartsBlock({ code }: EchartsBlockProps) {
         </div>
       ) : !renderOption ? (
         // Shown while: (a) still streaming/debouncing, (b) idle-scheduled, (c) error
-        <div className="flex items-center justify-center" style={{ height: '360px' }}>
+        <div className="flex items-center justify-center" style={{ height: '260px' }}>
           <div className="w-4 h-4 rounded-full border-2 border-surface-border border-t-accent-600 animate-spin" />
         </div>
       ) : (
         <div className="p-2">
           <ReactECharts
             option={renderOption}
-            style={{ height: '360px', width: '100%' }}
+            style={{ height: '260px', width: '100%' }}
             opts={{ renderer: 'svg', locale: 'EN' }}
             notMerge
           />
