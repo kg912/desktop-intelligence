@@ -17,6 +17,8 @@ import {
   saveMessage,
   deleteChatById,
   setCompactedSummary,
+  getChatSystemInstructions,
+  setChatSystemInstructions,
 } from '../services/DatabaseService'
 import { retrieveContext } from '../services/RAGService'
 import type {
@@ -1216,5 +1218,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       observabilityService.captureArtifact(event)
     }
   )
+
+  // ── Per-chat system instructions ────────────────────────────────
+  ipcMain.handle('chat:get-system-instructions', (_event, chatId: string) => {
+    return getChatSystemInstructions(chatId)
+  })
+
+  ipcMain.handle('chat:set-system-instructions', (_event, chatId: string, text: string) => {
+    setChatSystemInstructions(chatId, text)
+  })
 
 }

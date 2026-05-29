@@ -49,10 +49,11 @@ export interface ChatMessage {
 }
 
 export interface Chat {
-  id:        string
-  title:     string
-  createdAt: number
-  updatedAt: number
+  id:                 string
+  title:              string
+  createdAt:          number
+  updatedAt:          number
+  systemInstructions: string | null
 }
 
 /**
@@ -270,6 +271,10 @@ export const IPC_CHANNELS = {
   // ── Suggestion cards ───────────────────────────────────────────
   SETTINGS_GET_SUGGESTIONS:  'settings:getSuggestions',
   SETTINGS_SAVE_SUGGESTIONS: 'settings:saveSuggestions',
+
+  // ── Per-chat system instructions ───────────────────────────────
+  CHAT_GET_SYSTEM_INSTRUCTIONS: 'chat:get-system-instructions',
+  CHAT_SET_SYSTEM_INSTRUCTIONS: 'chat:set-system-instructions',
 
 } as const
 

@@ -138,6 +138,11 @@ export function getDB(): Database.Database {
     console.error('[DB] FTS5 table creation failed — FTS5 may not be compiled into this SQLite build:', err)
   }
 
+  // Per-chat system instructions
+  try {
+    _db.exec(`ALTER TABLE chats ADD COLUMN system_instructions TEXT`)
+  } catch { /* column already exists */ }
+
   return _db
 }
 
@@ -145,13 +150,14 @@ export function getDB(): Database.Database {
 
 export function getAllChats(): Chat[] {
   const rows = getDB()
-    .prepare('SELECT id, title, created_at, updated_at FROM chats ORDER BY updated_at DESC')
-    .all() as Array<{ id: string; title: string; created_at: number; updated_at: number }>
+    .prepare('SELECT id, title, created_at, updated_at, system_instructions FROM chats ORDER BY updated_at DESC')
+    .all() as Array<{ id: string; title: string; created_at: number; updated_at: number; system_instructions: string | null }>
   return rows.map((r) => ({
-    id:        r.id,
-    title:     r.title,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    id:                 r.id,
+    title:              r.title,
+    createdAt:          r.created_at,
+    updatedAt:          r.updated_at,
+    systemInstructions: r.system_instructions ?? null,
   }))
 }
 
@@ -160,7 +166,7 @@ export function createChat(id: string, title: string): Chat {
   getDB()
     .prepare('INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
     .run(id, title, now, now)
-  return { id, title, createdAt: now, updatedAt: now }
+  return { id, title, createdAt: now, updatedAt: now, systemInstructions: null }
 }
 
 export function getChatMessages(chatId: string): StoredMessage[] {
@@ -248,4 +254,18 @@ export function deleteChatById(chatId: string): void {
     console.warn('[DB] deletePlotsForChat failed (non-fatal):', err)
   }
   getDB().prepare('DELETE FROM chats WHERE id = ?').run(chatId)
+}
+
+export function getChatSystemInstructions(chatId: string): string | null {
+  const row = getDB()
+    .prepare(`SELECT system_instructions FROM chats WHERE id = ?`)
+    .get(chatId) as { system_instructions: string | null } | undefined
+  return row?.system_instructions ?? null
+}
+
+export function setChatSystemInstructions(chatId: string, text: string): void {
+  const value = text.trim() || null
+  getDB()
+    .prepare(`UPDATE chats SET system_instructions = ?, updated_at = ? WHERE id = ?`)
+    .run(value, Date.now(), chatId)
 }

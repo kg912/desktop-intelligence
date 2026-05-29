@@ -235,6 +235,13 @@ const api = {
   saveSuggestions: (cards: string[]): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE_SUGGESTIONS, cards),
 
+  // ── Per-chat system instructions ─────────────────────────────
+  getChatSystemInstructions: (chatId: string): Promise<string | null> =>
+    ipcRenderer.invoke('chat:get-system-instructions', chatId),
+
+  setChatSystemInstructions: (chatId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('chat:set-system-instructions', chatId, text),
+
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
 
