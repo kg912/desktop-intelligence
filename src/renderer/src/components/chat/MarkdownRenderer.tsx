@@ -128,6 +128,15 @@ let _mermaidIdCounter = 0
 // Cache Map for highlighted HTML to avoid hljs re-run on scroll remounts.
 const HIGHLIGHT_CACHE = new Map<string, string>()
 
+// Module-level caches for chart blocks — prevent re-evaluation on virtualised remounts.
+// When a chart scrolls out of view and back in, the component remounts with empty state.
+// These caches let each block initialise synchronously from the cached result and skip
+// the expensive async work (mermaid.render, JSON parse + ECharts init, IPC to Python).
+const MERMAID_CACHE    = new Map<string, string>()                    // code → responsive SVG
+const ECHARTS_CACHE    = new Map<string, Record<string, unknown>>()   // code → processed option
+const MATPLOTLIB_CACHE = new Map<string, string>()                    // code → imageBase64 PNG
+const SVG_CACHE        = new Map<string, string>()                    // code → validated SVG markup
+
 
 // ----------------------------------------------------------------
 // Streaming context
@@ -208,7 +217,8 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   // Read streaming state from context — no prop drilling, no remounting.
   const isStreaming = useContext(StreamingCtx)
 
-  const [svg,   setSvg]   = useState<string | null>(null)
+  // Initialise synchronously from cache — renders on mount without any async work.
+  const [svg,   setSvg]   = useState<string | null>(() => MERMAID_CACHE.get(code) ?? null)
   const [error, setError] = useState<string | null>(null)
 
   // Stable per-instance DOM id.
@@ -220,6 +230,9 @@ function MermaidBlock({ code }: MermaidBlockProps) {
   const lastRenderedCode = useRef<string | null>(null)
 
   useEffect(() => {
+    // Cache hit: SVG already populated synchronously on mount — skip all async work.
+    if (MERMAID_CACHE.has(code)) return
+
     // Attempt recovery before giving up on invalid syntax.
     // Most common case: model wrote a mindmap but omitted the 'mindmap' header
     // line, jumping straight to root((Title)). Prepend the missing keyword.
@@ -252,8 +265,10 @@ function MermaidBlock({ code }: MermaidBlockProps) {
       try {
         const { svg: out } = await mermaid.render(id.current, codeToRender)
         if (!cancelled) {
+          const responsiveSvg = makeResponsiveSvg(out)
           lastRenderedCode.current = codeToRender
-          setSvg(makeResponsiveSvg(out))
+          MERMAID_CACHE.set(code, responsiveSvg)
+          setSvg(responsiveSvg)
           setError(null)
         }
       } catch (err) {
@@ -569,14 +584,18 @@ function EchartsBlock({ code }: EchartsBlockProps) {
   // `option` = parsed + dark-themed + format-fixed option object.
   // `renderOption` = what ReactECharts actually receives, deferred to idle time
   // so that echarts.init() never blocks a streaming token render.
-  const [option,       setOption]       = useState<Record<string, unknown> | null>(null)
-  const [renderOption, setRenderOption] = useState<Record<string, unknown> | null>(null)
+  // Both initialise synchronously from cache on remount — no spinner, no idle delay.
+  const _ecCached = ECHARTS_CACHE.get(code) ?? null
+  const [option,       setOption]       = useState<Record<string, unknown> | null>(_ecCached)
+  const [renderOption, setRenderOption] = useState<Record<string, unknown> | null>(_ecCached)
   const [error,        setError]        = useState<string | null>(null)
 
-  const lastParsedCode = useRef<string | null>(null)
+  const lastParsedCode = useRef<string | null>(_ecCached ? code : null)
 
   // ── Parse JSON when code changes (debounced while streaming) ──
   useEffect(() => {
+    // Cache hit: option + renderOption already populated synchronously on mount.
+    if (ECHARTS_CACHE.has(code)) return
     if (code === lastParsedCode.current) return
     const delay = isStreaming ? 600 : 0
     let cancelled = false
@@ -618,6 +637,7 @@ function EchartsBlock({ code }: EchartsBlockProps) {
         // then sanitizeFormatters removes it — leaving year axes with no formatter at all.
         const sanitized = sanitizeFormatters(fixSeriesDataFormat(merged)) as Record<string, unknown>
         const fixed     = fixYearAxes(sanitized)
+        ECHARTS_CACHE.set(code, fixed)
         setOption(fixed)
         setError(null)
       } catch (err) {
@@ -637,11 +657,13 @@ function EchartsBlock({ code }: EchartsBlockProps) {
   // and causes streaming token renders to visually pause.
   // scheduleIdle() pushes the mount until the browser has a free moment,
   // so streaming text always stays responsive.
+  // Skip idle scheduling when renderOption is already populated from the cache.
   useEffect(() => {
     if (!option) { setRenderOption(null); return }
+    if (renderOption !== null) return  // already set synchronously from cache
     const cancel = scheduleIdle(() => setRenderOption(option))
     return cancel
-  }, [option])
+  }, [option, renderOption])
 
   const border = error ? 'border-accent-900/30' : 'border-surface-border/60'
 
@@ -714,10 +736,14 @@ interface SvgBlockProps {
 
 function SvgBlock({ code }: SvgBlockProps) {
   const isStreaming = useContext(StreamingCtx)
-  const [renderedSvg, setRenderedSvg] = useState<string | null>(null)
+  // Initialise synchronously from cache — avoids re-validation on scroll remount.
+  const [renderedSvg, setRenderedSvg] = useState<string | null>(() => SVG_CACHE.get(code) ?? null)
   const lastRenderedCode = useRef<string | null>(null)
 
   useEffect(() => {
+    // Cache hit: SVG already populated synchronously on mount — skip re-validation.
+    if (SVG_CACHE.has(code)) return
+
     if (code === lastRenderedCode.current) return
 
     const delay = isStreaming ? 600 : 0
@@ -731,6 +757,7 @@ function SvgBlock({ code }: SvgBlockProps) {
         return
       }
       lastRenderedCode.current = code
+      SVG_CACHE.set(code, code)
       setRenderedSvg(code)
     }, delay)
 
@@ -824,7 +851,8 @@ interface MatplotlibBlockProps {
 function MatplotlibBlock({ code }: MatplotlibBlockProps) {
   const isStreaming = useContext(StreamingCtx)
   const chatId      = useContext(ChatIdCtx)
-  const [imageBase64, setImageBase64] = useState<string | null>(null)
+  // Initialise synchronously from cache — avoids the IPC round-trip on scroll remount.
+  const [imageBase64, setImageBase64] = useState<string | null>(() => MATPLOTLIB_CACHE.get(code) ?? null)
   const [error,       setError]       = useState<string | null>(null)
   const [running,     setRunning]     = useState(false)
   const lastRenderedCode = useRef<string | null>(null)
@@ -833,6 +861,9 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
 
   useEffect(() => {
     lastCodeRef.current = code
+
+    // Cache hit: image already populated synchronously on mount — skip IPC call.
+    if (MATPLOTLIB_CACHE.has(code)) return
 
     // Skip if we already rendered this exact code.
     if (code === lastRenderedCode.current) return
@@ -857,9 +888,10 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
         const result = await window.api.renderMatplotlib(code)
         if (cancelled) return
         if (result.success && result.imageBase64) {
+          MATPLOTLIB_CACHE.set(code, result.imageBase64)
           setImageBase64(result.imageBase64)
           setError(null)
-          
+
           // Image RAG: Fire and forget storage. Extract caption directly from code.
           if (chatId) {
             const titleMatch  = code.match(/plt\.(?:title|suptitle)\(\s*['"]([^'"]+)['"]/)
