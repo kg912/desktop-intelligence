@@ -11,9 +11,148 @@
  * the in-memory provider differs from the one that was active at boot.
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { AlertTriangle, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Eye, EyeOff, RefreshCw, TrendingUp, Zap, Activity } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { BackendProvider, BackendSettings } from '../../../../../shared/types'
+
+// ── OpenRouter account stats ─────────────────────────────────────────────────
+interface ORCredits  { total_credits: number; total_usage: number }
+interface ORActivity { usage: number; requests: number; prompt_tokens: number; completion_tokens: number }
+
+function OpenRouterStats({ apiKey }: { apiKey: string }) {
+  const [credits,  setCredits]  = useState<ORCredits | null>(null)
+  const [activity, setActivity] = useState<ORActivity | null>(null)
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState<string | null>(null)
+
+  const fetch2 = useCallback(async (key: string) => {
+    if (!key) return
+    setLoading(true)
+    setError(null)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const headers = { Authorization: `Bearer ${key}` }
+      const [cRes, aRes] = await Promise.all([
+        fetch('https://openrouter.ai/api/v1/credits',            { headers }),
+        fetch(`https://openrouter.ai/api/v1/activity?date=${today}`, { headers }),
+      ])
+      if (!cRes.ok) throw new Error(`Credits: ${cRes.status}`)
+      if (!aRes.ok) throw new Error(`Activity: ${aRes.status}`)
+      const cJson = await cRes.json() as { data: ORCredits }
+      const aJson = await aRes.json() as { data: ORActivity[] }
+      setCredits(cJson.data)
+      // Sum across all models for the day
+      const rows = aJson.data ?? []
+      const agg: ORActivity = rows.reduce(
+        (acc, r) => ({
+          usage:             acc.usage             + (r.usage ?? 0),
+          requests:          acc.requests          + (r.requests ?? 0),
+          prompt_tokens:     acc.prompt_tokens     + (r.prompt_tokens ?? 0),
+          completion_tokens: acc.completion_tokens + (r.completion_tokens ?? 0),
+        }),
+        { usage: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0 }
+      )
+      setActivity(agg)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Fetch once when the OpenRouter section mounts (parent calls this only when provider === 'openrouter')
+  // Also triggers when a new API key is persisted (parent re-mounts on provider switch)
+  useEffect(() => { fetch2(apiKey) }, [apiKey, fetch2])
+
+  const balance = credits ? +(credits.total_credits - credits.total_usage).toFixed(4) : null
+  const tokens  = activity ? activity.prompt_tokens + activity.completion_tokens : null
+
+  const labelCls = "text-xs text-content-muted uppercase tracking-wider font-medium mb-0.5"
+  const valCls   = "text-sm font-medium text-content-primary font-mono"
+
+  // No key — hide the entire section
+  if (!apiKey) return null
+
+  return (
+    <div className="space-y-2 pt-3 border-t border-surface-border/30">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-content-secondary uppercase tracking-wider">Account</span>
+        {!error && (
+          <button
+            onClick={() => fetch2(apiKey)}
+            disabled={loading}
+            className="flex items-center gap-1 text-xs text-content-muted hover:text-content-primary transition-colors disabled:opacity-40"
+          >
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+            {loading ? 'Fetching…' : 'Refresh'}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="flex items-center justify-between py-1">
+          <span className="text-xs text-content-muted">Account stats are not available at the moment</span>
+          <button
+            onClick={() => fetch2(apiKey)}
+            disabled={loading}
+            className="flex items-center gap-1 text-xs text-accent-500 hover:text-accent-400 transition-colors disabled:opacity-40 ml-3 flex-shrink-0"
+          >
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!error && (credits || activity) && (
+        <div className="grid grid-cols-4 gap-2">
+          {/* Credits balance */}
+          <div className="col-span-1 rounded-lg p-2.5" style={{ background: '#141414', border: '0.5px solid #222' }}>
+            <div className={labelCls} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <TrendingUp size={10} aria-hidden />
+              Balance
+            </div>
+            <div className={valCls}>
+              {balance !== null ? `${balance.toFixed(2)}` : '—'}
+            </div>
+          </div>
+
+          {/* Today: spend */}
+          <div className="col-span-1 rounded-lg p-2.5" style={{ background: '#141414', border: '0.5px solid #222' }}>
+            <div className={labelCls} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Activity size={10} aria-hidden />
+              Today spend
+            </div>
+            <div className={valCls}>
+              {activity ? `${activity.usage.toFixed(4)}` : '—'}
+            </div>
+          </div>
+
+          {/* Today: requests */}
+          <div className="col-span-1 rounded-lg p-2.5" style={{ background: '#141414', border: '0.5px solid #222' }}>
+            <div className={labelCls} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Zap size={10} aria-hidden />
+              Requests
+            </div>
+            <div className={valCls}>
+              {activity ? activity.requests : '—'}
+            </div>
+          </div>
+
+          {/* Today: tokens */}
+          <div className="col-span-1 rounded-lg p-2.5" style={{ background: '#141414', border: '0.5px solid #222' }}>
+            <div className={labelCls} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Zap size={10} aria-hidden />
+              Tokens
+            </div>
+            <div className={valCls}>
+              {tokens !== null ? (tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens) : '—'}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Captured once on first IPC response — tells us which provider was running
 // when the app started so we know whether a restart banner is needed.
@@ -432,6 +571,9 @@ export function NvidiaSettingsPanel() {
               </p>
             )}
           </div>
+
+          {/* Account stats — fetched on tab focus */}
+          <OpenRouterStats apiKey={settings.openrouterApiKey} />
         </div>
       )}
 
