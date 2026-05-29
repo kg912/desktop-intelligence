@@ -43,6 +43,7 @@ import type {
   Chat,
   GenerationStats,
   MessageBlock,
+  ModelConfig,
   ProcessedAttachment,
 } from "../../../shared/types";
 import {
@@ -133,6 +134,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
   // preventing the post-stream chat-switching freeze.
   const [isStreamingState, setIsStreamingState] = useState(false);
 
+  // ── App-level settings (global system prompt) ─────────────────
+  const [appSettings, setAppSettings] = useState<ModelConfig | null>(null);
+
+  // ── Per-chat system instructions ──────────────────────────────
+  const [chatSystemInstructions, setChatSystemInstructions] = useState<string | null>(null);
+
   useEffect(() => {
     currentChatIdRef.current = chatId;
   }, [chatId]);
@@ -201,6 +208,24 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       streamingMessage.value = { ...cur, ...patch };
     }
   }, []);
+
+  // ── Load global model config (once on mount) ─────────────────
+  useEffect(() => {
+    window.api.getModelConfig()
+      .then(setAppSettings)
+      .catch(() => { /* non-fatal — globalPrompt will be '' */ })
+  }, [])
+
+  // ── Load per-chat system instructions when active chat changes ─
+  useEffect(() => {
+    if (!chatId) {
+      setChatSystemInstructions(null)
+      return
+    }
+    window.api.getChatSystemInstructions(chatId)
+      .then(setChatSystemInstructions)
+      .catch(() => setChatSystemInstructions(null))
+  }, [chatId])
 
   // ── Register demo trigger only in browser/mock mode ───────────
   useEffect(() => {
@@ -659,12 +684,19 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       // Build wire messages from pre-send history + current user message.
       const wire = buildWireMessages([...prevHistory, ...dividers, userMsg]);
 
+      const globalPrompt  = (appSettings?.systemPrompt ?? '').trim()
+      const perChatPrompt = (chatSystemInstructions ?? '').trim()
+      const combinedSystemPrompt = [globalPrompt, perChatPrompt]
+        .filter(Boolean)
+        .join('\n\n')
+
       try {
         await window.api.sendChatMessage({
-          messages:     wire,
-          attachments:  attachments?.length ? attachments : undefined,
-          chatId:       activeChatId ?? undefined,
-          model:        selectedModel,
+          messages:      wire,
+          systemPrompt:  combinedSystemPrompt || undefined,
+          attachments:   attachments?.length ? attachments : undefined,
+          chatId:        activeChatId ?? undefined,
+          model:         selectedModel,
           thinkingMode,
         });
       } catch (err) {
@@ -694,6 +726,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       onChatCreated,
       selectedModel,
       thinkingMode,
+      appSettings,
+      chatSystemInstructions,
     ],
   );
 
@@ -761,5 +795,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
     abort,
     loadMessages,
     clearMessages,
+    chatSystemInstructions,
+    updateChatSystemInstructions: (text: string) => {
+      setChatSystemInstructions(text || null)
+      if (currentChatIdRef.current) {
+        window.api.setChatSystemInstructions(currentChatIdRef.current, text).catch(console.error)
+      }
+    },
   };
 }

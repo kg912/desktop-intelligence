@@ -62,6 +62,8 @@ export function Layout() {
     abort,
     loadMessages,
     clearMessages,
+    chatSystemInstructions,
+    updateChatSystemInstructions,
   } = useChat({ chatId: activeChatId, onChatCreated: handleChatCreated })
 
   // Stable refs so handleSend/handleSuggest never need to be recreated when
@@ -386,7 +388,14 @@ export function Layout() {
               />
             )}
 
-            <TopBar activeChatId={activeChatId} onCompactComplete={handleCompactComplete} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={() => setSidebarCollapsed((v) => !v)} />
+            <TopBar
+              activeChatId={activeChatId}
+              onCompactComplete={handleCompactComplete}
+              sidebarCollapsed={sidebarCollapsed}
+              onSidebarToggle={() => setSidebarCollapsed((v) => !v)}
+              chatSystemInstructions={chatSystemInstructions}
+              onUpdateChatSystemInstructions={updateChatSystemInstructions}
+            />
 
             <ChatArea
               ref={chatAreaRef}

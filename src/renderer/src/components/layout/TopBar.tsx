@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSignals } from '@preact/signals-react/runtime'
 import { Zap, RotateCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
@@ -17,13 +17,15 @@ const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boo
  */
 
 interface TopBarProps {
-  activeChatId:      string | null
-  onCompactComplete: () => void
-  sidebarCollapsed?: boolean
-  onSidebarToggle?:  () => void
+  activeChatId:                   string | null
+  onCompactComplete:              () => void
+  sidebarCollapsed?:              boolean
+  onSidebarToggle?:               () => void
+  chatSystemInstructions:         string | null
+  onUpdateChatSystemInstructions: (text: string) => void
 }
 
-export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle }: TopBarProps) {
+export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle, chatSystemInstructions, onUpdateChatSystemInstructions }: TopBarProps) {
   useSignals()
   const {
     selectedModel,
@@ -45,6 +47,11 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
   const [isOllama,    setIsOllama]    = useState(false)
   const [isOpenRouter, setIsOpenRouter] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const [showSysPromptPopup, setShowSysPromptPopup] = useState(false)
+  const [sysPromptDraft,     setSysPromptDraft]     = useState('')
+  const sysPromptBtnRef   = useRef<HTMLButtonElement>(null)
+  const sysPromptPopupRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // Track fullscreen so we know whether to leave room for macOS traffic lights
@@ -75,6 +82,37 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
         if (DEBUG) console.log('[DEV][TopBar] getModelConfig failed:', err)
       })
   }, [])
+
+  // ── Click-outside dismissal for sys-prompt popup ─────────────
+  useEffect(() => {
+    if (!showSysPromptPopup) return
+    function handleMouseDown(e: MouseEvent) {
+      if (
+        sysPromptPopupRef.current &&
+        !sysPromptPopupRef.current.contains(e.target as Node) &&
+        sysPromptBtnRef.current &&
+        !sysPromptBtnRef.current.contains(e.target as Node)
+      ) {
+        setShowSysPromptPopup(false)
+        onUpdateChatSystemInstructions(sysPromptDraft)
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [showSysPromptPopup, sysPromptDraft, onUpdateChatSystemInstructions])
+
+  // ── Escape-key dismissal for sys-prompt popup ─────────────────
+  useEffect(() => {
+    if (!showSysPromptPopup) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setShowSysPromptPopup(false)
+        onUpdateChatSystemInstructions(sysPromptDraft)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [showSysPromptPopup, sysPromptDraft, onUpdateChatSystemInstructions])
 
   // Colour shifts from muted → amber → red as context fills
   const barColour = pct >= 90
@@ -184,7 +222,63 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
             />
           </button>
         )}
+
+        {/* Chat instructions button */}
+        <button
+          ref={sysPromptBtnRef}
+          onClick={() => {
+            if (!activeChatId) return
+            if (!showSysPromptPopup) setSysPromptDraft(chatSystemInstructions ?? '')
+            setShowSysPromptPopup(prev => !prev)
+          }}
+          disabled={!activeChatId}
+          title={
+            !activeChatId
+              ? 'Open a chat to add instructions'
+              : chatSystemInstructions
+              ? 'Chat instructions (set)'
+              : 'Add chat instructions'
+          }
+          className={[
+            'ml-1 p-1 rounded text-[11px] leading-none transition-colors',
+            !activeChatId
+              ? 'text-content-muted/20 cursor-not-allowed'
+              : chatSystemInstructions
+              ? 'text-accent-400 border border-accent-700/40 bg-accent-900/30 hover:bg-accent-900/50 cursor-pointer'
+              : 'text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer',
+          ].join(' ')}
+        >
+          ≡
+        </button>
       </div>
+
+      {/* Chat instructions popup */}
+      {showSysPromptPopup && activeChatId && (
+        <div
+          ref={sysPromptPopupRef}
+          className="absolute left-0 top-[52px] z-50 w-[380px] rounded-xl border border-surface-border bg-surface-elevated/95 backdrop-blur-sm shadow-xl p-3.5"
+        >
+          <p className="text-[11px] font-medium text-content-primary mb-2">
+            Chat instructions
+          </p>
+          <textarea
+            autoFocus
+            value={sysPromptDraft}
+            onChange={e => setSysPromptDraft(e.target.value)}
+            maxLength={4000}
+            placeholder="Add instructions for this chat only — e.g. 'You are reviewing Python code. Be terse. Assume a senior reader.' Appended to your global system prompt."
+            className="w-full min-h-[96px] resize-none rounded-lg bg-surface-border/20 border border-surface-border text-[12px] text-content-secondary placeholder:text-content-muted/50 p-2.5 leading-relaxed focus:outline-none focus:border-accent-700/60"
+          />
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[10px] text-content-muted/50 italic">
+              Saved on dismiss · persists until chat deleted
+            </span>
+            <span className={`text-[10px] font-mono ${sysPromptDraft.length >= 3600 ? 'text-accent-400' : 'text-content-muted/40'}`}>
+              {sysPromptDraft.length} / 4000
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Right: context bar then Compact button — always visible */}
       <div className="no-drag flex items-center gap-3">
