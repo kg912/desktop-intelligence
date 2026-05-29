@@ -610,8 +610,7 @@ function stripLeadingThinkClose(content: string): string {
   // separators sent as whitespace-only deltas), merging all text together.
   return content
     .replace(/^<\/think>\s*/i, "")
-    .replace(/^<channel\|>\s*/i, "")
-    .replace(EOS_TOKENS_RE, "");
+    .replace(/^<channel\|>\s*/i, "");
 }
 
 // Vision content parts (OpenAI-compatible multimodal format)
@@ -1436,7 +1435,8 @@ export class ChatService {
             // Strip Qwen3 internal template tokens that occasionally leak into
             // the content stream and corrupt code blocks or fence syntax.
             const cleanedDelta = (firstChunkProcessed ? delta : stripLeadingThinkClose(delta))
-              .replace(/<\|mask_(?:start|end)\|>/gi, "");
+              .replace(/<\|mask_(?:start|end)\|>/gi, "")
+              .replace(EOS_TOKENS_RE, "");
             firstChunkProcessed = true;
             if (!cleanedDelta) { if (ndjsonDone) break; continue; }
 
