@@ -50,6 +50,7 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
 
   const [showSysPromptPopup, setShowSysPromptPopup] = useState(false)
   const [sysPromptDraft,     setSysPromptDraft]     = useState('')
+  const [popupLeft,          setPopupLeft]          = useState(0)
   const sysPromptBtnRef   = useRef<HTMLButtonElement>(null)
   const sysPromptPopupRef = useRef<HTMLDivElement>(null)
 
@@ -227,7 +228,15 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
         <button
           ref={sysPromptBtnRef}
           onClick={() => {
-            if (!showSysPromptPopup) setSysPromptDraft(chatSystemInstructions ?? '')
+            if (!showSysPromptPopup) {
+              setSysPromptDraft(chatSystemInstructions ?? '')
+              if (sysPromptBtnRef.current) {
+                const btnRect = sysPromptBtnRef.current.getBoundingClientRect()
+                const popupWidth = 400
+                const centeredLeft = btnRect.left + btnRect.width / 2 - popupWidth / 2
+                setPopupLeft(Math.max(8, centeredLeft))
+              }
+            }
             setShowSysPromptPopup(prev => !prev)
           }}
           title={
@@ -252,7 +261,8 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
       {showSysPromptPopup && (
         <div
           ref={sysPromptPopupRef}
-          className="absolute left-0 top-[52px] z-50 w-[380px] rounded-xl border border-surface-border bg-surface-elevated/95 backdrop-blur-sm shadow-xl p-3.5"
+          style={{ left: popupLeft, top: 60, width: 400 }}
+          className="fixed z-50 rounded-xl border border-surface-border bg-[#111111] shadow-xl p-3.5"
         >
           <p className="text-[11px] font-medium text-content-primary mb-2">
             Chat instructions

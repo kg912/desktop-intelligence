@@ -61,19 +61,23 @@ interface EmptyStateProps {
 export function EmptyState({ onSuggest, pendingInstructions }: EmptyStateProps) {
   if (pendingInstructions) {
     return (
-      <div className="flex flex-col items-center justify-center h-full select-none gap-3">
-        <img
-          src={logoWelcome}
-          alt="Desktop Intelligence"
-          className="w-10 h-10 opacity-60"
-          draggable={false}
-        />
-        <p className="text-[13px] font-mono text-content-tertiary tracking-widest uppercase">
-          Send a message to get started
-        </p>
-        <p className="text-[11px] text-content-muted/50 font-mono max-w-[320px] text-center leading-relaxed">
-          Instructions active for this chat
-        </p>
+      <div className="flex flex-col items-center justify-center h-full px-8 select-none">
+        <div className="mb-8 flex flex-col items-center gap-4 animate-fade-in">
+          <img
+            src={logoWelcome}
+            alt="Desktop Intelligence"
+            className="w-14 h-14"
+            draggable={false}
+          />
+          <div className="text-center">
+            <h1 className="text-xl font-semibold text-content-primary tracking-tight">
+              Send a message to get started
+            </h1>
+            <p className="text-sm text-content-tertiary mt-1">
+              Instructions active for this chat
+            </p>
+          </div>
+        </div>
       </div>
     )
   }
