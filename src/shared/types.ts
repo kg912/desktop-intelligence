@@ -267,6 +267,7 @@ export const IPC_CHANNELS = {
   APP_RESTART: 'app:restart',
   SETTINGS_GET_OLLAMA_MODELS: 'settings:getOllamaModels',
   SETTINGS_GET_OPENROUTER_MODELS: 'settings:getOpenRouterModels',
+  SETTINGS_GET_OPENROUTER_STATS:  'settings:getOpenRouterStats',
 
   // ── Suggestion cards ───────────────────────────────────────────
   SETTINGS_GET_SUGGESTIONS:  'settings:getSuggestions',

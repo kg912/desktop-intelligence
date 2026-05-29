@@ -153,6 +153,13 @@ const api = {
   getOpenRouterModels: (apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_MODELS, apiKey),
 
+  getOpenRouterStats: (apiKey?: string): Promise<{
+    credits:  { total_credits: number; total_usage: number } | null
+    activity: { usage: number; requests: number; prompt_tokens: number; completion_tokens: number } | null
+    error:    string | null
+  }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_STATS, apiKey),
+
   restartApp: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
 

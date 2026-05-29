@@ -30,29 +30,10 @@ function OpenRouterStats({ apiKey }: { apiKey: string }) {
     setLoading(true)
     setError(null)
     try {
-      const today = new Date().toISOString().slice(0, 10)
-      const headers = { Authorization: `Bearer ${key}` }
-      const [cRes, aRes] = await Promise.all([
-        fetch('https://openrouter.ai/api/v1/credits',            { headers }),
-        fetch(`https://openrouter.ai/api/v1/activity?date=${today}`, { headers }),
-      ])
-      if (!cRes.ok) throw new Error(`Credits: ${cRes.status}`)
-      if (!aRes.ok) throw new Error(`Activity: ${aRes.status}`)
-      const cJson = await cRes.json() as { data: ORCredits }
-      const aJson = await aRes.json() as { data: ORActivity[] }
-      setCredits(cJson.data)
-      // Sum across all models for the day
-      const rows = aJson.data ?? []
-      const agg: ORActivity = rows.reduce(
-        (acc, r) => ({
-          usage:             acc.usage             + (r.usage ?? 0),
-          requests:          acc.requests          + (r.requests ?? 0),
-          prompt_tokens:     acc.prompt_tokens     + (r.prompt_tokens ?? 0),
-          completion_tokens: acc.completion_tokens + (r.completion_tokens ?? 0),
-        }),
-        { usage: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0 }
-      )
-      setActivity(agg)
+      const result = await window.api.getOpenRouterStats(key)
+      if (result.error) throw new Error(result.error)
+      setCredits(result.credits)
+      setActivity(result.activity)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
