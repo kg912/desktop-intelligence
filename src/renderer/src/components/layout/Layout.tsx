@@ -401,6 +401,7 @@ export function Layout() {
               ref={chatAreaRef}
               activeChatId={activeChatId}
               onSuggest={handleSuggest}
+              chatSystemInstructions={chatSystemInstructions}
             />
 
             <InputBar

@@ -12,8 +12,9 @@ import { EmptyState } from './EmptyState'
 // ChatArea
 // ----------------------------------------------------------------
 interface ChatAreaProps {
-  activeChatId: string | null
-  onSuggest?:   (text: string) => void
+  activeChatId:             string | null
+  onSuggest?:               (text: string) => void
+  chatSystemInstructions?:  string | null
 }
 
 export const ChatIdCtx = createContext<string | null>(null)
@@ -24,7 +25,7 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ activeChatId, onSuggest }, ref) {
+function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
   useSignals()
   const { compactToast } = useModelRuntime()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -215,7 +216,10 @@ function ChatArea({ activeChatId, onSuggest }, ref) {
 
       {!hasMessages ? (
         <div key="empty" className="h-full">
-          <EmptyState onSuggest={onSuggest ?? (() => {})} />
+          <EmptyState
+            onSuggest={onSuggest ?? (() => {})}
+            pendingInstructions={!activeChatId ? chatSystemInstructions : null}
+          />
         </div>
       ) : (
         <div

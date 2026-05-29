@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSignals } from '@preact/signals-react/runtime'
-import { Zap, RotateCw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
 
 const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
@@ -227,33 +227,29 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
         <button
           ref={sysPromptBtnRef}
           onClick={() => {
-            if (!activeChatId) return
             if (!showSysPromptPopup) setSysPromptDraft(chatSystemInstructions ?? '')
             setShowSysPromptPopup(prev => !prev)
           }}
-          disabled={!activeChatId}
           title={
-            !activeChatId
-              ? 'Open a chat to add instructions'
-              : chatSystemInstructions
-              ? 'Chat instructions (set)'
-              : 'Add chat instructions'
+            chatSystemInstructions
+              ? `Instructions: ${chatSystemInstructions.length > 80
+                  ? chatSystemInstructions.slice(0, 80).trimEnd() + '…'
+                  : chatSystemInstructions}`
+              : 'Add instructions for this chat'
           }
           className={[
-            'ml-1 p-1 rounded text-[11px] leading-none transition-colors',
-            !activeChatId
-              ? 'text-content-muted/20 cursor-not-allowed'
-              : chatSystemInstructions
-              ? 'text-accent-400 border border-accent-700/40 bg-accent-900/30 hover:bg-accent-900/50 cursor-pointer'
-              : 'text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer',
+            'ml-1 p-1 rounded transition-colors cursor-pointer',
+            chatSystemInstructions
+              ? 'text-accent-400 border border-accent-700/40 bg-accent-900/30 hover:bg-accent-900/50'
+              : 'text-content-muted hover:text-content-secondary hover:bg-surface-border/30',
           ].join(' ')}
         >
-          ≡
+          <ScrollText className="w-3.5 h-3.5" />
         </button>
       </div>
 
       {/* Chat instructions popup */}
-      {showSysPromptPopup && activeChatId && (
+      {showSysPromptPopup && (
         <div
           ref={sysPromptPopupRef}
           className="absolute left-0 top-[52px] z-50 w-[380px] rounded-xl border border-surface-border bg-surface-elevated/95 backdrop-blur-sm shadow-xl p-3.5"

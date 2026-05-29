@@ -666,6 +666,11 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
             `[Chat] Created new chat row: id=${chat.id}, title="${chat.title}"`,
           );
           onChatCreated?.(chat);
+          // Persist any instructions that were set before the first message
+          const pendingInstructions = chatSystemInstructions;
+          if (pendingInstructions) {
+            window.api.setChatSystemInstructions(chat.id, pendingInstructions).catch(console.error);
+          }
         } catch (err) {
           console.warn("[DB] newChat failed:", err);
         }
