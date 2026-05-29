@@ -1029,27 +1029,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const key = apiKey ?? s.openrouterApiKey ?? ''
     if (!key) return { credits: null, activity: null, error: 'No API key' }
     try {
-      const today = new Date().toISOString().slice(0, 10)
-      const headers = { Authorization: `Bearer ${key}` }
-      const [cRes, aRes] = await Promise.all([
-        fetch('https://openrouter.ai/api/v1/credits',                 { headers, signal: AbortSignal.timeout(10_000) }),
-        fetch(`https://openrouter.ai/api/v1/activity?date=${today}`,  { headers, signal: AbortSignal.timeout(10_000) }),
-      ])
-      if (!cRes.ok) throw new Error(`Credits API returned ${cRes.status}`)
-      if (!aRes.ok) throw new Error(`Activity API returned ${aRes.status}`)
-      const cJson = await cRes.json() as { data: { total_credits: number; total_usage: number } }
-      const aJson = await aRes.json() as { data: Array<{ usage: number; requests: number; prompt_tokens: number; completion_tokens: number }> }
-      const rows = aJson.data ?? []
-      const activity = rows.reduce(
-        (acc, r) => ({
-          usage:             acc.usage             + (r.usage             ?? 0),
-          requests:          acc.requests          + (r.requests          ?? 0),
-          prompt_tokens:     acc.prompt_tokens     + (r.prompt_tokens     ?? 0),
-          completion_tokens: acc.completion_tokens + (r.completion_tokens ?? 0),
-        }),
-        { usage: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0 }
-      )
-      return { credits: cJson.data, activity, error: null }
+      const res = await fetch('https://openrouter.ai/api/v1/credits', {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) throw new Error(`Credits API returned ${res.status}`)
+      const json = await res.json() as { data: { total_credits: number; total_usage: number } }
+      return { credits: json.data, activity: null, error: null }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return { credits: null, activity: null, error: msg }
