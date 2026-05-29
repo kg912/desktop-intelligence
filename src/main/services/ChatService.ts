@@ -597,11 +597,21 @@ export function detectMidStreamToolCall(
  * Safe to apply to every chunk — only removes a tag at the very start.
  * Handles both Qwen3 </think> and Gemma 4 <channel|> orphaned close tags.
  */
+/**
+ * EOS tokens that some models (Qwen, DeepSeek) leak literally into the stream
+ * instead of relying on the provider's stop-sequence enforcement.
+ * Strip these anywhere they appear — they must never reach the renderer or persisted content.
+ */
+const EOS_TOKENS_RE = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi;
+
 function stripLeadingThinkClose(content: string): string {
   // Only strip the closing tag and its immediately following whitespace.
   // Do NOT trimStart() — that would eat "\n\n" chunks (paragraph/code-block
   // separators sent as whitespace-only deltas), merging all text together.
-  return content.replace(/^<\/think>\s*/i, "").replace(/^<channel\|>\s*/i, "");
+  return content
+    .replace(/^<\/think>\s*/i, "")
+    .replace(/^<channel\|>\s*/i, "")
+    .replace(EOS_TOKENS_RE, "");
 }
 
 // Vision content parts (OpenAI-compatible multimodal format)
@@ -2034,6 +2044,9 @@ export class ChatService {
   // of tokens.  Using lastIndexOf matches our renderer logic (Qwen sometimes
   // mentions </think> inside the thought, so we split at the LAST occurrence).
   private stripThinkBlocks(content: string): string {
+    // Strip EOS tokens that may have been persisted before the stream-level fix
+    content = content.replace(EOS_TOKENS_RE, "");
+
     // Strip Qwen3-style <think>…</think> blocks
     const open = "<think>";
     const close = "</think>";
