@@ -158,6 +158,141 @@ const StreamingCtx = createContext(false)
 // Removing them lets the CSS rules (.diagram-block svg) apply
 // max-width:100% / height:auto so diagrams scale to their container.
 // ----------------------------------------------------------------
+// ----------------------------------------------------------------
+// Colour utilities for SVG post-processing
+// ----------------------------------------------------------------
+
+/** Parse a 3- or 6-digit hex string → [r, g, b] 0–255. Returns null on bad input. */
+function hexToRgb(hex: string): [number, number, number] | null {
+  const h = hex.replace('#', '')
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16)
+    const g = parseInt(h[1] + h[1], 16)
+    const b = parseInt(h[2] + h[2], 16)
+    return [r, g, b]
+  }
+  if (h.length === 6) {
+    return [
+      parseInt(h.slice(0, 2), 16),
+      parseInt(h.slice(2, 4), 16),
+      parseInt(h.slice(4, 6), 16),
+    ]
+  }
+  return null
+}
+
+/** WCAG relative luminance of an RGB triplet (0–255 each). */
+function luminance([r, g, b]: [number, number, number]): number {
+  const toLinear = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
+}
+
+/**
+ * Convert RGB → HSL. Returns [h 0–360, s 0–1, l 0–1].
+ */
+function rgbToHsl([r, g, b]: [number, number, number]): [number, number, number] {
+  const rr = r / 255, gg = g / 255, bb = b / 255
+  const max = Math.max(rr, gg, bb), min = Math.min(rr, gg, bb)
+  const l = (max + min) / 2
+  if (max === min) return [0, 0, l]
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h = 0
+  if (max === rr) h = ((gg - bb) / d + (gg < bb ? 6 : 0)) / 6
+  else if (max === gg) h = ((bb - rr) / d + 2) / 6
+  else h = ((rr - gg) / d + 4) / 6
+  return [h * 360, s, l]
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const hue2rgb = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1
+    if (t < 1/6) return p + (q - p) * 6 * t
+    if (t < 1/2) return q
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6
+    return p
+  }
+  const hh = h / 360
+  if (s === 0) {
+    const v = Math.round(l * 255)
+    return '#' + v.toString(16).padStart(2, '0').repeat(3)
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const r = Math.round(hue2rgb(p, q, hh + 1/3) * 255)
+  const g = Math.round(hue2rgb(p, q, hh)       * 255)
+  const bb = Math.round(hue2rgb(p, q, hh - 1/3) * 255)
+  return '#' + [r, g, bb].map(c => c.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Given a hex fill that has too-high luminance for dark UI, return a
+ * dark variant that preserves hue/saturation but clamps lightness to
+ * 0.18 max. Also returns the appropriate text color (#f0f0f0 always,
+ * since the darkened fill will always be dark).
+ */
+function darkenFill(hex: string): string {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return hex
+  const [h, s] = rgbToHsl(rgb)
+  // Keep saturation (slightly boosted for visibility) but clamp lightness.
+  const newL = 0.15
+  const newS = Math.min(s * 1.1, 0.85)  // slight boost so colors stay distinct
+  return hslToHex(h, newS, newL)
+}
+
+/**
+ * Post-process Mermaid-rendered SVG:
+ * 1. Replace any hex fill color whose luminance > 0.15 with a dark variant
+ *    (preserving hue) so node backgrounds are always dark enough for
+ *    #f0f0f0 text to be legible.  This handles the case where the model
+ *    writes explicit `style fill:#b2dfdb` in the diagram source —
+ *    themeVariables cannot override inline style attributes.
+ * 2. Wherever a fill was darkened, also force the sibling `color` and
+ *    `fill` on descendent text elements to #f0f0f0.
+ */
+function darkifyFills(svg: string): string {
+  // Replace fill= attributes and fill: style properties.
+  // We match 3- and 6-digit hex colors only (avoids keywords like 'none',
+  // 'transparent', 'white', 'black' getting caught unintentionally —
+  // though we do handle 'white' separately below).
+
+  // Step 1: darken fill attributes: fill="#rrggbb"
+  let out = svg.replace(/\bfill="(#[0-9a-fA-F]{3,6})"/g, (match, hex) => {
+    const rgb = hexToRgb(hex)
+    if (!rgb) return match
+    if (luminance(rgb) > 0.15) return `fill="${darkenFill(hex)}"`
+    return match
+  })
+
+  // Step 2: darken fill inside style attributes: style="fill:#rrggbb;..."
+  out = out.replace(/\bstyle="([^"]*)"/g, (match, styleContent: string) => {
+    const newStyle = styleContent.replace(/\bfill\s*:\s*(#[0-9a-fA-F]{3,6})/g, (m: string, hex: string) => {
+      const rgb = hexToRgb(hex)
+      if (!rgb) return m
+      if (luminance(rgb) > 0.15) return `fill:${darkenFill(hex)}`
+      return m
+    })
+    // Also ensure text color is light wherever a fill was darkened
+    return `style="${newStyle}"`
+  })
+
+  // Step 3: force all <text> elements to #f0f0f0 fill so node labels are
+  // always legible regardless of what the diagram author specified.
+  // Mermaid places text as <text fill="#..."> or inside <span> within
+  // foreignObject; we target the SVG text elements only.
+  out = out.replace(/(<text\b[^>]*?)\bfill="(?!none)[^"]*"/g, '$1fill="#f0f0f0"')
+
+  // Step 4: handle literal 'white' and 'WhiteSmoke' fill values
+  out = out.replace(/\bfill="(white|whitesmoke|#fff|#ffffff|#FFFFFF|#FFF)"/gi, 'fill="#1e1e1e"')
+  out = out.replace(/\bfill\s*:\s*(white|whitesmoke|#fff|#ffffff|#FFFFFF|#FFF)\b/gi, 'fill:#1e1e1e')
+
+  return out
+}
+
 function makeResponsiveSvg(svg: string): string {
   // Replace Mermaid's fixed pixel width with 100% so every diagram
   // fills its card regardless of the SVG's natural content width.
@@ -165,9 +300,10 @@ function makeResponsiveSvg(svg: string): string {
   // large diagrams fill the card and are capped by the container max-height.
   // Remove explicit height — the browser derives it from the viewBox aspect
   // ratio once width is set to 100%.
-  return svg
+  const sized = svg
     .replace(/(<svg\b[^>]*?)\s+width="[\d.]+(?:px)?"/i,  '$1 width="100%"')
     .replace(/(<svg\b[^>]*?)\s+height="[\d.]+(?:px)?"/i, '$1')
+  return darkifyFills(sized)
 }
 
 // ----------------------------------------------------------------
