@@ -491,10 +491,79 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     }
     console.log(`${'='.repeat(80)}\n`)
 
+    // ── EOS TOKEN TRACE (always-on) ─────────────────────────────────────────
+    // Scans every field of the enriched payload for <|endoftext|> and similar
+    // special tokens BEFORE chatService.send() processes them. This runs in
+    // handlers.ts (not ChatService) so it fires regardless of compilation state.
+    const _EOS_RE = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi
+    console.log(`[EOS-TRACE:handlers] Scanning ${enrichedPayload.messages.length} messages pre-send for EOS tokens...`)
+    let _eosFound = false
+    for (let _ei = 0; _ei < enrichedPayload.messages.length; _ei++) {
+      const _em = enrichedPayload.messages[_ei]
+      const _contentStr = typeof _em.content === 'string' ? _em.content : JSON.stringify(_em.content)
+      _EOS_RE.lastIndex = 0
+      const _contentHasEos = _EOS_RE.test(_contentStr)
+      _EOS_RE.lastIndex = 0
+      // Log every message briefly
+      console.log(`[EOS-TRACE:handlers]   msg[${_ei}] role=${_em.role} chars=${_contentStr.length} hasEOS=${_contentHasEos} tail="${_contentStr.slice(-80).replace(/\n/g, '↵')}"`)
+      if (_contentHasEos) {
+        _eosFound = true
+        // Find and show context around every match
+        const _allMatches = [..._contentStr.matchAll(new RegExp(_EOS_RE.source, 'gi'))]
+        for (const _m of _allMatches) {
+          const _s = Math.max(0, (_m.index ?? 0) - 60)
+          const _e2 = Math.min(_contentStr.length, (_m.index ?? 0) + 60)
+          console.warn(`[EOS-TRACE:handlers]   ⚠️ EOS in msg[${_ei}].content at index ${_m.index}: "...${_contentStr.slice(_s, _e2)}..."`)
+        }
+      }
+      // Also check tool_call_id and any WireMessage tool_calls
+      const _wem = _em as { tool_call_id?: string; tool_calls?: unknown }
+      if (_wem.tool_call_id) {
+        _EOS_RE.lastIndex = 0
+        if (_EOS_RE.test(_wem.tool_call_id)) {
+          console.warn(`[EOS-TRACE:handlers]   ⚠️ EOS in msg[${_ei}].tool_call_id: "${_wem.tool_call_id}"`)
+          _eosFound = true
+        }
+      }
+      if (_wem.tool_calls) {
+        const _tcStr = JSON.stringify(_wem.tool_calls)
+        _EOS_RE.lastIndex = 0
+        if (_EOS_RE.test(_tcStr)) {
+          console.warn(`[EOS-TRACE:handlers]   ⚠️ EOS in msg[${_ei}].tool_calls: "${_tcStr.slice(0, 200)}"`)
+          _eosFound = true
+        }
+      }
+    }
+    if (!_eosFound) {
+      console.log('[EOS-TRACE:handlers] ✅ No EOS tokens found in pre-send payload messages.')
+    }
+
+    // ── EOS SANITIZE (handlers-level nuclear strip) ───────────────────────
+    // ChatService.ts nuclear strip is not firing (compilation issue).
+    // Strip here unconditionally so it cannot reach the wire payload.
+    // Covers tool messages containing HuggingFace tokenizer JSON with
+    // "pad_token":"<|endoftext|>" and any other source.
+    if (_eosFound) {
+      enrichedPayload = {
+        ...enrichedPayload,
+        messages: enrichedPayload.messages.map((m) => {
+          if (typeof m.content !== 'string') return m
+          const _EOS_RE2 = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi
+          const cleaned = m.content.replace(_EOS_RE2, '')
+          if (cleaned !== m.content) {
+            console.log(`[EOS-TRACE:handlers] ✅ Stripped EOS from role=${m.role} (${m.content.length} → ${cleaned.length} chars)`)
+          }
+          return { ...m, content: cleaned }
+        }),
+      }
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     try {
       await chatService.send(enrichedPayload, modelId, wc)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[EOS-TRACE:handlers] chatService.send() threw: ${msg}`)
       send(IPC_CHANNELS.CHAT_ERROR, msg)
     }
   })

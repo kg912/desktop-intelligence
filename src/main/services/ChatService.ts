@@ -922,8 +922,29 @@ export class ChatService {
     const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
 
     // ── Build base messages ────────────────────────────────────────
+    const _rawBuilt = this.buildMessages(payload, isNvidia || isOllama || isOpenRouter);
+    // Always-on: log every message buildMessages() produced so we can see
+    // exactly what goes into the wire payload, not just what came from the renderer.
+    console.log(`[EOS-TRACE] buildMessages() output — ${_rawBuilt.length} message(s):`);
+    _rawBuilt.forEach((m, i) => {
+      const contentStr = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      const hasEos = EOS_TOKENS_RE.test(contentStr);
+      EOS_TOKENS_RE.lastIndex = 0;
+      console.log(
+        `[EOS-TRACE]   [${i}] role=${m.role} chars=${contentStr.length} hasEOS=${hasEos} preview="${contentStr.slice(0, 120).replace(/\n/g, '↵')}"`,
+      );
+      if (hasEos) {
+        // Show the 80 chars around each match so we can see context
+        const matches = [...contentStr.matchAll(new RegExp(EOS_TOKENS_RE.source, 'gi'))];
+        matches.forEach(match => {
+          const start = Math.max(0, (match.index ?? 0) - 40);
+          const end = Math.min(contentStr.length, (match.index ?? 0) + 40);
+          console.warn(`[EOS-TRACE]   ⚠️  EOS at index ${match.index}: "...${contentStr.slice(start, end)}..."`);
+        });
+      }
+    });
     const builtMessages = applyThinkingPrefix(
-      this.buildMessages(payload, isNvidia || isOllama || isOpenRouter),
+      _rawBuilt,
       payload.thinkingMode,
       payload.model,
       provider,
@@ -1218,6 +1239,51 @@ export class ChatService {
         // 5d — messages_sent capture
         this._obsCapture({ type: 'messages_sent', payload: { messages: messagesForRequest }, ts: Date.now() })
 
+        // Nuclear EOS sanitization — strip special tokens from the serialised
+        // request body before it leaves the process. Catches any <|endoftext|>
+        // (and similar) that survived buildMessages() processing, whether split
+        // across chunk boundaries during streaming, stored via an older code
+        // path, or present in any field (content, tool_calls args, etc.).
+        // Safe: removes a known-invalid string from JSON content; result is
+        // still valid JSON with shorter string values.
+        const _eosBeforeNuclear = streamBody.match(EOS_TOKENS_RE);
+        if (_eosBeforeNuclear) {
+          // Always log — this is the production bug we are tracing.
+          console.warn(
+            `[EOS-TRACE] ⚠️  EOS token(s) found in streamBody BEFORE nuclear strip: ${JSON.stringify(_eosBeforeNuclear)} — loop=${searchLoopCount} provider=${provider}`,
+          );
+          // Scan each message in messagesForRequest to identify which one carries the token
+          try {
+            const _wireForTrace = JSON.parse(streamBody) as { messages?: Array<{ role: string; content: unknown; tool_calls?: unknown }> };
+            (_wireForTrace.messages ?? []).forEach((wm, wi) => {
+              const fields: Array<[string, string]> = [];
+              if (typeof wm.content === 'string' && EOS_TOKENS_RE.test(wm.content)) {
+                EOS_TOKENS_RE.lastIndex = 0;
+                fields.push(['content', wm.content.slice(0, 200)]);
+              }
+              EOS_TOKENS_RE.lastIndex = 0;
+              const tcStr = wm.tool_calls ? JSON.stringify(wm.tool_calls) : '';
+              if (tcStr && EOS_TOKENS_RE.test(tcStr)) {
+                EOS_TOKENS_RE.lastIndex = 0;
+                fields.push(['tool_calls', tcStr.slice(0, 200)]);
+              }
+              EOS_TOKENS_RE.lastIndex = 0;
+              if (fields.length > 0) {
+                console.warn(
+                  `[EOS-TRACE]   → message[${wi}] role=${wm.role} — EOS in: ${fields.map(([f, v]) => `${f}: "${v}"`).join(' | ')}`,
+                );
+              }
+            });
+          } catch (e) {
+            console.warn('[EOS-TRACE]   → could not parse streamBody for per-message trace:', e);
+          }
+        }
+        streamBody = streamBody.replace(EOS_TOKENS_RE, "");
+        EOS_TOKENS_RE.lastIndex = 0;
+        if (_eosBeforeNuclear) {
+          console.warn(`[EOS-TRACE] ✅ Nuclear strip applied — ${_eosBeforeNuclear.length} token(s) removed.`);
+        }
+
         const response = await net.fetch(endpoint, {
           method: "POST",
           headers: fetchHeaders,
@@ -1234,6 +1300,21 @@ export class ChatService {
         if (!response.ok) {
           const errText = await response.text();
           const label = isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : "LM Studio";
+          // Always log the full error body — critical for diagnosing EOS/special-token rejections.
+          console.warn(`[EOS-TRACE] OpenRouter HTTP ${response.status} error body: ${errText}`);
+          // If OpenRouter rejected for special token, log which messages survived into the final streamBody.
+          if (errText.includes('special token') || errText.includes('endoftext')) {
+            console.warn('[EOS-TRACE] Special token rejection — dumping final streamBody message summary:');
+            try {
+              const _parsed = JSON.parse(streamBody) as { messages?: Array<{ role: string; content: unknown }> };
+              (_parsed.messages ?? []).forEach((wm, wi) => {
+                const cs = typeof wm.content === 'string' ? wm.content : JSON.stringify(wm.content);
+                const hasEos = EOS_TOKENS_RE.test(cs);
+                EOS_TOKENS_RE.lastIndex = 0;
+                console.warn(`[EOS-TRACE]   streamBody[${wi}] role=${wm.role} chars=${cs.length} hasEOS=${hasEos} tail="${cs.slice(-120).replace(/\n/g, '↵')}"`)
+              });
+            } catch { /* ignore parse error */ }
+          }
           if (DEBUG)
             console.log(
               `[DEBUG][ChatService][Response] ERROR body: ${errText}`,
@@ -1434,9 +1515,19 @@ export class ChatService {
 
             // Strip Qwen3 internal template tokens that occasionally leak into
             // the content stream and corrupt code blocks or fence syntax.
-            const cleanedDelta = (firstChunkProcessed ? delta : stripLeadingThinkClose(delta))
+            const _rawForEosCheck = firstChunkProcessed ? delta : stripLeadingThinkClose(delta);
+            const _eosInDelta = _rawForEosCheck.match(EOS_TOKENS_RE);
+            if (_eosInDelta) {
+              EOS_TOKENS_RE.lastIndex = 0;
+              console.warn(
+                `[EOS-TRACE] ⚠️  EOS token in stream delta: ${JSON.stringify(_eosInDelta)} — loop=${searchLoopCount} streamBuffer.length=${streamBuffer.length} bufferTail="${streamBuffer.slice(-80)}"`,
+              );
+            }
+            EOS_TOKENS_RE.lastIndex = 0;
+            const cleanedDelta = _rawForEosCheck
               .replace(/<\|mask_(?:start|end)\|>/gi, "")
               .replace(EOS_TOKENS_RE, "");
+            EOS_TOKENS_RE.lastIndex = 0;
             firstChunkProcessed = true;
             if (!cleanedDelta) { if (ndjsonDone) break; continue; }
 
