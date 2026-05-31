@@ -132,6 +132,7 @@ export function NvidiaSettingsPanel() {
 
   // OpenRouter model list state
   const [openRouterModels, setOpenRouterModels]               = useState<string[]>([])
+  const [openRouterModalities, setOpenRouterModalities]       = useState<Record<string, string[]>>({})
   const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false)
   const [openRouterModelsError, setOpenRouterModelsError]     = useState<string | null>(null)
 
@@ -195,8 +196,10 @@ export function NvidiaSettingsPanel() {
       if (result.error) {
         setOpenRouterModelsError(result.error)
         setOpenRouterModels([])
+        setOpenRouterModalities({})
       } else {
         setOpenRouterModels(result.models)
+        setOpenRouterModalities(result.modalities ?? {})
         setOpenRouterModelsError(null)
         if (!settings.openrouterModel && result.models.length > 0) {
           setSettings((prev) => ({ ...prev, openrouterModel: result.models[0] }))
@@ -205,6 +208,7 @@ export function NvidiaSettingsPanel() {
     } catch (err) {
       setOpenRouterModelsError(err instanceof Error ? err.message : String(err))
       setOpenRouterModels([])
+      setOpenRouterModalities({})
     } finally {
       setOpenRouterModelsLoading(false)
     }
@@ -507,9 +511,47 @@ export function NvidiaSettingsPanel() {
                 Could not fetch models: {openRouterModelsError}
               </p>
             )}
-          </div>
 
-          {/* Account stats — fetched on tab focus */}
+            {/* Input modality chips for the selected model */}
+            {(() => {
+              const mods = openRouterModalities[settings.openrouterModel] ?? []
+              if (mods.length === 0) return null
+              const MODALITY_META: Record<string, { label: string; icon: string }> = {
+                text:   { label: 'Text',   icon: 'T' },
+                image:  { label: 'Image',  icon: '⬡' },
+                audio:  { label: 'Audio',  icon: '♪' },
+                video:  { label: 'Video',  icon: '▶' },
+                file:   { label: 'File',   icon: '⬒' },
+              }
+              return (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-xs text-content-muted">Inputs</span>
+                  <div className="flex gap-1.5">
+                    {mods.map((mod) => {
+                      const meta = MODALITY_META[mod] ?? { label: mod, icon: '·' }
+                      return (
+                        <span
+                          key={mod}
+                          title={meta.label}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium"
+                          style={{
+                            background: mod === 'text' ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
+                            border: `0.5px solid ${mod === 'text' ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
+                            color: mod === 'text' ? 'rgba(255,255,255,0.4)' : 'rgba(229,57,53,0.7)',
+                            fontFamily: 'var(--font-mono, monospace)',
+                          }}
+                        >
+                          <span style={{ fontSize: '10px' }}>{meta.icon}</span>
+                          {meta.label}
+                        </span>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Account stats — fetched on tab focus */}
           <OpenRouterStats apiKey={settings.openrouterApiKey} />
         </div>
       )}

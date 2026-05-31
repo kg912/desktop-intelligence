@@ -1070,7 +1070,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const key = apiKey ?? s.openrouterApiKey ?? ''
-    if (!key) return { models: [], error: 'No API key configured' }
+    if (!key) return { models: [], modalities: {}, error: 'No API key configured' }
     try {
       const res = await fetch('https://openrouter.ai/api/v1/models', {
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -1078,17 +1078,24 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
-        return { models: [], error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
+        return { models: [], modalities: {}, error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
       }
-      const data = await res.json() as { data?: Array<{ id: string }> }
+      const data = await res.json() as { data?: Array<{ id: string; architecture?: { input_modalities?: string[] } }> }
       const models = (data.data ?? [])
         .map((m) => m.id)
         .filter((id) => typeof id === 'string' && id.length > 0)
         .sort()
-      return { models, error: null }
+      // Build id → input_modalities lookup for the full catalogue
+      const modalities: Record<string, string[]> = {}
+      for (const m of (data.data ?? [])) {
+        if (m.id && m.architecture?.input_modalities) {
+          modalities[m.id] = m.architecture.input_modalities
+        }
+      }
+      return { models, modalities, error: null }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      return { models: [], error: msg }
+      return { models: [], modalities: {}, error: msg }
     }
   })
 
