@@ -550,8 +550,9 @@ export function NvidiaSettingsPanel() {
                 </div>
               )
             })()}
+          </div>
 
-            {/* Account stats — fetched on tab focus */}
+          {/* Account stats — fetched on tab focus */}
           <OpenRouterStats apiKey={settings.openrouterApiKey} />
         </div>
       )}
