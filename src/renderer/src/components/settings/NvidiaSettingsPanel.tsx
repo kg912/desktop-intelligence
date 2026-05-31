@@ -10,8 +10,8 @@
  * Switching providers requires an app restart — a banner appears as soon as
  * the in-memory provider differs from the one that was active at boot.
  */
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { AlertTriangle, Eye, EyeOff, RefreshCw, TrendingUp } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { AlertTriangle, Eye, EyeOff, RefreshCw, TrendingUp, Type, Image, Video, AudioLines, FileText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { BackendProvider, BackendSettings } from '../../../../../shared/types'
 
@@ -516,33 +516,33 @@ export function NvidiaSettingsPanel() {
             {(() => {
               const mods = openRouterModalities[settings.openrouterModel] ?? []
               if (mods.length === 0) return null
-              const MODALITY_META: Record<string, { label: string; icon: string }> = {
-                text:   { label: 'Text',   icon: 'T' },
-                image:  { label: 'Image',  icon: '⬡' },
-                audio:  { label: 'Audio',  icon: '♪' },
-                video:  { label: 'Video',  icon: '▶' },
-                file:   { label: 'File',   icon: '⬒' },
+              const MODALITY_META: Record<string, { label: string; icon: React.ReactNode }> = {
+                text:  { label: 'Text',  icon: <Type  size={11} /> },
+                image: { label: 'Image', icon: <Image size={11} /> },
+                audio: { label: 'Audio', icon: <AudioLines size={11} /> },
+                video: { label: 'Video', icon: <Video size={11} /> },
+                file:  { label: 'File',  icon: <FileText size={11} /> },
               }
               return (
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className="text-xs text-content-muted">Inputs</span>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1">
                     {mods.map((mod) => {
-                      const meta = MODALITY_META[mod] ?? { label: mod, icon: '·' }
+                      const meta = MODALITY_META[mod]
+                      if (!meta) return null
+                      const isText = mod === 'text'
                       return (
                         <span
                           key={mod}
                           title={meta.label}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium"
+                          className="inline-flex items-center justify-center w-6 h-6 rounded"
                           style={{
-                            background: mod === 'text' ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
-                            border: `0.5px solid ${mod === 'text' ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
-                            color: mod === 'text' ? 'rgba(255,255,255,0.4)' : 'rgba(229,57,53,0.7)',
-                            fontFamily: 'var(--font-mono, monospace)',
+                            background: isText ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
+                            border: `0.5px solid ${isText ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
+                            color: isText ? 'rgba(255,255,255,0.35)' : 'rgba(229,57,53,0.65)',
                           }}
                         >
-                          <span style={{ fontSize: '10px' }}>{meta.icon}</span>
-                          {meta.label}
+                          {meta.icon}
                         </span>
                       )
                     })}
