@@ -535,66 +535,96 @@ export function NvidiaSettingsPanel() {
                 { tag: 'out',    val: fmt(p.completion) },
                 { tag: 'cached', val: fmt(p.cacheRead) },
               ] : []
+              // Column count: 1 for inputs zone (if present) + price columns
+              const colCount = (mods.length > 0 ? 1 : 0) + prices.length
+              if (colCount === 0) return null
+              const tagStyle: React.CSSProperties = {
+                fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase',
+                color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace',
+              }
               return (
                 <div
-                  className="flex items-stretch overflow-hidden rounded-lg"
-                  style={{ border: '0.5px solid rgba(255,255,255,0.09)', background: '#111' }}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: `repeat(${colCount}, 1fr)`,
+                    gridTemplateRows: 'auto auto',
+                    border: '0.5px solid rgba(255,255,255,0.09)',
+                    borderRadius: 8,
+                    background: '#111',
+                    overflow: 'hidden',
+                  }}
                 >
+                  {/* ── Row 1: labels ── */}
+                  {mods.length > 0 && (
+                    <div style={{ padding: '8px 12px 4px', borderRight: '0.5px solid rgba(255,255,255,0.07)' }}>
+                      <span style={tagStyle}>Inputs</span>
+                    </div>
+                  )}
+                  {prices.map((item, i) => (
+                    <div
+                      key={item.tag + '-label'}
+                      style={{
+                        padding: '8px 12px 4px',
+                        borderRight: i < prices.length - 1 ? '0.5px solid rgba(255,255,255,0.07)' : undefined,
+                      }}
+                    >
+                      <span style={tagStyle}>{item.tag}</span>
+                    </div>
+                  ))}
+
+                  {/* ── Row 2: values ── */}
                   {mods.length > 0 && (
                     <div
-                      className="flex flex-col justify-center gap-1.5 px-3 py-2.5"
-                      style={{ borderRight: '0.5px solid rgba(255,255,255,0.07)', minWidth: 60 }}
+                      style={{ padding: '4px 12px 8px', borderRight: '0.5px solid rgba(255,255,255,0.07)', display: 'flex', gap: 4, alignItems: 'center' }}
                     >
-                      <span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace' }}>Inputs</span>
-                      <div className="flex gap-1">
-                        {mods.map((mod) => {
-                          const icon = MODALITY_ICONS[mod]
-                          if (!icon) return null
-                          const isText = mod === 'text'
-                          return (
-                            <span
-                              key={mod}
-                              title={mod.charAt(0).toUpperCase() + mod.slice(1)}
-                              className="inline-flex items-center justify-center rounded"
-                              style={{
-                                width: 22, height: 22,
-                                background: isText ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
-                                border: `0.5px solid ${isText ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
-                                color: isText ? 'rgba(255,255,255,0.35)' : 'rgba(229,57,53,0.65)',
-                              }}
-                            >
-                              {icon}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {prices.length > 0 && (
-                    <div className="flex flex-1">
-                      {prices.map((item, i) => (
-                        <div
-                          key={item.tag}
-                          className="flex flex-col justify-center gap-0.5 px-3 py-2.5 flex-1"
-                          style={{ borderRight: i < prices.length - 1 ? '0.5px solid rgba(255,255,255,0.05)' : undefined }}
-                        >
-                          <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace' }}>{item.tag}</span>
+                      {mods.map((mod) => {
+                        const icon = MODALITY_ICONS[mod]
+                        if (!icon) return null
+                        const isText = mod === 'text'
+                        return (
                           <span
-                            className="font-mono font-medium"
+                            key={mod}
+                            title={mod.charAt(0).toUpperCase() + mod.slice(1)}
                             style={{
-                              fontSize: 12,
-                              color: item.val === null ? 'rgba(255,255,255,0.15)' : item.val === 'free' ? 'rgba(46,204,113,0.7)' : 'rgba(255,255,255,0.75)',
+                              width: 22, height: 22, borderRadius: 4, flexShrink: 0,
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                              background: isText ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
+                              border: `0.5px solid ${isText ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
+                              color: isText ? 'rgba(255,255,255,0.35)' : 'rgba(229,57,53,0.65)',
                             }}
                           >
-                            {item.val ?? 'n/a'}
+                            {icon}
                           </span>
-                          {item.val !== null && (
-                            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.18)', fontFamily: 'monospace' }}>/ M tok</span>
-                          )}
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
+                  {prices.map((item, i) => (
+                    <div
+                      key={item.tag + '-val'}
+                      style={{
+                        padding: '4px 12px 8px',
+                        borderRight: i < prices.length - 1 ? '0.5px solid rgba(255,255,255,0.07)' : undefined,
+                        display: 'flex', alignItems: 'center', gap: 4,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: 'monospace', fontWeight: 500, fontSize: 12,
+                          color: item.val === null ? 'rgba(255,255,255,0.15)'
+                            : item.val === 'free'  ? 'rgba(46,204,113,0.7)'
+                            : 'rgba(255,255,255,0.75)',
+                        }}
+                      >
+                        {item.val ?? 'n/a'}
+                      </span>
+                      {item.val !== null && item.val !== 'free' && (
+                        <span style={{ fontFamily: 'monospace', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
+                          / M tok
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )
             })()}
