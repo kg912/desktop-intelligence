@@ -1078,24 +1078,35 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
-        return { models: [], modalities: {}, error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
+        return { models: [], modalities: {}, pricing: {}, error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
       }
-      const data = await res.json() as { data?: Array<{ id: string; architecture?: { input_modalities?: string[] } }> }
+      const data = await res.json() as { data?: Array<{ id: string; architecture?: { input_modalities?: string[] }; pricing?: { prompt?: string; completion?: string; cache_read?: string } }> }
       const models = (data.data ?? [])
         .map((m) => m.id)
         .filter((id) => typeof id === 'string' && id.length > 0)
         .sort()
-      // Build id → input_modalities lookup for the full catalogue
       const modalities: Record<string, string[]> = {}
+      const pricing: Record<string, { prompt: number | null; completion: number | null; cacheRead: number | null }> = {}
       for (const m of (data.data ?? [])) {
         if (m.id && m.architecture?.input_modalities) {
           modalities[m.id] = m.architecture.input_modalities
         }
+        if (m.id && m.pricing) {
+          const toNum = (v?: string) => {
+            const n = parseFloat(v ?? '')
+            return isNaN(n) ? null : n
+          }
+          pricing[m.id] = {
+            prompt:     toNum(m.pricing.prompt),
+            completion: toNum(m.pricing.completion),
+            cacheRead:  toNum(m.pricing.cache_read),
+          }
+        }
       }
-      return { models, modalities, error: null }
+      return { models, modalities, pricing, error: null }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      return { models: [], modalities: {}, error: msg }
+      return { models: [], modalities: {}, pricing: {}, error: msg }
     }
   })
 

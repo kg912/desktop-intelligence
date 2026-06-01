@@ -133,6 +133,7 @@ export function NvidiaSettingsPanel() {
   // OpenRouter model list state
   const [openRouterModels, setOpenRouterModels]               = useState<string[]>([])
   const [openRouterModalities, setOpenRouterModalities]       = useState<Record<string, string[]>>({})
+  const [openRouterPricing, setOpenRouterPricing]             = useState<Record<string, { prompt: number | null; completion: number | null; cacheRead: number | null }>>({})
   const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false)
   const [openRouterModelsError, setOpenRouterModelsError]     = useState<string | null>(null)
 
@@ -197,9 +198,11 @@ export function NvidiaSettingsPanel() {
         setOpenRouterModelsError(result.error)
         setOpenRouterModels([])
         setOpenRouterModalities({})
+        setOpenRouterPricing({})
       } else {
         setOpenRouterModels(result.models)
         setOpenRouterModalities(result.modalities ?? {})
+        setOpenRouterPricing(result.pricing ?? {})
         setOpenRouterModelsError(null)
         if (!settings.openrouterModel && result.models.length > 0) {
           setSettings((prev) => ({ ...prev, openrouterModel: result.models[0] }))
@@ -209,6 +212,7 @@ export function NvidiaSettingsPanel() {
       setOpenRouterModelsError(err instanceof Error ? err.message : String(err))
       setOpenRouterModels([])
       setOpenRouterModalities({})
+      setOpenRouterPricing({})
     } finally {
       setOpenRouterModelsLoading(false)
     }
@@ -551,6 +555,42 @@ export function NvidiaSettingsPanel() {
               )
             })()}
           </div>
+
+          {/* Pricing for the selected model */}
+          {(() => {
+            const p = openRouterPricing[settings.openrouterModel]
+            if (!p) return null
+            const fmt = (n: number | null) =>
+              n === null ? null : n === 0 ? 'Free' : `${(n * 1_000_000).toPrecision(4)}`
+            const rows: { label: string; value: string | null }[] = [
+              { label: 'Input',        value: fmt(p.prompt) },
+              { label: 'Output',       value: fmt(p.completion) },
+              { label: 'Cached input', value: fmt(p.cacheRead) },
+            ].filter((r) => r.value !== null)
+            if (rows.length === 0) return null
+            return (
+              <div className="rounded-lg overflow-hidden" style={{ border: '0.5px solid #222' }}>
+                {rows.map((row, i) => (
+                  <div
+                    key={row.label}
+                    className="flex items-center justify-between px-3 py-2"
+                    style={{
+                      background: i % 2 === 0 ? '#111' : '#141414',
+                      borderBottom: i < rows.length - 1 ? '0.5px solid #1e1e1e' : undefined,
+                    }}
+                  >
+                    <span className="text-xs text-content-muted">{row.label}</span>
+                    <span className="text-xs font-mono font-medium text-content-primary">
+                      {row.value}
+                      {row.value !== 'Free' && (
+                        <span className="text-content-muted font-normal"> / M tokens</span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
 
           {/* Account stats — fetched on tab focus */}
           <OpenRouterStats apiKey={settings.openrouterApiKey} />

@@ -150,7 +150,7 @@ const api = {
   getOllamaModels: (baseUrl?: string, apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, baseUrl, apiKey),
 
-  getOpenRouterModels: (apiKey?: string): Promise<{ models: string[]; modalities: Record<string, string[]>; error: string | null }> =>
+  getOpenRouterModels: (apiKey?: string): Promise<{ models: string[]; modalities: Record<string, string[]>; pricing: Record<string, { prompt: number | null; completion: number | null; cacheRead: number | null }>; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_MODELS, apiKey),
 
   getOpenRouterStats: (apiKey?: string): Promise<{
