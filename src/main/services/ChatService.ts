@@ -1179,7 +1179,13 @@ export class ChatService {
           streamBody = JSON.stringify({
             ...commonFields,
             repeat_penalty: repeatPenalty ?? 1.1,
-            stop: STOP_SEQUENCES,
+            // NOTE: Do NOT send stop: STOP_SEQUENCES to LM Studio.
+            // LM Studio handles EOS tokens natively per model; sending <|im_end|> /
+            // <|endoftext|> as explicit stop sequences causes immediate stream
+            // termination for Qwen and Gemma respectively — both emit these tokens
+            // before any content, producing a 0-token empty response.
+            // EOS tokens that leak into the content stream are stripped by
+            // EOS_TOKENS_RE in the delta processing loop instead.
             ...step2ThinkingField,
             ...toolsPayload,
           });

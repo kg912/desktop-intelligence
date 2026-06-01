@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "2.8.9",
+  "version": "2.8.10",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
