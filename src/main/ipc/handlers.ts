@@ -1080,7 +1080,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         const body = await res.text().catch(() => '')
         return { models: [], modalities: {}, pricing: {}, error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
       }
-      const data = await res.json() as { data?: Array<{ id: string; architecture?: { input_modalities?: string[] }; pricing?: { prompt?: string; completion?: string; cache_read?: string } }> }
+      const data = await res.json() as { data?: Array<{ id: string; architecture?: { input_modalities?: string[] }; pricing?: { prompt?: string; completion?: string; cache_read?: string; input_cache_read?: string } }> }
       const models = (data.data ?? [])
         .map((m) => m.id)
         .filter((id) => typeof id === 'string' && id.length > 0)
@@ -1099,7 +1099,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           pricing[m.id] = {
             prompt:     toNum(m.pricing.prompt),
             completion: toNum(m.pricing.completion),
-            cacheRead:  toNum(m.pricing.cache_read),
+            cacheRead:  toNum((m.pricing as Record<string, string>).input_cache_read ?? (m.pricing as Record<string, string>).cache_read),
           }
         }
       }

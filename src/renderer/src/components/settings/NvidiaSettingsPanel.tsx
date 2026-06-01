@@ -516,81 +516,89 @@ export function NvidiaSettingsPanel() {
               </p>
             )}
 
-            {/* Input modality chips for the selected model */}
+            {/* Unified model spec card: modality icons + pricing */}
             {(() => {
               const mods = openRouterModalities[settings.openrouterModel] ?? []
-              if (mods.length === 0) return null
-              const MODALITY_META: Record<string, { label: string; icon: React.ReactNode }> = {
-                text:  { label: 'Text',  icon: <Type  size={11} /> },
-                image: { label: 'Image', icon: <Image size={11} /> },
-                audio: { label: 'Audio', icon: <AudioLines size={11} /> },
-                video: { label: 'Video', icon: <Video size={11} /> },
-                file:  { label: 'File',  icon: <FileText size={11} /> },
+              const p    = openRouterPricing[settings.openrouterModel]
+              if (mods.length === 0 && !p) return null
+              const MODALITY_ICONS: Record<string, React.ReactNode> = {
+                text:  <Type       size={11} />,
+                image: <Image      size={11} />,
+                audio: <AudioLines size={11} />,
+                video: <Video      size={11} />,
+                file:  <FileText   size={11} />,
               }
+              const fmt = (n: number | null) =>
+                n === null ? null : n === 0 ? 'free' : `${(n * 1_000_000).toPrecision(4)}`
+              const prices = p ? [
+                { tag: 'in',     val: fmt(p.prompt) },
+                { tag: 'out',    val: fmt(p.completion) },
+                { tag: 'cached', val: fmt(p.cacheRead) },
+              ] : []
               return (
-                <div className="flex items-center gap-2 mt-1.5">
-                  <span className="text-xs text-content-muted">Inputs</span>
-                  <div className="flex gap-1">
-                    {mods.map((mod) => {
-                      const meta = MODALITY_META[mod]
-                      if (!meta) return null
-                      const isText = mod === 'text'
-                      return (
-                        <span
-                          key={mod}
-                          title={meta.label}
-                          className="inline-flex items-center justify-center w-6 h-6 rounded"
-                          style={{
-                            background: isText ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
-                            border: `0.5px solid ${isText ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
-                            color: isText ? 'rgba(255,255,255,0.35)' : 'rgba(229,57,53,0.65)',
-                          }}
+                <div
+                  className="flex items-stretch overflow-hidden rounded-lg"
+                  style={{ border: '0.5px solid rgba(255,255,255,0.09)', background: '#111' }}
+                >
+                  {mods.length > 0 && (
+                    <div
+                      className="flex flex-col justify-center gap-1.5 px-3 py-2.5"
+                      style={{ borderRight: '0.5px solid rgba(255,255,255,0.07)', minWidth: 60 }}
+                    >
+                      <span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace' }}>Inputs</span>
+                      <div className="flex gap-1">
+                        {mods.map((mod) => {
+                          const icon = MODALITY_ICONS[mod]
+                          if (!icon) return null
+                          const isText = mod === 'text'
+                          return (
+                            <span
+                              key={mod}
+                              title={mod.charAt(0).toUpperCase() + mod.slice(1)}
+                              className="inline-flex items-center justify-center rounded"
+                              style={{
+                                width: 22, height: 22,
+                                background: isText ? 'rgba(255,255,255,0.05)' : 'rgba(229,57,53,0.1)',
+                                border: `0.5px solid ${isText ? 'rgba(255,255,255,0.1)' : 'rgba(229,57,53,0.25)'}`,
+                                color: isText ? 'rgba(255,255,255,0.35)' : 'rgba(229,57,53,0.65)',
+                              }}
+                            >
+                              {icon}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {prices.length > 0 && (
+                    <div className="flex flex-1">
+                      {prices.map((item, i) => (
+                        <div
+                          key={item.tag}
+                          className="flex flex-col justify-center gap-0.5 px-3 py-2.5 flex-1"
+                          style={{ borderRight: i < prices.length - 1 ? '0.5px solid rgba(255,255,255,0.05)' : undefined }}
                         >
-                          {meta.icon}
-                        </span>
-                      )
-                    })}
-                  </div>
+                          <span style={{ fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace' }}>{item.tag}</span>
+                          <span
+                            className="font-mono font-medium"
+                            style={{
+                              fontSize: 12,
+                              color: item.val === null ? 'rgba(255,255,255,0.15)' : item.val === 'free' ? 'rgba(46,204,113,0.7)' : 'rgba(255,255,255,0.75)',
+                            }}
+                          >
+                            {item.val ?? 'n/a'}
+                          </span>
+                          {item.val !== null && (
+                            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.18)', fontFamily: 'monospace' }}>/ M tok</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })()}
           </div>
-
-          {/* Pricing for the selected model */}
-          {(() => {
-            const p = openRouterPricing[settings.openrouterModel]
-            if (!p) return null
-            const fmt = (n: number | null) =>
-              n === null ? null : n === 0 ? 'Free' : `${(n * 1_000_000).toPrecision(4)}`
-            const rows: { label: string; value: string | null }[] = [
-              { label: 'Input',        value: fmt(p.prompt) },
-              { label: 'Output',       value: fmt(p.completion) },
-              { label: 'Cached input', value: fmt(p.cacheRead) },
-            ].filter((r) => r.value !== null)
-            if (rows.length === 0) return null
-            return (
-              <div className="rounded-lg overflow-hidden" style={{ border: '0.5px solid #222' }}>
-                {rows.map((row, i) => (
-                  <div
-                    key={row.label}
-                    className="flex items-center justify-between px-3 py-2"
-                    style={{
-                      background: i % 2 === 0 ? '#111' : '#141414',
-                      borderBottom: i < rows.length - 1 ? '0.5px solid #1e1e1e' : undefined,
-                    }}
-                  >
-                    <span className="text-xs text-content-muted">{row.label}</span>
-                    <span className="text-xs font-mono font-medium text-content-primary">
-                      {row.value}
-                      {row.value !== 'Free' && (
-                        <span className="text-content-muted font-normal"> / M tokens</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )
-          })()}
 
           {/* Account stats — fetched on tab focus */}
           <OpenRouterStats apiKey={settings.openrouterApiKey} />
