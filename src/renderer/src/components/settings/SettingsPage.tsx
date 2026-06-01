@@ -3,7 +3,7 @@ import { Settings, Globe, Info, Plug, Server, Bug } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import { McpToolsPanel } from "./McpToolsPanel";
-import { NvidiaSettingsPanel } from "./NvidiaSettingsPanel";
+import { InferenceProviderSettingsPanel } from "./InferenceProviderSettingsPanel";
 import { DebugSettings } from "./DebugSettings";
 import { cn } from "../../lib/utils";
 import { version, author } from "../../../../../package.json";
@@ -210,7 +210,7 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
           {tab === "model"     && <ModelSettingsPanel onReloadingChange={handleReloadingChange} />}
           {tab === "websearch" && <MCPSettingsPanel />}
           {tab === "tools"     && <McpToolsPanel />}
-          {tab === "backend"   && <NvidiaSettingsPanel />}
+          {tab === "backend"   && <InferenceProviderSettingsPanel />}
           {tab === "debug"     && <DebugSettings />}
           {tab === "about"     && <AboutPanel />}
         </div>

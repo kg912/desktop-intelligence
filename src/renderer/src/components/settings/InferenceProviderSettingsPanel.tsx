@@ -1,5 +1,5 @@
 /**
- * BackendSettingsPanel (NvidiaSettingsPanel.tsx)
+ * BackendSettingsPanel (InferenceProviderSettingsPanel.tsx)
  *
  * Three-way provider selector: LM Studio | Ollama | NVIDIA Build
  *
@@ -102,7 +102,7 @@ const PROVIDER_LABELS: Record<BackendProvider, string> = {
   nvidia:     'NVIDIA Build',
 }
 
-export function NvidiaSettingsPanel() {
+export function InferenceProviderSettingsPanel() {
   const [settings, setSettings] = useState<BackendSettings>({
     provider:         'lmstudio',
     nvidiaApiKey:     '',
@@ -529,7 +529,7 @@ export function NvidiaSettingsPanel() {
                 file:  <FileText   size={11} />,
               }
               const fmt = (n: number | null) =>
-                n === null ? null : n === 0 ? 'free' : `${(n * 1_000_000).toPrecision(4)}`
+                n === null ? null : n === 0 ? 'free' : `$${(n * 1_000_000).toPrecision(4)}`
               const prices = p ? [
                 { tag: 'in',     val: fmt(p.prompt) },
                 { tag: 'out',    val: fmt(p.completion) },
