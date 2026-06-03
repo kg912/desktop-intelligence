@@ -829,33 +829,52 @@ describe('ChatService Agent Loop E2E integration', () => {
     expect(lastMessage.content).toBe('<|channel>thought\n')
   })
 
-  it('Scenario 13: Search Limit Text Fallback Safety Breaker', async () => {
+  it('Scenario 13: Search Limit Text Fallback — no CHAT_ERROR, partial content finalised', async () => {
+    // Regression test for the duplicate-message + lost-content bug.
+    //
+    // Sequence:
+    //   Loop 0 (searchLoopCount=0): model calls brave_web_search natively
+    //                               → tool executes, searchLoopCount increments to 1
+    //   Loop 1 (searchLoopCount=1, forceFinalAnswer=true): tools stripped.
+    //                               Model STILL emits a <tool_call> tag in content stream.
+    //                               detectMidStreamToolCall fires, toolCallIntercepted=true.
+    //   Guard (forceFinalAnswer && toolCallIntercepted) fires.
+    //
+    // OLD (broken) behaviour: sent CHAT_ERROR then CHAT_STREAM_END with aborted:true.
+    //   → onChatError moved streaming message to completedMessages and nulled
+    //     streamingMessage. onChatStreamEnd then created a SECOND empty message.
+    //   → Duplicate in UI, partial content never saved to DB.
+    //
+    // NEW (fixed) behaviour: no CHAT_ERROR, exactly one CHAT_STREAM_END with
+    //   aborted:false, containing the partial streamed content from loop 1.
     mockFetch.mockClear()
     mockWebContents.send.mockClear()
-    // Set max search rounds to 1
+
     mockReadSettings.mockReturnValue({
       backendProvider: 'lmstudio',
       maxSearchLoops: 1,
       braveSearchEnabled: true,
     })
 
-    // First turn: model calls tool brave search
-    const mockSSEChunks1 = [
-      'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-search-1", "function": {"name": "brave_web_search", "arguments": "{\\"query\\":\\"weather\\"}"}}]}}]}\n',
-      'data: [DONE]\n'
+    // Loop 0: native tool call path
+    const nativeToolCallChunks = [
+      'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-s1", "function": {"name": "brave_web_search", "arguments": "{\\"query\\":\\"Cupertino weather\\"}"}}]}}]}\n',
+      'data: [DONE]\n',
+    ]
+    // Loop 1 (forceFinalAnswer=true): model ignores the stop instruction and
+    // emits a text-format tool call mid-stream — detectMidStreamToolCall fires.
+    // The content before the <tool_call> tag IS the partial answer.
+    const forcedLoopChunks = [
+      'data: {"choices": [{"delta": {"content": "Based on the search results, the weather is sunny."}}]}\n',
+      'data: {"choices": [{"delta": {"content": " <tool_call>brave_web_search query=\\"Cupertino weather\\"}"}}]}\n',
+      'data: [DONE]\n',
     ]
 
-    // Second turn: tools are stripped, but model *still* outputs a tool call in text stream fallback
-    const mockSSEChunks2 = [
-      'data: {"choices": [{"delta": {"content": "I must search again: <tool_call>brave_web_search query=\\" Cupertino weather \\"</tool_call>"}}]}\n',
-      'data: [DONE]\n'
-    ]
-
-    queueLlmResponse(mockSSEChunks1)
-    queueLlmResponse(mockSSEChunks2)
+    queueLlmResponse(nativeToolCallChunks)
+    queueLlmResponse(forcedLoopChunks)
 
     mockBraveSearch.mockResolvedValue([
-      { title: 'Sunny', url: 'https://weather.com' }
+      { title: 'Sunny in Cupertino', url: 'https://weather.com' },
     ])
 
     const payload: ChatSendPayload = {
@@ -867,15 +886,208 @@ describe('ChatService Agent Loop E2E integration', () => {
 
     await chatService.send(payload, 'qwen3.5-35b', mockWebContents)
 
-    // Should only call LLM twice, break on second loop, emit CHAT_ERROR and CHAT_STREAM_END
-    expect(mockFetch).toHaveBeenCalledTimes(2)
     const sendCalls = mockWebContents.send.mock.calls
-    const chatError = sendCalls.find(([channel]) => channel === IPC_CHANNELS.CHAT_ERROR)
-    expect(chatError).toBeDefined()
-    expect(chatError![1]).toContain('search limit was reached')
 
-    const endStream = sendCalls.find(([channel]) => channel === IPC_CHANNELS.CHAT_STREAM_END)
-    expect(endStream).toBeDefined()
-    expect(endStream![1].aborted).toBe(true)
+    // ── Invariant 1: no CHAT_ERROR ─────────────────────────────────────────────
+    // The old code fired CHAT_ERROR here, which triggered onChatError in useChat,
+    // committed a partial message, nulled streamingMessage, and set up the duplicate.
+    const chatErrorCalls = sendCalls.filter(
+      ([channel]) => channel === IPC_CHANNELS.CHAT_ERROR,
+    )
+    expect(
+      chatErrorCalls,
+      'CHAT_ERROR must not fire on search-limit text-fallback — it causes duplicate messages',
+    ).toHaveLength(0)
+
+    // ── Invariant 2: exactly one CHAT_STREAM_END ───────────────────────────────
+    // The old code also sent CHAT_STREAM_END early from the error branch, THEN
+    // the normal bottom-of-function path would have sent another. With the fix,
+    // only the normal path fires — exactly once.
+    const streamEndCalls = sendCalls.filter(
+      ([channel]) => channel === IPC_CHANNELS.CHAT_STREAM_END,
+    )
+    expect(
+      streamEndCalls,
+      'Exactly one CHAT_STREAM_END must fire (duplicate = useChat creates two messages)',
+    ).toHaveLength(1)
+
+    // ── Invariant 3: stream ended as stopped, not aborted ──────────────────────
+    // The old code set aborted:true; the fix exits via the normal loop break so
+    // buildStats is called with aborted:false.
+    const stats = streamEndCalls[0][1]
+    expect(
+      stats.aborted,
+      'aborted must be false — the stream ended cleanly via break, not an error path',
+    ).toBe(false)
+
+    // ── Invariant 4: partial content was captured in the stats ─────────────────
+    // totalTokens > 0 means lastStreamBuffer had content from loop 1 before the
+    // tool-call tag was detected. useChat's onChatStreamEnd receives this and the
+    // assistantContent ref has the rendered chunks — so saveMessage will be called
+    // with non-empty content (the DB save happens in the renderer, but the event
+    // carrying the content exists on the main-process side).
+    expect(
+      stats.totalTokens,
+      'totalTokens must be > 0 — partial content from loop 1 must be counted',
+    ).toBeGreaterThan(0)
+
+    // ── Invariant 5: the partial answer chunks were sent to the renderer ────────
+    // The text before the <tool_call> tag was flushed by flushChunkBuffer before
+    // detectMidStreamToolCall broke the inner loop. The renderer received it.
+    const chunkContent = sendCalls
+      .filter(([channel]) => channel === IPC_CHANNELS.CHAT_STREAM_CHUNK)
+      .map(([, val]) => val)
+      .join('')
+    expect(
+      chunkContent,
+      'The partial answer streamed before the <tool_call> tag must reach the renderer',
+    ).toContain('Based on the search results')
+
+    // ── Invariant 6: the search from loop 0 completed normally ─────────────────
+    expect(
+      mockBraveSearch,
+      'Brave search from loop 0 must have executed',
+    ).toHaveBeenCalledTimes(1)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('Scenario 14: Search Limit — CHAT_STREAM_END carries content, enabling DB persistence', async () => {
+    // Focuses on the DB-persistence side of the fix.
+    //
+    // useChat.ts persists the assistant message in onChatStreamEnd when ALL THREE
+    // of these are true:
+    //   1. activeChatId is set
+    //   2. assistantMsgId is set
+    //   3. assistantContent is non-empty
+    //
+    // Before the fix, the CHAT_ERROR path cleared assistantIdRef and assistantContent
+    // (via ref resets in onChatError). The subsequent CHAT_STREAM_END saw both as null/
+    // empty, so saveMessage was never called — the content vanished on chat navigation.
+    //
+    // This test verifies the main-process side of that contract: CHAT_STREAM_END fires
+    // exactly once with enough data (totalTokens > 0, aborted: false) that the renderer
+    // will correctly persist the partial response. The renderer-side DB call cannot be
+    // tested here, but the event contract guarantees it.
+    mockFetch.mockClear()
+    mockWebContents.send.mockClear()
+
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'lmstudio',
+      maxSearchLoops: 1,
+      braveSearchEnabled: true,
+    })
+
+    // Loop 0: native search
+    queueLlmResponse([
+      'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "brave_web_search", "arguments": "{\\"query\\":\\"test\\"}"}}]}}]}\n',
+      'data: [DONE]\n',
+    ])
+    // Loop 1 (forceFinalAnswer): partial answer then illegal text-stream tool call
+    queueLlmResponse([
+      'data: {"choices": [{"delta": {"content": "Here is what I found: temperatures are high."}}]}\n',
+      'data: {"choices": [{"delta": {"content": "<tool_call>brave_web_search query=\\"more info\\"</tool_call>"}}]}\n',
+      'data: [DONE]\n',
+    ])
+
+    mockBraveSearch.mockResolvedValue([
+      { title: 'Result', url: 'https://example.com' },
+    ])
+
+    await chatService.send(
+      {
+        chatId: 'chat-persist-14',
+        messages: [{ role: 'user', content: 'Tell me about the weather' }],
+        model: 'qwen3.5-35b',
+        thinkingMode: 'fast',
+      },
+      'qwen3.5-35b',
+      mockWebContents,
+    )
+
+    const sendCalls = mockWebContents.send.mock.calls
+
+    // No CHAT_ERROR — onChatError must not run so refs are never cleared prematurely
+    expect(
+      sendCalls.filter(([ch]) => ch === IPC_CHANNELS.CHAT_ERROR),
+      'CHAT_ERROR must not fire — it clears assistantIdRef and assistantContent, preventing saveMessage',
+    ).toHaveLength(0)
+
+    // Exactly one CHAT_STREAM_END
+    const endEvents = sendCalls.filter(([ch]) => ch === IPC_CHANNELS.CHAT_STREAM_END)
+    expect(endEvents, 'Exactly one CHAT_STREAM_END required for correct persistence').toHaveLength(1)
+
+    const stats = endEvents[0][1]
+    // aborted:false → useChat finalises the message into completedMessages with full state
+    expect(stats.aborted).toBe(false)
+    // totalTokens > 0 → assistantContent in useChat is non-empty when streamEnd fires
+    expect(stats.totalTokens).toBeGreaterThan(0)
+  })
+
+  it('Scenario 15: Mid-stream text fallback BEFORE the limit is reached — normal path unaffected', async () => {
+    // Regression guard: the fix to Scenario 13/14 must not break the happy path
+    // where detectMidStreamToolCall fires on loop 0 (not a forceFinalAnswer loop).
+    // That path must still execute the search, increment searchLoopCount, and
+    // continue to the synthesis loop normally.
+    mockFetch.mockClear()
+    mockWebContents.send.mockClear()
+
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'lmstudio',
+      maxSearchLoops: 3, // plenty of budget
+      braveSearchEnabled: true,
+    })
+
+    // Loop 0: mid-stream text-format tool call (not native delta.tool_calls)
+    queueLlmResponse([
+      'data: {"choices": [{"delta": {"content": "Searching: <tool_call>brave_web_search query=\\"NVDA stock\\"</tool_call>"}}]}\n',
+      'data: [DONE]\n',
+    ])
+    // Loop 1: model writes a proper final answer
+    queueLlmResponse([
+      'data: {"choices": [{"delta": {"content": "NVDA is trading at $900."}}]}\n',
+      'data: [DONE]\n',
+    ])
+
+    mockBraveSearch.mockResolvedValue([
+      { title: 'NVDA at $900', url: 'https://finance.com/nvda' },
+    ])
+
+    await chatService.send(
+      {
+        chatId: 'chat-15-midstream',
+        messages: [{ role: 'user', content: 'NVDA price?' }],
+        model: 'qwen3.5-35b',
+        thinkingMode: 'fast',
+      },
+      'qwen3.5-35b',
+      mockWebContents,
+    )
+
+    const sendCalls = mockWebContents.send.mock.calls
+
+    // Must still fire exactly one CHAT_STREAM_END, no CHAT_ERROR
+    expect(
+      sendCalls.filter(([ch]) => ch === IPC_CHANNELS.CHAT_ERROR),
+    ).toHaveLength(0)
+    expect(
+      sendCalls.filter(([ch]) => ch === IPC_CHANNELS.CHAT_STREAM_END),
+    ).toHaveLength(1)
+
+    // Search was executed for loop 0
+    expect(mockBraveSearch).toHaveBeenCalledWith('NVDA stock', 'mock-api-key', 5)
+
+    // Both LLM calls happened
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+
+    // Final answer content reached the renderer
+    const chunks = sendCalls
+      .filter(([ch]) => ch === IPC_CHANNELS.CHAT_STREAM_CHUNK)
+      .map(([, v]) => v)
+      .join('')
+    expect(chunks).toContain('NVDA is trading at $900')
+
+    // Stream ended normally (not aborted)
+    const endStats = sendCalls.find(([ch]) => ch === IPC_CHANNELS.CHAT_STREAM_END)![1]
+    expect(endStats.aborted).toBe(false)
   })
 })

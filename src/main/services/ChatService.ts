@@ -1992,25 +1992,19 @@ export class ChatService {
         }
 
         if (forceFinalAnswer && toolCallIntercepted) {
-          // Tools were stripped but the model still intercepted a tool call via
-          // text-stream fallback (detectMidStreamToolCall). This should not happen
-          // in normal operation. Break and surface an error rather than looping forever.
+          // Tools were stripped but the model still tried to search via the
+          // text-stream fallback (detectMidStreamToolCall).
+          // Do NOT send CHAT_ERROR — that fires onChatError which moves the
+          // streaming message to completedMessages and nulls streamingMessage,
+          // then the CHAT_STREAM_END below would create a second empty message
+          // (duplicate) and the partial content would never be saved to DB.
+          // Instead, record what the model did manage to stream as lastStreamBuffer
+          // so the normal CHAT_STREAM_END path at the bottom finalises and persists it.
           console.warn(
-            "[ChatService] ⚠️ Tool call intercepted after tools were stripped — breaking to prevent infinite loop",
+            "[ChatService] ⚠️ Tool call intercepted after tools were stripped — ending stream with partial content",
           );
-          send(
-            IPC_CHANNELS.CHAT_ERROR,
-            "The model attempted to search again after the search limit was reached. Try rephrasing your question or reducing Max Search Rounds in Settings.",
-          );
-          const stats = this.buildStats(
-            startTime,
-            firstTokenAt,
-            totalTokens,
-            true,
-            promptTokens,
-          );
-          send(IPC_CHANNELS.CHAT_STREAM_END, stats);
-          return;
+          lastStreamBuffer = streamBuffer;
+          break;
         }
       }
     } catch (err) {
