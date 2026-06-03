@@ -5,10 +5,8 @@
  * AI    → left-aligned, transparent bg, full markdown + LaTeX + stats bar
  */
 
-import { useState, memo } from 'react'
-import { motion } from 'framer-motion'
-import { User, Globe, Paperclip, ChevronRight } from 'lucide-react'
-import avatarAssistant from '../../assets/avatar-assistant.png'
+import { useState, useEffect, useRef, memo } from 'react'
+import { User, Paperclip } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
 import { ToolCallNotification } from './ToolCallNotification'
@@ -84,40 +82,187 @@ function UserBubble({ content, attachments }: { content: string; attachments?: M
   )
 }
 
-// ── Thinking accordion (standalone, for MessageBlock rendering) ──
-function ThinkingAccordion({ content, isStreaming, className }: { content: string; isStreaming?: boolean; className?: string }) {
-  const [open, setOpen] = useState(false)
+/**
+ * AvatarDot — minimalist red dot avatar for assistant messages.
+ * A single glowing red circle with a faint outer ring.
+ * No graph nodes, no wireframe — clean and minimal.
+ */
+function AvatarDot() {
   return (
-    <details
-      open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
-      className={`group/think mb-3 rounded-lg overflow-hidden border border-accent-900/30 bg-[rgba(127,29,29,0.04)] ${className ?? ''}`}
+    <svg
+      viewBox="0 0 28 28"
+      xmlns="http://www.w3.org/2000/svg"
+      width="28"
+      height="28"
+      className="flex-shrink-0"
+      aria-hidden="true"
     >
-      <summary
-        className="flex items-center gap-2 px-3 py-2
-                   text-[11px] font-medium text-content-muted
-                   cursor-pointer select-none list-none
-                   [&::-webkit-details-marker]:hidden
-                   hover:text-content-secondary transition-colors duration-100"
+      {/* Outer glow ring */}
+      <circle
+        cx="14" cy="14" r="13"
+        fill="none"
+        stroke="rgba(229,57,53,0.25)"
+        strokeWidth="1"
+      />
+      {/* Mid ring */}
+      <circle
+        cx="14" cy="14" r="10"
+        fill="none"
+        stroke="rgba(229,57,53,0.12)"
+        strokeWidth="0.5"
+      />
+      {/* Solid red core */}
+      <circle
+        cx="14" cy="14" r="7"
+        fill="#e53935"
+      />
+      {/* Inner highlight for depth */}
+      <circle
+        cx="12" cy="12" r="2.5"
+        fill="rgba(255,255,255,0.18)"
+      />
+    </svg>
+  )
+}
+
+/**
+ * WorkingIndicator
+ *
+ * Shown when the model is active but hasn't emitted the first visible
+ * token yet — covers: initial thinking wait, post-tool-call processing.
+ *
+ * Uses a CSS text shimmer (background-clip: text on a moving gradient).
+ * No Framer Motion — pure CSS animation, zero rAF overhead.
+ * No cursor or trailing element — just the word "Working" with the shimmer.
+ */
+function WorkingIndicator() {
+  return (
+    <div className="py-0.5">
+      <span
+        className="shimmer-text font-mono text-[13px] tracking-wide"
+        style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
       >
-        <ChevronRight
-          className="w-3 h-3 flex-shrink-0 transition-transform duration-150
-                     group-open/think:rotate-90"
-        />
-        {isStreaming ? 'Thinking…' : 'Thought Process'}
-        {isStreaming && (
-          <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-accent-600 animate-pulse" />
-        )}
-      </summary>
-      <div
-        className="px-3 pb-3 pt-2 border-t border-accent-900/20
-                   max-h-52 overflow-y-auto
-                   text-[11px] text-content-muted/70 font-mono
-                   leading-relaxed whitespace-pre-wrap"
-      >
-        {content || '…'}
+        Working
+      </span>
+    </div>
+  )
+}
+
+/**
+ * ThinkingAccordion
+ *
+ * isStreaming=true  → "Reasoning" shimmer header, scrolling content, no toggle
+ * isStreaming=false → collapses to "Thought process ›  Xs" pill, toggleable
+ */
+function ThinkingAccordion({
+  content,
+  isStreaming,
+  className,
+}: {
+  content: string
+  isStreaming?: boolean
+  className?: string
+}) {
+  const [open, setOpen]         = useState(false)
+  const [duration, setDuration] = useState<number | null>(null)
+  const startedAtRef            = useRef<number>(Date.now())
+  const scrollRef               = useRef<HTMLDivElement>(null)
+
+  // Record elapsed seconds when streaming ends
+  useEffect(() => {
+    if (!isStreaming && duration === null) {
+      setDuration(Math.round((Date.now() - startedAtRef.current) / 1000))
+    }
+  }, [isStreaming, duration])
+
+  // Auto-scroll to bottom while streaming
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [content, isStreaming])
+
+  // ── Active: shimmer header + scrolling content ──
+  if (isStreaming) {
+    return (
+      <div className={cn('mb-3 border-l border-white/[0.07] pl-3', className)}>
+        <div className="flex items-center gap-1.5 h-5 mb-1.5">
+          {/* Tiny spinner */}
+          <span
+            className="block w-2.5 h-2.5 rounded-full border border-white/[0.08] border-t-white/30 animate-spin flex-shrink-0"
+            style={{ animationDuration: '0.95s' }}
+          />
+          <span
+            className="shimmer-text font-mono text-[10px] tracking-[0.09em] uppercase"
+            style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
+          >
+            Reasoning
+          </span>
+        </div>
+        {/* Scrolling thought content with top-fade shadow */}
+        <div className="relative">
+          <div
+            className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
+            style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
+          />
+          <div
+            ref={scrollRef}
+            className="max-h-[72px] overflow-hidden font-mono text-[11px] text-content-muted/50 leading-relaxed whitespace-pre-wrap"
+          >
+            {content || '…'}
+          </div>
+        </div>
       </div>
-    </details>
+    )
+  }
+
+  // ── Collapsed pill (default post-stream state) ──
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className={cn(
+          'flex items-center gap-1.5 mb-1.5 py-0.5 group/tp',
+          'text-left cursor-pointer select-none',
+          className
+        )}
+      >
+        <span className="font-mono text-[10px] tracking-[0.09em] uppercase text-white/[0.22] group-hover/tp:text-white/40 transition-colors duration-100">
+          Thought process
+        </span>
+        <span className="text-white/[0.18] group-hover/tp:text-white/32 transition-colors duration-100 text-[10px]">›</span>
+        {duration !== null && (
+          <span className="font-mono text-[9px] text-white/[0.12]">
+            {duration}s
+          </span>
+        )}
+      </button>
+    )
+  }
+
+  // ── Expanded (user clicked pill) ──
+  return (
+    <div className={cn('mb-1.5', className)}>
+      <button
+        onClick={() => setOpen(false)}
+        className="flex items-center gap-1.5 mb-0 py-0.5 group/tp text-left cursor-pointer select-none"
+      >
+        <span className="font-mono text-[10px] tracking-[0.09em] uppercase text-white/[0.22] group-hover/tp:text-white/40 transition-colors duration-100">
+          Thought process
+        </span>
+        <span className="text-white/[0.18] group-hover/tp:text-white/32 transition-colors duration-100 text-[10px] inline-block rotate-90">›</span>
+        {duration !== null && (
+          <span className="font-mono text-[9px] text-white/[0.12]">
+            {duration}s
+          </span>
+        )}
+      </button>
+      <div className="border-l border-white/[0.06] pl-3">
+        <div className="font-mono text-[11px] text-white/[0.24] leading-relaxed whitespace-pre-wrap">
+          {content}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -143,12 +288,7 @@ function AssistantBubble({
     <div className="flex gap-3">
       {/* AI avatar */}
       <div className="flex-shrink-0 mt-1">
-        <img
-          src={avatarAssistant}
-          alt=""
-          className="w-7 h-7 rounded-full"
-          draggable={false}
-        />
+        <AvatarDot />
       </div>
 
       {/* Content */}
@@ -198,20 +338,8 @@ function AssistantBubble({
               return null
             })}
 
-            {/* Thinking dots while waiting for the first block */}
-            {isThinking && (
-              <div className="flex items-center gap-2 py-1.5">
-                {[0, 1, 2].map((i) => (
-                  <motion.span
-                    key={i}
-                    className="block w-2 h-2 rounded-full bg-accent-700"
-                    animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.15, 0.8] }}
-                    transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.2 }}
-                    style={{ boxShadow: '0 0 5px rgba(220,38,38,0.5)' }}
-                  />
-                ))}
-              </div>
-            )}
+            {/* Working indicator while waiting for the first block */}
+            {isThinking && <WorkingIndicator />}
           </>
         ) : (
           /* ── Legacy flat-field render path (old messages / fallback) ── */
@@ -226,33 +354,8 @@ function AssistantBubble({
               />
             )}
 
-            {/* Searching the web indicator */}
-            {isSearching && !content && (
-              <div className="flex items-center gap-2 py-1.5 text-content-muted text-xs">
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                >
-                  <Globe className="w-3.5 h-3.5 text-accent-500" />
-                </motion.div>
-                <span>Searching the web…</span>
-              </div>
-            )}
-
-            {/* Thinking state — empty content placeholder */}
-            {isThinking && !isSearching && !content && (
-              <div className="flex items-center gap-2 py-1.5">
-                {[0, 1, 2].map((i) => (
-                  <motion.span
-                    key={i}
-                    className="block w-2 h-2 rounded-full bg-accent-700"
-                    animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.15, 0.8] }}
-                    transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.2 }}
-                    style={{ boxShadow: '0 0 5px rgba(220,38,38,0.5)' }}
-                  />
-                ))}
-              </div>
-            )}
+            {/* Working indicator — covers both thinking and searching states */}
+            {(isThinking || isSearching) && !content && <WorkingIndicator />}
 
             {/* Markdown content */}
             {content && (

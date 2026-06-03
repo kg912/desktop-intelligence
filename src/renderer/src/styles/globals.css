@@ -49,6 +49,25 @@
     background-size: 1000px 100%;
     animation: shimmer 2s linear infinite;
   }
+
+  /* Text shimmer — used by WorkingIndicator and ThinkingHeader */
+  @keyframes text-shimmer {
+    0%   { background-position: 200% center; }
+    100% { background-position: -100% center; }
+  }
+  .shimmer-text {
+    background: linear-gradient(
+      90deg,
+      rgba(255,255,255,0.18) 0%,
+      rgba(255,255,255,0.55) 42%,
+      rgba(255,255,255,0.18) 84%
+    );
+    background-size: 250% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: text-shimmer 2s ease-in-out infinite;
+  }
 }
 
 /* ----------------------------------------------------------------

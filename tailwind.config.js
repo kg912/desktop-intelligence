@@ -67,7 +67,8 @@ module.exports = {
         'glow': 'glow 2s ease-in-out infinite alternate',
         'shimmer': 'shimmer 2s linear infinite',
         'fade-in': 'fade-in 0.3s ease-out',
-        'slide-up': 'slide-up 0.3s ease-out'
+        'slide-up': 'slide-up 0.3s ease-out',
+        'text-shimmer': 'text-shimmer 2s ease-in-out infinite',
       },
       keyframes: {
         'pulse-red': {
@@ -89,7 +90,11 @@ module.exports = {
         'slide-up': {
           'from': { opacity: '0', transform: 'translateY(8px)' },
           'to': { opacity: '1', transform: 'translateY(0)' }
-        }
+        },
+        'text-shimmer': {
+          '0%':   { backgroundPosition: '200% center' },
+          '100%': { backgroundPosition: '-100% center' },
+        },
       },
       boxShadow: {
         'red-glow': '0 0 12px rgba(220, 38, 38, 0.4)',
