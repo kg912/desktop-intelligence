@@ -216,14 +216,16 @@ export function ToolCallNotification({
         onClick={() => setExpanded(v => !v)}
         className="flex items-center gap-1.5 group/tc select-none"
       >
-        <Plug size={12} className="shrink-0 text-white/20 group-hover/tc:text-white/35 transition-colors duration-100" />
-        <span className="font-mono text-[13px] text-white/20 leading-none
-                         group-hover/tc:text-white/35 transition-colors duration-100">
+        <Plug size={12} className="shrink-0 transition-colors duration-100" style={{ color: 'rgb(255,77,77)' }} />
+        <span className="font-mono text-[13px] leading-none
+                         transition-colors duration-100"
+             style={{ color: 'rgb(255,77,77)' }}>
           {serverLabel}
         </span>
-        <span className="text-white/15 text-[13px] leading-none">·</span>
-        <span className="font-mono text-[13px] text-white/35 font-medium leading-none
-                         group-hover/tc:text-white/55 transition-colors duration-100">
+        <span className="text-[13px] leading-none" style={{ color: 'rgba(255,77,77,0.4)' }}>·</span>
+        <span className="font-mono text-[13px] font-medium leading-none
+                         group-hover/tc:text-white/55 transition-colors duration-100"
+             style={{ color: 'rgb(255,77,77)' }}>
           {tool || label}
         </span>
         <ChevronIcon open={expanded} className="text-white/20 group-hover/tc:text-white/35 transition-colors duration-150" />

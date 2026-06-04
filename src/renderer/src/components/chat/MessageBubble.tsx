@@ -355,6 +355,8 @@ function AssistantBubble({
               const i = group.index
 
               if (block.type === 'search') {
+                const prevBlock = i > 0 ? blocks[i - 1] : null
+                const afterAnswer = prevBlock?.type === 'answer'
                 return (
                   <ToolCallNotification
                     key={block.id}
@@ -366,15 +368,19 @@ function AssistantBubble({
                     formattedContent={block.formattedContent}
                     toolArgs={block.toolArgs}
                     toolImages={block.toolImages}
+                    className={afterAnswer ? 'mt-3' : ''}
                   />
                 )
               }
               if (block.type === 'thinking') {
+                const prevBlock = i > 0 ? blocks[i - 1] : null
+                const afterAnswer = prevBlock?.type === 'answer'
                 return (
                   <ThinkingAccordion
                     key={block.id}
                     content={block.content}
                     isStreaming={isStreaming && block.id === blocks[blocks.length - 1].id}
+                    className={afterAnswer ? 'mt-3' : ''}
                   />
                 )
               }
