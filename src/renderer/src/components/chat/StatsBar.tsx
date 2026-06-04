@@ -87,7 +87,7 @@ export function StatsBar({ isThinking, isStreaming, stats }: StatsBarProps) {
   const totalStr  = useComputed(() => { const s = statsSignal.value; return s ? fmt(s.totalMs)      : '' })
   const tokensStr = useComputed(() => statsSignal.value?.totalTokens.toString() ?? '')
 
-  const showBar = isThinking || isStreaming || stats !== null
+  const showBar = stats !== null
 
   return (
     <AnimatePresence>
@@ -103,36 +103,9 @@ export function StatsBar({ isThinking, isStreaming, stats }: StatsBarProps) {
             style={{ background: 'rgba(20,20,20,0.6)' }}
           >
             <AnimatePresence mode="wait">
-              {/* ── Thinking ── */}
-              {isThinking && (
-                <motion.div
-                  key="thinking"
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                >
-                  <ThinkingDots />
-                </motion.div>
-              )}
+              {/* ── Thinking — suppressed: WorkingIndicator in MessageBubble covers this state ── */}
 
-              {/* ── Streaming — live tick ── */}
-              {!isThinking && isStreaming && stats === null && (
-                <motion.div
-                  key="streaming"
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="flex items-center gap-1.5"
-                >
-                  <motion.span
-                    className="block w-1.5 h-1.5 rounded-full bg-accent-500"
-                    animate={{ opacity: [1, 0.3, 1] }}
-                    transition={{ duration: 0.8, repeat: Infinity }}
-                    style={{ boxShadow: '0 0 4px rgba(220,38,38,0.5)' }}
-                  />
-                  <span className="text-[11px] text-content-tertiary font-mono">
-                    Generating…
-                  </span>
-                </motion.div>
-              )}
+              {/* ── Streaming live tick — suppressed: WorkingIndicator in MessageBubble covers this state ── */}
 
               {/* ── Done ── */}
               {stats !== null && (
