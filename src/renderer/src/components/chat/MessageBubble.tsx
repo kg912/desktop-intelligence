@@ -6,10 +6,10 @@
  */
 
 import { useState, useEffect, useRef, memo } from 'react'
-import { User, Paperclip } from 'lucide-react'
+import { Paperclip } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
-import { ToolCallNotification } from './ToolCallNotification'
+import { ToolCallNotification, SearchResult } from './ToolCallNotification'
 import { cn } from '../../lib/utils'
 import type { GenerationStats, MessageBlock } from '../../../../shared/types'
 
@@ -45,7 +45,7 @@ export interface Message {
 // ── User bubble ──────────────────────────────────────────────────
 function UserBubble({ content, attachments }: { content: string; attachments?: MessageAttachment[] }) {
   return (
-    <div className="flex justify-end gap-3">
+    <div className="flex justify-end">
       <div className="max-w-[72%]">
         {/* Attachment pills — rendered above the text bubble */}
         {attachments && attachments.length > 0 && (
@@ -66,17 +66,12 @@ function UserBubble({ content, attachments }: { content: string; attachments?: M
             className="px-4 py-3 rounded-2xl rounded-tr-sm selectable
                        text-[0.9375rem] leading-relaxed text-content-primary"
             style={{
-              background: 'rgba(127,29,29,0.22)',
-              border: '1px solid rgba(127,29,29,0.35)',
+              background: 'rgb(71 71 71 / 22%)',
             }}
           >
             <MarkdownRenderer content={content} variant="user" />
           </div>
         )}
-      </div>
-      <div className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-DEFAULT border border-surface-border
-                      flex items-center justify-center mt-1">
-        <User className="w-3.5 h-3.5 text-content-tertiary" />
       </div>
     </div>
   )
@@ -145,24 +140,26 @@ function ThinkingAccordion({
       <div className={cn('mb-3 border-l border-white/[0.07] pl-3', className)}>
         <div className="flex items-center gap-1.5 h-5 mb-1.5">
           <span
-            className="shimmer-text font-mono text-[11px] tracking-[0.06em] uppercase"
+            className="shimmer-text font-mono text-[11px] tracking-[0.06em] capitalize"
             style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
           >
             Reasoning
           </span>
         </div>
-        <div className="relative">
-          <div
-            className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
-            style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
-          />
-          <div
-            ref={scrollRef}
-            className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
-          >
-            {content || '…'}
+        {content && (
+          <div className="relative">
+            <div
+              className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
+              style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
+            />
+            <div
+              ref={scrollRef}
+              className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
+            >
+              {content}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     )
   }
@@ -178,12 +175,12 @@ function ThinkingAccordion({
           className
         )}
       >
-        <span className="font-mono text-[11px] tracking-[0.06em] uppercase text-white/40 group-hover/tp:text-white/60 transition-colors duration-100">
+        <span className="font-mono text-[11px] tracking-[0.06em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px]">›</span>
-        {duration !== null && (
-          <span className="font-mono text-[10px] text-white/25">
+        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px] leading-none">›</span>
+        {duration !== null && duration > 0 && (
+          <span className="font-mono text-[10px] text-white/25 leading-none">
             {duration}s
           </span>
         )}
@@ -198,12 +195,12 @@ function ThinkingAccordion({
         onClick={() => setOpen(false)}
         className="flex items-center gap-2 mb-1 py-0.5 group/tp text-left cursor-pointer select-none"
       >
-        <span className="font-mono text-[11px] tracking-[0.06em] uppercase text-white/40 group-hover/tp:text-white/60 transition-colors duration-100">
+        <span className="font-mono text-[11px] tracking-[0.06em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px] inline-block rotate-90">›</span>
-        {duration !== null && (
-          <span className="font-mono text-[10px] text-white/25">
+        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px] leading-none inline-block rotate-90">›</span>
+        {duration !== null && duration > 0 && (
+          <span className="font-mono text-[10px] text-white/25 leading-none">
             {duration}s
           </span>
         )}
@@ -213,6 +210,109 @@ function ThinkingAccordion({
           {content}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Block grouping ────────────────────────────────────────────────
+// Groups consecutive done web-search blocks into merged runs.
+// All other blocks pass through as single-item groups.
+type SearchBlock = Extract<MessageBlock, { type: 'search' }>
+
+type BlockGroup =
+  | { kind: 'merged-search'; blocks: SearchBlock[] }
+  | { kind: 'single'; block: MessageBlock; index: number }
+
+function isWebSearchBlock(b: SearchBlock): boolean {
+  if (b.toolName !== undefined) return b.toolName === 'brave_web_search'
+  return !b.query.includes('__')
+}
+
+function groupBlocks(blocks: MessageBlock[]): BlockGroup[] {
+  const groups: BlockGroup[] = []
+  let i = 0
+  while (i < blocks.length) {
+    const b = blocks[i]
+    // Only merge done web-search blocks
+    if (b.type === 'search' && b.phase === 'done' && isWebSearchBlock(b)) {
+      const run: SearchBlock[] = []
+      while (
+        i < blocks.length &&
+        blocks[i].type === 'search' &&
+        (blocks[i] as SearchBlock).phase === 'done' &&
+        isWebSearchBlock(blocks[i] as SearchBlock)
+      ) {
+        run.push(blocks[i] as SearchBlock)
+        i++
+      }
+      if (run.length === 1) {
+        groups.push({ kind: 'single', block: run[0], index: i - 1 })
+      } else {
+        groups.push({ kind: 'merged-search', blocks: run })
+      }
+    } else {
+      groups.push({ kind: 'single', block: b, index: i })
+      i++
+    }
+  }
+  return groups
+}
+
+// ── MergedSearchGroup ─────────────────────────────────────────────
+// Renders 2+ consecutive done web-search blocks as a single collapsed unit.
+function MergedSearchGroup({
+  blocks,
+  className,
+}: {
+  blocks: SearchBlock[]
+  className?: string
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const totalResults = blocks.reduce((sum, b) => sum + (b.results?.length ?? 0), 0)
+
+  return (
+    <div className={cn('border-l border-white/[0.10] pl-3 mb-3', className)}>
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-1.5 mb-0 group/sh select-none"
+      >
+        {/* Inline search icon — no lucide dependency here */}
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0 text-white/25">
+          <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.2"/>
+          <line x1="7.5" y1="7.5" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+        </svg>
+        <span className="text-[12px] text-white/40 font-medium
+                         group-hover/sh:text-white/60 transition-colors duration-100">
+          Searched the web
+        </span>
+        <span
+          className={cn(
+            'text-[10px] text-white/20 transition-all duration-150',
+            'group-hover/sh:text-white/35',
+            expanded ? 'rotate-90 inline-block' : ''
+          )}
+        >
+          ›
+        </span>
+        <span className="font-mono text-[10px] text-white/20">
+          {totalResults} results · {blocks.length} searches
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-1.5 flex flex-col gap-0">
+          {blocks.map((b, idx) => (
+            <div key={b.id} className={idx > 0 ? 'mt-3 pt-2.5 border-t border-white/[0.05]' : ''}>
+              <SearchResult
+                query={b.query}
+                results={b.results ?? []}
+                isFirst={idx === 0}
+                showDot
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -244,7 +344,19 @@ function AssistantBubble({
         {hasBlocks ? (
           /* ── v2.1 block-based render path ─────────────────────── */
           <>
-            {blocks.map((block, i) => {
+            {groupBlocks(blocks).map((group, gi) => {
+              if (group.kind === 'merged-search') {
+                return (
+                  <MergedSearchGroup
+                    key={group.blocks.map(b => b.id).join('-')}
+                    blocks={group.blocks}
+                  />
+                )
+              }
+
+              const block = group.block
+              const i = group.index
+
               if (block.type === 'search') {
                 const prevIsAnswer = i > 0 && blocks[i - 1].type === 'answer'
                 return (
@@ -285,19 +397,33 @@ function AssistantBubble({
               return null
             })}
 
-            {/* Working: pre-first-token — only when no blocks have arrived yet */}
-            {isThinking && blocks.length === 0 && <WorkingIndicator />}
+            {/* Working: pre-first-token — covers both empty blocks and when only
+                a searching block is present (tool fired before first think token) */}
+            {isThinking && !blocks.some(b => b.type === 'thinking' || b.type === 'answer') && <WorkingIndicator />}
 
-            {/* Working: post-tool-call gap — last block is a completed search, no
-                answer yet, no thinking block is currently streaming.
-                Excludes: active search (phase=searching), active thinking stream. */}
-            {isStreaming
-              && blocks.length > 0
-              && !blocks.some(b => b.type === 'answer')
-              && blocks[blocks.length - 1].type === 'search'
-              && (blocks[blocks.length - 1] as {type:'search'; phase:string}).phase === 'done'
-              && <WorkingIndicator />
-            }
+            {/* Working: post-gap — streaming, no answer yet, and the last block is
+                idle. "Idle" means: a done search, OR a done thinking block
+                (i.e. NOT the last block which ThinkingAccordion marks as active).
+                Active searches already render Working via ToolCallNotification.
+                Active thinking renders Reasoning via ThinkingAccordion. */}
+            {(() => {
+              // Show Working when the model is active but nothing is currently
+              // rendering as a loading state. Two entry conditions:
+              // (a) isStreaming=true: chunks are flowing but we're between blocks
+              // (b) isStreaming=false but isSearching=false and last block is a
+              //     done search: tool fired before any answer tokens so isStreaming
+              //     never flipped true, but model is still running
+              const active = isStreaming || (!isStreaming && !isThinking && !isSearching && hasBlocks)
+              if (!active) return null
+              if (blocks.some(b => b.type === 'answer')) return null
+              if (blocks.length === 0) return null
+              const last = blocks[blocks.length - 1]
+              // Active search: ToolCallNotification already shows Working
+              if (last.type === 'search' && last.phase === 'searching') return null
+              // Active thinking: ThinkingAccordion already shows Reasoning
+              if (last.type === 'thinking') return null
+              return <WorkingIndicator />
+            })()}
           </>
         ) : (
           /* ── Legacy flat-field render path (old messages / fallback) ── */
