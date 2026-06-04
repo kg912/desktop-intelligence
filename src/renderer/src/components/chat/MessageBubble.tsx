@@ -285,13 +285,19 @@ function AssistantBubble({
               return null
             })}
 
-            {/* Working indicator while waiting for the very first block */}
-            {isThinking && <WorkingIndicator />}
+            {/* Working: pre-first-token — only when no blocks have arrived yet */}
+            {isThinking && blocks.length === 0 && <WorkingIndicator />}
 
-            {/* Post-tool-call gap: search block(s) exist but answer hasn't started yet */}
-            {!isThinking && isStreaming && hasBlocks && !blocks.some(b => b.type === 'answer') && (
-              <WorkingIndicator />
-            )}
+            {/* Working: post-tool-call gap — last block is a completed search, no
+                answer yet, no thinking block is currently streaming.
+                Excludes: active search (phase=searching), active thinking stream. */}
+            {isStreaming
+              && blocks.length > 0
+              && !blocks.some(b => b.type === 'answer')
+              && blocks[blocks.length - 1].type === 'search'
+              && (blocks[blocks.length - 1] as {type:'search'; phase:string}).phase === 'done'
+              && <WorkingIndicator />
+            }
           </>
         ) : (
           /* ── Legacy flat-field render path (old messages / fallback) ── */
