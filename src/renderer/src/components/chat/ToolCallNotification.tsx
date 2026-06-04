@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Globe } from 'lucide-react'
+import { Globe, Plug } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { ChevronIcon } from './ChevronIcon'
 
 interface ToolCallNotificationProps {
   phase:    'searching' | 'done' | 'error'
@@ -90,18 +91,18 @@ export function SearchResult({
             <button
               key={i}
               onClick={() => window.api.openExternal(r.url).catch(console.error)}
-              className="flex items-baseline gap-2 px-1.5 py-0.5 rounded-[4px] text-left
+              className="flex items-baseline gap-3 px-1.5 py-0.5 rounded-[4px] text-left
                          hover:bg-white/[0.03] transition-colors duration-100 group w-full"
             >
               <span className="font-mono text-[11px] text-white/20 flex-shrink-0 leading-none w-4">
                 {i + 1}.
               </span>
-              <span className="text-[12px] text-white/50 leading-snug flex-shrink-0
+              <span className="text-[12px] text-white/75 leading-snug flex-shrink truncate max-w-[65%]
                                group-hover:text-accent-500 transition-colors duration-100">
                 {r.title}
               </span>
-              <span className="font-mono text-[10px] text-white/15 min-w-0 truncate
-                               group-hover:text-white/30 transition-colors duration-100 ml-auto pl-3">
+              <span className="font-mono text-[10px] text-white/30 min-w-0 truncate flex-1 text-right
+                               group-hover:text-white/45 transition-colors duration-100">
                 {r.url}
               </span>
             </button>
@@ -186,15 +187,7 @@ export function ToolCallNotification({
                            group-hover/sh:text-white/60 transition-colors duration-100">
             Searched the web
           </span>
-          <span
-            className={cn(
-              'text-[13px] text-white/20 transition-all duration-150',
-              'group-hover/sh:text-white/35',
-              expanded ? 'rotate-90 inline-block' : ''
-            )}
-          >
-            ›
-          </span>
+          <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
           <span className="font-mono text-[13px] text-white/20">
             {results.length} {results.length === 1 ? 'result' : 'results'}
           </span>
@@ -211,6 +204,9 @@ export function ToolCallNotification({
 
   // ── Done — MCP tool: title at full width, body indented ─────────
   const { server, tool } = parseMcpLabel(query)
+  // Built-in tools have no server prefix (no __ in query, not web search)
+  // Show "built-in" as the server label instead
+  const serverLabel = server || 'built-in'
 
   return (
     <div className={cn('mb-2', className)}>
@@ -220,28 +216,17 @@ export function ToolCallNotification({
         onClick={() => setExpanded(v => !v)}
         className="flex items-center gap-1.5 group/tc select-none"
       >
-        {server && (
-          <>
-            <span className="font-mono text-[13px] text-white/20 leading-none
-                             group-hover/tc:text-white/35 transition-colors duration-100">
-              {server}
-            </span>
-            <span className="text-white/15 text-[13px] leading-none">·</span>
-          </>
-        )}
+        <Plug size={12} className="shrink-0 text-white/20 group-hover/tc:text-white/35 transition-colors duration-100" />
+        <span className="font-mono text-[13px] text-white/20 leading-none
+                         group-hover/tc:text-white/35 transition-colors duration-100">
+          {serverLabel}
+        </span>
+        <span className="text-white/15 text-[13px] leading-none">·</span>
         <span className="font-mono text-[13px] text-white/35 font-medium leading-none
                          group-hover/tc:text-white/55 transition-colors duration-100">
           {tool || label}
         </span>
-        <span
-          className={cn(
-            'text-[13px] text-white/20 leading-none transition-all duration-150',
-            'group-hover/tc:text-white/35',
-            expanded ? 'rotate-90 inline-block' : ''
-          )}
-        >
-          ›
-        </span>
+        <ChevronIcon open={expanded} className="text-white/20 group-hover/tc:text-white/35 transition-colors duration-150" />
       </button>
 
       {/* Expanded body */}

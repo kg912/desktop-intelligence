@@ -1,9 +1,5 @@
 import { useState, useCallback } from 'react'
 import {
-  MessageSquarePlus,
-  ChevronLeft,
-  ChevronRight,
-  MessageSquare,
   Trash2,
   Search,
   Settings,
@@ -70,12 +66,6 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
           : "border border-transparent bg-transparent before:content-[''] before:absolute before:inset-0 before:bg-surface-hover before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-100 before:pointer-events-none before:rounded-lg before:z-0 before:will-change-[opacity]"
       )}
     >
-      <MessageSquare
-        className={cn(
-          'relative z-10 mt-0.5 flex-shrink-0 w-3.5 h-3.5',
-          isActive ? 'text-accent-500' : 'text-content-muted group-hover:text-content-secondary transition-colors duration-100'
-        )}
-      />
       <div className="relative z-10 flex-1 min-w-0">
         <p className={cn(
           'text-sm truncate font-medium leading-tight',
@@ -209,7 +199,6 @@ export function Sidebar({
                          focus:outline-none focus:ring-1 focus:ring-accent-700/60
                          no-drag"
             >
-              <MessageSquarePlus className="w-4 h-4" />
               New Chat
             </button>
           </div>

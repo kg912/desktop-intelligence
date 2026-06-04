@@ -10,6 +10,7 @@ import { Paperclip } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
 import { ToolCallNotification, SearchResult } from './ToolCallNotification'
+import { ChevronIcon } from './ChevronIcon'
 import { cn } from '../../lib/utils'
 import type { GenerationStats, MessageBlock } from '../../../../shared/types'
 
@@ -180,7 +181,7 @@ function ThinkingAccordion({
         <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[13px] leading-none">›</span>
+        <ChevronIcon open={false} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
         {duration !== null && duration > 0 && (
           <span className="font-mono text-[13px] text-white/25 leading-none">
             {duration}s
@@ -200,7 +201,7 @@ function ThinkingAccordion({
         <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[13px] leading-none inline-block rotate-90">›</span>
+        <ChevronIcon open={true} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
         {duration !== null && duration > 0 && (
           <span className="font-mono text-[13px] text-white/25 leading-none">
             {duration}s
@@ -287,15 +288,7 @@ function MergedSearchGroup({
                          group-hover/sh:text-white/60 transition-colors duration-100">
           Searched the web
         </span>
-        <span
-          className={cn(
-            'text-[13px] text-white/20 transition-all duration-150',
-            'group-hover/sh:text-white/35',
-            expanded ? 'rotate-90 inline-block' : ''
-          )}
-        >
-          ›
-        </span>
+        <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
         <span className="font-mono text-[13px] text-white/20">
           {totalResults} results · {blocks.length} searches
         </span>
@@ -305,7 +298,7 @@ function MergedSearchGroup({
         <div className="border-l border-white/[0.07] pl-3 mt-1">
           <div className="mt-0.5 flex flex-col gap-0">
             {blocks.map((b, idx) => (
-              <div key={b.id} className={idx > 0 ? 'mt-2 pt-2 border-t border-white/[0.05]' : ''}>
+              <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
                 <SearchResult
                   query={b.query}
                   results={b.results ?? []}
@@ -362,7 +355,6 @@ function AssistantBubble({
               const i = group.index
 
               if (block.type === 'search') {
-                const prevIsAnswer = i > 0 && blocks[i - 1].type === 'answer'
                 return (
                   <ToolCallNotification
                     key={block.id}
@@ -374,18 +366,15 @@ function AssistantBubble({
                     formattedContent={block.formattedContent}
                     toolArgs={block.toolArgs}
                     toolImages={block.toolImages}
-                    className={prevIsAnswer ? 'mt-3' : ''}
                   />
                 )
               }
               if (block.type === 'thinking') {
-                const prevIsAnswer = i > 0 && blocks[i - 1].type === 'answer'
                 return (
                   <ThinkingAccordion
                     key={block.id}
                     content={block.content}
                     isStreaming={isStreaming && block.id === blocks[blocks.length - 1].id}
-                    className={prevIsAnswer ? 'mt-3' : ''}
                   />
                 )
               }
