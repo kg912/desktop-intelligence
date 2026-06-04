@@ -33,10 +33,6 @@ export const streamingStats = signal<GenerationStats | null>(null)
 // ── isStreaming — drives InputBar send/abort state ────────────────────────────
 export const isStreamingSignal = signal<boolean>(false)
 
-// ── isReasoning — true while a thinking block is actively streaming ───────────
-// Set by ThinkingAccordion; read by ReasoningStrip in Layout.
-export const isReasoningSignal = signal<boolean>(false)
-
 // ── Derived: the full message list for ChatArea to render ─────────────────────
 // Only recomputes when completedMessages or streamingMessage changes — not on
 // every block update. This means the messages prop to ChatArea only updates on

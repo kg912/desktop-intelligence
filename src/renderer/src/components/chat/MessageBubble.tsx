@@ -11,7 +11,6 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
 import { ToolCallNotification } from './ToolCallNotification'
 import { cn } from '../../lib/utils'
-import { isReasoningSignal } from '../../signals/chatSignals'
 import type { GenerationStats, MessageBlock } from '../../../../shared/types'
 
 // ── Attachment display metadata (subset of ProcessedAttachment) ──
@@ -109,9 +108,8 @@ function WorkingIndicator() {
 /**
  * ThinkingAccordion
  *
- * isStreaming=true  → returns null (visual delegated to ReasoningStrip in Layout);
- *                     drives isReasoningSignal so the strip knows to appear.
- * isStreaming=false → collapses to "Thought process › Xs" pill, toggleable.
+ * isStreaming=true  → inline shimmer "Reasoning" header + scrolling thought content
+ * isStreaming=false → collapses to "Thought process › Xs" pill, toggleable
  */
 function ThinkingAccordion({
   content,
@@ -125,15 +123,7 @@ function ThinkingAccordion({
   const [open, setOpen]         = useState(false)
   const [duration, setDuration] = useState<number | null>(null)
   const startedAtRef            = useRef<number>(Date.now())
-
-  // Drive the global reasoning signal — ReasoningStrip in Layout reads this.
-  useEffect(() => {
-    isReasoningSignal.value = !!isStreaming
-    return () => {
-      // Only clear if this instance was the one that set it to true
-      if (isStreaming) isReasoningSignal.value = false
-    }
-  }, [isStreaming])
+  const scrollRef               = useRef<HTMLDivElement>(null)
 
   // Record elapsed seconds when streaming ends
   useEffect(() => {
@@ -142,12 +132,42 @@ function ThinkingAccordion({
     }
   }, [isStreaming, duration])
 
-  // ── Active: visual is shown by ReasoningStrip in Layout — nothing here ──
+  // Auto-scroll to bottom while streaming
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [content, isStreaming])
+
+  // ── Active: shimmer header + scrolling content ──
   if (isStreaming) {
-    return null
+    return (
+      <div className={cn('mb-3 border-l border-white/[0.07] pl-3', className)}>
+        <div className="flex items-center gap-1.5 h-5 mb-1.5">
+          <span
+            className="shimmer-text font-mono text-[11px] tracking-[0.06em] uppercase"
+            style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
+          >
+            Reasoning
+          </span>
+        </div>
+        <div className="relative">
+          <div
+            className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
+            style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
+          />
+          <div
+            ref={scrollRef}
+            className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
+          >
+            {content || '…'}
+          </div>
+        </div>
+      </div>
+    )
   }
 
-  // ── Collapsed pill (default post-stream state) ──
+  // ── Collapsed pill ──
   if (!open) {
     return (
       <button
@@ -171,7 +191,7 @@ function ThinkingAccordion({
     )
   }
 
-  // ── Expanded (user clicked pill) ──
+  // ── Expanded ──
   return (
     <div className={cn('mb-2', className)}>
       <button
