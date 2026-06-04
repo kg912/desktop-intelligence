@@ -144,23 +144,25 @@ export function ToolCallNotification({
     )
   }
 
-  // ── Error: left-rail, no card ─────────────────────────────────
+  // ── Error: title at full width, detail indented under rail ──────
   if (phase === 'error') {
     return (
-      <div className={cn('border-l border-white/[0.10] pl-3 mb-3', className)}>
+      <div className={cn('mb-2', className)}>
         <div className="flex items-center gap-2">
           <Globe size={12} className="text-accent-700 shrink-0" />
-          <span className="text-[12px] text-accent-700 font-medium">
+          <span className="text-[13px] text-accent-700 font-medium font-mono">
             {webSearch ? 'Search failed' : 'Tool failed'}
           </span>
-          <span className="font-mono text-[10.5px] text-white/20">
-            "{label}"
+          <span className="font-mono text-[11px] text-white/20">
+            {label}
           </span>
         </div>
         {errorMsg && (
-          <p className="font-mono text-[10px] text-accent-700/50 mt-0.5 leading-relaxed pl-[20px]">
-            {errorMsg}
-          </p>
+          <div className="border-l border-accent-900/40 pl-3 mt-1">
+            <p className="font-mono text-[11px] text-accent-700/50 leading-relaxed">
+              {errorMsg}
+            </p>
+          </div>
         )}
       </div>
     )
@@ -170,10 +172,10 @@ export function ToolCallNotification({
   const hasImages = toolImages && toolImages.length > 0
   const hasText   = !!formattedContent
 
-  // ── Done — web search: left-rail, no card ────────────────────
+  // ── Done — web search: title at full width, results indented ────
   if (webSearch) {
     return (
-      <div className={cn('border-l border-white/[0.10] pl-3 mb-3', className)}>
+      <div className={cn('mb-2', className)}>
         {/* Header row: "Searched the web  ›  N results" — toggles results */}
         <button
           onClick={() => setExpanded(v => !v)}
@@ -199,7 +201,7 @@ export function ToolCallNotification({
         </button>
 
         {expanded && (
-          <div className="mt-1">
+          <div className="border-l border-white/[0.07] pl-3 mt-1">
             <SearchResult query={label} results={results} isFirst />
           </div>
         )}
@@ -207,11 +209,11 @@ export function ToolCallNotification({
     )
   }
 
-  // ── Done — MCP tool: inline left-rail, collapsed by default ──
+  // ── Done — MCP tool: title at full width, body indented ─────────
   const { server, tool } = parseMcpLabel(query)
 
   return (
-    <div className={cn('border-l border-white/[0.10] pl-3 mb-3', className)}>
+    <div className={cn('mb-2', className)}>
 
       {/* Header: server · tool_name › */}
       <button
@@ -244,7 +246,8 @@ export function ToolCallNotification({
 
       {/* Expanded body */}
       {expanded && (
-        <div className="mt-2 flex flex-col gap-0">
+        <div className="border-l border-white/[0.07] pl-3 mt-1">
+        <div className="mt-1 flex flex-col gap-0">
 
           {/* Arguments */}
           {hasArgs && (
@@ -293,6 +296,7 @@ export function ToolCallNotification({
             </div>
           )}
 
+        </div>
         </div>
       )}
     </div>

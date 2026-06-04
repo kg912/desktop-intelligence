@@ -137,26 +137,28 @@ function ThinkingAccordion({
   // ── Active: shimmer header + scrolling content ──
   if (isStreaming) {
     return (
-      <div className={cn('mb-3 border-l border-white/[0.07] pl-3', className)}>
-        <div className="flex items-center gap-1.5 h-5 mb-1.5">
+      <div className={cn('mb-3', className)}>
+        <div className="flex items-center gap-1.5 h-5 mb-1">
           <span
-            className="shimmer-text font-mono text-[11px] tracking-[0.06em] capitalize"
+            className="shimmer-text font-mono text-[13px] tracking-[0.06em] capitalize"
             style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
           >
             Reasoning
           </span>
         </div>
         {content && (
-          <div className="relative">
-            <div
-              className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
-              style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
-            />
-            <div
-              ref={scrollRef}
-              className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
-            >
-              {content}
+          <div className="border-l border-white/[0.07] pl-3">
+            <div className="relative">
+              <div
+                className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
+                style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
+              />
+              <div
+                ref={scrollRef}
+                className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
+              >
+                {content}
+              </div>
             </div>
           </div>
         )}
@@ -205,7 +207,7 @@ function ThinkingAccordion({
           </span>
         )}
       </button>
-      <div className="border-l border-white/[0.08] pl-3">
+      <div className="border-l border-white/[0.07] pl-3">
         <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
           {content}
         </div>
@@ -271,7 +273,7 @@ function MergedSearchGroup({
   const totalResults = blocks.reduce((sum, b) => sum + (b.results?.length ?? 0), 0)
 
   return (
-    <div className={cn('border-l border-white/[0.10] pl-3 mb-3', className)}>
+    <div className={cn('mb-2', className)}>
       <button
         onClick={() => setExpanded(v => !v)}
         className="flex items-center gap-1.5 mb-0 group/sh select-none"
@@ -300,17 +302,19 @@ function MergedSearchGroup({
       </button>
 
       {expanded && (
-        <div className="mt-1.5 flex flex-col gap-0">
-          {blocks.map((b, idx) => (
-            <div key={b.id} className={idx > 0 ? 'mt-3 pt-2.5 border-t border-white/[0.05]' : ''}>
-              <SearchResult
-                query={b.query}
-                results={b.results ?? []}
-                isFirst={idx === 0}
-                showDot
-              />
-            </div>
-          ))}
+        <div className="border-l border-white/[0.07] pl-3 mt-1">
+          <div className="mt-0.5 flex flex-col gap-0">
+            {blocks.map((b, idx) => (
+              <div key={b.id} className={idx > 0 ? 'mt-3 pt-2.5 border-t border-white/[0.05]' : ''}>
+                <SearchResult
+                  query={b.query}
+                  results={b.results ?? []}
+                  isFirst={idx === 0}
+                  showDot
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
