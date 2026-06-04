@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Globe, Plug } from 'lucide-react'
+import { Globe } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 interface ToolCallNotificationProps {
@@ -37,6 +37,19 @@ function resolveIsWebSearch(toolName?: string, query?: string): boolean {
   if (toolName !== undefined) return toolName === 'brave_web_search'
   // Legacy fallback: Brave search queries never contain '__'
   return !(query ?? '').includes('__')
+}
+
+/** Splits "server__toolName" into { server, tool }.
+ *  Falls back to { server: '', tool: query } for non-MCP queries. */
+function parseMcpLabel(query: string): { server: string; tool: string } {
+  if (query.includes('__')) {
+    const idx = query.indexOf('__')
+    return {
+      server: query.slice(0, idx),
+      tool:   query.slice(idx + 2),
+    }
+  }
+  return { server: '', tool: query }
 }
 
 // ── SearchResult ─────────────────────────────────────────────────
@@ -111,10 +124,11 @@ export function ToolCallNotification({
   toolImages,
   className = '',
 }: ToolCallNotificationProps) {
-  // Default expanded=true so results are visible immediately on 'done'
-  const [expanded, setExpanded] = useState(true)
   const label = formatQueryLabel(query)
   const webSearch = resolveIsWebSearch(toolName, query)
+  // Web search: expanded by default so results are immediately visible.
+  // MCP tools: collapsed by default — header shows server·tool summary.
+  const [expanded, setExpanded] = useState(webSearch)
 
   // ── Searching: shimmer "Working" ──────────────────────────────
   if (phase === 'searching') {
@@ -193,23 +207,34 @@ export function ToolCallNotification({
     )
   }
 
-  // ── Done — MCP tool: keep existing card design ───────────────
+  // ── Done — MCP tool: inline left-rail, collapsed by default ──
+  const { server, tool } = parseMcpLabel(query)
+
   return (
-    <div
-      className={`rounded-lg border border-surface-border/40 mb-3 overflow-hidden ${className}`}
-      style={{ background: '#141414' }}
-    >
+    <div className={cn('border-l border-white/[0.10] pl-3 mb-3', className)}>
+
+      {/* Header: server · tool_name › */}
       <button
         onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.03] transition-colors"
+        className="flex items-center gap-1.5 group/tc select-none"
       >
-        <Plug size={13} className="text-content-muted shrink-0" />
-        <span className="text-xs text-content-secondary font-medium flex-1 text-left">
-          Used tool: {label}
+        {server && (
+          <>
+            <span className="font-mono text-[11px] text-white/20 leading-none
+                             group-hover/tc:text-white/35 transition-colors duration-100">
+              {server}
+            </span>
+            <span className="text-white/15 text-[11px] leading-none">·</span>
+          </>
+        )}
+        <span className="text-[12px] text-white/35 font-medium leading-none
+                         group-hover/tc:text-white/55 transition-colors duration-100">
+          {tool || label}
         </span>
         <span
           className={cn(
-            'text-content-muted text-[10px] transition-transform duration-150',
+            'text-[10px] text-white/20 leading-none transition-all duration-150',
+            'group-hover/tc:text-white/35',
             expanded ? 'rotate-90 inline-block' : ''
           )}
         >
@@ -217,39 +242,57 @@ export function ToolCallNotification({
         </span>
       </button>
 
+      {/* Expanded body */}
       {expanded && (
-        <div className="border-t border-surface-border/30 px-3 py-3 space-y-2.5">
-          <p className="text-xs font-mono text-content-muted">"{label}"</p>
+        <div className="mt-2 flex flex-col gap-0">
 
-          {/* MCP: Arguments */}
+          {/* Arguments */}
           {hasArgs && (
-            <div className="mt-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-content-tertiary mb-1.5 font-medium">Arguments</p>
-              <pre className="text-xs font-mono text-content-secondary bg-black/30 rounded-md px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-surface-border/20">
+            <div className="mb-2">
+              <p className="font-mono text-[9.5px] text-white/20 mb-1 tracking-[0.04em]">
+                arguments
+              </p>
+              <pre className="font-mono text-[11px] text-white/30 leading-relaxed
+                              whitespace-pre-wrap break-all overflow-x-auto">
                 {JSON.stringify(toolArgs, null, 2)}
               </pre>
             </div>
           )}
 
-          {/* MCP: Output (images + text) */}
+          {/* Divider between args and output — only when both exist */}
+          {hasArgs && (hasImages || hasText) && (
+            <div className="h-px bg-white/[0.06] my-1" />
+          )}
+
+          {/* Output */}
           {(hasImages || hasText) && (
-            <div className="mt-2.5">
-              <p className="text-[10px] uppercase tracking-wider text-content-tertiary mb-1.5 font-medium">Output</p>
+            <div>
+              <p className="font-mono text-[9.5px] text-white/20 mb-1 tracking-[0.04em]">
+                output
+              </p>
+
+              {/* Images */}
               {hasImages && toolImages!.map((img, i) => (
-                <img
-                  key={i}
-                  src={`data:${img.mimeType};base64,${img.data}`}
-                  className="rounded-md w-full mt-2 border border-surface-border/30"
-                  alt="Tool output"
-                />
+                <div key={i} className="mt-1">
+                  <img
+                    src={`data:${img.mimeType};base64,${img.data}`}
+                    className="rounded-[4px] w-full border border-white/[0.08]"
+                    alt="Tool output"
+                  />
+                </div>
               ))}
+
+              {/* Text */}
               {hasText && (
-                <pre className="text-xs font-mono text-content-secondary bg-black/30 rounded-md px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-surface-border/20 max-h-48 overflow-y-auto mt-2">
+                <pre className="font-mono text-[11px] text-white/30 leading-relaxed
+                                whitespace-pre-wrap break-all overflow-x-auto
+                                max-h-48 overflow-y-auto">
                   {formattedContent}
                 </pre>
               )}
             </div>
           )}
+
         </div>
       )}
     </div>
