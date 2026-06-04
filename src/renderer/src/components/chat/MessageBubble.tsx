@@ -11,6 +11,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
 import { ToolCallNotification } from './ToolCallNotification'
 import { cn } from '../../lib/utils'
+import { isReasoningSignal } from '../../signals/chatSignals'
 import type { GenerationStats, MessageBlock } from '../../../../shared/types'
 
 // ── Attachment display metadata (subset of ProcessedAttachment) ──
@@ -83,49 +84,6 @@ function UserBubble({ content, attachments }: { content: string; attachments?: M
 }
 
 /**
- * AvatarDot — minimalist red dot avatar for assistant messages.
- * A single glowing red circle with a faint outer ring.
- * No graph nodes, no wireframe — clean and minimal.
- */
-function AvatarDot() {
-  return (
-    <svg
-      viewBox="0 0 28 28"
-      xmlns="http://www.w3.org/2000/svg"
-      width="28"
-      height="28"
-      className="flex-shrink-0"
-      aria-hidden="true"
-    >
-      {/* Outer glow ring */}
-      <circle
-        cx="14" cy="14" r="13"
-        fill="none"
-        stroke="rgba(229,57,53,0.25)"
-        strokeWidth="1"
-      />
-      {/* Mid ring */}
-      <circle
-        cx="14" cy="14" r="10"
-        fill="none"
-        stroke="rgba(229,57,53,0.12)"
-        strokeWidth="0.5"
-      />
-      {/* Solid red core */}
-      <circle
-        cx="14" cy="14" r="7"
-        fill="#e53935"
-      />
-      {/* Inner highlight for depth */}
-      <circle
-        cx="12" cy="12" r="2.5"
-        fill="rgba(255,255,255,0.18)"
-      />
-    </svg>
-  )
-}
-
-/**
  * WorkingIndicator
  *
  * Shown when the model is active but hasn't emitted the first visible
@@ -151,8 +109,9 @@ function WorkingIndicator() {
 /**
  * ThinkingAccordion
  *
- * isStreaming=true  → "Reasoning" shimmer header, scrolling content, no toggle
- * isStreaming=false → collapses to "Thought process ›  Xs" pill, toggleable
+ * isStreaming=true  → returns null (visual delegated to ReasoningStrip in Layout);
+ *                     drives isReasoningSignal so the strip knows to appear.
+ * isStreaming=false → collapses to "Thought process › Xs" pill, toggleable.
  */
 function ThinkingAccordion({
   content,
@@ -166,7 +125,15 @@ function ThinkingAccordion({
   const [open, setOpen]         = useState(false)
   const [duration, setDuration] = useState<number | null>(null)
   const startedAtRef            = useRef<number>(Date.now())
-  const scrollRef               = useRef<HTMLDivElement>(null)
+
+  // Drive the global reasoning signal — ReasoningStrip in Layout reads this.
+  useEffect(() => {
+    isReasoningSignal.value = !!isStreaming
+    return () => {
+      // Only clear if this instance was the one that set it to true
+      if (isStreaming) isReasoningSignal.value = false
+    }
+  }, [isStreaming])
 
   // Record elapsed seconds when streaming ends
   useEffect(() => {
@@ -175,45 +142,9 @@ function ThinkingAccordion({
     }
   }, [isStreaming, duration])
 
-  // Auto-scroll to bottom while streaming
-  useEffect(() => {
-    if (isStreaming && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [content, isStreaming])
-
-  // ── Active: shimmer header + scrolling content ──
+  // ── Active: visual is shown by ReasoningStrip in Layout — nothing here ──
   if (isStreaming) {
-    return (
-      <div className={cn('mb-3 border-l border-white/[0.07] pl-3', className)}>
-        <div className="flex items-center gap-1.5 h-5 mb-1.5">
-          {/* Tiny spinner */}
-          <span
-            className="block w-2.5 h-2.5 rounded-full border border-white/[0.08] border-t-white/30 animate-spin flex-shrink-0"
-            style={{ animationDuration: '0.95s' }}
-          />
-          <span
-            className="shimmer-text font-mono text-[10px] tracking-[0.09em] uppercase"
-            style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
-          >
-            Reasoning
-          </span>
-        </div>
-        {/* Scrolling thought content with top-fade shadow */}
-        <div className="relative">
-          <div
-            className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
-            style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
-          />
-          <div
-            ref={scrollRef}
-            className="max-h-[72px] overflow-hidden font-mono text-[11px] text-content-muted/50 leading-relaxed whitespace-pre-wrap"
-          >
-            {content || '…'}
-          </div>
-        </div>
-      </div>
-    )
+    return null
   }
 
   // ── Collapsed pill (default post-stream state) ──
@@ -222,17 +153,17 @@ function ThinkingAccordion({
       <button
         onClick={() => setOpen(true)}
         className={cn(
-          'flex items-center gap-1.5 mb-1.5 py-0.5 group/tp',
+          'flex items-center gap-2 mb-2 py-0.5 group/tp',
           'text-left cursor-pointer select-none',
           className
         )}
       >
-        <span className="font-mono text-[10px] tracking-[0.09em] uppercase text-white/[0.22] group-hover/tp:text-white/40 transition-colors duration-100">
+        <span className="font-mono text-[11px] tracking-[0.06em] uppercase text-white/40 group-hover/tp:text-white/60 transition-colors duration-100">
           Thought process
         </span>
-        <span className="text-white/[0.18] group-hover/tp:text-white/32 transition-colors duration-100 text-[10px]">›</span>
+        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px]">›</span>
         {duration !== null && (
-          <span className="font-mono text-[9px] text-white/[0.12]">
+          <span className="font-mono text-[10px] text-white/25">
             {duration}s
           </span>
         )}
@@ -242,23 +173,23 @@ function ThinkingAccordion({
 
   // ── Expanded (user clicked pill) ──
   return (
-    <div className={cn('mb-1.5', className)}>
+    <div className={cn('mb-2', className)}>
       <button
         onClick={() => setOpen(false)}
-        className="flex items-center gap-1.5 mb-0 py-0.5 group/tp text-left cursor-pointer select-none"
+        className="flex items-center gap-2 mb-1 py-0.5 group/tp text-left cursor-pointer select-none"
       >
-        <span className="font-mono text-[10px] tracking-[0.09em] uppercase text-white/[0.22] group-hover/tp:text-white/40 transition-colors duration-100">
+        <span className="font-mono text-[11px] tracking-[0.06em] uppercase text-white/40 group-hover/tp:text-white/60 transition-colors duration-100">
           Thought process
         </span>
-        <span className="text-white/[0.18] group-hover/tp:text-white/32 transition-colors duration-100 text-[10px] inline-block rotate-90">›</span>
+        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px] inline-block rotate-90">›</span>
         {duration !== null && (
-          <span className="font-mono text-[9px] text-white/[0.12]">
+          <span className="font-mono text-[10px] text-white/25">
             {duration}s
           </span>
         )}
       </button>
-      <div className="border-l border-white/[0.06] pl-3">
-        <div className="font-mono text-[11px] text-white/[0.24] leading-relaxed whitespace-pre-wrap">
+      <div className="border-l border-white/[0.08] pl-3">
+        <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
           {content}
         </div>
       </div>
@@ -285,14 +216,10 @@ function AssistantBubble({
   const hasBlocks = blocks && blocks.length > 0
 
   return (
-    <div className="flex gap-3">
-      {/* AI avatar */}
-      <div className="flex-shrink-0 mt-1">
-        <AvatarDot />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 pb-1">
+    <div className="flex">
+      {/* Content — pl-9 (2.25rem = 36px) matches the old avatar+gap width so
+          message text stays left-aligned with the rest of the chat column.     */}
+      <div className="flex-1 min-w-0 pb-1 pl-9">
 
         {hasBlocks ? (
           /* ── v2.1 block-based render path ─────────────────────── */
@@ -338,8 +265,13 @@ function AssistantBubble({
               return null
             })}
 
-            {/* Working indicator while waiting for the first block */}
+            {/* Working indicator while waiting for the very first block */}
             {isThinking && <WorkingIndicator />}
+
+            {/* Post-tool-call gap: search block(s) exist but answer hasn't started yet */}
+            {!isThinking && isStreaming && hasBlocks && !blocks.some(b => b.type === 'answer') && (
+              <WorkingIndicator />
+            )}
           </>
         ) : (
           /* ── Legacy flat-field render path (old messages / fallback) ── */

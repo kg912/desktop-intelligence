@@ -11,8 +11,49 @@ import { useChat } from '../../hooks/useChat'
 import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
+import { useSignals } from '@preact/signals-react/runtime'
+import { isReasoningSignal } from '../../signals/chatSignals'
 import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
+
+/**
+ * ReasoningStrip
+ *
+ * Shown between ChatArea and InputBar while a thinking block is streaming.
+ * Mirrors the VSCode Copilot pattern: a bottom-anchored status strip with
+ * a glowing red dot on the left rail and a shimmer "Reasoning" label.
+ * Renders nothing when not reasoning.
+ *
+ * Owns its own useSignals() call so Layout itself is not a signal subscriber
+ * and avoids unnecessary re-renders on every thinking token.
+ */
+function ReasoningStrip() {
+  useSignals()
+  if (!isReasoningSignal.value) return null
+  return (
+    <div
+      className="flex items-center gap-3 px-6 py-2 border-t border-white/[0.05]"
+      style={{ background: 'rgba(10,10,10,0.6)' }}
+    >
+      {/* Glowing red dot — sits on the left rail, aligns with pl-9 content column */}
+      <div
+        className="flex-shrink-0 w-2 h-2 rounded-full"
+        style={{
+          background: '#e53935',
+          boxShadow: '0 0 6px rgba(229,57,53,0.7)',
+          marginLeft: '2.25rem',
+        }}
+      />
+      {/* Shimmer label */}
+      <span
+        className="shimmer-text font-mono text-[11px] tracking-[0.09em] uppercase"
+        style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
+      >
+        Reasoning
+      </span>
+    </div>
+  )
+}
 
 export function Layout() {
   const { setThinkingMode } = useModelConfig()
@@ -403,6 +444,8 @@ export function Layout() {
               onSuggest={handleSuggest}
               chatSystemInstructions={chatSystemInstructions}
             />
+
+            <ReasoningStrip />
 
             <InputBar
               onSend={handleSend}
