@@ -73,9 +73,9 @@ export function SearchResult({
   showDot?: boolean
 }) {
   return (
-    <div className={cn(isFirst ? '' : 'mt-3')}>
+    <div className={cn(isFirst ? '' : 'mt-2')}>
       {/* Query line */}
-      <div className="flex items-center gap-1.5 mb-1.5">
+      <div className="flex items-center gap-1.5 mb-1">
         {showDot && (
           <span className="w-1 h-1 rounded-full bg-white/[0.12] flex-shrink-0 inline-block" />
         )}
@@ -90,18 +90,18 @@ export function SearchResult({
             <button
               key={i}
               onClick={() => window.api.openExternal(r.url).catch(console.error)}
-              className="flex items-baseline gap-2 px-1.5 py-1 rounded-[4px] text-left
-                         hover:bg-white/[0.03] transition-colors duration-100 group"
+              className="flex items-baseline gap-2 px-1.5 py-0.5 rounded-[4px] text-left
+                         hover:bg-white/[0.03] transition-colors duration-100 group w-full"
             >
-              <span className="font-mono text-[10px] text-white/20 w-3.5 flex-shrink-0 leading-none">
+              <span className="font-mono text-[11px] text-white/20 flex-shrink-0 leading-none w-4">
                 {i + 1}.
               </span>
-              <span className="text-[12px] text-white/50 leading-snug flex-1 min-w-0
-                               group-hover:text-accent-500 transition-colors duration-100 truncate">
+              <span className="text-[12px] text-white/50 leading-snug flex-shrink-0
+                               group-hover:text-accent-500 transition-colors duration-100">
                 {r.title}
               </span>
-              <span className="font-mono text-[10px] text-white/15 flex-shrink-0 max-w-[200px] truncate
-                               group-hover:text-white/30 transition-colors duration-100 hidden sm:block">
+              <span className="font-mono text-[10px] text-white/15 min-w-0 truncate
+                               group-hover:text-white/30 transition-colors duration-100 ml-auto pl-3">
                 {r.url}
               </span>
             </button>
@@ -133,7 +133,7 @@ export function ToolCallNotification({
   // ── Searching: shimmer "Working" ──────────────────────────────
   if (phase === 'searching') {
     return (
-      <div className={`mb-3 py-0.5 ${className}`}>
+      <div className={`mb-2 py-0.5 ${className}`}>
         <span
           className="shimmer-text font-mono text-[13px] tracking-wide"
           style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
@@ -153,7 +153,7 @@ export function ToolCallNotification({
           <span className="text-[13px] text-accent-700 font-medium font-mono">
             {webSearch ? 'Search failed' : 'Tool failed'}
           </span>
-          <span className="font-mono text-[11px] text-white/20">
+          <span className="font-mono text-[13px] text-white/20">
             {label}
           </span>
         </div>
@@ -182,20 +182,20 @@ export function ToolCallNotification({
           className="flex items-center gap-1.5 mb-0 group/sh select-none"
         >
           <Globe size={12} className="text-white/25 shrink-0" />
-          <span className="text-[12px] text-white/40 font-medium
+          <span className="font-mono text-[13px] text-white/40 font-medium
                            group-hover/sh:text-white/60 transition-colors duration-100">
             Searched the web
           </span>
           <span
             className={cn(
-              'text-[10px] text-white/20 transition-all duration-150',
+              'text-[13px] text-white/20 transition-all duration-150',
               'group-hover/sh:text-white/35',
               expanded ? 'rotate-90 inline-block' : ''
             )}
           >
             ›
           </span>
-          <span className="font-mono text-[10px] text-white/20">
+          <span className="font-mono text-[13px] text-white/20">
             {results.length} {results.length === 1 ? 'result' : 'results'}
           </span>
         </button>
@@ -222,20 +222,20 @@ export function ToolCallNotification({
       >
         {server && (
           <>
-            <span className="font-mono text-[11px] text-white/20 leading-none
+            <span className="font-mono text-[13px] text-white/20 leading-none
                              group-hover/tc:text-white/35 transition-colors duration-100">
               {server}
             </span>
-            <span className="text-white/15 text-[11px] leading-none">·</span>
+            <span className="text-white/15 text-[13px] leading-none">·</span>
           </>
         )}
-        <span className="text-[12px] text-white/35 font-medium leading-none
+        <span className="font-mono text-[13px] text-white/35 font-medium leading-none
                          group-hover/tc:text-white/55 transition-colors duration-100">
           {tool || label}
         </span>
         <span
           className={cn(
-            'text-[10px] text-white/20 leading-none transition-all duration-150',
+            'text-[13px] text-white/20 leading-none transition-all duration-150',
             'group-hover/tc:text-white/35',
             expanded ? 'rotate-90 inline-block' : ''
           )}

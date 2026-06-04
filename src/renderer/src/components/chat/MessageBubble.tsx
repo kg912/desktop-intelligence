@@ -137,7 +137,7 @@ function ThinkingAccordion({
   // ── Active: shimmer header + scrolling content ──
   if (isStreaming) {
     return (
-      <div className={cn('mb-3', className)}>
+      <div className={cn('mb-2', className)}>
         <div className="flex items-center gap-1.5 h-5 mb-1">
           <span
             className="shimmer-text font-mono text-[13px] tracking-[0.06em] capitalize"
@@ -177,12 +177,12 @@ function ThinkingAccordion({
           className
         )}
       >
-        <span className="font-mono text-[11px] tracking-[0.06em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
+        <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px] leading-none">›</span>
+        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[13px] leading-none">›</span>
         {duration !== null && duration > 0 && (
-          <span className="font-mono text-[10px] text-white/25 leading-none">
+          <span className="font-mono text-[13px] text-white/25 leading-none">
             {duration}s
           </span>
         )}
@@ -197,12 +197,12 @@ function ThinkingAccordion({
         onClick={() => setOpen(false)}
         className="flex items-center gap-2 mb-1 py-0.5 group/tp text-left cursor-pointer select-none"
       >
-        <span className="font-mono text-[11px] tracking-[0.06em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
+        <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[11px] leading-none inline-block rotate-90">›</span>
+        <span className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-100 text-[13px] leading-none inline-block rotate-90">›</span>
         {duration !== null && duration > 0 && (
-          <span className="font-mono text-[10px] text-white/25 leading-none">
+          <span className="font-mono text-[13px] text-white/25 leading-none">
             {duration}s
           </span>
         )}
@@ -283,20 +283,20 @@ function MergedSearchGroup({
           <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.2"/>
           <line x1="7.5" y1="7.5" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
         </svg>
-        <span className="text-[12px] text-white/40 font-medium
+        <span className="font-mono text-[13px] text-white/40 font-medium
                          group-hover/sh:text-white/60 transition-colors duration-100">
           Searched the web
         </span>
         <span
           className={cn(
-            'text-[10px] text-white/20 transition-all duration-150',
+            'text-[13px] text-white/20 transition-all duration-150',
             'group-hover/sh:text-white/35',
             expanded ? 'rotate-90 inline-block' : ''
           )}
         >
           ›
         </span>
-        <span className="font-mono text-[10px] text-white/20">
+        <span className="font-mono text-[13px] text-white/20">
           {totalResults} results · {blocks.length} searches
         </span>
       </button>
@@ -305,7 +305,7 @@ function MergedSearchGroup({
         <div className="border-l border-white/[0.07] pl-3 mt-1">
           <div className="mt-0.5 flex flex-col gap-0">
             {blocks.map((b, idx) => (
-              <div key={b.id} className={idx > 0 ? 'mt-3 pt-2.5 border-t border-white/[0.05]' : ''}>
+              <div key={b.id} className={idx > 0 ? 'mt-2 pt-2 border-t border-white/[0.05]' : ''}>
                 <SearchResult
                   query={b.query}
                   results={b.results ?? []}
