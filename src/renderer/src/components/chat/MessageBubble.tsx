@@ -404,7 +404,7 @@ function RailSegment({
   isStreaming: boolean
 }) {
   return (
-    <div className="flex gap-0 mb-2" style={{ alignItems: 'stretch' }}>
+    <div className="flex gap-0" style={{ alignItems: 'stretch', marginBottom: '0.8rem' }}>
       <div style={{
         width: '1px',
         background: 'rgba(255,255,255,0.13)',
@@ -414,7 +414,7 @@ function RailSegment({
         alignSelf: 'stretch',
         flexShrink: 0,
       }} />
-      <div className="flex flex-col flex-1 min-w-0" style={{ gap: '5px' }}>
+      <div className="flex flex-col flex-1 min-w-0" style={{ gap: '11px' }}>
         {groupBlocks(blocks).map((group) => {
           if (group.kind === 'merged-search') {
             const lastBlock = group.blocks[group.blocks.length - 1]
