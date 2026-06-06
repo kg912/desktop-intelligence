@@ -407,7 +407,7 @@ function RailSegment({
     <div className="flex gap-0 mb-2" style={{ alignItems: 'stretch' }}>
       <div style={{
         width: '1px',
-        background: 'rgba(255,255,255,0.07)',
+        background: 'rgba(255,255,255,0.13)',
         marginLeft: '2px',
         marginRight: '12px',
         borderRadius: '1px',
@@ -421,11 +421,12 @@ function RailSegment({
             const globalIdx = allBlocks.indexOf(lastBlock)
             const hasNonSearchAfter = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
             return (
-              <MergedSearchGroup
-                key={group.blocks[0].id}
-                blocks={group.blocks}
-                autoCollapse={hasNonSearchAfter}
-              />
+              <div key={group.blocks[0].id} style={{ marginBottom: 0 }}>
+                <MergedSearchGroup
+                  blocks={group.blocks}
+                  autoCollapse={hasNonSearchAfter}
+                />
+              </div>
             )
           }
 
@@ -436,28 +437,30 @@ function RailSegment({
           if (block.type === 'thinking') {
             const isActiveThink = isStreaming && block.id === allBlocks[allBlocks.length - 1].id
             return (
-              <ThinkingAccordion
-                key={block.id}
-                content={block.content}
-                isStreaming={isActiveThink}
-              />
+              <div key={block.id} style={{ marginBottom: 0 }}>
+                <ThinkingAccordion
+                  content={block.content}
+                  isStreaming={isActiveThink}
+                />
+              </div>
             )
           }
 
           if (block.type === 'search') {
             return (
-              <ToolCallNotification
-                key={block.id}
-                phase={block.phase}
-                query={block.query}
-                toolName={block.toolName}
-                results={block.results}
-                error={block.error}
-                formattedContent={block.formattedContent}
-                toolArgs={block.toolArgs}
-                toolImages={block.toolImages}
-                autoCollapse={hasNonSearchAfter}
-              />
+              <div key={block.id} style={{ marginBottom: 0 }}>
+                <ToolCallNotification
+                  phase={block.phase}
+                  query={block.query}
+                  toolName={block.toolName}
+                  results={block.results}
+                  error={block.error}
+                  formattedContent={block.formattedContent}
+                  toolArgs={block.toolArgs}
+                  toolImages={block.toolImages}
+                  autoCollapse={hasNonSearchAfter}
+                />
+              </div>
             )
           }
 
