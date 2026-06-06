@@ -425,7 +425,7 @@ function RailSegment({
                 key={group.blocks[0].id}
                 blocks={group.blocks}
                 autoCollapse={hasNonSearchAfter}
-                className="!mb-0"
+                className="!mb-1"
               />
             )
           }
@@ -441,7 +441,7 @@ function RailSegment({
                 key={block.id}
                 content={block.content}
                 isStreaming={isActiveThink}
-                className="!mb-0"
+                className="!mb-1"
               />
             )
           }
@@ -459,7 +459,7 @@ function RailSegment({
                 toolArgs={block.toolArgs}
                 toolImages={block.toolImages}
                 autoCollapse={hasNonSearchAfter}
-                className="!mb-0"
+                className="!mb-1"
               />
             )
           }
