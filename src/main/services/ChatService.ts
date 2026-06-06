@@ -1158,6 +1158,7 @@ align-content:start}
             borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
             titleColor: 'rgba(255,255,255,0.4)',
             bodyColor: 'rgba(255,255,255,0.8)', padding: 6,
+            filter: function(item) { return item.datasetIndex === 0; },
             callbacks: { label: function(c) { return ' $' + f(c.raw); } }
           }
         },

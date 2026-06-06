@@ -246,6 +246,8 @@ function StockChartBlock({
   phase:   'loading' | 'ready' | 'error'
   error?:  string
 }) {
+  const wvRef = useRef<HTMLElement>(null)
+
   if (phase === 'error') {
     return (
       <div className="mb-2 text-[13px] text-red-400 font-mono">
@@ -257,8 +259,10 @@ function StockChartBlock({
     <div
       className="mb-3 rounded-lg overflow-hidden border border-white/[0.07]"
       style={{ height: 380 }}
+      onMouseLeave={() => wvRef.current?.blur()}
     >
       <webview
+        ref={wvRef}
         src={fileUri}
         style={{ width: '100%', height: '100%' }}
         nodeintegration="false"
