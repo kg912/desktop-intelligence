@@ -421,12 +421,12 @@ function RailSegment({
             const globalIdx = allBlocks.indexOf(lastBlock)
             const hasNonSearchAfter = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
             return (
-              <div key={group.blocks[0].id} style={{ marginBottom: 0 }}>
-                <MergedSearchGroup
-                  blocks={group.blocks}
-                  autoCollapse={hasNonSearchAfter}
-                />
-              </div>
+              <MergedSearchGroup
+                key={group.blocks[0].id}
+                blocks={group.blocks}
+                autoCollapse={hasNonSearchAfter}
+                className="!mb-0"
+              />
             )
           }
 
@@ -437,30 +437,30 @@ function RailSegment({
           if (block.type === 'thinking') {
             const isActiveThink = isStreaming && block.id === allBlocks[allBlocks.length - 1].id
             return (
-              <div key={block.id} style={{ marginBottom: 0 }}>
-                <ThinkingAccordion
-                  content={block.content}
-                  isStreaming={isActiveThink}
-                />
-              </div>
+              <ThinkingAccordion
+                key={block.id}
+                content={block.content}
+                isStreaming={isActiveThink}
+                className="!mb-0"
+              />
             )
           }
 
           if (block.type === 'search') {
             return (
-              <div key={block.id} style={{ marginBottom: 0 }}>
-                <ToolCallNotification
-                  phase={block.phase}
-                  query={block.query}
-                  toolName={block.toolName}
-                  results={block.results}
-                  error={block.error}
-                  formattedContent={block.formattedContent}
-                  toolArgs={block.toolArgs}
-                  toolImages={block.toolImages}
-                  autoCollapse={hasNonSearchAfter}
-                />
-              </div>
+              <ToolCallNotification
+                key={block.id}
+                phase={block.phase}
+                query={block.query}
+                toolName={block.toolName}
+                results={block.results}
+                error={block.error}
+                formattedContent={block.formattedContent}
+                toolArgs={block.toolArgs}
+                toolImages={block.toolImages}
+                autoCollapse={hasNonSearchAfter}
+                className="!mb-0"
+              />
             )
           }
 
