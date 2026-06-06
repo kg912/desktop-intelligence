@@ -5,7 +5,6 @@ import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import { McpToolsPanel } from "./McpToolsPanel";
 import { InferenceProviderSettingsPanel } from "./InferenceProviderSettingsPanel";
 import { DebugSettings } from "./DebugSettings";
-import { cn } from "../../lib/utils";
 import { version, author } from "../../../../../package.json";
 
 type SettingsTab = "model" | "websearch" | "tools" | "backend" | "debug" | "about";
@@ -28,37 +27,90 @@ function TabItem({
   active: boolean;
   onClick: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+
   return (
     <button
       onClick={onClick}
-      className={cn(
-        "group relative flex items-center gap-2.5 w-full px-3 py-[11px] rounded-lg cursor-pointer",
-        "text-left overflow-hidden",
-        active
-          ? "bg-accent-950/60 border border-accent-900/40"
-          : "border border-transparent bg-transparent before:content-[''] before:absolute before:inset-0 before:bg-surface-hover before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-100 before:pointer-events-none before:rounded-lg before:z-0 before:will-change-[opacity]",
-      )}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display:       'flex',
+        alignItems:    'stretch',
+        width:         '100%',
+        background:    'transparent',
+        border:        'none',
+        borderBottom:  '0.5px solid rgba(255,255,255,0.03)',
+        cursor:        'pointer',
+        padding:       0,
+        textAlign:     'left',
+        transition:    'background 120ms ease',
+      }}
     >
-      <span
-        className={cn(
-          "relative z-10 flex-shrink-0 w-3.5 h-3.5",
-          active
-            ? "text-accent-500"
-            : "text-content-muted group-hover:text-content-secondary transition-colors duration-100",
-        )}
+      {/* Left accent bar — same pattern as ChatItem */}
+      <div
+        style={{
+          width:      2,
+          flexShrink: 0,
+          alignSelf:  'stretch',
+          background: active
+            ? 'rgba(229,57,53,0.6)'
+            : hovered
+            ? 'rgba(255,255,255,0.1)'
+            : 'transparent',
+          transition: 'background 120ms ease',
+        }}
+      />
+
+      {/* Content */}
+      <div
+        style={{
+          display:    'flex',
+          alignItems: 'center',
+          gap:        9,
+          padding:    '10px 12px',
+          flex:       1,
+          minWidth:   0,
+        }}
       >
-        {icon}
-      </span>
-      <span
-        className={cn(
-          "relative z-10 text-sm font-medium",
-          active
-            ? "text-content-primary"
-            : "text-content-secondary group-hover:text-content-primary transition-colors duration-100",
-        )}
-      >
-        {label}
-      </span>
+        {/* Icon */}
+        <span
+          style={{
+            flexShrink:  0,
+            display:     'flex',
+            alignItems:  'center',
+            color:       active
+              ? 'rgba(229,57,53,0.85)'
+              : 'rgba(255,255,255,0.55)',
+            opacity:     active ? 1 : hovered ? 0.55 : 0.3,
+            transition:  'opacity 120ms ease, color 120ms ease',
+            width:       14,
+            height:      14,
+          }}
+        >
+          {icon}
+        </span>
+
+        {/* Label */}
+        <span
+          style={{
+            fontFamily:   'inherit',
+            fontSize:     12,
+            fontWeight:   active ? 500 : 400,
+            color:        active
+              ? 'rgba(255,255,255,0.88)'
+              : hovered
+              ? 'rgba(255,255,255,0.65)'
+              : 'rgba(255,255,255,0.38)',
+            whiteSpace:   'nowrap',
+            overflow:     'hidden',
+            textOverflow: 'ellipsis',
+            transition:   'color 120ms ease',
+          }}
+        >
+          {label}
+        </span>
+      </div>
     </button>
   );
 }
@@ -161,43 +213,45 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
           </button>
         </div>
         {/* Nav items — same top offset as content panel */}
-        <nav className="px-2" style={{ paddingTop: 160 }}>
-          <TabItem
-            icon={<Settings size={15} />}
-            label="Model"
-            active={tab === "model"}
-            onClick={() => setTab("model")}
-          />
-          <TabItem
-            icon={<Globe size={15} />}
-            label="Web Search"
-            active={tab === "websearch"}
-            onClick={() => setTab("websearch")}
-          />
-          <TabItem
-            icon={<Plug size={15} />}
-            label="MCP Servers"
-            active={tab === "tools"}
-            onClick={() => setTab("tools")}
-          />
-          <TabItem
-            icon={<Server size={15} />}
-            label="Backend"
-            active={tab === "backend"}
-            onClick={() => setTab("backend")}
-          />
-          <TabItem
-            icon={<Bug size={15} />}
-            label="Debug"
-            active={tab === "debug"}
-            onClick={() => setTab("debug")}
-          />
-          <TabItem
-            icon={<Info size={15} />}
-            label="About"
-            active={tab === "about"}
-            onClick={() => setTab("about")}
-          />
+        <nav style={{ paddingTop: 160 }}>
+          <div style={{ paddingTop: 4, paddingBottom: 4 }}>
+            <TabItem
+              icon={<Settings size={15} />}
+              label="Model"
+              active={tab === "model"}
+              onClick={() => setTab("model")}
+            />
+            <TabItem
+              icon={<Globe size={15} />}
+              label="Web Search"
+              active={tab === "websearch"}
+              onClick={() => setTab("websearch")}
+            />
+            <TabItem
+              icon={<Plug size={15} />}
+              label="MCP Servers"
+              active={tab === "tools"}
+              onClick={() => setTab("tools")}
+            />
+            <TabItem
+              icon={<Server size={15} />}
+              label="Backend"
+              active={tab === "backend"}
+              onClick={() => setTab("backend")}
+            />
+            <TabItem
+              icon={<Bug size={15} />}
+              label="Debug"
+              active={tab === "debug"}
+              onClick={() => setTab("debug")}
+            />
+            <TabItem
+              icon={<Info size={15} />}
+              label="About"
+              active={tab === "about"}
+              onClick={() => setTab("about")}
+            />
+          </div>
         </nav>
       </div>
 
