@@ -280,19 +280,19 @@ export function EmptyState({ onSuggest, pendingInstructions }: EmptyStateProps) 
                 )
               }
 
-              // Real card — top-aligned text, fixed height, scrollable overflow
+              // Real card — top-aligned text, fixed height, clipped overflow
               return (
                 <button
                   key={i}
                   onClick={() => onSuggest(slot)}
                   style={{ animationDelay: `${i * 60}ms` }}
                   className="self-start flex flex-col justify-start items-start
-                             h-[88px] overflow-y-auto [&::-webkit-scrollbar]:hidden w-full
+                             h-[88px] overflow-hidden w-full
                              text-left px-4 py-3 rounded-xl animate-fade-in
                              bg-surface-DEFAULT hover:bg-surface-hover active:bg-surface-active
                              border border-surface-border hover:border-surface-border/80
                              text-[13px] text-content-secondary hover:text-content-primary
-                             transition-all duration-150 leading-snug
+                             transition-all duration-150 leading-snug break-words
                              focus:outline-none focus:ring-1 focus:ring-accent-900/50
                              no-drag"
                 >

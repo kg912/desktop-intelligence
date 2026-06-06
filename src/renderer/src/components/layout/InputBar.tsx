@@ -368,7 +368,7 @@ export const InputBar = memo(function InputBar({
             'text-sm text-content-primary placeholder:text-content-muted',
             'focus:outline-none leading-6 py-px selectable'
           )}
-          style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT, fontFamily: 'inherit', overflowY: 'hidden' }}
+          style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT, fontFamily: 'inherit', overflowY: text.length > 0 && textareaRef.current && textareaRef.current.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden' }}
         />
         <button
           onClick={isStreaming ? onAbort : handleSend}
