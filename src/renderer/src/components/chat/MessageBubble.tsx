@@ -359,17 +359,16 @@ function MergedSearchGroup({
 }
 
 // ── Rail layout helpers ───────────────────────────────────────────
-function isPaneBlock(block: MessageBlock): boolean {
-  return block.type === 'stock_chart'
+function isBreakBlock(block: MessageBlock): boolean {
+  return block.type === 'stock_chart' || block.type === 'answer'
 }
 
 type Segment =
   | { kind: 'rail'; blocks: MessageBlock[] }
   | { kind: 'pane'; block: MessageBlock }
 
-function segmentBlocks(blocks: MessageBlock[]): { segments: Segment[]; answerBlocks: MessageBlock[] } {
+function segmentBlocks(blocks: MessageBlock[]): Segment[] {
   const segments: Segment[] = []
-  const answerBlocks: MessageBlock[] = []
   let railBuffer: MessageBlock[] = []
 
   function flushRail() {
@@ -380,10 +379,7 @@ function segmentBlocks(blocks: MessageBlock[]): { segments: Segment[]; answerBlo
   }
 
   for (const block of blocks) {
-    if (block.type === 'answer') {
-      flushRail()
-      answerBlocks.push(block)
-    } else if (isPaneBlock(block)) {
+    if (isBreakBlock(block)) {
       flushRail()
       segments.push({ kind: 'pane', block })
     } else {
@@ -391,7 +387,7 @@ function segmentBlocks(blocks: MessageBlock[]): { segments: Segment[]; answerBlo
     }
   }
   flushRail()
-  return { segments, answerBlocks }
+  return segments
 }
 
 function RailSegment({
@@ -499,47 +495,44 @@ function AssistantBubble({
           /* ── v2.1 block-based render path ─────────────────────── */
           <>
             {(() => {
-              const { segments, answerBlocks } = segmentBlocks(blocks)
-              return (
-                <>
-                  {segments.map((seg, si) => {
-                    if (seg.kind === 'rail') {
-                      return (
-                        <RailSegment
-                          key={`rail-${si}`}
-                          blocks={seg.blocks}
-                          allBlocks={blocks}
-                          isStreaming={isStreaming}
-                        />
-                      )
-                    }
-                    if (seg.kind === 'pane') {
-                      const block = seg.block
-                      if (block.type === 'stock_chart') {
-                        return (
-                          <StockChartBlock
-                            key={block.id}
-                            symbol={block.symbol}
-                            fileUri={block.fileUri}
-                            phase={block.phase}
-                            error={block.error}
-                          />
-                        )
-                      }
-                      return null
-                    }
-                    return null
-                  })}
-
-                  {answerBlocks.map(block => (
-                    <MarkdownRenderer
-                      key={block.id}
-                      content={(block as Extract<MessageBlock, { type: 'answer' }>).content}
-                      isStreaming={(block as Extract<MessageBlock, { type: 'answer' }>).isStreaming}
+              const segments = segmentBlocks(blocks)
+              return segments.map((seg, si) => {
+                if (seg.kind === 'rail') {
+                  return (
+                    <RailSegment
+                      key={`rail-${si}`}
+                      blocks={seg.blocks}
+                      allBlocks={blocks}
+                      isStreaming={isStreaming}
                     />
-                  ))}
-                </>
-              )
+                  )
+                }
+                if (seg.kind === 'pane') {
+                  const block = seg.block
+                  if (block.type === 'stock_chart') {
+                    return (
+                      <StockChartBlock
+                        key={block.id}
+                        symbol={block.symbol}
+                        fileUri={block.fileUri}
+                        phase={block.phase}
+                        error={block.error}
+                      />
+                    )
+                  }
+                  if (block.type === 'answer') {
+                    return (
+                      <MarkdownRenderer
+                        key={block.id}
+                        content={block.content}
+                        isStreaming={block.isStreaming}
+                      />
+                    )
+                  }
+                  return null
+                }
+                return null
+              })
             })()}
 
             {/* Working: pre-first-token — covers both empty blocks and when only
