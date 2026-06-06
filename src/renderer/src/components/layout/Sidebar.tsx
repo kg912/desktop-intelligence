@@ -111,6 +111,8 @@ interface ChatItemProps {
 }
 
 function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
+  const [hovered, setHovered] = useState(false)
+
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     onDelete(chat.id)
@@ -119,39 +121,97 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
   return (
     <div
       onClick={() => onSelect(chat.id)}
-      className={cn(
-        'group relative flex items-start gap-2.5 px-3 py-[11px] rounded-lg cursor-pointer',
-        'text-left overflow-hidden',
-        isActive
-          ? 'bg-accent-950/60 border border-accent-900/40'
-          : "border border-transparent bg-transparent before:content-[''] before:absolute before:inset-0 before:bg-surface-hover before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-100 before:pointer-events-none before:rounded-lg before:z-0 before:will-change-[opacity]"
-      )}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display:         'flex',
+        alignItems:      'stretch',
+        borderBottom:    '0.5px solid rgba(255,255,255,0.03)',
+        cursor:          'pointer',
+        background:      'transparent',
+        transition:      'background 120ms ease',
+      }}
     >
-      <div className="relative z-10 flex-1 min-w-0">
-        <p className={cn(
-          'text-sm truncate font-medium leading-tight',
-          isActive ? 'text-content-primary' : 'text-content-secondary group-hover:text-content-primary transition-colors duration-100'
-        )}>
+      {/* Left accent bar */}
+      <div
+        style={{
+          width:      2,
+          flexShrink: 0,
+          background: isActive
+            ? 'rgba(229,57,53,0.6)'
+            : hovered
+            ? 'rgba(255,255,255,0.1)'
+            : 'transparent',
+          transition: 'background 120ms ease',
+        }}
+      />
+
+      {/* Content */}
+      <div
+        style={{
+          flex:       1,
+          minWidth:   0,
+          padding:    '9px 10px',
+        }}
+      >
+        <p
+          style={{
+            fontFamily:   'inherit',
+            fontSize:     12,
+            fontWeight:   isActive ? 500 : 400,
+            color:        isActive
+              ? 'rgba(255,255,255,0.85)'
+              : hovered
+              ? 'rgba(255,255,255,0.65)'
+              : 'rgba(255,255,255,0.38)',
+            whiteSpace:   'nowrap',
+            overflow:     'hidden',
+            textOverflow: 'ellipsis',
+            lineHeight:   1.35,
+            transition:   'color 120ms ease',
+            margin:       0,
+          }}
+        >
           {chat.title}
         </p>
-        <p className="text-xs text-content-muted truncate mt-0.5 leading-tight">
+        <p
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize:   9,
+            color:      isActive
+              ? 'rgba(229,57,53,0.4)'
+              : 'rgba(255,255,255,0.15)',
+            marginTop:  2,
+            transition: 'color 120ms ease',
+          }}
+        >
           {timeAgo(chat.updatedAt)}
         </p>
       </div>
 
-      {/* Delete button — visible on group hover via CSS */}
-      <button
-        onClick={handleDelete}
-        className="absolute right-2 top-1/2 -translate-y-1/2 z-20
-                   p-1 rounded-md
-                   opacity-0 group-hover:opacity-100
-                   text-content-muted hover:text-red-400
-                   hover:bg-red-950/30
-                   transition-all duration-100"
-        title="Delete chat"
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
+      {/* Delete button — only on hover */}
+      {hovered && (
+        <button
+          onClick={handleDelete}
+          title="Delete chat"
+          style={{
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'center',
+            background:     'transparent',
+            border:         'none',
+            cursor:         'pointer',
+            paddingRight:   10,
+            paddingLeft:    4,
+            color:          'rgba(229,57,53,0.45)',
+            flexShrink:     0,
+            fontSize:       11,
+            lineHeight:     1,
+          }}
+        >
+          <Trash2 style={{ width: 12, height: 12 }} />
+        </button>
+      )}
     </div>
   )
 }
@@ -169,8 +229,17 @@ function ChatGroup({
   onDelete:     (id: string) => void
 }) {
   return (
-    <div className="mb-2">
-      <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest uppercase text-content-muted">
+    <div style={{ marginBottom: 4 }}>
+      <p
+        style={{
+          padding:       '14px 12px 4px',
+          fontSize:      10,
+          fontWeight:    400,
+          color:         'rgba(255,255,255,0.18)',
+          letterSpacing: '0.02em',
+          margin:        0,
+        }}
+      >
         {label}
       </p>
       <div>
@@ -325,7 +394,7 @@ export function Sidebar({
           </div>
 
           {/* ── Chat list (scrollable) ── */}
-          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-3 no-drag">
+          <div className="flex-1 overflow-y-auto no-drag" style={{ paddingTop: 4, paddingBottom: 4 }}>
             {groups.length > 0
               ? groups.map((g) => (
                   <ChatGroup
