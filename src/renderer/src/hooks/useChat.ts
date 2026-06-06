@@ -535,6 +535,23 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       }
     });
 
+    // ── Stock chart ready: replace spinner block, append chart block ─
+    const unsubStockChart = window.api.onChatStreamStockChartReady(
+      ({ symbol, fileUri }: { symbol: string; fileUri: string }) => {
+        updateLastBlock('search', {
+          phase: 'done',
+          formattedContent: `[Stock chart: ${symbol}]`,
+        } as Partial<MessageBlock>)
+        appendBlock({
+          id:      uuid(),
+          type:    'stock_chart',
+          symbol,
+          fileUri,
+          phase:   'ready',
+        })
+      },
+    )
+
     const unsubErr = window.api.onChatError((msg: string) => {
       if (DEBUG) console.log(`[Debug][useChat][ChatError] msg="${msg}"`);
       const assistantMsgId = assistantIdRef.current;
@@ -570,6 +587,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
       unsubToolStart();
       unsubToolDone();
       unsubToolError();
+      unsubStockChart();
       unsubEnd();
       unsubErr();
     };

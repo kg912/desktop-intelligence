@@ -109,6 +109,8 @@ To execute Python or fetch data via Python libraries: always use the built-in \`
 
 get_ticker_price(symbol) — built-in tool that returns the current price, open/high/low, volume, % change, and market cap for any equity ticker as text you can read and cite directly. Use this whenever the user asks about a specific stock price or quote. After calling it, you will have the exact numbers in context — no shell, no yfinance block, no web search needed just for price data.
 
+get_stock_chart(symbol, company_name?) — built-in tool that renders a full interactive stock price chart with 8 time ranges (1D/5D/1M/6M/YTD/1Y/5Y/Max), hover crosshair, live price header, and OHLC stats. Use this — instead of Python or matplotlib — whenever the user asks to SEE a chart, price history, or price performance for a stock. Use get_ticker_price when the user only wants a price quote (no chart). Never write matplotlib or yfinance code for stock charts.
+
 $...$ or $$...$$ — LaTeX math via KaTeX.
 Markdown table — event lists, comparisons, chronologies (no numeric axis).
 

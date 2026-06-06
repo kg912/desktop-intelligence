@@ -11,8 +11,10 @@
  *  - Abort support (user stop or app quit)
  */
 
-import { net } from "electron";
+import { net, app } from "electron";
 import type { WebContents } from "electron";
+import { promises as fs } from 'fs'
+import { join } from 'path'
 import { IPC_CHANNELS } from "../../shared/types";
 import type {
   GenerationStats,
@@ -174,6 +176,33 @@ const TICKER_TOOL = {
         symbol: {
           type: "string",
           description: "The ticker symbol, e.g. NVDA, AAPL, MSFT.",
+        },
+      },
+      required: ["symbol"],
+    },
+  },
+} as const;
+
+const STOCK_CHART_TOOL = {
+  type: "function",
+  function: {
+    name: "get_stock_chart",
+    description:
+      "Renders a professional interactive stock price chart for a given ticker symbol. " +
+      "Returns a chart with 8 time-range views (1D/5D/1M/6M/YTD/1Y/5Y/Max), hover crosshair, " +
+      "live price header, and OHLC stats footer. " +
+      "Use this tool — instead of writing Python/matplotlib code — whenever the user asks " +
+      "to see a stock chart, price history, or price performance.",
+    parameters: {
+      type: "object",
+      properties: {
+        symbol: {
+          type: "string",
+          description: "The ticker symbol, e.g. NVDA, AAPL, MSFT.",
+        },
+        company_name: {
+          type: "string",
+          description: "Full company name for the chart header (optional).",
         },
       },
       required: ["symbol"],
@@ -886,6 +915,325 @@ export async function fetchTickerPrice(symbol: string): Promise<string> {
   }
 }
 
+/**
+ * Fetches 1-day chart data from Yahoo Finance and builds a self-contained
+ * HTML file with Chart.js, 8 range tabs, hover crosshair, and OHLC stats.
+ */
+export async function fetchStockChartHtml(symbol: string, companyName: string): Promise<string> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1d`
+  try {
+    const resp = await net.fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+
+    const data = await resp.json() as {
+      chart?: {
+        result?: Array<{
+          meta?: Record<string, unknown>
+          timestamp?: number[]
+          indicators?: { quote?: Array<{ close?: Array<number | null> }> }
+        }>
+        error?: { description?: string }
+      }
+    }
+
+    const apiErr = data?.chart?.error
+    if (apiErr) throw new Error(String(apiErr.description ?? 'unknown error'))
+
+    const result = data?.chart?.result?.[0]
+    if (!result) throw new Error('No data returned')
+
+    const meta = result.meta ?? {}
+    const timestamps = result.timestamp ?? []
+    const closes = (result.indicators?.quote?.[0]?.close ?? []) as Array<number | null>
+    const pairs = timestamps
+      .map((t, i) => ({ t, c: closes[i] }))
+      .filter((p): p is { t: number; c: number } => p.c != null)
+
+    const initialData = {
+      company: companyName,
+      meta: {
+        regularMarketPrice:  meta.regularMarketPrice,
+        chartPreviousClose:  meta.chartPreviousClose,
+        regularMarketOpen:   meta.regularMarketOpen,
+        regularMarketDayHigh: meta.regularMarketDayHigh,
+        regularMarketDayLow:  meta.regularMarketDayLow,
+        marketCap:           meta.marketCap,
+        trailingPE:          meta.trailingPE,
+        fiftyTwoWeekHigh:    meta.fiftyTwoWeekHigh,
+        fiftyTwoWeekLow:     meta.fiftyTwoWeekLow,
+        dividendRate:        meta.dividendRate,
+        regularMarketTime:   meta.regularMarketTime,
+      },
+      timestamps: pairs.map(p => p.t),
+      closes:     pairs.map(p => p.c),
+      prevClose:  meta.chartPreviousClose as number | undefined,
+    }
+
+    return buildChartHtml(symbol, initialData)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return buildErrorHtml(symbol, companyName, msg)
+  }
+}
+
+function buildErrorHtml(symbol: string, companyName: string, reason: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0e0e0e;
+color:rgba(255,255,255,0.7);font-family:system-ui,-apple-system,sans-serif;
+display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+.sym{font-size:18px;font-weight:700;color:rgba(255,255,255,0.85)}
+.msg{font-size:12px;color:rgba(255,255,255,0.38);max-width:300px;text-align:center}
+button{padding:6px 16px;border-radius:6px;border:1px solid rgba(220,38,38,0.4);
+background:rgba(220,38,38,0.12);color:#dc2626;font-size:12px;cursor:pointer}
+button:hover{background:rgba(220,38,38,0.22)}
+</style></head><body>
+<div class="sym">${symbol}</div>
+<div class="msg">${companyName} — data unavailable</div>
+<div class="msg" style="font-size:10px;margin-top:-4px">${reason}</div>
+<button onclick="location.reload()">Retry</button>
+</body></html>`
+}
+
+function buildChartHtml(symbol: string, init: {
+  company: string
+  meta: Record<string, unknown>
+  timestamps: number[]
+  closes: number[]
+  prevClose: number | undefined
+}): string {
+  const initJson = JSON.stringify(init)
+  const sym = symbol.toUpperCase()
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0e0e0e;
+color:rgba(255,255,255,0.85);font-family:system-ui,-apple-system,sans-serif;
+display:flex;flex-direction:column}
+.hdr{padding:10px 16px 5px;flex-shrink:0}
+.htop{display:flex;align-items:baseline;gap:6px}
+.co{font-size:13px;font-weight:600;color:rgba(255,255,255,0.9)}
+.sym{font-size:11px;color:rgba(255,255,255,0.35);font-family:monospace}
+.prow{display:flex;align-items:baseline;gap:7px;margin-top:1px}
+.pr{font-size:20px;font-weight:700;color:rgba(255,255,255,0.95)}
+.chg{font-size:11px;padding:1px 5px;border-radius:3px;font-weight:500}
+.up{background:rgba(22,163,74,0.18);color:#4ade80}
+.dn{background:rgba(220,38,38,0.18);color:#f87171}
+.sub{font-size:10px;color:rgba(255,255,255,0.25);margin-top:1px}
+.tabs{display:flex;gap:2px;padding:2px 16px 4px;flex-shrink:0}
+.tab{padding:2px 7px;font-size:10px;font-family:monospace;border-radius:3px;
+cursor:pointer;border:none;background:transparent;
+color:rgba(255,255,255,0.3);transition:color 0.1s,background 0.1s}
+.tab:hover{color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.05)}
+.tab.active{background:rgba(220,38,38,0.18);color:#dc2626}
+.cw{height:180px;flex-shrink:0;padding:0 8px;position:relative}
+canvas{display:block;width:100% !important;height:100% !important}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);
+border-top:1px solid rgba(255,255,255,0.06);padding:5px 16px 0;flex:1;min-height:0;
+align-content:start}
+.st{padding:3px 0}
+.sl{font-size:9px;color:rgba(255,255,255,0.25);text-transform:uppercase;letter-spacing:0.04em}
+.sv{font-size:11px;font-family:monospace;color:rgba(255,255,255,0.7);margin-top:1px}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="htop">
+    <span class="co" id="cn"></span>
+    <span class="sym">${sym}</span>
+  </div>
+  <div class="prow">
+    <span class="pr" id="cp">—</span>
+    <span class="chg" id="cc"></span>
+  </div>
+  <div class="sub" id="cs"></div>
+</div>
+<div class="tabs" id="tabs">
+  <button class="tab active" data-r="1d" data-i="5m">1D</button>
+  <button class="tab" data-r="5d" data-i="15m">5D</button>
+  <button class="tab" data-r="1mo" data-i="1d">1M</button>
+  <button class="tab" data-r="6mo" data-i="1d">6M</button>
+  <button class="tab" data-r="ytd" data-i="1d">YTD</button>
+  <button class="tab" data-r="1y" data-i="1wk">1Y</button>
+  <button class="tab" data-r="5y" data-i="1mo">5Y</button>
+  <button class="tab" data-r="max" data-i="3mo">Max</button>
+</div>
+<div class="cw" id="cw">
+  <canvas id="ch"></canvas>
+</div>
+<div class="stats">
+  <div class="st"><div class="sl">Open</div><div class="sv" id="so">—</div></div>
+  <div class="st"><div class="sl">High</div><div class="sv" id="sh">—</div></div>
+  <div class="st"><div class="sl">Low</div><div class="sv" id="sl">—</div></div>
+  <div class="st"><div class="sl">Mkt Cap</div><div class="sv" id="smc">—</div></div>
+  <div class="st"><div class="sl">P/E</div><div class="sv" id="spe">—</div></div>
+  <div class="st"><div class="sl">52w High</div><div class="sv" id="s52h">—</div></div>
+  <div class="st"><div class="sl">52w Low</div><div class="sv" id="s52l">—</div></div>
+  <div class="st"><div class="sl">Dividend</div><div class="sv" id="sdv">—</div></div>
+  <div class="st"><div class="sl">Prev Close</div><div class="sv" id="spc">—</div></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+(function() {
+  var SYM = '${sym}';
+  var INIT = ${initJson};
+  var ci = null;
+
+  function h(id) { return document.getElementById(id); }
+  function s(id, v) { h(id).textContent = v; }
+  function f(n, d) { return n == null ? '—' : Number(n).toLocaleString('en-US', {minimumFractionDigits:d||2,maximumFractionDigits:d||2}); }
+  function fcap(n) {
+    if (!n) return '—';
+    if (n >= 1e12) return '$' + (n/1e12).toFixed(2) + 'T';
+    if (n >= 1e9)  return '$' + (n/1e9).toFixed(2)  + 'B';
+    if (n >= 1e6)  return '$' + (n/1e6).toFixed(2)  + 'M';
+    return '$' + Number(n).toLocaleString();
+  }
+
+  function updMeta(m) {
+    var price = m.regularMarketPrice;
+    var prev  = m.chartPreviousClose;
+    if (price == null || prev == null) return;
+    var chg = price - prev;
+    var pct = (chg / prev) * 100;
+    var up  = chg >= 0;
+    s('cn', INIT.company || SYM);
+    s('cp', '$' + f(price));
+    var ce = h('cc');
+    ce.textContent = (up ? '+' : '') + f(chg) + ' (' + (up ? '+' : '') + f(pct) + '%)';
+    ce.className   = 'chg ' + (up ? 'up' : 'dn');
+    var t = m.regularMarketTime ? new Date(m.regularMarketTime * 1000) : new Date();
+    s('cs', 'As of ' + t.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}));
+    s('so',   '$' + f(m.regularMarketOpen));
+    s('sh',   '$' + f(m.regularMarketDayHigh));
+    s('sl',   '$' + f(m.regularMarketDayLow));
+    s('smc',  fcap(m.marketCap));
+    s('spe',  m.trailingPE    ? f(m.trailingPE, 1) : '—');
+    s('s52h', m.fiftyTwoWeekHigh ? '$' + f(m.fiftyTwoWeekHigh) : '—');
+    s('s52l', m.fiftyTwoWeekLow  ? '$' + f(m.fiftyTwoWeekLow)  : '—');
+    s('sdv',  m.dividendRate  ? '$' + f(m.dividendRate) : '—');
+    s('spc',  '$' + f(prev));
+  }
+
+  function drawChart(ts, cs, prevClose, is1d) {
+    var ctx = h('ch').getContext('2d');
+    var last = cs.length ? cs[cs.length - 1] : prevClose;
+    var up   = last >= prevClose;
+    var col  = up ? '#16a34a' : '#dc2626';
+    var fill = up ? 'rgba(22,163,74,0.07)' : 'rgba(220,38,38,0.07)';
+    var labels = ts.map(function(x) {
+      var d = new Date(x * 1000);
+      if (is1d) return d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+      return d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+    });
+    var datasets = [{
+      data: cs, borderColor: col, backgroundColor: fill,
+      borderWidth: 1.5, fill: true, tension: 0.1,
+      pointRadius: 0, pointHoverRadius: 4,
+      pointHoverBackgroundColor: col, pointHoverBorderColor: '#0e0e0e', pointHoverBorderWidth: 2
+    }];
+    if (is1d && prevClose) datasets.push({
+      data: cs.map(function() { return prevClose; }),
+      borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1,
+      borderDash: [4, 4], fill: false, tension: 0,
+      pointRadius: 0, pointHoverRadius: 0
+    });
+    if (ci) { ci.destroy(); ci = null; }
+    ci = new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(18,18,18,0.95)',
+            borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
+            titleColor: 'rgba(255,255,255,0.4)',
+            bodyColor: 'rgba(255,255,255,0.8)', padding: 6,
+            callbacks: { label: function(c) { return ' $' + f(c.raw); } }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: { color: 'rgba(255,255,255,0.25)', font: { size: 9, family: 'monospace' }, maxTicksLimit: 6, maxRotation: 0 },
+            border: { color: 'rgba(255,255,255,0.07)' }
+          },
+          y: {
+            position: 'right',
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: { color: 'rgba(255,255,255,0.25)', font: { size: 9, family: 'monospace' },
+              callback: function(v) { return '$' + Number(v).toFixed(2); } },
+            border: { color: 'rgba(255,255,255,0.07)' }
+          }
+        }
+      }
+    });
+  }
+
+  function loadRange(r, iv) {
+    var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + SYM + '?interval=' + iv + '&range=' + r;
+    fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        var result = data.chart && data.chart.result && data.chart.result[0];
+        if (!result) return;
+        var meta = result.meta;
+        var ts   = result.timestamp || [];
+        var raw  = result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close || [];
+        var pairs = ts
+          .map(function(t, i) { return { t: t, c: raw[i] }; })
+          .filter(function(p) { return p.c != null; });
+        updMeta(meta);
+        drawChart(
+          pairs.map(function(p) { return p.t; }),
+          pairs.map(function(p) { return p.c; }),
+          meta.chartPreviousClose, r === '1d'
+        );
+      })
+      .catch(function(e) { console.error('Range load error', r, e); });
+  }
+
+  h('tabs').addEventListener('click', function(e) {
+    var btn = e.target.closest('.tab');
+    if (!btn) return;
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    btn.classList.add('active');
+    loadRange(btn.dataset.r, btn.dataset.i);
+  });
+
+  if (INIT && INIT.timestamps && INIT.timestamps.length) {
+    updMeta(INIT.meta);
+    drawChart(INIT.timestamps, INIT.closes, INIT.prevClose || 0, true);
+  } else {
+    loadRange('1d', '5m');
+  }
+})();
+</script>
+</body>
+</html>`
+}
+
+/**
+ * Writes an HTML chart string to userData/charts/ and returns its file:// URI.
+ */
+export async function writeChartFile(html: string, symbol: string): Promise<string> {
+  const chartsDir = join(app.getPath('userData'), 'charts')
+  await fs.mkdir(chartsDir, { recursive: true })
+  const fileName = `${symbol.toUpperCase()}_${Date.now()}.html`
+  const filePath = join(chartsDir, fileName)
+  await fs.writeFile(filePath, html, 'utf-8')
+  return `file://${filePath}`
+}
+
 export class ChatService {
   private controller: AbortController | null = null;
   private obsSessionId = '';
@@ -1078,6 +1426,7 @@ export class ChatService {
           const allTools = [
             ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
             TICKER_TOOL,
+            STOCK_CHART_TOOL,
             ...mcpTools,
           ];
           allTools.forEach((t) => validToolNames.add(t.function.name))
@@ -1802,11 +2151,12 @@ export class ChatService {
               }
               // ── End registry screen ─────────────────────────────────────────────────────
 
-              // Dispatch: Ticker, Brave Search, or MCP custom tool (namespaced as serverName__toolName)
-              const isTicker = toolName === "get_ticker_price";
-              const isBrave = toolName === "brave_web_search";
-              const mcpParts = !isBrave && !isTicker ? toolName.split("__") : null;
-              const isMcp = !isBrave && !isTicker && mcpParts && mcpParts.length === 2;
+              // Dispatch: Ticker, StockChart, Brave Search, or MCP custom tool (namespaced as serverName__toolName)
+              const isTicker     = toolName === "get_ticker_price";
+              const isStockChart = toolName === "get_stock_chart";
+              const isBrave      = toolName === "brave_web_search";
+              const mcpParts = !isBrave && !isTicker && !isStockChart ? toolName.split("__") : null;
+              const isMcp = !isBrave && !isTicker && !isStockChart && mcpParts && mcpParts.length === 2;
               if (DEBUG)
                 console.log(
                   `[Debug][ChatService][ToolDispatch] toolName=${toolName} query="${query}" isBrave=${isBrave} isMcp=${!isBrave && !!mcpParts && mcpParts.length === 2}`,
@@ -1851,6 +2201,29 @@ export class ChatService {
                     results: [],
                     formattedContent: tickerResult,
                   });
+                } else if (isStockChart) {
+                  // ── Built-in stock chart via Yahoo Finance + Chart.js HTML ─
+                  const scArgs = (() => { try { return JSON.parse(argsRaw || '{}') as Record<string, string> } catch { return {} as Record<string, string> } })()
+                  const scSymbol      = (scArgs.symbol ?? query).toUpperCase()
+                  const scCompanyName = scArgs.company_name ?? scSymbol
+
+                  const chartHtml = await fetchStockChartHtml(scSymbol, scCompanyName)
+                  const fileUri   = await writeChartFile(chartHtml, scSymbol)
+
+                  send(IPC_CHANNELS.CHAT_STREAM_STOCK_CHART_READY, { symbol: scSymbol, fileUri })
+
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query: scSymbol,
+                    toolName,
+                    results: [],
+                    formattedContent: `[Stock chart rendered for ${scSymbol}]`,
+                  })
+
+                  toolResult =
+                    `Stock chart for ${scSymbol} has been rendered and displayed to the user ` +
+                    `as an interactive chart. The chart shows current price, % change, and OHLC data. ` +
+                    `Do not describe the chart in text — it is already visible. ` +
+                    `Provide your analysis directly.`
                 } else if (isBrave) {
                   // ── Existing Brave Search path — DO NOT MODIFY ────────────
                   const results = await braveSearch(query, resolvedKey!, 5);

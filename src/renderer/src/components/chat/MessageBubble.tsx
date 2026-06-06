@@ -5,6 +5,23 @@
  * AI    → left-aligned, transparent bg, full markdown + LaTeX + stats bar
  */
 
+// Electron-specific <webview> JSX element
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      webview: React.DetailedHTMLProps<
+        React.HTMLAttributes<HTMLElement> & {
+          src?:                string
+          nodeintegration?:    string
+          disablewebsecurity?: string
+          partition?:          string
+        },
+        HTMLElement
+      >
+    }
+  }
+}
+
 import { useState, useEffect, useRef, memo } from 'react'
 import { Paperclip } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -217,6 +234,41 @@ function ThinkingAccordion({
   )
 }
 
+// ── StockChartBlock ───────────────────────────────────────────────
+function StockChartBlock({
+  symbol,
+  fileUri,
+  phase,
+  error,
+}: {
+  symbol:  string
+  fileUri: string
+  phase:   'loading' | 'ready' | 'error'
+  error?:  string
+}) {
+  if (phase === 'error') {
+    return (
+      <div className="mb-2 text-[13px] text-red-400 font-mono">
+        Chart unavailable for {symbol}{error ? `: ${error}` : ''}
+      </div>
+    )
+  }
+  return (
+    <div
+      className="mb-3 rounded-lg overflow-hidden border border-white/[0.07]"
+      style={{ height: 380 }}
+    >
+      <webview
+        src={fileUri}
+        style={{ width: '100%', height: '100%' }}
+        nodeintegration="false"
+        disablewebsecurity="false"
+        partition="persist:charts"
+      />
+    </div>
+  )
+}
+
 // ── Block grouping ────────────────────────────────────────────────
 // Groups consecutive done web-search blocks into merged runs.
 // All other blocks pass through as single-item groups.
@@ -381,6 +433,17 @@ function AssistantBubble({
                     content={block.content}
                     isStreaming={isStreaming && block.id === blocks[blocks.length - 1].id}
                     className={afterAnswer ? 'mt-3' : ''}
+                  />
+                )
+              }
+              if (block.type === 'stock_chart') {
+                return (
+                  <StockChartBlock
+                    key={block.id}
+                    symbol={block.symbol}
+                    fileUri={block.fileUri}
+                    phase={block.phase}
+                    error={block.error}
                   />
                 )
               }

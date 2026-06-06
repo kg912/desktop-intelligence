@@ -96,6 +96,12 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_ERROR, h)
   },
 
+  onChatStreamStockChartReady: (cb: (payload: { symbol: string; fileUri: string }) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { symbol: string; fileUri: string }): void => cb(p)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_STOCK_CHART_READY, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_STOCK_CHART_READY, h)
+  },
+
   // ── File processing ──────────────────────────────────────────
   processFile: (payload: AttachmentFilePayload): Promise<ProcessedAttachment> =>
     ipcRenderer.invoke(IPC_CHANNELS.FILE_PROCESS, payload),

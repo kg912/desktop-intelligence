@@ -150,6 +150,14 @@ export type MessageBlock =
       content:     string
       isStreaming: boolean
     }
+  | {
+      id:      string
+      type:    'stock_chart'
+      symbol:  string
+      fileUri: string          // file:// path to the self-contained HTML chart
+      phase:   'loading' | 'ready' | 'error'
+      error?:  string
+    }
 
 export type ThinkingMode = 'thinking' | 'fast'
 
@@ -203,6 +211,7 @@ export const IPC_CHANNELS = {
   CHAT_STREAM_TOOL_DONE:  'chat:streamToolDone',
   CHAT_STREAM_TOOL_ERROR: 'chat:streamToolError',
   CHAT_STREAM_TICKER_DONE: 'chat:streamTickerDone',
+  CHAT_STREAM_STOCK_CHART_READY: 'chat:streamStockChartReady',
   CHAT_ABORT:             'chat:abort',
   CHAT_ERROR:             'chat:error',
 
