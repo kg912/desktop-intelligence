@@ -189,7 +189,7 @@ function ThinkingAccordion({
     <div className={cn('mb-2', className)}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-2 mb-0 py-0.5 group/tp text-left cursor-pointer select-none"
+        className="flex items-center gap-2 mb-0 py-0 group/tp text-left cursor-pointer select-none"
       >
         <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           {label}
@@ -414,7 +414,7 @@ function RailSegment({
         alignSelf: 'stretch',
         flexShrink: 0,
       }} />
-      <div className="flex flex-col gap-0 flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0" style={{ gap: '5px' }}>
         {groupBlocks(blocks).map((group) => {
           if (group.kind === 'merged-search') {
             const lastBlock = group.blocks[group.blocks.length - 1]
@@ -425,7 +425,7 @@ function RailSegment({
                 key={group.blocks[0].id}
                 blocks={group.blocks}
                 autoCollapse={hasNonSearchAfter}
-                className="!mb-1"
+                className="!mb-0"
               />
             )
           }
@@ -441,7 +441,7 @@ function RailSegment({
                 key={block.id}
                 content={block.content}
                 isStreaming={isActiveThink}
-                className="!mb-1"
+                className="!mb-0"
               />
             )
           }
@@ -459,7 +459,7 @@ function RailSegment({
                 toolArgs={block.toolArgs}
                 toolImages={block.toolImages}
                 autoCollapse={hasNonSearchAfter}
-                className="!mb-1"
+                className="!mb-0"
               />
             )
           }
