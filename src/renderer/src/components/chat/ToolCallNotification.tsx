@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Globe, Plug } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { ChevronIcon } from './ChevronIcon'
@@ -18,6 +18,7 @@ interface ToolCallNotificationProps {
   /** Image outputs returned by the tool (e.g. Puppeteer screenshots) */
   toolImages?: Array<{ mimeType: string; data: string }>
   className?: string
+  autoCollapse?: boolean
 }
 
 // Format the query label for display.
@@ -124,12 +125,17 @@ export function ToolCallNotification({
   toolArgs,
   toolImages,
   className = '',
+  autoCollapse,
 }: ToolCallNotificationProps) {
   const label = formatQueryLabel(query)
   const webSearch = resolveIsWebSearch(toolName, query)
   // Web search: expanded by default so results are immediately visible.
   // MCP tools: collapsed by default — header shows server·tool summary.
   const [expanded, setExpanded] = useState(webSearch)
+
+  useEffect(() => {
+    if (autoCollapse && webSearch && phase === 'done') setExpanded(false)
+  }, [autoCollapse, webSearch, phase])
 
   // ── Searching: shimmer "Working" ──────────────────────────────
   if (phase === 'searching') {
@@ -193,11 +199,13 @@ export function ToolCallNotification({
           </span>
         </button>
 
-        {expanded && (
-          <div className="border-l border-white/[0.07] pl-3 mt-1">
-            <SearchResult query={label} results={results} isFirst />
+        <div className={cn('accordion-body', expanded && 'open')}>
+          <div style={{ overflow: 'hidden' }}>
+            <div className="border-l border-white/[0.07] pl-3 mt-1">
+              <SearchResult query={label} results={results} isFirst />
+            </div>
           </div>
-        )}
+        </div>
       </div>
     )
   }
@@ -232,60 +240,62 @@ export function ToolCallNotification({
       </button>
 
       {/* Expanded body */}
-      {expanded && (
-        <div className="border-l border-white/[0.07] pl-3 mt-1">
-        <div className="mt-1 flex flex-col gap-0">
+      <div className={cn('accordion-body', expanded && 'open')}>
+        <div style={{ overflow: 'hidden' }}>
+          <div className="border-l border-white/[0.07] pl-3 mt-1">
+          <div className="mt-1 flex flex-col gap-0">
 
-          {/* Arguments */}
-          {hasArgs && (
-            <div className="mb-2">
-              <p className="font-mono text-[9.5px] text-white/20 mb-1 tracking-[0.04em]">
-                arguments
-              </p>
-              <pre className="font-mono text-[11px] text-white/30 leading-relaxed
-                              whitespace-pre-wrap break-all overflow-x-auto">
-                {JSON.stringify(toolArgs, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {/* Divider between args and output — only when both exist */}
-          {hasArgs && (hasImages || hasText) && (
-            <div className="h-px bg-white/[0.06] my-1" />
-          )}
-
-          {/* Output */}
-          {(hasImages || hasText) && (
-            <div>
-              <p className="font-mono text-[9.5px] text-white/20 mb-1 tracking-[0.04em]">
-                output
-              </p>
-
-              {/* Images */}
-              {hasImages && toolImages!.map((img, i) => (
-                <div key={i} className="mt-1">
-                  <img
-                    src={`data:${img.mimeType};base64,${img.data}`}
-                    className="rounded-[4px] w-full border border-white/[0.08]"
-                    alt="Tool output"
-                  />
-                </div>
-              ))}
-
-              {/* Text */}
-              {hasText && (
+            {/* Arguments */}
+            {hasArgs && (
+              <div className="mb-2">
+                <p className="font-mono text-[9.5px] text-white/20 mb-1 tracking-[0.04em]">
+                  arguments
+                </p>
                 <pre className="font-mono text-[11px] text-white/30 leading-relaxed
-                                whitespace-pre-wrap break-all overflow-x-auto
-                                max-h-48 overflow-y-auto">
-                  {formattedContent}
+                                whitespace-pre-wrap break-all overflow-x-auto">
+                  {JSON.stringify(toolArgs, null, 2)}
                 </pre>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
+            {/* Divider between args and output — only when both exist */}
+            {hasArgs && (hasImages || hasText) && (
+              <div className="h-px bg-white/[0.06] my-1" />
+            )}
+
+            {/* Output */}
+            {(hasImages || hasText) && (
+              <div>
+                <p className="font-mono text-[9.5px] text-white/20 mb-1 tracking-[0.04em]">
+                  output
+                </p>
+
+                {/* Images */}
+                {hasImages && toolImages!.map((img, i) => (
+                  <div key={i} className="mt-1">
+                    <img
+                      src={`data:${img.mimeType};base64,${img.data}`}
+                      className="rounded-[4px] w-full border border-white/[0.08]"
+                      alt="Tool output"
+                    />
+                  </div>
+                ))}
+
+                {/* Text */}
+                {hasText && (
+                  <pre className="font-mono text-[11px] text-white/30 leading-relaxed
+                                  whitespace-pre-wrap break-all overflow-x-auto
+                                  max-h-48 overflow-y-auto">
+                    {formattedContent}
+                  </pre>
+                )}
+              </div>
+            )}
+
+          </div>
+          </div>
         </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

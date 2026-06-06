@@ -184,50 +184,29 @@ function ThinkingAccordion({
     )
   }
 
-  // ── Collapsed pill ──
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className={cn(
-          'flex items-center gap-2 mb-2 py-0.5 group/tp',
-          'text-left cursor-pointer select-none',
-          className
-        )}
-      >
-        <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
-          Thought process
-        </span>
-        <ChevronIcon open={false} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
-        {duration !== null && duration > 0 && (
-          <span className="font-mono text-[13px] text-white/25 leading-none">
-            {duration}s
-          </span>
-        )}
-      </button>
-    )
-  }
-
-  // ── Expanded ──
   return (
     <div className={cn('mb-2', className)}>
       <button
-        onClick={() => setOpen(false)}
-        className="flex items-center gap-2 mb-1 py-0.5 group/tp text-left cursor-pointer select-none"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-2 mb-0 py-0.5 group/tp text-left cursor-pointer select-none"
       >
         <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
           Thought process
         </span>
-        <ChevronIcon open={true} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
+        <ChevronIcon open={open} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
         {duration !== null && duration > 0 && (
           <span className="font-mono text-[13px] text-white/25 leading-none">
             {duration}s
           </span>
         )}
       </button>
-      <div className="border-l border-white/[0.07] pl-3">
-        <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
-          {content}
+      <div className={cn('accordion-body', open && 'open')}>
+        <div style={{ overflow: 'hidden' }}>
+          <div className="border-l border-white/[0.07] pl-3 mt-1">
+            <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
+              {content}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -322,12 +301,18 @@ function groupBlocks(blocks: MessageBlock[]): BlockGroup[] {
 function MergedSearchGroup({
   blocks,
   className,
+  autoCollapse,
 }: {
   blocks: SearchBlock[]
   className?: string
+  autoCollapse?: boolean
 }) {
   const [expanded, setExpanded] = useState(true)
   const totalResults = blocks.reduce((sum, b) => sum + (b.results?.length ?? 0), 0)
+
+  useEffect(() => {
+    if (autoCollapse) setExpanded(false)
+  }, [autoCollapse])
 
   return (
     <div className={cn('mb-2', className)}>
@@ -350,22 +335,24 @@ function MergedSearchGroup({
         </span>
       </button>
 
-      {expanded && (
-        <div className="border-l border-white/[0.07] pl-3 mt-1">
-          <div className="mt-0.5 flex flex-col gap-0">
-            {blocks.map((b, idx) => (
-              <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
-                <SearchResult
-                  query={b.query}
-                  results={b.results ?? []}
-                  isFirst={idx === 0}
-                  showDot
-                />
-              </div>
-            ))}
+      <div className={cn('accordion-body', expanded && 'open')}>
+        <div style={{ overflow: 'hidden' }}>
+          <div className="border-l border-white/[0.07] pl-3 mt-1">
+            <div className="mt-0.5 flex flex-col gap-0">
+              {blocks.map((b, idx) => (
+                <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
+                  <SearchResult
+                    query={b.query}
+                    results={b.results ?? []}
+                    isFirst={idx === 0}
+                    showDot
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -398,11 +385,18 @@ function AssistantBubble({
           /* ── v2.1 block-based render path ─────────────────────── */
           <>
             {groupBlocks(blocks).map((group, gi) => {
+              const lastIdx =
+                group.kind === 'merged-search'
+                  ? blocks.indexOf(group.blocks[group.blocks.length - 1])
+                  : group.index
+              const hasNonSearchAfter = blocks.slice(lastIdx + 1).some(b => b.type !== 'search')
+
               if (group.kind === 'merged-search') {
                 return (
                   <MergedSearchGroup
                     key={group.blocks.map(b => b.id).join('-')}
                     blocks={group.blocks}
+                    autoCollapse={hasNonSearchAfter}
                   />
                 )
               }
@@ -425,6 +419,7 @@ function AssistantBubble({
                     toolArgs={block.toolArgs}
                     toolImages={block.toolImages}
                     className={afterAnswer ? 'mt-3' : ''}
+                    autoCollapse={hasNonSearchAfter}
                   />
                 )
               }

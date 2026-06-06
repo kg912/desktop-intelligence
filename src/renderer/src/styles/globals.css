@@ -68,6 +68,20 @@
     background-clip: text;
     animation: text-shimmer 2s ease-in-out infinite;
   }
+
+  /* Accordion slide — body always stays mounted; .open expands it */
+  .accordion-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition:
+      grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.22s ease;
+    opacity: 0;
+  }
+  .accordion-body.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
 }
 
 /* ----------------------------------------------------------------
