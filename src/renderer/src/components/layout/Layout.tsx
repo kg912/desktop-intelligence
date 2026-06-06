@@ -15,13 +15,18 @@ import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode } = useModelConfig()
+  const { setThinkingMode, isMultiAgentRunning } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
-  const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
+  const [chatPanelOpen,       setChatPanelOpen]       = useState(true)
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
   const [mcpActivity,         setMcpActivity]         = useState<{ serverName: string; toolName: string } | null>(null)
   const chatAreaRef = useRef<ChatAreaHandle>(null)
+
+  // Auto-collapse chats panel when multi-agent orchestrator becomes active
+  useEffect(() => {
+    if (isMultiAgentRunning) setChatPanelOpen(false)
+  }, [isMultiAgentRunning])
 
   // ── Chat history list (sidebar) ───────────────────────────────
   const [chats,        setChats]        = useState<Chat[]>([])
@@ -332,8 +337,8 @@ export function Layout() {
           {/* ── Sidebar ── */}
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
-              collapsed={sidebarCollapsed}
-              onToggle={() => setSidebarCollapsed((v) => !v)}
+              panelOpen={chatPanelOpen}
+              onTogglePanel={() => setChatPanelOpen((v) => !v)}
               chats={chats}
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
@@ -391,8 +396,8 @@ export function Layout() {
             <TopBar
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
-              sidebarCollapsed={sidebarCollapsed}
-              onSidebarToggle={() => setSidebarCollapsed((v) => !v)}
+              sidebarCollapsed={!chatPanelOpen}
+              onSidebarToggle={() => setChatPanelOpen((v) => !v)}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />

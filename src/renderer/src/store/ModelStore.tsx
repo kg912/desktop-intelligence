@@ -40,6 +40,9 @@ interface ModelConfigValue {
   /** Whether the model reasons before answering (Section 5 of CLAUDE.md) */
   thinkingMode: ThinkingMode;
   setThinkingMode: (mode: ThinkingMode) => void;
+  /** Stub for future multi-agent orchestrator — always false until implemented */
+  isMultiAgentRunning: boolean;
+  setIsMultiAgentRunning: (v: boolean) => void;
 }
 
 /** Volatile runtime state that changes during/after streaming. */
@@ -67,8 +70,9 @@ const ModelRuntimeContext = createContext<ModelRuntimeValue | null>(null);
 export function ModelStoreProvider({ children }: { children: ReactNode }) {
   // Intentionally empty string — App.tsx populates this via setSelectedModel
   // once it has read the saved modelId from SettingsStore (IPC round-trip).
-  const [selectedModel, setSelectedModel] = useState<string>("");
-  const [thinkingMode,  setThinkingMode]  = useState<ThinkingMode>("thinking");
+  const [selectedModel,        setSelectedModel]        = useState<string>("");
+  const [thinkingMode,         setThinkingMode]         = useState<ThinkingMode>("thinking");
+  const [isMultiAgentRunning,  setIsMultiAgentRunning]  = useState<boolean>(false);
 
   const [compactToast, setCompactToast] = useState<{
     tokensBefore: number;
@@ -97,6 +101,8 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
     setSelectedModel,
     thinkingMode,
     setThinkingMode,
+    isMultiAgentRunning,
+    setIsMultiAgentRunning,
   };
 
   const runtimeValue: ModelRuntimeValue = {

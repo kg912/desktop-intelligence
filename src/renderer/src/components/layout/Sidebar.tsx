@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react'
 import {
-  Trash2,
-  Search,
+  MessageSquare,
+  Network,
   Settings,
+  Search,
+  Trash2,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { Chat } from '../../../../shared/types'
@@ -40,13 +42,72 @@ function groupChats(chats: Chat[]): { label: string; items: Chat[] }[] {
 }
 
 // ----------------------------------------------------------------
+// RailButton — icon button for the permanent 44px rail
+// ----------------------------------------------------------------
+function RailButton({
+  active = false,
+  disabled = false,
+  onClick,
+  title,
+  style: extraStyle,
+  children,
+}: {
+  active?:   boolean
+  disabled?: boolean
+  onClick?:  () => void
+  title?:    string
+  style?:    React.CSSProperties
+  children:  React.ReactNode
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  if (disabled) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-[6px] text-content-secondary"
+        style={{ width: 28, height: 28, opacity: 0.35, cursor: 'default', pointerEvents: 'none', ...extraStyle }}
+      >
+        {children}
+      </div>
+    )
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="no-drag flex items-center justify-center rounded-[6px]"
+      style={{
+        width:      28,
+        height:     28,
+        border:     'none',
+        padding:    0,
+        cursor:     'pointer',
+        transition: 'background 100ms ease, color 100ms ease',
+        background: active
+          ? 'rgba(229,57,53,0.15)'
+          : hovered
+          ? 'rgba(255,255,255,0.06)'
+          : 'transparent',
+        color: active ? 'rgba(229,57,53,0.8)' : 'rgba(255,255,255,0.25)',
+        ...extraStyle,
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ----------------------------------------------------------------
 // ChatItem
 // ----------------------------------------------------------------
 interface ChatItemProps {
-  chat:         Chat
-  isActive:     boolean
-  onSelect:     (id: string) => void
-  onDelete:     (id: string) => void
+  chat:     Chat
+  isActive: boolean
+  onSelect: (id: string) => void
+  onDelete: (id: string) => void
 }
 
 function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
@@ -131,8 +192,8 @@ function ChatGroup({
 // Sidebar component
 // ----------------------------------------------------------------
 interface SidebarProps {
-  collapsed:      boolean
-  onToggle:       () => void
+  panelOpen:      boolean
+  onTogglePanel:  () => void
   chats:          Chat[]
   activeChatId:   string | null
   onSelectChat:   (chatId: string) => void
@@ -141,9 +202,11 @@ interface SidebarProps {
   onOpenSettings: () => void
 }
 
+const PANEL_WIDTH = 220
+
 export function Sidebar({
-  collapsed,
-  onToggle,
+  panelOpen,
+  onTogglePanel,
   chats,
   activeChatId,
   onSelectChat,
@@ -153,77 +216,111 @@ export function Sidebar({
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
 
-  const sidebarWidth = 260
-
   const filteredChats = searchQuery.trim()
-    ? chats.filter((c) =>
-        c.title.toLowerCase().includes(searchQuery.toLowerCase())
-      )
+    ? chats.filter((c) => c.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : chats
 
   const groups = groupChats(filteredChats)
 
   return (
-    <>
-      {/* Sidebar panel */}
-      <aside
-        className="relative flex-shrink-0 h-full overflow-hidden"
+    <div className="flex h-full flex-shrink-0">
+
+      {/* ── Permanent Rail (44px, always visible) ── */}
+      <div
+        className="flex-shrink-0 flex flex-col items-center"
         style={{
-          backgroundColor: '#141414',
-          width: collapsed ? 0 : sidebarWidth,
-          transition: 'width 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+          width:       44,
+          background:  '#0a0a0a',
+          borderRight: '0.5px solid rgba(255,255,255,0.05)',
         }}
       >
-        <div
-          className="flex flex-col h-full border-r border-surface-border"
-          style={{ width: sidebarWidth }}
-        >
-          {/* ── Top: drag region + header ── */}
-          <div className="drag-region flex items-center justify-between px-4 pt-[52px] pb-3 flex-shrink-0">
-            <span className="no-drag text-[13px] font-semibold text-content-secondary tracking-wide">
-              Chats
-            </span>
-          </div>
+        {/* Drag region — covers macOS traffic lights (52px = TopBar height) */}
+        <div className="drag-region w-full flex-shrink-0" style={{ height: 52 }} />
 
-          {/* ── New Chat button ── */}
-          <div className="px-3 pb-3 flex-shrink-0">
+        {/* Chat panel toggle */}
+        <RailButton
+          active={panelOpen}
+          onClick={onTogglePanel}
+          title={panelOpen ? 'Close chats' : 'Open chats'}
+        >
+          <MessageSquare style={{ width: 15, height: 15 }} />
+        </RailButton>
+
+        {/* Node-graph / agents — placeholder, not yet functional */}
+        <div style={{ height: 4 }} />
+        <RailButton disabled title="Multi-agent (coming soon)">
+          <Network style={{ width: 15, height: 15 }} />
+        </RailButton>
+
+        {/* Settings gear — pushed to bottom */}
+        <div className="flex-1" />
+        <RailButton onClick={onOpenSettings} title="Settings">
+          <Settings style={{ width: 15, height: 15 }} />
+        </RailButton>
+        <div style={{ height: 12 }} />
+      </div>
+
+      {/* ── Expandable Chats Panel ── */}
+      <div
+        className="flex-shrink-0 h-full overflow-hidden"
+        style={{
+          width:      panelOpen ? PANEL_WIDTH : 0,
+          transition: 'width 220ms cubic-bezier(0.4, 0, 0.2, 1)',
+          background:  '#141414',
+          borderRight: '0.5px solid rgba(255,255,255,0.05)',
+        }}
+      >
+        {/* Inner container — fixed width so content doesn't reflow during animation */}
+        <div
+          className="flex flex-col h-full"
+          style={{
+            width:      PANEL_WIDTH,
+            opacity:    panelOpen ? 1 : 0,
+            transition: 'opacity 180ms ease',
+          }}
+        >
+          {/* ── Panel header ── */}
+          <div
+            className="drag-region flex-shrink-0 flex items-center justify-between px-3"
+            style={{
+              height:       52,
+              borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+            }}
+          >
+            <span
+              className="no-drag select-none"
+              style={{
+                fontSize:      11,
+                fontWeight:    500,
+                color:         'rgba(255,255,255,0.3)',
+                letterSpacing: '0.04em',
+              }}
+            >
+              chats
+            </span>
+
             <button
               onClick={onNewChat}
-              className="w-full flex items-center justify-center gap-2
-                         px-3 py-2.5 rounded-xl
-                         bg-accent-900/30 hover:bg-accent-800/40 active:bg-accent-900/50
-                         border border-accent-800/40 hover:border-accent-700/50
-                         text-accent-400 hover:text-accent-300
-                         text-sm font-medium
-                         transition-all duration-150
-                         focus:outline-none focus:ring-1 focus:ring-accent-700/60
-                         no-drag"
+              className="no-drag flex items-center"
+              style={{
+                gap:          4,
+                fontSize:     10,
+                background:   'rgba(229,57,53,0.12)',
+                border:       '0.5px solid rgba(229,57,53,0.25)',
+                color:        'rgba(229,57,53,0.7)',
+                borderRadius: 5,
+                padding:      '3px 8px',
+                cursor:       'pointer',
+                lineHeight:   1,
+              }}
             >
-              New Chat
+              <span>+</span>
+              <span>New</span>
             </button>
           </div>
 
-          {/* ── Search ── */}
-          <div className="px-3 pb-3 flex-shrink-0">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-content-muted" />
-              <input
-                type="text"
-                placeholder="Search chats…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 rounded-lg
-                           bg-surface-DEFAULT border border-surface-border
-                           text-xs text-content-secondary placeholder:text-content-muted
-                           focus:outline-none focus:border-accent-900/60 focus:bg-surface-hover
-                           transition-colors duration-100
-                           no-drag selectable"
-              />
-            </div>
-          </div>
-
-          {/* ── Chat history (scrollable) ── */}
-          <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3 no-drag">
+          {/* ── Chat list (scrollable) ── */}
+          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-3 no-drag">
             {groups.length > 0
               ? groups.map((g) => (
                   <ChatGroup
@@ -236,30 +333,59 @@ export function Sidebar({
                   />
                 ))
               : (
-                <p className="px-3 py-6 text-center text-[12px] text-content-muted">
-                  {searchQuery ? 'No matching chats' : 'No chats yet'}
+                <p
+                  className="px-3 py-6 text-center text-content-muted"
+                  style={{ fontSize: 11 }}
+                >
+                  {searchQuery.trim() ? 'no results' : 'No chats yet'}
                 </p>
               )
             }
           </div>
 
-          {/* ── Bottom: settings cog ── */}
-          <div className="flex-shrink-0 px-3 py-3 border-t border-surface-border">
-            <button
-              onClick={onOpenSettings}
-              className="no-drag p-2 rounded-lg
-                         text-content-muted hover:text-content-secondary
-                         hover:bg-surface-hover
-                         transition-colors duration-100"
-              title="Settings"
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
+          {/* ── Panel footer: search ── */}
+          <div
+            className="flex-shrink-0 px-3 py-2"
+            style={{ borderTop: '0.5px solid rgba(255,255,255,0.04)' }}
+          >
+            <div className="relative no-drag">
+              <Search
+                style={{
+                  position:  'absolute',
+                  left:      8,
+                  top:       '50%',
+                  transform: 'translateY(-50%)',
+                  width:     14,
+                  height:    14,
+                  color:     'rgba(255,255,255,0.25)',
+                  pointerEvents: 'none',
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Search…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full selectable focus:outline-none"
+                style={{
+                  height:      28,
+                  fontSize:    11,
+                  background:  'rgba(255,255,255,0.04)',
+                  border:      '0.5px solid rgba(255,255,255,0.07)',
+                  borderRadius: 6,
+                  paddingLeft:  28,
+                  paddingRight: 8,
+                  color:        'rgba(255,255,255,0.7)',
+                  transition:   'border-color 100ms ease',
+                }}
+                onFocus={(e)  => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+                onBlur={(e)   => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)' }}
+              />
+            </div>
           </div>
         </div>
-      </aside>
+      </div>
 
-      {/* Collapsed toggle button removed — now lives in TopBar */}
-    </>
+    </div>
   )
 }
