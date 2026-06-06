@@ -2010,7 +2010,15 @@ export class ChatService {
                 streamBuffer.includes("\uFF5CDSML\uFF5C") ||
                 streamBuffer.replace(/\uFF5C/g, "|").replace(/\s*\|\s*/g, "|").includes("<|DSML|");
               if (!pendingToolCalls.size && !hasOpenToolCallTag) {
-                if (chunkToSend.trim() || hasNonWhitespaceContent) {
+                // Always pass structural think/reasoning markers regardless of whitespace state.
+                // Qwen3 on OpenRouter emits <think> as a whitespace-only delta on the first chunk
+                // after a tool result; the hasNonWhitespaceContent gate silently drops it,
+                // leaving the renderer without an open <think> tag and stalling the response.
+                const isStructuralMarker = chunkToSend.includes("<think>") ||
+                  chunkToSend.includes("</think>") ||
+                  chunkToSend.includes("<|channel>") ||
+                  chunkToSend.includes("<channel|>");
+                if (chunkToSend.trim() || hasNonWhitespaceContent || isStructuralMarker) {
                   hasNonWhitespaceContent = true;
                   accumulatedChunks.push(chunkToSend);
                   const now = Date.now();
