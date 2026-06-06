@@ -137,6 +137,7 @@ function ThinkingAccordion({
   const [duration, setDuration] = useState<number | null>(null)
   const startedAtRef            = useRef<number>(Date.now())
   const scrollRef               = useRef<HTMLDivElement>(null)
+  const label = (duration !== null && duration > 0) ? `Thought for ${duration}s` : 'Thought Process'
 
   // Record elapsed seconds when streaming ends
   useEffect(() => {
@@ -191,7 +192,7 @@ function ThinkingAccordion({
         className="flex items-center gap-2 mb-0 py-0.5 group/tp text-left cursor-pointer select-none"
       >
         <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
-          Thought process
+          {label}
         </span>
         <ChevronIcon open={open} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
         {duration !== null && duration > 0 && (
@@ -357,6 +358,116 @@ function MergedSearchGroup({
   )
 }
 
+// ── Rail layout helpers ───────────────────────────────────────────
+function isPaneBlock(block: MessageBlock): boolean {
+  return block.type === 'stock_chart'
+}
+
+type Segment =
+  | { kind: 'rail'; blocks: MessageBlock[] }
+  | { kind: 'pane'; block: MessageBlock }
+
+function segmentBlocks(blocks: MessageBlock[]): { segments: Segment[]; answerBlocks: MessageBlock[] } {
+  const segments: Segment[] = []
+  const answerBlocks: MessageBlock[] = []
+  let railBuffer: MessageBlock[] = []
+
+  function flushRail() {
+    if (railBuffer.length > 0) {
+      segments.push({ kind: 'rail', blocks: [...railBuffer] })
+      railBuffer = []
+    }
+  }
+
+  for (const block of blocks) {
+    if (block.type === 'answer') {
+      flushRail()
+      answerBlocks.push(block)
+    } else if (isPaneBlock(block)) {
+      flushRail()
+      segments.push({ kind: 'pane', block })
+    } else {
+      railBuffer.push(block)
+    }
+  }
+  flushRail()
+  return { segments, answerBlocks }
+}
+
+function RailSegment({
+  blocks,
+  allBlocks,
+  isStreaming,
+}: {
+  blocks: MessageBlock[]
+  allBlocks: MessageBlock[]
+  isStreaming: boolean
+}) {
+  return (
+    <div className="flex gap-0 mb-2" style={{ alignItems: 'stretch' }}>
+      <div style={{
+        width: '1px',
+        background: 'rgba(255,255,255,0.07)',
+        marginLeft: '2px',
+        marginRight: '12px',
+        borderRadius: '1px',
+        alignSelf: 'stretch',
+        flexShrink: 0,
+      }} />
+      <div className="flex flex-col gap-0 flex-1 min-w-0">
+        {groupBlocks(blocks).map((group) => {
+          if (group.kind === 'merged-search') {
+            const lastBlock = group.blocks[group.blocks.length - 1]
+            const globalIdx = allBlocks.indexOf(lastBlock)
+            const hasNonSearchAfter = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
+            return (
+              <MergedSearchGroup
+                key={group.blocks[0].id}
+                blocks={group.blocks}
+                autoCollapse={hasNonSearchAfter}
+              />
+            )
+          }
+
+          const block = group.block
+          const globalIdx = allBlocks.indexOf(block)
+          const hasNonSearchAfter = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
+
+          if (block.type === 'thinking') {
+            const isActiveThink = isStreaming && block.id === allBlocks[allBlocks.length - 1].id
+            return (
+              <ThinkingAccordion
+                key={block.id}
+                content={block.content}
+                isStreaming={isActiveThink}
+              />
+            )
+          }
+
+          if (block.type === 'search') {
+            return (
+              <ToolCallNotification
+                key={block.id}
+                phase={block.phase}
+                query={block.query}
+                toolName={block.toolName}
+                results={block.results}
+                error={block.error}
+                formattedContent={block.formattedContent}
+                toolArgs={block.toolArgs}
+                toolImages={block.toolImages}
+                autoCollapse={hasNonSearchAfter}
+              />
+            )
+          }
+
+          return null
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Assistant bubble ─────────────────────────────────────────────
 interface AssistantBubbleProps {
   content:     string
@@ -384,79 +495,49 @@ function AssistantBubble({
         {hasBlocks ? (
           /* ── v2.1 block-based render path ─────────────────────── */
           <>
-            {groupBlocks(blocks).map((group, gi) => {
-              const lastIdx =
-                group.kind === 'merged-search'
-                  ? blocks.indexOf(group.blocks[group.blocks.length - 1])
-                  : group.index
-              const hasNonSearchAfter = blocks.slice(lastIdx + 1).some(b => b.type !== 'search')
+            {(() => {
+              const { segments, answerBlocks } = segmentBlocks(blocks)
+              return (
+                <>
+                  {segments.map((seg, si) => {
+                    if (seg.kind === 'rail') {
+                      return (
+                        <RailSegment
+                          key={`rail-${si}`}
+                          blocks={seg.blocks}
+                          allBlocks={blocks}
+                          isStreaming={isStreaming}
+                        />
+                      )
+                    }
+                    if (seg.kind === 'pane') {
+                      const block = seg.block
+                      if (block.type === 'stock_chart') {
+                        return (
+                          <StockChartBlock
+                            key={block.id}
+                            symbol={block.symbol}
+                            fileUri={block.fileUri}
+                            phase={block.phase}
+                            error={block.error}
+                          />
+                        )
+                      }
+                      return null
+                    }
+                    return null
+                  })}
 
-              if (group.kind === 'merged-search') {
-                return (
-                  <MergedSearchGroup
-                    key={group.blocks.map(b => b.id).join('-')}
-                    blocks={group.blocks}
-                    autoCollapse={hasNonSearchAfter}
-                  />
-                )
-              }
-
-              const block = group.block
-              const i = group.index
-
-              if (block.type === 'search') {
-                const prevBlock = i > 0 ? blocks[i - 1] : null
-                const afterAnswer = prevBlock?.type === 'answer'
-                return (
-                  <ToolCallNotification
-                    key={block.id}
-                    phase={block.phase}
-                    query={block.query}
-                    toolName={block.toolName}
-                    results={block.results}
-                    error={block.error}
-                    formattedContent={block.formattedContent}
-                    toolArgs={block.toolArgs}
-                    toolImages={block.toolImages}
-                    className={afterAnswer ? 'mt-3' : ''}
-                    autoCollapse={hasNonSearchAfter}
-                  />
-                )
-              }
-              if (block.type === 'thinking') {
-                const prevBlock = i > 0 ? blocks[i - 1] : null
-                const afterAnswer = prevBlock?.type === 'answer'
-                return (
-                  <ThinkingAccordion
-                    key={block.id}
-                    content={block.content}
-                    isStreaming={isStreaming && block.id === blocks[blocks.length - 1].id}
-                    className={afterAnswer ? 'mt-3' : ''}
-                  />
-                )
-              }
-              if (block.type === 'stock_chart') {
-                return (
-                  <StockChartBlock
-                    key={block.id}
-                    symbol={block.symbol}
-                    fileUri={block.fileUri}
-                    phase={block.phase}
-                    error={block.error}
-                  />
-                )
-              }
-              if (block.type === 'answer') {
-                return (
-                  <MarkdownRenderer
-                    key={block.id}
-                    content={block.content}
-                    isStreaming={block.isStreaming}
-                  />
-                )
-              }
-              return null
-            })}
+                  {answerBlocks.map(block => (
+                    <MarkdownRenderer
+                      key={block.id}
+                      content={(block as Extract<MessageBlock, { type: 'answer' }>).content}
+                      isStreaming={(block as Extract<MessageBlock, { type: 'answer' }>).isStreaming}
+                    />
+                  ))}
+                </>
+              )
+            })()}
 
             {/* Working: pre-first-token — covers both empty blocks and when only
                 a searching block is present (tool fired before first think token) */}
