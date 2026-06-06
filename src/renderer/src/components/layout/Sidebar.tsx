@@ -202,7 +202,7 @@ interface SidebarProps {
   onOpenSettings: () => void
 }
 
-const PANEL_WIDTH = 220
+const PANEL_WIDTH = 264
 
 export function Sidebar({
   panelOpen,
@@ -246,11 +246,12 @@ export function Sidebar({
           <MessageSquare style={{ width: 15, height: 15 }} />
         </RailButton>
 
-        {/* Node-graph / agents — placeholder, not yet functional */}
+        {/* Multi-agent rail button — hidden until orchestration is implemented
         <div style={{ height: 4 }} />
         <RailButton disabled title="Multi-agent (coming soon)">
           <Network style={{ width: 15, height: 15 }} />
         </RailButton>
+        */}
 
         {/* Settings gear — pushed to bottom */}
         <div className="flex-1" />
@@ -281,40 +282,44 @@ export function Sidebar({
         >
           {/* ── Panel header ── */}
           <div
-            className="drag-region flex-shrink-0 flex items-center justify-between px-3"
+            className="drag-region flex-shrink-0 flex items-center justify-between"
             style={{
               height:       52,
+              background:   '#0a0a0a',
               borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+              paddingLeft:  80,
+              paddingRight: 12,
             }}
           >
             <span
               className="no-drag select-none"
               style={{
-                fontSize:      11,
-                fontWeight:    500,
-                color:         'rgba(255,255,255,0.3)',
-                letterSpacing: '0.04em',
+                fontSize:      13,
+                fontWeight:    600,
+                color:         'rgba(255,255,255,0.55)',
+                letterSpacing: '0.01em',
               }}
             >
-              chats
+              Chats
             </span>
 
             <button
               onClick={onNewChat}
               className="no-drag flex items-center"
               style={{
-                gap:          4,
-                fontSize:     10,
+                gap:          5,
+                fontSize:     12,
                 background:   'rgba(229,57,53,0.12)',
                 border:       '0.5px solid rgba(229,57,53,0.25)',
                 color:        'rgba(229,57,53,0.7)',
                 borderRadius: 5,
-                padding:      '3px 8px',
+                padding:      '4px 10px',
                 cursor:       'pointer',
                 lineHeight:   1,
+                fontWeight:   500,
               }}
             >
-              <span>+</span>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
               <span>New</span>
             </button>
           </div>
@@ -345,10 +350,10 @@ export function Sidebar({
 
           {/* ── Panel footer: search ── */}
           <div
-            className="flex-shrink-0 px-3 py-2"
-            style={{ borderTop: '0.5px solid rgba(255,255,255,0.04)' }}
+            className="flex-shrink-0 px-3"
+            style={{ borderTop: '0.5px solid rgba(255,255,255,0.04)', height: 52, display: 'flex', alignItems: 'center' }}
           >
-            <div className="relative no-drag">
+            <div className="relative no-drag" style={{ width: '100%' }}>
               <Search
                 style={{
                   position:  'absolute',
