@@ -1115,7 +1115,7 @@ function MatplotlibBlock({ code }: MatplotlibBlockProps) {
             src={`data:image/png;base64,${imageBase64}`}
             alt="matplotlib chart"
             className="w-full rounded-lg"
-            style={{ background: '#0f0f0f' }}
+            style={{ background: '#0f0f0f', aspectRatio: '16/9', display: 'block' }}
           />
         </div>
       ) : null}

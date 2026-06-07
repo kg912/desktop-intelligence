@@ -60,6 +60,15 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
   // scroll; cleared by the first onScroll handler invocation that follows.
   const isProgrammaticScroll = useRef(false)
 
+  // Timestamp of the most recent upward wheel gesture (ms, from Date.now()).
+  // Used in handleScroll to ignore scroll events that arrive within 500ms of
+  // a wheel event — these are virtualizer layout-shift scroll events caused
+  // by chart/diagram remounts, not genuine user scroll-to-bottom gestures.
+  // Without this guard, the virtualizer height change fires a scroll event
+  // that briefly makes distanceFromBottom look small, re-enabling auto-scroll
+  // while the user is still scrolling up — producing the visible flicker loop.
+  const lastWheelTs = useRef(0)
+
   // ── Imperative handle — lets Layout snap to bottom before async send ──
   useImperativeHandle(ref, () => ({
     scrollToBottom() {
@@ -163,6 +172,7 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
   function handleWheel(e: React.WheelEvent) {
     if (e.deltaY < 0) {          // negative deltaY = scroll toward top
       userScrolledUp.current = true
+      lastWheelTs.current = Date.now()
     }
   }
 
@@ -179,6 +189,14 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
     }
     // Already at the bottom — nothing to re-enable, skip the layout read.
     if (!userScrolledUp.current) return
+
+    // Ignore scroll events that arrive within 500ms of an upward wheel gesture.
+    // Virtualizer layout shifts (caused by chart/image remounts changing height)
+    // emit spurious scroll events that can make distanceFromBottom look small
+    // for one frame, falsely re-enabling auto-scroll mid-upward-scroll and
+    // creating the oscillating flicker loop. The 500ms window reliably covers
+    // the ResizeObserver → virtualizer remeasure → scroll-event cascade.
+    if (Date.now() - lastWheelTs.current < 500) return
 
     if (scrollEventRafRef.current !== null) return // already scheduled
     scrollEventRafRef.current = requestAnimationFrame(() => {
