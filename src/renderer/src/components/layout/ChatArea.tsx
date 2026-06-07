@@ -241,8 +241,8 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
         </div>
       ) : (
         <div
-          key="messages"
-          className="max-w-[55rem] mx-auto py-8"
+          key={activeChatId ?? 'messages'}
+          className="max-w-[55rem] mx-auto py-8 chat-fade-in"
           style={{ position: 'relative', height: virtualizer.getTotalSize() }}
         >
             <ChatIdCtx.Provider value={activeChatId}>
