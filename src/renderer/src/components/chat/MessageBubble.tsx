@@ -522,11 +522,12 @@ function AssistantBubble({
                   }
                   if (block.type === 'answer') {
                     return (
-                      <MarkdownRenderer
-                        key={block.id}
-                        content={block.content}
-                        isStreaming={block.isStreaming}
-                      />
+                      <div key={block.id} style={{ marginTop: '0.6rem', marginBottom: '0.8rem' }}>
+                        <MarkdownRenderer
+                          content={block.content}
+                          isStreaming={block.isStreaming}
+                        />
+                      </div>
                     )
                   }
                   return null

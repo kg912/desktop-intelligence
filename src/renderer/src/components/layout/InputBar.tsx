@@ -134,26 +134,24 @@ export const InputBar = memo(function InputBar({
         from { opacity: 0; transform: scale(0.85) translateY(4px); }
         to   { opacity: 1; transform: scale(1) translateY(0); }
       }
-      @property --ib-angle {
-        syntax: '<angle>';
-        initial-value: 0deg;
-        inherits: false;
-      }
       @keyframes ib-revolve {
-        to { --ib-angle: 360deg; }
+        to { transform: translate(-50%, -50%) rotate(360deg); }
       }
       .ib-glow-ring {
         border-radius: 17px;
         padding: 1px;
         position: relative;
+        overflow: hidden;
       }
-      .ib-glow-ring::before {
-        content: '';
+      .ib-glow-border {
         position: absolute;
-        inset: 0;
-        border-radius: 17px;
+        top: 50%;
+        left: 50%;
+        width: 1400px;
+        height: 1400px;
+        transform: translate(-50%, -50%) rotate(0deg);
         background: conic-gradient(
-          from var(--ib-angle),
+          from 0deg,
           transparent 0deg,
           rgba(229,57,53,0.0) 50deg,
           rgba(229,57,53,0.5) 120deg,
@@ -163,20 +161,18 @@ export const InputBar = memo(function InputBar({
           transparent 360deg
         );
         animation: ib-revolve 1.25s linear infinite;
-        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-        mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-        -webkit-mask-composite: xor;
-        mask-composite: exclude;
-        padding: 1px;
         z-index: 0;
+        pointer-events: none;
       }
-      .ib-glow-ring::after {
-        content: '';
+      .ib-glow-blur {
         position: absolute;
-        inset: -2px;
-        border-radius: 20px;
+        top: 50%;
+        left: 50%;
+        width: 1400px;
+        height: 1400px;
+        transform: translate(-50%, -50%) rotate(0deg);
         background: conic-gradient(
-          from var(--ib-angle),
+          from 0deg,
           transparent 0deg,
           rgba(229,57,53,0.0) 50deg,
           rgba(229,57,53,0.10) 120deg,
@@ -188,6 +184,7 @@ export const InputBar = memo(function InputBar({
         animation: ib-revolve 1.25s linear infinite;
         filter: blur(8px);
         z-index: 0;
+        pointer-events: none;
       }
       .ib-glow-inner {
         border-radius: 16px;
@@ -195,6 +192,7 @@ export const InputBar = memo(function InputBar({
         overflow: hidden;
         position: relative;
         z-index: 1;
+        margin: 1px;
       }
     `
     document.head.appendChild(s)
@@ -439,7 +437,12 @@ export const InputBar = memo(function InputBar({
     >
       {isStreaming ? (
         // ── Streaming: revolving conic-gradient glow ring ──
+        // Uses transform:rotate on real DOM nodes instead of @property --ib-angle
+        // to avoid the Chromium bug where a globally-registered @property with
+        // syntax:'<angle>' keeps the compositor ticking at 60fps even at idle.
         <div className="ib-glow-ring">
+          <div className="ib-glow-blur" aria-hidden="true" />
+          <div className="ib-glow-border" aria-hidden="true" />
           <div className="ib-glow-inner relative">
             {innerContent}
           </div>

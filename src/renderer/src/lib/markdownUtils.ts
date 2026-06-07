@@ -407,20 +407,36 @@ export function prepareUserContent(raw: string): string {
 /**
  * Splits a markdown answer string by blank lines (\n\n) outside active code blocks,
  * allowing the renderer to memoize completed blocks and only re-parse the growing active one.
+ *
+ * Uses CommonMark-correct fence matching: the opening fence's backtick run length
+ * is remembered, and only a closing line with AT LEAST that many backticks ends
+ * the block.  This prevents a simple toggle from being tripped by backtick
+ * sequences inside fences (e.g. inline ` ``` ` inside a code example) or by
+ * a partial fence at a streaming chunk boundary.
  */
 export function splitMarkdownIntoBlocks(markdown: string): string[] {
   if (!markdown) return []
   const lines = markdown.split('\n')
   const blocks: string[] = []
   let currentBlock: string[] = []
-  let inCodeBlock = false
+  // null = not inside a fence; number = min backtick run needed to close
+  let fenceMinLen: number | null = null
 
   for (const line of lines) {
-    if (/^\s*`{3,}/.test(line)) {
-      inCodeBlock = !inCodeBlock
+    const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/)
+    if (fenceMatch) {
+      const runLen = fenceMatch[2].length
+      if (fenceMinLen === null) {
+        // Opening fence — remember minimum closing run length
+        fenceMinLen = runLen
+      } else if (runLen >= fenceMinLen && line.trim().replace(/`+|~+/g, '').trim() === '') {
+        // Closing fence — must be at least as long as the opener AND have no
+        // trailing info-string (info-string means it's a new opening fence)
+        fenceMinLen = null
+      }
     }
 
-    if (!inCodeBlock && line.trim() === '') {
+    if (fenceMinLen === null && line.trim() === '') {
       if (currentBlock.length > 0) {
         blocks.push(currentBlock.join('\n'))
         currentBlock = []
