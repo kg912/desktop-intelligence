@@ -231,4 +231,18 @@ app.whenReady().then(async () => {
       createWindow()
     }
   })
+
+  // TEMPORARY — Phase 0 spike, removed in RAG v2 Phase 5.
+  // Launch with DI_SPIKE_SQLITE_VEC=1 to run the sqlite-vec probe in the packaged
+  // Electron process and then quit. This validates the extension loads correctly
+  // with the ASAR-unpacked dylib and Electron's Node.js ABI before the full rebuild.
+  if (process.env['DI_SPIKE_SQLITE_VEC'] === '1') {
+    const { runSqliteVecSpike } = await import('../../scripts/spike-sqlite-vec')
+    const spikeLog = (msg: string): void => {
+      console.log(msg)
+    }
+    const ok = await runSqliteVecSpike(spikeLog)
+    console.log(`[Spike][sqlite-vec] Packaged-build probe: ${ok ? 'PASS' : 'FAIL'}`)
+    app.quit()
+  }
 })
