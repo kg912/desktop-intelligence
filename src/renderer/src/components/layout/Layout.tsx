@@ -106,6 +106,15 @@ export function Layout() {
         error:       null,
       }))
       loadMessages(msgs)
+      // Scroll to the bottom after load so the most recent message is visible,
+      // matching every other chat app. Double-rAF ensures this fires after React
+      // has committed the new messages AND the virtualizer has had one frame to
+      // measure item heights, so scrollHeight is fully accurate.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          chatAreaRef.current?.scrollToBottom()
+        })
+      })
     } catch (err) {
       console.warn('[DB] getChatMessages failed:', err)
     }

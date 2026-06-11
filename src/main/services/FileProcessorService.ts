@@ -25,6 +25,7 @@
 
 import { readFileSync } from 'fs'
 import { extname }      from 'path'
+import crypto           from 'crypto'
 import type { AttachmentFilePayload, ProcessedAttachment } from '../../shared/types'
 
 /**
@@ -126,7 +127,8 @@ export async function processFile(
     console.warn(`[FileProcessor] ⚠️  Prompt injection patterns removed from "${fileName}"`)
   }
 
-  // ── RAG ingest — AWAITED (not fire-and-forget) ───────────────
+  // ── v1 RAG ingest — AWAITED (not fire-and-forget) ───────────────
+  // v1 path — removed in RAG v2 Phase 2 ─────────────────────────────────────
   // We must await the full chunk→embed→store pipeline before returning.
   // The IPC caller fires chat:send immediately after this resolves, and
   // retrieveContext must find completed rows in SQLite to return context.
@@ -139,12 +141,81 @@ export async function processFile(
   try {
     const { ingestDocument } = await import('./RAGService')
     await ingestDocument(fileName, sanitizedText, payload.chatId)
-    console.log(`[FileProcessor] ✅ Ingest complete in ${Date.now() - ingestStart} ms`)
+    console.log(`[FileProcessor] ✅ v1 Ingest complete in ${Date.now() - ingestStart} ms`)
   } catch (err) {
     // Log and continue — the message can still be sent without RAG context
-    console.error(`[FileProcessor] ❌ Ingest FAILED after ${Date.now() - ingestStart} ms:`, err)
+    console.error(`[FileProcessor] ❌ v1 Ingest FAILED after ${Date.now() - ingestStart} ms:`, err)
   }
 
+  // ── v2 RAG ingest — STRICTLY ADDITIVE dual-write (Phase 1) ──────────────
+  // v2 path — wires into the new rag/ pipeline alongside the v1 path above.
+  // Wrapped entirely in try/catch so any failure leaves v1 serving as before.
+  // v2 path — removed in RAG v2 Phase 2 (once v2 retrieval is live and gated) ─
+  try {
+    // Resolve configured context window for inline/indexed routing (D6).
+    let contextWindow = 32768  // conservative fallback
+    let usedFallback  = false
+    try {
+      const { readSettings } = await import('./SettingsStore')
+      const settings = readSettings()
+      if (typeof settings.contextLength === 'number' && settings.contextLength > 0) {
+        contextWindow = settings.contextLength
+      } else {
+        usedFallback = true
+      }
+    } catch {
+      usedFallback = true
+    }
+    if (usedFallback) {
+      console.log('[FileProcessor] [v2] context window not resolvable from SettingsStore — using 32768')
+    }
+
+    const INLINE_BUDGET = Math.floor(0.5 * contextWindow)
+
+    const { countTokens }  = await import('./tokenUtils')
+    const { getDB }        = await import('./DatabaseService')
+    const { ingest: v2ingest } = await import('./rag/RagIngestionService')
+
+    const tokenCount  = countTokens(sanitizedText)
+    const contentHash = crypto.createHash('sha256').update(sanitizedText, 'utf8').digest('hex')
+    const v2DocId     = crypto.randomUUID()
+    const db          = getDB()
+    const v2Mode      = tokenCount <= INLINE_BUDGET ? 'inline' : 'indexed'
+
+    // Insert v2 documents row
+    db.prepare(
+      `INSERT INTO documents (id, name, path, ts, chat_id, content_hash, token_count, mode)
+       VALUES (?, ?, '', ?, ?, ?, ?, ?)`
+    ).run(v2DocId, fileName, Date.now(), payload.chatId ?? null, contentHash, tokenCount, v2Mode)
+
+    if (v2Mode === 'inline') {
+      db.prepare('INSERT INTO doc_inline_text (doc_id, text) VALUES (?, ?)').run(v2DocId, sanitizedText)
+      console.log(
+        `[FileProcessor] [v2] mode=inline tokenCount=${tokenCount} ` +
+        `INLINE_BUDGET=${INLINE_BUDGET} doc="${fileName}"`
+      )
+    } else {
+      console.log(
+        `[FileProcessor] [v2] mode=indexed tokenCount=${tokenCount} ` +
+        `INLINE_BUDGET=${INLINE_BUDGET} doc="${fileName}"`
+      )
+      const result = await v2ingest({
+        docId:   v2DocId,
+        chatId:  payload.chatId,
+        fileName,
+        text:    sanitizedText,
+      })
+      console.log(
+        `[FileProcessor] [v2] ingest result: status=${result.status} ` +
+        `chunks=${result.chunkCount} vectors=${result.vectorCount}`
+      )
+    }
+  } catch (v2Err) {
+    // Non-fatal: v1 path is still active and serving context
+    console.warn('[FileProcessor] [v2] Ingest path failed (non-fatal, v1 still active):', v2Err)
+  }
+
+  // ── Inject (v1 rule — unchanged) ────────────────────────────────────────
   // Inject the raw text directly into the system prompt so the model can
   // read the file without depending on RAG retrieval timing or chatId
   // propagation.  The first 12 000 chars cover most lecture notes / papers;

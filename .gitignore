@@ -34,3 +34,6 @@ nvda_plot.py
 open-router-deep-research-report.md
 
 coverage/
+
+# ── Working specs (local-only, not committed) ────────────────
+specs/

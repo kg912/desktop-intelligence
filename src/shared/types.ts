@@ -163,6 +163,23 @@ export type ThinkingMode = 'thinking' | 'fast'
 
 export type BackendProvider = 'lmstudio' | 'nvidia' | 'ollama' | 'openrouter'
 
+// ── RAG v2 types (Phase 1) ────────────────────────────────────────────────────
+
+/** Whether a document was stored inline (full text, small docs) or indexed (chunked + embedded). */
+export type RagDocumentMode = 'inline' | 'indexed'
+
+/** A single chunk stored in rag_chunks / chunks_fts / chunks_vec. */
+export interface RagChunk {
+  /** Auto-assigned INTEGER PRIMARY KEY (aligns across rag_chunks, chunks_fts, chunks_vec). */
+  id:           number
+  docId:        string
+  chatId:       string
+  docName:      string
+  chunkIndex:   number
+  sectionTitle: string | null
+  content:      string
+}
+
 export interface ChatSendPayload {
   messages:       WireMessage[]
   systemPrompt?:  string

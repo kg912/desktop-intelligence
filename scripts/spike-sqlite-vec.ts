@@ -9,58 +9,11 @@
  * TEMPORARY — Phase 0 spike, removed in RAG v2 Phase 5.
  */
 
-import path from 'path'
 import Database from 'better-sqlite3'
-import * as sqliteVec from 'sqlite-vec'
-
-// ── Exported canonical loader (becomes DatabaseService.loadSqliteVec in Phase 1) ──
-
-/**
- * Load the sqlite-vec extension into a better-sqlite3 Database instance.
- *
- * Primary path: delegates to sqlite-vec's own load() helper.
- * Fallback path: resolves the dylib manually, rewrites app.asar → app.asar.unpacked,
- * and strips the .dylib suffix before calling loadExtension().
- * This fixes electron-builder issue #8824 where better-sqlite3/SQLite appends the
- * platform suffix, producing vec0.dylib.dylib inside the ASAR virtual filesystem.
- *
- * Returns true if the extension loaded successfully, false otherwise.
- */
-export function loadSqliteVec(db: Database.Database): boolean {
-  // Primary: use the sqlite-vec package's own load helper
-  try {
-    sqliteVec.load(db)
-    return true
-  } catch {
-    // fall through to manual fallback
-  }
-
-  // Fallback: manual path resolution with ASAR rewrite + extension strip
-  try {
-    let extPath = sqliteVec.getLoadablePath()
-
-    // Rewrite app.asar → app.asar.unpacked so dlopen sees a real on-disk path.
-    // Electron patches require() to redirect ASAR paths but sqlite3_load_extension
-    // calls dlopen() directly, which has no knowledge of ASAR.
-    if (extPath.includes('app.asar' + path.sep)) {
-      extPath = extPath.split('app.asar' + path.sep).join('app.asar.unpacked' + path.sep)
-    }
-
-    // Strip .dylib: better-sqlite3 passes the path to sqlite3_load_extension which
-    // appends the platform suffix on macOS when the path does not already have it.
-    // When the resolved path already ends in .dylib and the suffix is added again,
-    // the resulting vec0.dylib.dylib does not exist → ENOENT.
-    if (extPath.endsWith('.dylib')) {
-      extPath = extPath.slice(0, -'.dylib'.length)
-    }
-
-    db.loadExtension(extPath)
-    return true
-  } catch (fallbackErr) {
-    console.error('[loadSqliteVec] Fallback loader failed:', fallbackErr)
-    return false
-  }
-}
+// Phase 1: canonical loader moved to sqliteVecLoader.ts — import for local use,
+// re-export for the Vitest spike test and index.ts env-gate probe.
+import { loadSqliteVec } from '../src/main/services/rag/sqliteVecLoader'
+export { loadSqliteVec }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

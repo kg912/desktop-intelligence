@@ -21,6 +21,8 @@ import Database from 'better-sqlite3'
 import { app }  from 'electron'
 import path     from 'path'
 import type { Chat, StoredMessage } from '../../shared/types'
+import { ensureVecLoaded, isVecAvailable } from './rag/sqliteVecLoader'
+import { EMBEDDING_DIM } from './EmbeddingService'
 
 let _db: Database.Database | null = null
 
@@ -143,6 +145,102 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE chats ADD COLUMN system_instructions TEXT`)
   } catch { /* column already exists */ }
 
+  // ── RAG v2 Phase 1 — load sqlite-vec extension (before migration) ────────────
+  // Must run on every launch so that if the extension was unavailable on a prior
+  // launch (e.g. cold boot before asarUnpack resolved), we pick it up now.
+  // Failure is non-fatal (D10): sets isVecAvailable() = false, FTS5-only retrieval.
+  ensureVecLoaded(_db)
+
+  // ── RAG v2 Phase 1 — schema migration (user_version 0 → 1) ─────────────────
+  const dbVersion = _db.pragma('user_version', { simple: true }) as number
+  if (dbVersion < 1) {
+    // 3b. Drop the Phase 5 "chunks" relic (dead code, no FK dependants)
+    _db.exec('DROP TABLE IF EXISTS chunks')
+
+    // 3c. Add v2 columns to existing documents table
+    try { _db.exec(`ALTER TABLE documents ADD COLUMN mode TEXT NOT NULL DEFAULT 'indexed'`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE documents ADD COLUMN content_hash TEXT`) }                  catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE documents ADD COLUMN token_count INTEGER`) }                catch { /* already exists */ }
+
+    // 3d. v2 inline-text and chunk tables
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS doc_inline_text (
+        doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        text   TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS rag_chunks (
+        id            INTEGER PRIMARY KEY,
+        doc_id        TEXT    NOT NULL,
+        chat_id       TEXT    NOT NULL,
+        doc_name      TEXT    NOT NULL,
+        chunk_index   INTEGER NOT NULL,
+        section_title TEXT,
+        content       TEXT    NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rag_chunks_chat ON rag_chunks(chat_id);
+    `)
+
+    // 3e. External-content FTS5 for rag_chunks + canonical sync triggers
+    try {
+      _db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+          content, content='rag_chunks', content_rowid='id'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS rag_chunks_ai
+          AFTER INSERT ON rag_chunks BEGIN
+            INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
+          END;
+
+        CREATE TRIGGER IF NOT EXISTS rag_chunks_ad
+          AFTER DELETE ON rag_chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES ('delete', old.id, old.content);
+          END;
+
+        CREATE TRIGGER IF NOT EXISTS rag_chunks_au
+          AFTER UPDATE ON rag_chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES ('delete', old.id, old.content);
+            INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
+          END;
+      `)
+    } catch (err) {
+      console.error('[DB] chunks_fts / trigger creation failed (FTS5 unavailable?):', err)
+    }
+
+    // 3f. Best-effort cleanup of stale hnswlib index file (VectorStoreService is dead code)
+    try {
+      const fsModule = require('fs') as typeof import('fs')
+      const vectorsHnsw = path.join(app.getPath('userData'), 'vectors.hnsw')
+      if (typeof fsModule.rmSync === 'function' && typeof fsModule.existsSync === 'function') {
+        if (fsModule.existsSync(vectorsHnsw)) {
+          fsModule.rmSync(vectorsHnsw, { force: true })
+          console.log('[DB] Removed stale vectors.hnsw file.')
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    // 3g. Seal migration
+    _db.exec('PRAGMA user_version = 1')
+    console.log('[DB] RAG v2 Phase 1 migration complete (user_version → 1).')
+  }
+
+  // 3h. Create chunks_vec OUTSIDE the version gate — runs on every launch so
+  // the table is created if vec became available after a prior failed launch.
+  if (isVecAvailable()) {
+    try {
+      _db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
+          chat_id text partition key,
+          embedding float[${EMBEDDING_DIM}]
+        )
+      `)
+    } catch (err) {
+      console.error('[DB] chunks_vec creation failed (sqlite-vec available but table failed):', err)
+    }
+  }
+
   return _db
 }
 
@@ -243,6 +341,49 @@ export function clearCompactedSummary(chatId: string): void {
     .run(chatId)
 }
 
+/**
+ * Delete all RAG data (v1 + v2) associated with a chat session.
+ * Called from deleteChatById before removing the chats row.
+ *
+ * v2: deletes rag_chunks (triggers clean chunks_fts via external-content sync),
+ *     chunks_vec embeddings, doc_inline_text, and documents rows.
+ * v1: also deletes document_chunks (Phase 28 FTS5 — v1 never cleaned up on delete;
+ *     this is the first-ever cleanup for v1 data, fixing the orphan-row leak).
+ */
+export function deleteRagDataForChat(chatId: string): void {
+  const db = getDB()
+
+  // v2: delete rag_chunks rows — AFTER INSERT trigger auto-deletes chunks_fts rows
+  try {
+    db.prepare('DELETE FROM rag_chunks WHERE chat_id = ?').run(chatId)
+  } catch (err) {
+    console.warn('[DB] deleteRagDataForChat: rag_chunks delete failed (non-fatal):', err)
+  }
+
+  // v2: delete vec embeddings if sqlite-vec is available (inline SQL — avoids circular require)
+  if (isVecAvailable()) {
+    try {
+      db.prepare('DELETE FROM chunks_vec WHERE chat_id = ?').run(chatId)
+    } catch (err) {
+      console.warn('[DB] deleteRagDataForChat: chunks_vec delete failed (non-fatal):', err)
+    }
+  }
+
+  // v1: delete FTS5 document_chunks rows (v1 path, never cleaned before this)
+  try {
+    db.prepare('DELETE FROM document_chunks WHERE chat_id = ?').run(chatId)
+  } catch (err) {
+    console.warn('[DB] deleteRagDataForChat: document_chunks delete failed (non-fatal):', err)
+  }
+
+  // v2 + v1: delete documents rows (CASCADE deletes doc_inline_text via FK)
+  try {
+    db.prepare('DELETE FROM documents WHERE chat_id = ?').run(chatId)
+  } catch (err) {
+    console.warn('[DB] deleteRagDataForChat: documents delete failed (non-fatal):', err)
+  }
+}
+
 export function deleteChatById(chatId: string): void {
   // Delete plot PNG files from disk before removing the DB row.
   // The plot_store FK has ON DELETE CASCADE so rows auto-delete,
@@ -253,6 +394,15 @@ export function deleteChatById(chatId: string): void {
   } catch (err) {
     console.warn('[DB] deletePlotsForChat failed (non-fatal):', err)
   }
+
+  // Delete RAG data (v1 document_chunks + v2 rag_chunks/vectors/inline) for this chat.
+  // Must run before DELETE FROM chats because documents has no FK to chats.
+  try {
+    deleteRagDataForChat(chatId)
+  } catch (err) {
+    console.warn('[DB] deleteRagDataForChat failed (non-fatal):', err)
+  }
+
   getDB().prepare('DELETE FROM chats WHERE id = ?').run(chatId)
 }
 

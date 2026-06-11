@@ -52,6 +52,12 @@ async function ensureReady(): Promise<void> {
   await _initPromise
 }
 
+/** Embedding model identifier — shared constant for RAG v2 config and EmbeddingService. */
+export const EMBEDDING_MODEL_ID = 'Xenova/all-MiniLM-L6-v2'
+
+/** Output dimensionality of the embedding model — used for vec0 table schema. */
+export const EMBEDDING_DIM = 384
+
 /** Returns a 384-dim normalised embedding for `text`. */
 export async function embed(text: string): Promise<number[]> {
   await ensureReady()
