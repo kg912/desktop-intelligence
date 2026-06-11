@@ -180,6 +180,34 @@ export interface RagChunk {
   content:      string
 }
 
+/** One passage included in a retrieval result (may be original winner or stitched neighbour). */
+export interface RagPassage {
+  rowid:        number
+  docId:        string
+  docName:      string
+  chunkIndex:   number
+  sectionTitle: string | null
+  content:      string
+  /** true when this chunk was added via ±1 stitch, not a direct retrieval winner */
+  stitched:     boolean
+  rrfScore?:    number
+}
+
+/** Return type of RagRetrievalService.retrieve(). */
+export interface RagRetrievalResult {
+  hits:          RagPassage[]
+  /** true when both lexical and vector candidate lists were empty after filtering */
+  noHit:         boolean
+  /** true when the embed call failed; retrieval ran on FTS5 only */
+  degradedMode:  boolean
+  lexicalCount:  number
+  vectorCount:   number
+  fusedCount:    number
+  tokensUsed:    number
+  /** Names of all indexed documents in this chat (used for no-hit message) */
+  docNames:      string[]
+}
+
 export interface ChatSendPayload {
   messages:       WireMessage[]
   systemPrompt?:  string

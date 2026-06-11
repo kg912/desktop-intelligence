@@ -1,10 +1,8 @@
 /**
- * RagChunker — pure chunking functions for RAG v2 Phase 1.
+ * RagChunker — pure chunking functions for RAG v2.
  *
- * No DB, no Electron, no service imports except tokenUtils.
+ * No DB, no Electron, no service imports.
  * Every function here is independently unit-testable.
- *
- * TEMPORARY marker — update/remove in Phase 5 demolition.
  */
 
 // ── Exported constants ────────────────────────────────────────────────────────

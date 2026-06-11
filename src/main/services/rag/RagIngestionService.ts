@@ -19,12 +19,14 @@ import { isVecAvailable } from './sqliteVecLoader'
 export type EmbedFn = (text: string) => Promise<number[]>
 
 export interface IngestParams {
-  docId:    string
-  chatId:   string | undefined
-  fileName: string
-  text:     string
+  docId:       string
+  chatId:      string | undefined
+  fileName:    string
+  text:        string
+  /** Pre-computed token count of `text`; callers that already counted tokens pass it here. */
+  tokenCount?: number
   /** Defaults to EmbeddingService.embed — injectable for tests. */
-  embedFn?: EmbedFn
+  embedFn?:    EmbedFn
 }
 
 export interface IngestResult {
@@ -145,8 +147,17 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
   // Collect rowids so we can align with embedding vectors
   const insertedRowids: number[] = []
 
+  // Use caller-supplied tokenCount when available; fall back to lazy import
+  let resolvedTokenCount = params.tokenCount ?? 0
+  if (!resolvedTokenCount) {
+    try {
+      const { countTokens } = await import('../tokenUtils')
+      resolvedTokenCount = countTokens(text)
+    } catch { /* non-fatal — 0 is fine */ }
+  }
+
   db.transaction(() => {
-    insertDoc.run(docId, fileName, Date.now(), effectiveChatId, contentHash, 0 /* token_count updated below */)
+    insertDoc.run(docId, fileName, Date.now(), effectiveChatId, contentHash, resolvedTokenCount)
     for (let i = 0; i < N; i++) {
       const c = chunks[i]
       const info = insertChunk.run(

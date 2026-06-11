@@ -89,8 +89,7 @@ vi.mock('../rag/RagIngestionService', async (importOriginal) => {
   }
 })
 
-// v1 RAGService mock
-vi.mock('../RAGService', () => ({ ingestDocument: vi.fn().mockResolvedValue(undefined) }))
+// RAGService no longer used by FileProcessorService (v1 path removed in Phase 2)
 
 // fs mock (only readFileSync needed for FileProcessorService)
 vi.mock('fs', () => ({
@@ -138,8 +137,8 @@ describe('FileProcessorService v2 routing — inline (small doc)', () => {
 
     const result = await processFile(makePayload('small.pdf'))
 
-    // v1 inject still returned
-    expect(result.inject).not.toBeNull()
+    // Phase 2: inject is always null — context delivered via RagRetrievalService
+    expect(result.inject).toBeNull()
     expect(result.kind).toBe('document')
 
     // v2 inline row
@@ -148,18 +147,12 @@ describe('FileProcessorService v2 routing — inline (small doc)', () => {
     const inlineRow = inlineRows[inlineRows.length - 1]  // most recent
     expect(inlineRow.text).toContain('Short document')
 
-    // documents row has mode=inline
+    // documents row has mode=inline (exactly one row per upload — no v1 paired row)
     const docRow = db.prepare('SELECT mode FROM documents WHERE id = ?').get(inlineRow.doc_id) as { mode: string } | undefined
     expect(docRow?.mode).toBe('inline')
 
-    // No v2 rag_chunks for this doc
+    // No rag_chunks for inline doc
     expect((db.prepare(`SELECT COUNT(*) AS n FROM rag_chunks WHERE doc_id = ?`).get(inlineRow.doc_id) as { n: number }).n).toBe(0)
-
-    // v1 document_chunks still written (mocked RAGService; but the mock fires)
-    // We can't directly verify v1 document_chunks in this test because RAGService is mocked.
-    // What we CAN verify: v1 ingestDocument was called.
-    const { ingestDocument } = await import('../RAGService')
-    expect(vi.mocked(ingestDocument)).toHaveBeenCalled()
   })
 })
 
@@ -178,8 +171,8 @@ describe('FileProcessorService v2 routing — indexed (large doc)', () => {
 
     const result = await processFile(makePayload('large.pdf'))
 
-    // v1 inject still returned
-    expect(result.inject).not.toBeNull()
+    // Phase 2: inject is always null
+    expect(result.inject).toBeNull()
     expect(result.kind).toBe('document')
 
     // Verify the large doc didn't end up in inline text

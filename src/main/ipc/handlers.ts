@@ -20,7 +20,7 @@ import {
   getChatSystemInstructions,
   setChatSystemInstructions,
 } from '../services/DatabaseService'
-import { retrieveContext } from '../services/RAGService'
+import { retrieve as ragRetrieve, buildContextEnvelope } from '../services/rag/RagRetrievalService'
 import type {
   ConnectionState,
   DaemonState,
@@ -340,93 +340,92 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
 
 
-    // ── 3. RAG context retrieval ─────────────────────────────
-    // Runs unconditionally (independent of web search) so a web search
-    // timeout can never starve the RAG pipeline. Kept separate from
-    // systemParts so it is injected as a dedicated system message
-    // immediately before the user's last turn (step 6 below).
-    let ragContext = ''
-    if (lastUserMsg) {
-      try {
-        ragContext = await retrieveContext(lastUserMsg.content, payload.chatId)
-      } catch (err) {
-        console.error('[RAG] retrieveContext failed:', err)
-      }
-    }
-
-    // ── 4. Build enriched system prompt (web search only) ────
+    // ── 3. v2 RAG context retrieval + envelope ──────────────────────────────
+    // Builds ONE structured context envelope containing inline docs (full text)
+    // and/or retrieved passages from indexed docs, then splices it as a single
+    // system message immediately before the last user turn.
+    // Doc-free chats: zero queries, zero added messages.
     const enrichedSystemPrompt = systemParts.join('\n\n') || undefined
     let enrichedMessages       = payload.messages
 
-    // ── 5. Context sliding — now handled by ChatService token-budget trim ──
-    // slideIfNeeded() was removed. ChatService.buildMessages() reads the user's
-    // configured context window from SettingsStore and trims to a proper budget.
+    if (payload.chatId) {
+      try {
+        const db = getDB()
 
-    // ── 6. Splice RAG context as a dedicated system message ──
-    // Insert immediately before the last user message so the model sees
-    // the retrieved chunks as the most recent context signal.
-    // Phase 8 (Bug 3): the mandatory directive prefix forces the model to
-    // treat the provided text as directly readable file content and prevents
-    // it from claiming it cannot access the vector database or attached files.
-    if (ragContext) {
-      const lastUserIdx = [...enrichedMessages].map((m) => m.role).lastIndexOf('user')
-      if (lastUserIdx !== -1) {
-        const RAG_DIRECTIVE =
-          '[SYSTEM DIRECTIVE: You are equipped with a local RAG vector database. ' +
-          'The user has attached files to this conversation. The raw text from these ' +
-          'files has been extracted and is provided below. YOU MUST ACT AS IF YOU CAN ' +
-          'READ THESE FILES DIRECTLY. NEVER state that you cannot access files or the ' +
-          'vector database. Use the text below to answer the user\'s query perfectly.]'
+        // Resolve current context window for inline truncation cap
+        let contextWindow = 32768
+        try {
+          const { readSettings } = await import('../services/SettingsStore')
+          const { contextLength } = readSettings()
+          if (typeof contextLength === 'number' && contextLength > 0) contextWindow = contextLength
+        } catch { /* fallback */ }
 
-        const fullRagContent = `${RAG_DIRECTIVE}\n\n${ragContext}`
-        const ragMessage: WireMessage = { role: 'system', content: fullRagContent }
-        enrichedMessages = [
-          ...enrichedMessages.slice(0, lastUserIdx),
-          ragMessage,
-          ...enrichedMessages.slice(lastUserIdx),
-        ]
-        console.log(
-          `[RAG] INJECTING RAG CONTEXT (chatId=${payload.chatId ?? 'none'}, ` +
-          `${ragContext.length} chars): ` +
-          ragContext.slice(0, 120).replace(/\n/g, ' ') + '…'
-        )
-      }
-    }
+        // ── Inline documents: small docs stored in full ──────────────────────
+        const inlineRows = db.prepare(
+          `SELECT d.name AS doc_name, it.text
+           FROM   doc_inline_text it
+           JOIN   documents d ON d.id = it.doc_id
+           WHERE  d.chat_id = ?`
+        ).all(payload.chatId) as Array<{ doc_name: string; text: string }>
 
-    // ── 3b. Direct document injection — consume attachment.inject fields ──────
-    // FileProcessorService extracts raw PDF/text content and returns it in
-    // attachment.inject. This must be spliced into the wire messages so the
-    // model receives the full document text regardless of RAG retrieval timing.
-    // Without this step, inject is a dead end — it never reaches the model.
-    const injectAttachments = (payload.attachments ?? []).filter(
-      (a) => a.inject && typeof a.inject === 'string' && a.inject.trim().length > 0
-    )
-    if (injectAttachments.length > 0) {
-      const injectParts = injectAttachments.map((a) => a.inject as string)
-      const combinedInject = injectParts.join('\n\n---\n\n')
-      const injectMessage: WireMessage = {
-        role: 'system',
-        content:
-          `[DOCUMENT CONTENT — READ THIS CAREFULLY. The user has attached the following file(s). ` +
-          `This is the COMPLETE extracted text. Answer all questions using this content directly.]\n\n` +
-          combinedInject,
+        const inlineTexts = inlineRows.map(r => ({ docName: r.doc_name, text: r.text }))
+
+        // ── Indexed documents: hybrid retrieval ──────────────────────────────
+        const hasIndexed = (db.prepare(
+          `SELECT COUNT(*) AS n FROM documents WHERE chat_id = ? AND mode = 'indexed'`
+        ).get(payload.chatId) as { n: number }).n > 0
+
+        let ragResult: Awaited<ReturnType<typeof ragRetrieve>> | null = null
+        if (hasIndexed && lastUserMsg) {
+          try {
+            ragResult = await ragRetrieve(userMessageText, payload.chatId)
+          } catch (err) {
+            console.error('[RAG] retrieve() failed:', err)
+          }
+        }
+
+        // ── Observability trace ──────────────────────────────────────────────
+        if (ragResult) {
+          const { lexicalCount, vectorCount, fusedCount, hits, tokensUsed, degradedMode, noHit } = ragResult
+          console.log(
+            `[RAG] query="${userMessageText.slice(0, 80)}" ` +
+            `lex=${lexicalCount} vec=${vectorCount} fused=${fusedCount} ` +
+            `final=${hits.length} tokens=${tokensUsed} ` +
+            `degraded=${degradedMode} noHit=${noHit}`
+          )
+        }
+
+        // ── Build envelope and splice ────────────────────────────────────────
+        const hasContent = inlineTexts.length > 0 || (ragResult !== null)
+        if (hasContent) {
+          const envelope = buildContextEnvelope({
+            passages:        ragResult?.hits ?? [],
+            noHit:           ragResult?.noHit ?? false,
+            inlineTexts,
+            indexedDocNames: ragResult?.docNames ?? [],
+            contextWindow,
+          })
+
+          if (envelope) {
+            const lastUserIdx = [...enrichedMessages].map((m) => m.role).lastIndexOf('user')
+            if (lastUserIdx !== -1) {
+              const ragMsg: WireMessage = { role: 'system', content: envelope }
+              enrichedMessages = [
+                ...enrichedMessages.slice(0, lastUserIdx),
+                ragMsg,
+                ...enrichedMessages.slice(lastUserIdx),
+              ]
+              console.log(
+                `[RAG] INJECTING CONTEXT ENVELOPE (chatId=${payload.chatId}, ` +
+                `${envelope.length} chars): ` +
+                envelope.slice(0, 120).replace(/\n/g, ' ') + '…'
+              )
+            }
+          }
+        }
+      } catch (ragErr) {
+        console.error('[RAG] v2 retrieval block failed (non-fatal):', ragErr)
       }
-      // Splice immediately before the last user message (same position as RAG context)
-      const lastUserIdx2 = [...enrichedMessages].map((m) => m.role).lastIndexOf('user')
-      if (lastUserIdx2 !== -1) {
-        enrichedMessages = [
-          ...enrichedMessages.slice(0, lastUserIdx2),
-          injectMessage,
-          ...enrichedMessages.slice(lastUserIdx2),
-        ]
-        console.log(
-          `[DirectInject] ✅ Injected ${injectAttachments.length} attachment(s) into wire payload. ` +
-          `Total inject chars: ${combinedInject.length}. ` +
-          `Files: ${injectAttachments.map((a) => a.name).join(', ')}`
-        )
-      }
-    } else {
-      console.log(`[DirectInject] No inject attachments found in payload (count=${payload.attachments?.length ?? 0})`)
     }
 
     // ── 7. Image RAG — retrieve stored plots if user references a past chart ──

@@ -241,6 +241,33 @@ export function getDB(): Database.Database {
     }
   }
 
+  // ── RAG v2 Phase 2 — cutover migration (user_version 1 → 2) ────────────────
+  // After this point v1 retrieval is gone: drop document_chunks, purge dead v1
+  // document rows, and wipe all v2 RAG data so that Phase 2 starts from a clean,
+  // consistently-normalised state (vectors ingested in Phase 1 may not be L2-
+  // normalised if the model was loaded cold; re-ingest fixes this cleanly).
+  const dbVersion2 = _db.pragma('user_version', { simple: true }) as number
+  if (dbVersion2 < 2) {
+    // a. Drop v1 FTS5 table
+    _db.exec('DROP TABLE IF EXISTS document_chunks')
+
+    // b. Remove v1-era documents rows (no content_hash = written before v2)
+    _db.exec('DELETE FROM documents WHERE content_hash IS NULL')
+
+    // c. Wipe all v2 RAG data for a clean, normalised re-start
+    //    (per O1: per-chat docs are ephemeral; re-upload is one drag-and-drop)
+    _db.exec('DELETE FROM rag_chunks')   // triggers clean chunks_fts
+    _db.exec('DELETE FROM doc_inline_text')
+    _db.exec('DELETE FROM documents')
+    if (isVecAvailable()) {
+      try { _db.exec('DELETE FROM chunks_vec') } catch { /* non-fatal */ }
+    }
+
+    // d. Seal
+    _db.exec('PRAGMA user_version = 2')
+    console.log('[DB] RAG v2 Phase 2 migration complete (user_version → 2). All stale RAG data wiped for clean re-ingest.')
+  }
+
   return _db
 }
 

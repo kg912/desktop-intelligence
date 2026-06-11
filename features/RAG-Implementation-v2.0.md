@@ -95,8 +95,10 @@ attach lecture-notes.pdf (34 pages)
 ┌──────────────────────────────┐
 │ 5. CHUNK (RagChunker)        │
 │   target 400 tokens          │   split preference, in order:
-│   overlap  60 tokens (~15%)  │   blank line ▸ newline ▸ sentence end ▸ hard cut
-│   track nearest heading      │   "§3 Optimization" travels with its chunks
+│   overlap  60 tokens (~15%)  │   blank line ▸ newline ▸ sentence end ▸ word ▸ hard cut
+│   char estimate only         │   splits use 3.5 chars/token estimate (no tokenUtils
+│   track nearest heading      │   in hot path — avoids O(n²) cost on large docs)
+│                              │   "§3 Optimization" travels with its chunks
 └──────────────┬───────────────┘
                ▼   ~70 chunks
 ┌──────────────────────────────┐
@@ -272,7 +274,7 @@ ingestion fails       ──► error logged, message still sends     chat unaff
 |---|---|---|
 | 0 | sqlite-vec packaged-build validation spike | ✅ Done (2026-06-11) — dev 0.07ms KNN, packaged 0.15ms, partition key confirmed |
 | 1 | Schema v2, chunker, dual-index ingestion (v1 still serving) | ✅ Done (2026-06-11) — dual-write live; v1 path untouched; 43 new tests |
-| 2 | Hybrid retrieval + RRF, handlers cutover | ⏳ |
+| 2 | Hybrid retrieval + RRF, handlers cutover | ✅ Done (2026-06-11) — FTS5+KNN+RRF live, v1 path fully removed, inject=null, 717/718 tests |
 | 3 | Local cross-encoder rerank (flag, default off) | ⏳ |
 | 4 | Progress events, observability traces, optional contextual headers | ⏳ |
 | 5 | Demolition: RAGService.ts, VectorStoreService.ts, hnswlib-node removed | ⏳ |

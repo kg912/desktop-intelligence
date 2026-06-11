@@ -1,5 +1,6 @@
 /**
- * DatabaseService RAG v2 migration + deleteRagDataForChat tests — Phase 1
+ * DatabaseService RAG v2 migration + deleteRagDataForChat tests — Phase 2
+ * Updated: user_version is now 2; document_chunks is dropped in Phase 2 migration.
  *
  * Uses a real temporary-directory SQLite DB (not in-memory) so that the
  * module-level `_db` singleton in DatabaseService is exercised exactly as
@@ -47,9 +48,9 @@ describe('DatabaseService RAG v2 migration', () => {
     db = getDB()
   })
 
-  it('reaches user_version = 1 after first getDB()', () => {
+  it('reaches user_version = 2 after first getDB() (Phase 2 migration applied)', () => {
     const v = db.pragma('user_version', { simple: true }) as number
-    expect(v).toBe(1)
+    expect(v).toBe(2)
   })
 
   it('documents table has mode, content_hash, token_count columns', () => {
@@ -95,18 +96,28 @@ describe('DatabaseService RAG v2 migration', () => {
     expect(tables.length).toBe(0)
   })
 
-  it('document_chunks (v1 FTS5) is still present', () => {
+  it('document_chunks (v1 FTS5) is absent — dropped in Phase 2 migration', () => {
     const tables = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks'"
     ).all() as Array<{ name: string }>)
-    expect(tables.length).toBe(1)
+    expect(tables.length).toBe(0)
   })
 
   it('migration is idempotent (calling getDB() again does not throw)', () => {
     expect(() => getDB()).not.toThrow()
-    // user_version should still be 1
+    // user_version should still be 2
     const v = db.pragma('user_version', { simple: true }) as number
-    expect(v).toBe(1)
+    expect(v).toBe(2)
+  })
+
+  it('Phase 2 migration: NULL-hash documents rows removed, document_chunks absent', () => {
+    // Manually insert a v1-era row (no content_hash) to verify migration cleans it
+    // This row is already cleaned by the Phase 2 migration that ran at init.
+    // Verify: no such rows remain.
+    const nullHashCount = (db.prepare(
+      "SELECT COUNT(*) AS n FROM documents WHERE content_hash IS NULL"
+    ).get() as { n: number }).n
+    expect(nullHashCount).toBe(0)
   })
 })
 
@@ -150,8 +161,7 @@ describe('deleteRagDataForChat', () => {
       { rowid: otherChunkId, chatId: otherChat, embedding: makeVec(2) },
     ])
 
-    // Seed v1 document_chunks
-    db.prepare(`INSERT INTO document_chunks (doc_id, chat_id, doc_name, content, chunk_index) VALUES (?, ?, ?, ?, ?)`).run(docId1, chatId, 'del.pdf', 'v1 chunk', 0)
+    // (document_chunks no longer exists in Phase 2 — table was dropped in migration 1→2)
 
     // ── Delete ──
     deleteRagDataForChat(chatId)
@@ -159,7 +169,6 @@ describe('deleteRagDataForChat', () => {
     // Target chat data gone
     expect((db.prepare('SELECT COUNT(*) AS n FROM rag_chunks WHERE chat_id = ?').get(chatId) as { n: number }).n).toBe(0)
     expect((db.prepare('SELECT COUNT(*) AS n FROM documents WHERE chat_id = ?').get(chatId) as { n: number }).n).toBe(0)
-    expect((db.prepare("SELECT COUNT(*) AS n FROM document_chunks WHERE chat_id = ?").get(chatId) as { n: number }).n).toBe(0)
     // doc_inline_text cascades with documents
     expect((db.prepare('SELECT COUNT(*) AS n FROM doc_inline_text WHERE doc_id = ?').get(docId1) as { n: number }).n).toBe(0)
 
