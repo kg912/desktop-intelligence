@@ -412,3 +412,145 @@ describe('buildContextEnvelope', () => {
     expect(env).toBe('')
   })
 })
+
+// ── Priority budget: top-RRF wins over alphabetical order ─────────────────────
+
+describe('retrieve — priority budget: top-RRF over alphabetical order', () => {
+  it('admits the highest-RRF chunk even when it is alphabetically last', async () => {
+    const chatId    = 'chat-prio-alpha'
+    const querySeed = 11
+
+    // Large content — enough tokens to create real budget pressure
+    const big = 'priority alpha '.repeat(600)  // ~1800+ chars, several hundred tokens
+
+    // z-last.pdf: highest RRF — FTS5 + vec rank 0 (close to query)
+    const idZ = seedChunk({
+      chatId, docId: 'doc-pa-z', docName: 'z-last.pdf', chunkIndex: 0,
+      content: `priority alpha ${big}`, vecSeed: querySeed,
+    })
+    // Five alphabetically-earlier docs: FTS5 only (vec seeds far → filtered by VEC_DISTANCE_FLOOR)
+    for (let i = 0; i < 5; i++) {
+      seedChunk({
+        chatId,
+        docId:   `doc-pa-${i}`,
+        docName: `${String.fromCharCode(97 + i)}-filler.pdf`,  // a-filler … e-filler
+        chunkIndex: 0,
+        content: `priority alpha ${big}`,
+        vecSeed: 80 + i,  // far from querySeed=11 — filtered by distance floor
+      })
+    }
+
+    const result = await retrieve('priority alpha', chatId, stubEmbed(querySeed))
+
+    // z-last.pdf has the highest RRF score (vec rank 0 + lexical rank) and MUST be admitted.
+    // Under the old sort-then-truncate approach it would be excluded (alphabetically last).
+    expect(result.hits.some(h => h.rowid === idZ)).toBe(true)
+  })
+})
+
+// ── Priority budget: stitch dropped before winner ─────────────────────────────
+
+describe('retrieve — priority budget: stitch dropped before winner', () => {
+  it('winner-2 is admitted even when winner-1\'s stitch would have consumed its slot', async () => {
+    const chatId    = 'chat-prio-stitch'
+    const querySeed = 13
+
+    // winner-1: large chunk; winner-2: tiny chunk; stitch (adjacent to winner-1): large chunk.
+    //
+    // Two-pass allocation:
+    //   Pass 1: winner-1 (large) admitted; winner-2 (tiny) admitted → both fit.
+    //   Pass 2: stitch (large) — remaining budget ≈ CONTEXT_TOKEN_BUDGET - winner-1 - winner-2.
+    //           If stitch > remaining, it is dropped. winner-2 is already safe.
+    //
+    // Old single-pass (sort+truncate) would order:
+    //   a-prio-stitch.pdf chunk 0 (winner-2), z-prio-stitch.pdf chunk 4 (stitch), chunk 5 (winner-1).
+    //   With stitch + winner-1 > budget, winner-1 would be the one dropped — NOT the stitch.
+
+    const large = 'st '.repeat(2800)  // ~2800+ tokens
+    const small = 'st unique winner two'  // ~5 tokens
+
+    // winner-1 in alphabetically-LAST doc (so old code places it after the stitch)
+    const idW1 = seedChunk({
+      chatId, docId: 'doc-ps-z', docName: 'z-prio-stitch.pdf', chunkIndex: 5,
+      content: `st winner one ${large}`, vecSeed: querySeed,
+    })
+    // Stitch neighbour at chunkIndex 4 of same doc (adjacent to winner-1)
+    seedChunk({
+      chatId, docId: 'doc-ps-z', docName: 'z-prio-stitch.pdf', chunkIndex: 4,
+      content: `st stitch neighbour ${large}`, vecSeed: querySeed + 0.01,
+    })
+    // winner-2: tiny chunk in alphabetically-FIRST doc
+    const idW2 = seedChunk({
+      chatId, docId: 'doc-ps-a', docName: 'a-prio-stitch.pdf', chunkIndex: 0,
+      content: `st winner two ${small}`, vecSeed: querySeed + 0.005,
+    })
+
+    const result = await retrieve('st winner', chatId, stubEmbed(querySeed))
+
+    const hitIds = result.hits.map(h => h.rowid)
+    // Both winners must be present — a stitched neighbour cannot displace an un-admitted winner
+    expect(hitIds).toContain(idW1)
+    expect(hitIds).toContain(idW2)
+  })
+})
+
+// ── Combined inline accounting ────────────────────────────────────────────────
+
+describe('buildContextEnvelope — combined inline accounting', () => {
+  it('second inline doc omitted when first doc exhausts the inline budget', () => {
+    // contextWindow=500 → inlineBudget=250 tokens
+    // doc1: ~300+ tokens → individually exceeds 250 → truncated; budget exhausted
+    // doc2: very small (individually fits within 250) → budget gone → omitted with note
+    // This test validates combined accounting: the old per-doc implementation would include
+    // doc2 because it individually fits the cap; combined accounting correctly omits it.
+    const text1 = 'hello '.repeat(300)  // ~300 tokens > inlineBudget of 250
+    const text2 = 'world content here'  // ~4 tokens — fits individually; not after combined cap
+    const env = buildContextEnvelope({
+      passages: [], noHit: false,
+      inlineTexts: [
+        { docName: 'first.pdf',  text: text1 },
+        { docName: 'second.txt', text: text2 },
+      ],
+      indexedDocNames: [], contextWindow: 500,
+    })
+    // First doc: present but truncated (exceeded the per-envelope inline budget)
+    expect(env).toContain('first.pdf')
+    expect(env).toContain('[Note: first.pdf truncated to fit the context window]')
+    // Second doc: omitted entirely — budget was exhausted by first doc
+    expect(env).toContain('[Note: second.txt omitted to fit the context window]')
+    expect(env).not.toContain('world content here')
+  })
+})
+
+// ── Preamble wording ──────────────────────────────────────────────────────────
+
+describe('buildContextEnvelope — preamble wording', () => {
+  it('inline-only chat (no retrieved passages, noHit=false) uses the combined preamble', () => {
+    const env = buildContextEnvelope({
+      passages: [], noHit: false,
+      inlineTexts: [{ docName: 'notes.txt', text: 'some content here' }],
+      indexedDocNames: [], contextWindow: 32768,
+    })
+    expect(env).toContain('<attached_file_context>')
+    // New preamble explicitly covers both inline docs and retrieved passages
+    expect(env).toContain('full documents')
+    expect(env).toContain('and/or passages retrieved for the current question')
+    // Old preamble ("Relevant passages retrieved for the…") is gone
+    expect(env).not.toContain('Relevant passages retrieved for the')
+  })
+
+  it('mixed inline + retrieved also uses the combined preamble', () => {
+    const env = buildContextEnvelope({
+      passages: [{
+        rowid: 99, docId: 'doc-preamble', docName: 'indexed.pdf',
+        chunkIndex: 0, sectionTitle: null,
+        content: 'retrieved content', stitched: false, rrfScore: 0.5,
+      }],
+      noHit: false,
+      inlineTexts: [{ docName: 'notes.txt', text: 'inline content' }],
+      indexedDocNames: ['indexed.pdf'], contextWindow: 32768,
+    })
+    expect(env).toContain('full documents')
+    expect(env).toContain('and/or passages retrieved for the current question')
+  })
+})

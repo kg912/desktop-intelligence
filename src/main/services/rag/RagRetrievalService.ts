@@ -152,17 +152,40 @@ export function buildContextEnvelope(opts: {
 
   const sections: string[] = []
 
-  // ── Inline documents (full text, truncated if needed) ─────────────────────
+  // ── Inline documents (cumulative token accounting) ───────────────────────
+  // Track COMBINED tokens across all inline docs against floor(0.5 × contextWindow).
+  // When the cap is crossed mid-doc, truncate THAT doc at the remaining budget
+  // and mark the cap exhausted. Subsequent docs are replaced by a single omit note.
+  let cumulativeInlineTokens = 0
+  let inlineBudgetExhausted = false
+
   for (const { docName, text } of inlineTexts) {
     const header = `[${docName} · full document]`
-    // Token-budget cap: if combined inline would overflow, truncate with notice
-    if (countTokens(text) > inlineBudget) {
-      // Approximate char truncation
-      const capChars = inlineBudget * 4  // conservative 4 chars/token
+
+    if (inlineBudgetExhausted) {
+      // All docs after the cap is crossed are omitted entirely
+      sections.push(`[Note: ${docName} omitted to fit the context window]`)
+      continue
+    }
+
+    const docTokens = countTokens(text)
+    const remaining = inlineBudget - cumulativeInlineTokens
+
+    if (docTokens <= remaining) {
+      // Full doc fits within remaining combined budget
+      sections.push(`${header}\n${text}`)
+      cumulativeInlineTokens += docTokens
+    } else if (remaining > 0) {
+      // Partial fit — truncate at remaining budget (char approximation)
+      const capChars = remaining * 4  // conservative 4 chars/token
       const truncated = text.slice(0, capChars)
       sections.push(`${header}\n${truncated}\n[Note: ${docName} truncated to fit the context window]`)
+      cumulativeInlineTokens = inlineBudget
+      inlineBudgetExhausted = true
     } else {
-      sections.push(`${header}\n${text}`)
+      // No remaining budget — omit entirely
+      sections.push(`[Note: ${docName} omitted to fit the context window]`)
+      inlineBudgetExhausted = true
     }
   }
 
@@ -189,9 +212,10 @@ export function buildContextEnvelope(opts: {
 
   return (
     `<attached_file_context>\n` +
-    `The user attached files to this conversation. Relevant passages retrieved for the\n` +
-    `current question are below. Treat them as readable file content; cite the file name\n` +
-    `when drawing on them. If the passages do not contain the answer, say so.\n\n` +
+    `The user attached files to this conversation. Their content (full documents\n` +
+    `and/or passages retrieved for the current question) is below. Treat it as\n` +
+    `readable file content; cite the file name when drawing on it. If it does not\n` +
+    `contain the answer, say so.\n\n` +
     `${body}\n` +
     `</attached_file_context>`
   )
@@ -294,50 +318,73 @@ export async function retrieve(
   // Fetch full rows for winners
   const chunkMap = fetchChunkRows(topIds)
 
-  // ── 4. Stitch: include ±1 neighbours within token budget ─────────────────
-  const includedIds = new Set(topIds)
-  const passages: RagPassage[] = []
+  // ── 4. Priority-ordered budget allocation ────────────────────────────────────
+  //
+  // Pass 1 — winners (descending RRF score order):
+  //   • The very first winner is always admitted regardless of size (guarantees
+  //     at least one result even on an oversized single chunk).
+  //   • Any subsequent winner that does not fit is SKIPPED with `continue` —
+  //     a smaller winner later in the list may still fit.
+  //
+  // Pass 2 — stitches (fills remaining budget only):
+  //   • For each admitted winner (in RRF order), attempt its ±1 neighbours.
+  //   • A neighbour is added only if it fits within the remaining budget.
+  //   • Guarantee: stitched neighbours can NEVER displace an un-admitted winner
+  //     because all winners are decided before any stitch is attempted.
 
+  let tokensUsed = 0
+
+  // Pass 1 — winners
+  const admittedWinners: Array<{ row: ChunkRow; score: number }> = []
   for (const { id, score } of scored.slice(0, FINAL_K)) {
     const row = chunkMap.get(id)
     if (!row) continue
+    const t = countTokens(row.content)
+    if (tokensUsed + t > CONTEXT_TOKEN_BUDGET && admittedWinners.length > 0) {
+      continue  // too large for current budget; try the next winner
+    }
+    admittedWinners.push({ row, score })
+    tokensUsed += t
+  }
 
-    passages.push({
-      rowid: row.id, docId: row.doc_id, docName: row.doc_name,
-      chunkIndex: row.chunk_index, sectionTitle: row.section_title,
-      content: row.content, stitched: false, rrfScore: score,
-    })
+  // Seed passages with admitted winners
+  const passages: RagPassage[] = admittedWinners.map(({ row, score }) => ({
+    rowid: row.id, docId: row.doc_id, docName: row.doc_name,
+    chunkIndex: row.chunk_index, sectionTitle: row.section_title,
+    content: row.content, stitched: false, rrfScore: score,
+  }))
 
-    // Stitch ±1
+  // Track all admitted ids to prevent duplicates (includes winners so a
+  // top-k chunk is not re-added as a neighbour stitch of another winner).
+  const includedIds = new Set<number>(admittedWinners.map(w => w.row.id))
+
+  // Pass 2 — stitches
+  for (const { row } of admittedWinners) {
     for (const delta of [-1, 1]) {
       const adj = fetchAdjacentChunk(row.doc_id, row.chunk_index + delta, chatId)
       if (adj && !includedIds.has(adj.id)) {
-        includedIds.add(adj.id)
-        passages.push({
-          rowid: adj.id, docId: adj.doc_id, docName: adj.doc_name,
-          chunkIndex: adj.chunk_index, sectionTitle: adj.section_title,
-          content: adj.content, stitched: true,
-        })
+        const t = countTokens(adj.content)
+        if (tokensUsed + t <= CONTEXT_TOKEN_BUDGET) {
+          includedIds.add(adj.id)
+          passages.push({
+            rowid: adj.id, docId: adj.doc_id, docName: adj.doc_name,
+            chunkIndex: adj.chunk_index, sectionTitle: adj.section_title,
+            content: adj.content, stitched: true,
+          })
+          tokensUsed += t
+        }
       }
     }
   }
 
-  // ── 5. Sort by doc + chunk_index, then apply token budget ─────────────────
+  // ── 5. Sort admitted passages for presentation ────────────────────────────
+  // Budget allocation above is by RRF priority; sorting is for readability only.
   passages.sort((a, b) =>
     a.docName.localeCompare(b.docName) || a.chunkIndex - b.chunkIndex
   )
 
-  let tokensUsed = 0
-  const budgetedPassages: RagPassage[] = []
-  for (const p of passages) {
-    const t = countTokens(p.content)
-    if (tokensUsed + t > CONTEXT_TOKEN_BUDGET && budgetedPassages.length > 0) break
-    budgetedPassages.push(p)
-    tokensUsed += t
-  }
-
   return {
-    hits: budgetedPassages,
+    hits: passages,
     noHit: false,
     degradedMode,
     lexicalCount,
