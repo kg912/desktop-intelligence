@@ -151,11 +151,12 @@ word "overfitting"; it talks about "L2 regularization" and "early stopping".
                   └──────────────────┬──────────────────┘
                                      ▼  top fused candidates
                   ┌─────────────────────────────────────┐
-                  │  (Phase 3, optional, default off)   │
-                  │  CROSS-ENCODER RERANK — tiny ONNX   │
-                  │  model scores (query, chunk) pairs  │
+                  │  CROSS-ENCODER RERANK (flag, off)   │
+                  │  jinaai/jina-reranker-v1-tiny-en    │
+                  │  scores top-20 (query, chunk) pairs │
+                  │  215 ms warm / 20 pairs (M5 Pro)    │
                   └──────────────────┬──────────────────┘
-                                     ▼  final 6 winners
+                                     ▼  final 6 (RRF) or 8 (rerank) winners
                   ┌─────────────────────────────────────┐
                   │  NEIGHBOUR STITCH + ASSEMBLY        │
                   │  pull chunk_index ±1 if budget OK   │
@@ -253,10 +254,12 @@ index-vs-data drift, no separate file to corrupt — the lesson of hnswlib.
 | `CHUNK_TOKENS` / `CHUNK_OVERLAP_TOKENS` | 400 / 60 | Chunk geometry |
 | `K_LEXICAL` / `K_VECTOR` | 20 / 20 | Candidates per retriever |
 | `RRF_K` | 60 | Fusion smoothing constant (industry default) |
-| `FINAL_K` | 6 (8 w/ rerank) | Passages handed to assembly |
+| `FINAL_K` / `FINAL_K_RERANKED` | 6 / 8 | Passages handed to budget allocation (RRF path / rerank path) |
+| `RERANK_CANDIDATES` | 20 | Top RRF candidates passed to the cross-encoder when rerank is on |
 | `CONTEXT_TOKEN_BUDGET` | 6,000 tok | Hard cap on the envelope |
-| `RERANK_ENABLED` | off | Phase 3 cross-encoder toggle (Settings) |
+| `RERANK_ENABLED` | **off** (default) | Cross-encoder reranker toggle — Settings → Debug → "Re-rank retrieved passages". Requires one-time ~7 MB model download (jinaai/jina-reranker-v1-tiny-en). Adds ~215 ms warm (M5 Pro) / est. ~500 ms (M1 Pro). |
 | Embedding model | all-MiniLM-L6-v2, 384-d | Shared `EmbeddingService` primitive; swappable constant |
+| Reranker model | jinaai/jina-reranker-v1-tiny-en | `RerankerService` — selected by Phase 3 spike; RERANKER_MODEL_ID constant |
 
 ## 8. Failure behaviour (graceful, never blocking)
 
@@ -265,6 +268,7 @@ sqlite-vec won't load ──► FTS5-only retrieval, logged once      chat unaff
 embed() throws        ──► FTS5-only for that query              chat unaffected
 FTS5 syntax error     ──► dense-only for that query             chat unaffected
 both come back empty  ──► honest no-hit note                    chat unaffected
+rerank() throws       ──► [RAG] warn logged, RRF order used    chat unaffected
 ingestion fails       ──► error logged, message still sends     chat unaffected
 ```
 
@@ -275,7 +279,7 @@ ingestion fails       ──► error logged, message still sends     chat unaff
 | 0 | sqlite-vec packaged-build validation spike | ✅ Done (2026-06-11) — dev 0.07ms KNN, packaged 0.15ms, partition key confirmed |
 | 1 | Schema v2, chunker, dual-index ingestion (v1 still serving) | ✅ Done (2026-06-11) — dual-write live; v1 path untouched; 43 new tests |
 | 2 | Hybrid retrieval + RRF, handlers cutover | ✅ Done (2026-06-11) — FTS5+KNN+RRF live, v1 path fully removed, inject=null, 717/718 tests |
-| 3 | Local cross-encoder rerank (flag, default off) | ⏳ |
+| 3 | Local cross-encoder rerank (flag, default off) | ✅ Done (2026-06-12) — jinaai/jina-reranker-v1-tiny-en; cold 93ms, warm20 215ms; 9 new tests |
 | 4 | Progress events, observability traces, optional contextual headers | ⏳ |
 | 5 | Demolition: RAGService.ts, VectorStoreService.ts, hnswlib-node removed | ⏳ |
 

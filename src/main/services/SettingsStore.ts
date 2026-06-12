@@ -64,6 +64,11 @@ export interface AppSettings {
   includeImages?: boolean
   /** User-customised suggestion cards shown on the empty-chat welcome screen (1–4 strings). */
   suggestionCards?: string[]
+  /**
+   * When true, the cross-encoder reranker (RerankerService) re-scores the top RRF candidates
+   * before budget allocation. Requires a one-time model download (~7 MB). Default: false.
+   */
+  rerankEnabled?: boolean
 }
 
 function settingsPath(): string {

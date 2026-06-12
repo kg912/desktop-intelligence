@@ -191,6 +191,8 @@ export interface RagPassage {
   /** true when this chunk was added via ±1 stitch, not a direct retrieval winner */
   stitched:     boolean
   rrfScore?:    number
+  /** Cross-encoder score assigned by the reranker (only present when rerankEnabled=true) */
+  rerankScore?: number
 }
 
 /** Return type of RagRetrievalService.retrieve(). */
@@ -206,6 +208,10 @@ export interface RagRetrievalResult {
   tokensUsed:    number
   /** Names of all indexed documents in this chat (used for no-hit message) */
   docNames:      string[]
+  /** true when the cross-encoder reranker was applied this turn */
+  rerankUsed:    boolean
+  /** Wall-clock ms spent in the reranker (only present when rerankUsed=true) */
+  rerankMs?:     number
 }
 
 export interface ChatSendPayload {
@@ -330,6 +336,10 @@ export const IPC_CHANNELS = {
   // ── Per-chat system instructions ───────────────────────────────
   CHAT_GET_SYSTEM_INSTRUCTIONS: 'chat:get-system-instructions',
   CHAT_SET_SYSTEM_INSTRUCTIONS: 'chat:set-system-instructions',
+
+  // ── RAG v2 settings ────────────────────────────────────────────
+  SETTINGS_GET_RAG:  'settings:getRag',
+  SETTINGS_SAVE_RAG: 'settings:saveRag',
 
 } as const
 

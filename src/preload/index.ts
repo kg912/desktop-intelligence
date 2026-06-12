@@ -255,6 +255,13 @@ const api = {
   setChatSystemInstructions: (chatId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('chat:set-system-instructions', chatId, text),
 
+  // ── RAG v2 settings (Phase 3: reranker toggle) ───────────────
+  ragGetSettings: (): Promise<{ rerankEnabled: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_RAG),
+
+  ragSaveSettings: (patch: { rerankEnabled?: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE_RAG, patch),
+
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
 

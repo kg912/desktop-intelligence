@@ -8,6 +8,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
+import { registerRagSettingsHandlers } from './ipc/ragSettingsHandlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
@@ -154,6 +155,7 @@ app.whenReady().then(async () => {
   // channels, which Electron rejects with "Attempted to register a second
   // handler" and crashes the main process.
   registerIpcHandlers(() => mainWindow?.webContents ?? null)
+  registerRagSettingsHandlers()
 
   // ── Fullscreen state bridge ───────────────────────────────────
   // Renderer needs to know fullscreen state so TopBar can conditionally

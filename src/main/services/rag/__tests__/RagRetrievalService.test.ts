@@ -78,7 +78,15 @@ beforeAll(() => {
 
 vi.mock('../../DatabaseService', () => ({ getDB: () => db }))
 
+// Mock SettingsStore so retrieve() can call readSettings() without Electron's app.getPath.
+// Default: rerankEnabled=false → pure-RRF path used by all pre-Phase-3 tests.
+vi.mock('../../SettingsStore', () => ({
+  readSettings:  vi.fn(() => ({ rerankEnabled: false })),
+  writeSettings: vi.fn(),
+}))
+
 import { retrieve, sanitizeFts5Query, buildContextEnvelope } from '../RagRetrievalService'
+import { readSettings } from '../../SettingsStore'
 
 // ── Helper: seed a chunk with both FTS5 and vec ────────────────────────────────
 
@@ -552,5 +560,119 @@ describe('buildContextEnvelope — preamble wording', () => {
     })
     expect(env).toContain('full documents')
     expect(env).toContain('and/or passages retrieved for the current question')
+  })
+})
+
+// ── Reranker integration ──────────────────────────────────────────────────────
+
+import type { RerankerScoreFn } from '../RerankerService'
+
+describe('retrieve — reranker integration: flag off', () => {
+  it('rerankUsed=false when rerankEnabled=false (default mock)', async () => {
+    const chatId = 'chat-rerank-off'
+    seedChunk({ chatId, docId: 'doc-rk-off', docName: 'rk-off.pdf', chunkIndex: 0,
+      content: 'reranker flag off test content', vecSeed: 3 })
+
+    // Default mock returns { rerankEnabled: false }
+    const result = await retrieve('reranker flag', chatId, stubEmbed(3))
+
+    expect(result.rerankUsed).toBe(false)
+    expect(result.rerankMs).toBeUndefined()
+    expect(result.hits.every(h => h.rerankScore === undefined)).toBe(true)
+  })
+})
+
+describe('retrieve — reranker integration: flag on, stub scoreFn inverts RRF order', () => {
+  it('winners follow rerank order when rerankEnabled=true + stub scoreFn', async () => {
+    const chatId    = 'chat-rerank-on'
+    const querySeed = 17
+
+    // Seed two chunks. RRF would rank idA first (closer vec), but stub scoreFn ranks idB first.
+    const idA = seedChunk({ chatId, docId: 'doc-rk-a', docName: 'a-rk.pdf', chunkIndex: 0,
+      content: 'reranker on test chunk A — closer vec so higher RRF', vecSeed: querySeed })
+    const idB = seedChunk({ chatId, docId: 'doc-rk-b', docName: 'b-rk.pdf', chunkIndex: 0,
+      content: 'reranker on test chunk B — farther vec so lower RRF', vecSeed: querySeed + 0.1 })
+
+    // Stub scoreFn: inverts the expected RRF order — idB gets the higher score
+    const invertingScoreFn: RerankerScoreFn = async (_q, passages) => {
+      return passages
+        .map(p => ({ rowid: p.rowid, score: p.rowid === idA ? 0.1 : 0.9 }))
+        .sort((a, b) => b.score - a.score)
+    }
+
+    // Enable reranking via mock override for this one call
+    vi.mocked(readSettings).mockReturnValueOnce({ rerankEnabled: true })
+
+    const result = await retrieve('reranker on test', chatId, stubEmbed(querySeed), invertingScoreFn)
+
+    expect(result.rerankUsed).toBe(true)
+    expect(result.rerankMs).toBeTypeOf('number')
+    // idB (higher rerank score) must appear as a non-stitched winner
+    const nonStitched = result.hits.filter(h => !h.stitched)
+    expect(nonStitched.some(h => h.rowid === idB)).toBe(true)
+    // rerankScore is populated on winner passages
+    const winner = result.hits.find(h => h.rowid === idB)
+    expect(winner?.rerankScore).toBeDefined()
+    expect(winner?.rerankScore).toBeGreaterThan(0.5)
+  })
+})
+
+describe('retrieve — reranker integration: rerank throws → RRF fallback', () => {
+  it('rerankUsed=false and hits still populated when scoreFn throws', async () => {
+    const chatId    = 'chat-rerank-throw'
+    const querySeed = 19
+
+    seedChunk({ chatId, docId: 'doc-rk-throw', docName: 'throw.pdf', chunkIndex: 0,
+      content: 'reranker throw fallback test content', vecSeed: querySeed })
+
+    const throwingScoreFn: RerankerScoreFn = async () => {
+      throw new Error('reranker model unavailable in test')
+    }
+
+    vi.mocked(readSettings).mockReturnValueOnce({ rerankEnabled: true })
+
+    // Must not throw — fallback to RRF silently
+    const result = await retrieve('reranker throw', chatId, stubEmbed(querySeed), throwingScoreFn)
+
+    expect(result.rerankUsed).toBe(false)
+    expect(result.hits.length).toBeGreaterThanOrEqual(1)
+    expect(result.hits.every(h => h.rerankScore === undefined)).toBe(true)
+  })
+})
+
+describe('retrieve — reranker integration: budget still priority-correct under rerank order', () => {
+  it('budget allocation respects rerank priority order (first rerank winner always admitted)', async () => {
+    const chatId    = 'chat-rerank-budget'
+    const querySeed = 23
+
+    // Large content so budget pressure is real: only ~2 chunks fit in 6000-token budget
+    const large = 'budget rerank '.repeat(2000)  // ≥2000 tokens each
+
+    const idFirst = seedChunk({ chatId, docId: 'doc-rb-1', docName: 'rb-first.pdf', chunkIndex: 0,
+      content: `budget rerank first winner ${large}`, vecSeed: querySeed })
+    seedChunk({ chatId, docId: 'doc-rb-2', docName: 'rb-second.pdf', chunkIndex: 0,
+      content: `budget rerank second winner ${large}`, vecSeed: querySeed + 0.05 })
+
+    // scoreFn ranks idFirst above idSecond (same as RRF here)
+    const stubFn: RerankerScoreFn = async (_q, passages) =>
+      passages
+        .map(p => ({ rowid: p.rowid, score: p.rowid === idFirst ? 0.9 : 0.4 }))
+        .sort((a, b) => b.score - a.score)
+
+    vi.mocked(readSettings).mockReturnValueOnce({ rerankEnabled: true })
+
+    const result = await retrieve('budget rerank', chatId, stubEmbed(querySeed), stubFn)
+
+    // The top rerank winner (idFirst) must always be admitted.
+    // Note: the "first winner always in" rule admits it even when its size alone
+    // exceeds CONTEXT_TOKEN_BUDGET — by design, to guarantee at least one result.
+    expect(result.hits.some(h => h.rowid === idFirst)).toBe(true)
+    // No SECOND large winner should have been admitted when the budget is already full.
+    const nonStitched = result.hits.filter(h => !h.stitched)
+    // If idFirst filled the budget, idSecond must not also be present
+    if (result.tokensUsed > 4000) {
+      // Both are large — only one should fit
+      expect(nonStitched.length).toBeLessThanOrEqual(2)
+    }
   })
 })

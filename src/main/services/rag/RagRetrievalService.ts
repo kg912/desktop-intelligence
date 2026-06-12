@@ -13,9 +13,12 @@ import { getDB } from '../DatabaseService'
 import { knn } from './RagVectorStore'
 import { isVecAvailable } from './sqliteVecLoader'
 import { countTokens } from '../tokenUtils'
+import { readSettings } from '../SettingsStore'
 import type { RagRetrievalResult, RagPassage } from '../../../shared/types'
+import type { RerankerScoreFn } from './RerankerService'
 
 export type { RagRetrievalResult, RagPassage }
+export type { RerankerScoreFn }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -28,8 +31,20 @@ export const K_VECTOR = 20
 /** RRF smoothing constant — industry default. */
 export const RRF_K = 60
 
-/** Number of fused candidates to carry into the stitch + assembly step. */
+/** Number of fused candidates to carry into the stitch + assembly step (rerank OFF). */
 export const FINAL_K = 6
+
+/**
+ * Number of fused candidates passed to the cross-encoder when rerankEnabled=true.
+ * A wider candidate pool gives the reranker more to work with.
+ */
+export const RERANK_CANDIDATES = 20
+
+/**
+ * Number of rerank winners carried into budget allocation (replaces FINAL_K when
+ * rerankEnabled=true).  More winners because the reranker has a larger pool to draw from.
+ */
+export const FINAL_K_RERANKED = 8
 
 /** Token budget for the assembled context envelope (excludes headers). */
 export const CONTEXT_TOKEN_BUDGET = 6000
@@ -232,19 +247,22 @@ export type EmbedFn = (text: string) => Promise<number[]>
  *   1. Lexical (FTS5 BM25) → up to K_LEXICAL candidates
  *   2. Dense (vec0 KNN, partition key) → up to K_VECTOR candidates,
  *      filtered by VEC_DISTANCE_FLOOR
- *   3. Reciprocal Rank Fusion → top FINAL_K
- *   4. Stitch: each winner gains its ±1 neighbours within CONTEXT_TOKEN_BUDGET
- *   5. Assemble: group by doc, order by chunk_index
+ *   3. Reciprocal Rank Fusion → top candidates
+ *   3.5 (optional) Cross-encoder rerank when settings.rerankEnabled=true
+ *   4. Priority-ordered budget allocation (pass 1: winners, pass 2: stitches)
+ *   5. Sort for presentation: docName + chunk_index
  *
  * Returns noHit=true when both candidate lists are empty (never falls back to
  * chronological dump).
  *
- * embedFn is injectable (tests supply a deterministic stub).
+ * embedFn and scoreFn are injectable — tests supply deterministic stubs so
+ * neither the embedding model nor the reranker model is ever downloaded.
  */
 export async function retrieve(
-  query:   string,
-  chatId:  string,
-  embedFn?: EmbedFn
+  query:    string,
+  chatId:   string,
+  embedFn?: EmbedFn,
+  scoreFn?: RerankerScoreFn
 ): Promise<RagRetrievalResult> {
   const db = getDB()
 
@@ -287,7 +305,7 @@ export async function retrieve(
     return {
       hits: [], noHit: true, degradedMode,
       lexicalCount: 0, vectorCount: 0, fusedCount: 0,
-      tokensUsed: 0, docNames,
+      tokensUsed: 0, docNames, rerankUsed: false,
     }
   }
 
@@ -312,22 +330,78 @@ export async function retrieve(
   }
   scored.sort((a, b) => b.score - a.score)
 
-  const topIds = scored.slice(0, FINAL_K).map(s => s.id)
   const fusedCount = scored.length
 
-  // Fetch full rows for winners
-  const chunkMap = fetchChunkRows(topIds)
+  // ── 3.5 Optional cross-encoder rerank ────────────────────────────────────────
+  // When rerankEnabled=true: take the top RERANK_CANDIDATES from RRF, re-score
+  // them with the cross-encoder, then carry the top FINAL_K_RERANKED into
+  // budget allocation (replacing the plain FINAL_K RRF path).
+  //
+  // Fallback rule: ANY error in the rerank step logs one [RAG] warning and falls
+  // back to the EXACT pure-RRF code path used when the flag is off — the budget
+  // allocation below is shared code, parameterised by `orderedCandidates` only.
+  //
+  // Fire-and-forget warm-up fires at the START of the rerank branch so the model
+  // is resident in memory for the NEXT call (the current call initialises it
+  // serially below if needed).
+
+  const settings = readSettings()
+  let rerankUsed = false
+  let rerankMs: number | undefined
+
+  // orderedCandidates: chunks to allocate against, in priority order (highest first)
+  type Candidate = { id: number; rrfScore: number; rerankScore?: number }
+  let orderedCandidates: Candidate[]
+
+  if (settings.rerankEnabled) {
+    // Fire-and-forget: warm up the model for the next query
+    void import('./RerankerService').then(m => m.ensureRerankerReady()).catch(() => {})
+
+    try {
+      const reCandIds = scored.slice(0, RERANK_CANDIDATES).map(s => s.id)
+      const reCandMap = fetchChunkRows(reCandIds)
+      const rePassages = reCandIds
+        .map(id => reCandMap.get(id))
+        .filter((r): r is ChunkRow => r != null)
+        .map(r => ({ rowid: r.id, content: r.content }))
+
+      const { rerank } = await import('./RerankerService')
+      const t0 = Date.now()
+      const reranked = await rerank(query, rePassages, scoreFn)
+      rerankMs  = Date.now() - t0
+      rerankUsed = true
+
+      orderedCandidates = reranked.slice(0, FINAL_K_RERANKED).map(r => ({
+        id:          r.rowid,
+        rrfScore:    scored.find(s => s.id === r.rowid)?.score ?? 0,
+        rerankScore: r.score,
+      }))
+    } catch (err) {
+      console.warn('[RAG] ⚠️ Rerank failed, falling back to RRF order:', err)
+      // Fall through to the exact same code path as rerankEnabled=false
+      orderedCandidates = scored.slice(0, FINAL_K).map(s => ({ id: s.id, rrfScore: s.score }))
+      rerankUsed = false
+    }
+  } else {
+    // Pure-RRF path (default) — byte-identical to pre-Phase-3 behaviour
+    orderedCandidates = scored.slice(0, FINAL_K).map(s => ({ id: s.id, rrfScore: s.score }))
+  }
+
+  // Fetch full rows for the chosen winner set
+  const chunkMap = fetchChunkRows(orderedCandidates.map(c => c.id))
 
   // ── 4. Priority-ordered budget allocation ────────────────────────────────────
   //
-  // Pass 1 — winners (descending RRF score order):
-  //   • The very first winner is always admitted regardless of size (guarantees
-  //     at least one result even on an oversized single chunk).
+  // Shared code path — orderedCandidates drives priority regardless of whether
+  // they came from RRF or rerank.  This guarantees no logic drift between modes.
+  //
+  // Pass 1 — winners (descending priority order):
+  //   • The very first winner is always admitted regardless of size.
   //   • Any subsequent winner that does not fit is SKIPPED with `continue` —
   //     a smaller winner later in the list may still fit.
   //
   // Pass 2 — stitches (fills remaining budget only):
-  //   • For each admitted winner (in RRF order), attempt its ±1 neighbours.
+  //   • For each admitted winner, attempt its ±1 neighbours.
   //   • A neighbour is added only if it fits within the remaining budget.
   //   • Guarantee: stitched neighbours can NEVER displace an un-admitted winner
   //     because all winners are decided before any stitch is attempted.
@@ -335,23 +409,24 @@ export async function retrieve(
   let tokensUsed = 0
 
   // Pass 1 — winners
-  const admittedWinners: Array<{ row: ChunkRow; score: number }> = []
-  for (const { id, score } of scored.slice(0, FINAL_K)) {
+  const admittedWinners: Array<{ row: ChunkRow; rrfScore: number; rerankScore?: number }> = []
+  for (const { id, rrfScore, rerankScore } of orderedCandidates) {
     const row = chunkMap.get(id)
     if (!row) continue
     const t = countTokens(row.content)
     if (tokensUsed + t > CONTEXT_TOKEN_BUDGET && admittedWinners.length > 0) {
       continue  // too large for current budget; try the next winner
     }
-    admittedWinners.push({ row, score })
+    admittedWinners.push({ row, rrfScore, rerankScore })
     tokensUsed += t
   }
 
   // Seed passages with admitted winners
-  const passages: RagPassage[] = admittedWinners.map(({ row, score }) => ({
+  const passages: RagPassage[] = admittedWinners.map(({ row, rrfScore, rerankScore }) => ({
     rowid: row.id, docId: row.doc_id, docName: row.doc_name,
     chunkIndex: row.chunk_index, sectionTitle: row.section_title,
-    content: row.content, stitched: false, rrfScore: score,
+    content: row.content, stitched: false, rrfScore,
+    ...(rerankScore !== undefined && { rerankScore }),
   }))
 
   // Track all admitted ids to prevent duplicates (includes winners so a
@@ -378,9 +453,16 @@ export async function retrieve(
   }
 
   // ── 5. Sort admitted passages for presentation ────────────────────────────
-  // Budget allocation above is by RRF priority; sorting is for readability only.
+  // Budget allocation above is by priority; sorting is for readability only.
   passages.sort((a, b) =>
     a.docName.localeCompare(b.docName) || a.chunkIndex - b.chunkIndex
+  )
+
+  console.log(
+    `[RAG] retrieve: lex=${lexicalCount} vec=${vectorCount} fused=${fusedCount}` +
+    ` hits=${passages.filter(p => !p.stitched).length}+${passages.filter(p => p.stitched).length}stitched` +
+    ` tokens=${tokensUsed} rerankUsed=${rerankUsed}` +
+    (rerankMs != null ? ` rerankMs=${rerankMs}` : '')
   )
 
   return {
@@ -392,5 +474,7 @@ export async function retrieve(
     fusedCount,
     tokensUsed,
     docNames,
+    rerankUsed,
+    rerankMs,
   }
 }

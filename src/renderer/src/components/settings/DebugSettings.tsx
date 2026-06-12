@@ -75,6 +75,7 @@ function truncateModel(modelId: string): string {
 export function DebugSettings() {
   const [observabilityEnabled, setObservabilityEnabled] = useState(false)
   const [includeImages,        setIncludeImages]        = useState(false)
+  const [rerankEnabled,        setRerankEnabled]        = useState(false)
   const [sessions,             setSessions]             = useState<SessionEntry[]>([])
   const [sessionCount,         setSessionCount]         = useState(0)
   const [totalBytes,           setTotalBytes]           = useState(0)
@@ -97,6 +98,9 @@ export function DebugSettings() {
         setIncludeImages(prefs.includeImages)
       })
       .catch(console.error)
+    window.api.ragGetSettings()
+      .then((s) => setRerankEnabled(s.rerankEnabled))
+      .catch(console.error)
     refreshStats().catch(console.error)
   }, [refreshStats])
 
@@ -109,6 +113,11 @@ export function DebugSettings() {
   const handleImagesToggle = (v: boolean) => {
     setIncludeImages(v)
     window.api.obsSetPrefs({ includeImages: v }).catch(console.error)
+  }
+
+  const handleRerankToggle = (v: boolean) => {
+    setRerankEnabled(v)
+    window.api.ragSaveSettings({ rerankEnabled: v }).catch(console.error)
   }
 
   const handleOpenDir = async () => {
@@ -155,6 +164,12 @@ export function DebugSettings() {
     <div className="space-y-8">
       {/* ── Toggle rows ── */}
       <div>
+        <Row
+          label="Re-rank retrieved passages (cross-encoder, experimental)"
+          description="After keyword + vector search, a local cross-encoder model (jinaai/jina-reranker-v1-tiny-en) re-scores the top 20 candidates for finer relevance ordering. Requires a one-time ~7 MB model download; adds ~200–700 ms per document query."
+          checked={rerankEnabled}
+          onChange={handleRerankToggle}
+        />
         <Row
           label="Observability"
           description="Capture the full session log — system prompt, RAG context, tool calls and results, thinking, and the final answer. Logs are saved locally and never leave your device."
