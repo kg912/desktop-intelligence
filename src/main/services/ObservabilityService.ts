@@ -34,6 +34,9 @@ export type ObsEventType =
   | 'code_artifact'
   | 'chart_image'
   | 'session_end'
+  | 'rag_ingest'
+  | 'rag_query'
+  | 'rag_eval'
 
 export interface ObsEvent {
   type: ObsEventType
@@ -255,6 +258,21 @@ export class ObservabilityService {
   /** @internal — test use only */
   _getBuffer(sessionId: string): SessionBuffer | undefined {
     return this.sessions.get(sessionId)
+  }
+
+  /**
+   * Emit a standalone RAG event (rag_ingest / rag_query / rag_eval) that is not
+   * tied to a chat session. Written as a newline-delimited JSON line to
+   * <logsDir>/rag-events.jsonl when observability is enabled.
+   */
+  emitRagEvent(event: ObsEvent): void {
+    if (!this.isEnabled()) return
+    const line = JSON.stringify({ ts: Date.now(), ...event }) + '\n'
+    const logPath = path.join(this.logsDir, 'rag-events.jsonl')
+    // fire-and-forget: non-fatal if write fails
+    fs.mkdir(this.logsDir, { recursive: true })
+      .then(() => fs.appendFile(logPath, line, 'utf8'))
+      .catch((err) => console.warn('[ObservabilityService] rag event write failed:', err))
   }
 
   captureArtifact(event: ObsEvent): void {

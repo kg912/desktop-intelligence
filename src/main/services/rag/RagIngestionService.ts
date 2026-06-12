@@ -33,6 +33,8 @@ export interface IngestResult {
   status:      'ingested' | 'duplicate' | 'empty'
   chunkCount:  number
   vectorCount: number
+  /** Percentage of sanitized text covered by the last chunk's charEnd (should be ~100). */
+  coveragePct: number
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ function sha256(text: string): string {
 export async function ingest(params: IngestParams): Promise<IngestResult> {
   const { docId, chatId, fileName, text } = params
 
+  const ingestStartMs = Date.now()
   // Acquire DB handle first so all guards can clean up the placeholder documents row
   const db = getDB()
 
@@ -69,7 +72,7 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
   if (!text || text.trim().length === 0) {
     console.warn(`[RAG][v2] ingest: empty text for "${fileName}" — skipping`)
     try { db.prepare('DELETE FROM documents WHERE id = ?').run(docId) } catch { /* non-fatal */ }
-    return { status: 'empty', chunkCount: 0, vectorCount: 0 }
+    return { status: 'empty', chunkCount: 0, vectorCount: 0, coveragePct: 0 }
   }
   const contentHash = sha256(text)
 
@@ -87,7 +90,7 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
       )
       // Clean up the placeholder documents row the caller inserted
       db.prepare('DELETE FROM documents WHERE id = ?').run(docId)
-      return { status: 'duplicate', chunkCount: 0, vectorCount: 0 }
+      return { status: 'duplicate', chunkCount: 0, vectorCount: 0, coveragePct: 0 }
     }
   } catch (err) {
     console.warn('[RAG][v2] ingest: dedup check failed (proceeding):', err)
@@ -100,7 +103,7 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
 
   if (N === 0) {
     db.prepare('DELETE FROM documents WHERE id = ?').run(docId)
-    return { status: 'empty', chunkCount: 0, vectorCount: 0 }
+    return { status: 'empty', chunkCount: 0, vectorCount: 0, coveragePct: 0 }
   }
 
   // 4. Embed (with injectable embedFn; default = EmbeddingService.embed)
@@ -191,5 +194,37 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
     )
   }
 
-  return { status: 'ingested', chunkCount: N, vectorCount }
+  // coveragePct: proves the chunker consumed the whole document.
+  // lastChunk.charEnd ÷ text.length × 100. The chunker guarantees full consumption
+  // (loop terminates only when actualEnd >= text.length), so this should be ~100.
+  const lastChunk = chunks[chunks.length - 1]
+  const coveragePct = text.length > 0
+    ? Math.round((lastChunk.charEnd / text.length) * 100 * 100) / 100
+    : 100
+
+  // Emit rag_ingest observability event
+  const ingestMs = Date.now() - ingestStartMs
+  try {
+    const { observabilityService } = await import('../ObservabilityService')
+    observabilityService.emitRagEvent({
+      type: 'rag_ingest',
+      ts: Date.now(),
+      payload: {
+        docId,
+        docName:       fileName,
+        chatId:        effectiveChatId,
+        mode:          'indexed',
+        tokenCount:    resolvedTokenCount,
+        inlineBudget:  null,
+        chunkCount:    N,
+        vectorCount,
+        coveragePct,
+        embedMsTotal:  ingestMs,  // total ingest time (embed is the dominant cost)
+        durationMs:    ingestMs,
+        degraded:      embedFailed,
+      },
+    })
+  } catch { /* non-fatal */ }
+
+  return { status: 'ingested', chunkCount: N, vectorCount, coveragePct }
 }

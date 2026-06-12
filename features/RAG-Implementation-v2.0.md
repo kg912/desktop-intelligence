@@ -1,7 +1,8 @@
 # RAG Implementation v2.0 — How It Works, End to End
 
 **Project:** Desktop Intelligence
-**Status:** Design finalised, implementation pending (see `specs/RAG-v2-Implementation-Plan.md`)
+**Status:** Phases 0–3 implemented and live (hybrid retrieval + flag-gated reranker).
+Phases 4–5 (observability polish, v1 demolition) pending — see `specs/RAG-v2-Implementation-Plan.md`.
 **Purpose of this file:** A standing, human-readable description of the v2 RAG pipeline —
 what happens to a file from the moment it's dropped into a chat to the moment its content
 shows up in a model's answer. Maintained alongside the implementation so the system never
@@ -52,7 +53,7 @@ the model is told that honestly instead of being fed the first 32 chunks of the 
                         │   │  extract (pdf-parse / fs) + sanitize        │
                         │   │  count tokens (tokenUtils)                  │
                         │   ▼                                             │
-                        │  ≤ 8k tokens?                                   │
+                        │  ≤ 50% of context window?                       │
                         │   ├── yes ──► documents(mode='inline')          │
                         │   │           doc_inline_text (full text)       │
                         │   └── no ───► RagIngestionService               │
@@ -158,10 +159,15 @@ word "overfitting"; it talks about "L2 regularization" and "early stopping".
                   └──────────────────┬──────────────────┘
                                      ▼  final 6 (RRF) or 8 (rerank) winners
                   ┌─────────────────────────────────────┐
-                  │  NEIGHBOUR STITCH + ASSEMBLY        │
-                  │  pull chunk_index ±1 if budget OK   │
-                  │  group by doc, restore reading order│
-                  │  cap at ~6,000 tokens (tokenUtils)  │
+                  │  PRIORITY BUDGET + NEIGHBOUR STITCH │
+                  │  pass 1: admit winners in relevance │
+                  │  order until ~6,000-token budget    │
+                  │  (a big low-rank chunk is skipped,  │
+                  │  never displaces a better one)      │
+                  │  pass 2: fill remaining budget with │
+                  │  chunk_index ±1 neighbours          │
+                  │  then sort survivors by doc + index │
+                  │  for reading order (tokenUtils)     │
                   └──────────────────┬──────────────────┘
                                      ▼
                      one <attached_file_context> system
@@ -192,8 +198,10 @@ messages (wire payload)
 ├── user:   "summarise section 2"            ← earlier turns
 ├── assistant: "…"
 ├── system: <attached_file_context>          ← THE ONE RAG MESSAGE, this turn only
-│            The user attached files… passages below… cite the file name…
-│            If the passages do not contain the answer, say so.
+│            The user attached files to this conversation. Their content (full
+│            documents and/or passages retrieved for the current question) is
+│            below. Treat it as readable file content; cite the file name when
+│            drawing on it. If it does not contain the answer, say so.
 │
 │            [lecture-notes.pdf · §3 Optimization · part 11/70]
 │            …L2 regularization penalises large weights…
@@ -207,10 +215,12 @@ Rules the envelope obeys:
 - **Exactly one** context message per turn. Inline docs and retrieved passages never
   double-inject for the same document (a doc is either `inline` or `indexed`, never both).
 - Rebuilt fresh every turn from the current question — never accumulates in history.
-- No-hit case: the envelope is replaced by a single line —
+- No-hit case: the passages are replaced by an honest note —
   `Retrieval found no passages relevant to this question in the attached files
-  (lecture-notes.pdf).` The model can then say "the document doesn't cover this"
-  instead of improvising.
+  (lecture-notes.pdf). State this honestly if asked about their content.`
+  Sent as a bare system line when the chat has no inline docs, or inside the
+  envelope alongside inline content when it does. The model can then say "the
+  document doesn't cover this" instead of improvising.
 
 ---
 
@@ -225,10 +235,11 @@ documents ─────────────┐ 1:N (indexed docs)         
   token_count          │     chunk_index         │             │
                        │     section_title       ▼             ▼
                        │     content        chunks_fts    chunks_vec
-                       │                    (FTS5 BM25,   (vec0, 384-d
-                       │                    external-     float vectors)
-                       │                    content,
-                       │                    trigger-synced)
+                       │                    (FTS5 BM25,   (vec0, 384-d float
+                       │                    external-     vectors + chat_id
+                       │                    content,      PARTITION KEY → native
+                       │                    trigger-      per-chat KNN scoping
+                       │                    synced)       and direct deletion)
 chat deleted ──► deleteRagDataForChat(chatId) wipes all of the above for that chat
 ```
 
@@ -254,6 +265,7 @@ index-vs-data drift, no separate file to corrupt — the lesson of hnswlib.
 | `CHUNK_TOKENS` / `CHUNK_OVERLAP_TOKENS` | 400 / 60 | Chunk geometry |
 | `K_LEXICAL` / `K_VECTOR` | 20 / 20 | Candidates per retriever |
 | `RRF_K` | 60 | Fusion smoothing constant (industry default) |
+| `VEC_DISTANCE_FLOOR` | 1.15 | L2-distance ceiling for vector candidates before fusion. Embeddings are L2-normalized, so L2 distance is rank-equivalent to cosine: 1.15 ≈ cosine similarity 0.34. Anything farther is noise and is dropped — this is what makes the honest no-hit possible. |
 | `FINAL_K` / `FINAL_K_RERANKED` | 6 / 8 | Passages handed to budget allocation (RRF path / rerank path) |
 | `RERANK_CANDIDATES` | 20 | Top RRF candidates passed to the cross-encoder when rerank is on |
 | `CONTEXT_TOKEN_BUDGET` | 6,000 tok | Hard cap on the envelope |
@@ -280,7 +292,217 @@ ingestion fails       ──► error logged, message still sends     chat unaff
 | 1 | Schema v2, chunker, dual-index ingestion (v1 still serving) | ✅ Done (2026-06-11) — dual-write live; v1 path untouched; 43 new tests |
 | 2 | Hybrid retrieval + RRF, handlers cutover | ✅ Done (2026-06-11) — FTS5+KNN+RRF live, v1 path fully removed, inject=null, 717/718 tests |
 | 3 | Local cross-encoder rerank (flag, default off) | ✅ Done (2026-06-12) — jinaai/jina-reranker-v1-tiny-en; cold 93ms, warm20 215ms; 9 new tests |
-| 4 | Progress events, observability traces, optional contextual headers | ⏳ |
+| 4 | Observability traces, evaluation harness, chunk inspector | ✅ Done (2026-06-13) — rag_ingest/rag_query events, coveragePct, RetrieveOptions, RagQueryTrace, RagEvalService, IPC diagnostics, Debug panel extensions, 40 new tests |
 | 5 | Demolition: RAGService.ts, VectorStoreService.ts, hnswlib-node removed | ⏳ |
 
 *(Update this table and any sections that drift as phases land.)*
+
+---
+
+## 10. Observability & evaluation (Phase 4)
+
+### 10.1 Observability events
+
+Phase 4 adds two new event types written to `<logsDir>/rag-events.jsonl` (fire-and-forget,
+non-fatal; file rotates with each app launch). View events from Settings → Debug → Observability Logs.
+Unknown event types are rendered as formatted JSON — the existing panel handles them correctly.
+
+#### `rag_ingest`
+
+Emitted by `RagIngestionService` after every document ingest (both `indexed` and `inline` mode).
+
+```jsonc
+{
+  "ts": 1718000000000,
+  "type": "rag_ingest",
+  "payload": {
+    "docId": "uuid-...",
+    "docName": "paper.pdf",
+    "chatId": "chat-uuid",
+    "mode": "indexed",          // "indexed" | "inline"
+    "tokenCount": 12480,        // estimated tokens at ingest time
+    "inlineBudget": null,       // null when indexed; integer token cap when inline
+    "chunkCount": 31,           // rag_chunks rows created (0 if inline)
+    "vectorCount": 31,          // chunks_vec rows created (0 if embed failed)
+    "coveragePct": 100.00,      // (lastChunk.charEnd / rawText.length) × 100
+    "embedMsTotal": 2341,       // wall-clock ms for all embed() calls
+    "durationMs": 2580,         // total ingest wall-clock ms
+    "degraded": false           // true if embed failed and fell back to FTS5-only
+  }
+}
+```
+
+**`coveragePct`** proves the chunker consumed the whole document. A value < 100 would indicate a
+real chunker bug (the test suite asserts `coveragePct === 100` for normally-sized documents and
+will fail loudly if that guarantee ever breaks).
+
+#### `rag_query`
+
+Emitted by the `handlers.ts` retrieval path after every `retrieve()` call.
+
+When the **Verbose RAG tracing** toggle is **off** (default), `contentPreview` fields and
+`finalPassages` text are omitted from the event so the JSONL file stays compact.
+
+When **on**, every field is populated. Toggle lives in Settings → Debug → "Verbose RAG tracing
+(logs full retrieved chunk text)".
+
+```jsonc
+{
+  "ts": 1718000000000,
+  "type": "rag_query",
+  "payload": {
+    "query": "what does the paper say about dropout?",
+    "sanitizedFtsQuery": "paper say dropout",
+    "chatId": "chat-uuid",
+    "timestamp": "2026-06-13T10:00:00.000Z",
+    "mode": "hybrid",
+    "rerankUsed": false,
+    "lexical": [{ "rowid": 42, "rank": 1, "docName": "paper.pdf", "chunkIndex": 7,
+                  "contentPreview": "Dropout regularizes..." }],
+    "vector":  [{ "rowid": 42, "distance": 0.41, "cosineSim": 0.916,
+                  "docName": "paper.pdf", "chunkIndex": 7,
+                  "contentPreview": "Dropout regularizes...", "dropped": false }],
+    "fused":   [{ "rowid": 42, "rrfScore": 0.0323, "inLexical": true, "inVector": true }],
+    "rerank": null,
+    "allocation": [{ "rowid": 42, "decision": "admitted", "tokens": 381 }],
+    "finalPassages": ["[paper.pdf · chunk 7]\nDropout regularizes..."],
+    "envelopeTokens": 381
+  }
+}
+```
+
+**`vector.dropped: true`** marks candidates filtered out by `VEC_DISTANCE_FLOOR=1.15`
+(L2 ≥ 1.15 ≈ cosine similarity ≤ 0.34 — noise). They appear in the trace for diagnostics
+even though they never reach the fusion step.
+
+**`cosineSim`** is derived from the L2 distance via `1 − d² / 2` (valid because embeddings
+are L2-normalised to unit length).
+
+**Allocation decisions:**
+
+| decision | meaning |
+|---|---|
+| `admitted` | chunk fits in the token budget and is sent to the model |
+| `skipped_too_big` | chunk is larger than remaining budget in pass 1 |
+| `not_reached` | budget exhausted; this winner was never considered |
+| `stitched` | ±1 neighbour admitted in pass 2 to provide context continuity |
+| `stitch_rejected_budget` | stitch candidate would exceed remaining budget |
+
+### 10.2 Chunk inspector
+
+**IPC** `rag:export-chunks(docId)` — main-process handler in
+`src/main/ipc/ragDiagnosticsHandlers.ts`. Writes a markdown file to the user's Downloads folder:
+
+```
+rag-chunks-<docName>-<timestamp>.md
+```
+
+File structure:
+```
+# Chunks: paper.pdf
+- **Mode:** indexed
+- **Token count:** 12,480
+- **Chunk count:** 31
+- **Coverage:** 100.00%
+
+---
+
+## [#0 · §Introduction · chars 0–1842 · ~412 tok]
+<full chunk text>
+
+## [#1 · §Introduction · chars 1782–3601 · ~403 tok]
+...
+```
+
+**Debug panel** — Settings → Debug → "RAG Diagnostics" subsection:
+- Chatid input → "Load docs" → lists indexed documents with name / mode / token count / chunk count
+- "Export chunks" button per document → triggers `rag:export-chunks`
+
+### 10.3 Evaluation harness
+
+#### Eval file format (JSONL)
+
+One JSON object per line. Lines starting with `#` are comments (ignored by the parser).
+
+```jsonc
+// evals/eval.jsonl
+{ "query": "what does the paper say about dropout regularization?",
+  "relevant": ["dropout regularizes", "prevents overfitting"],
+  "note": "Section 4.2" }
+{ "query": "what optimiser does the paper use?",
+  "relevant": ["Adam optimiser", "learning rate 3e-4"] }
+```
+
+**Relevance rule:** a chunk is relevant to a query iff its content, after normalisation
+(lowercase + collapse whitespace), contains **any** of the `relevant` substrings. OR semantics —
+any match is sufficient.
+
+A query whose `relevant` snippets match zero chunks in the corpus is flagged as `unresolvable`
+and excluded from the aggregates (check your snippets).
+
+**Worked example:**
+
+Corpus chunk content: `"L2 Regularization prevents overfitting by penalizing large weights."`
+
+Query: `"how does L2 regularization work?"`
+Snippet: `"l2 regularization prevents"` (after normalisation)
+→ chunk is **relevant** (substring match)
+
+#### Ablation table interpretation
+
+`runEval` runs every query through four modes and reports the aggregate metrics:
+
+| Mode | What it tests |
+|---|---|
+| `lexical-only` | Pure BM25 — how well keywords alone surface relevant content |
+| `vector-only` | Pure semantic similarity — catches paraphrase, misses exact terms |
+| `hybrid` | RRF fusion of both — the production default |
+| `hybrid+rerank` | Hybrid + cross-encoder reranker — higher precision at cost of latency |
+
+**Reading the table:**
+
+- If `vector-only Hit@K ≫ lexical-only Hit@K` → your documents use varied terminology / paraphrase
+  (the embedding model generalises better than BM25 for your corpus style)
+- If `lexical-only Hit@K ≫ vector-only Hit@K` → your queries use the same exact terms as the
+  documents (precise technical jargon; BM25 thrives here)
+- `hybrid` should beat or match both unimodal modes on Hit@K — if it doesn't, check that
+  `VEC_DISTANCE_FLOOR` is not too tight (filtering good semantic candidates)
+- `hybrid+rerank MRR > hybrid MRR` at similar Hit@K → the reranker is reordering correctly
+  (most-relevant chunk moves to rank 1)
+
+**Metrics:**
+
+| Metric | Definition |
+|---|---|
+| Hit@K | 1 if any relevant chunk is in the top-K admitted passages; 0 otherwise |
+| Precision@K | (relevant chunks in top-K) / (top-K count) |
+| Recall@K | (relevant chunks in top-K) / (total relevant chunks in corpus) |
+| MRR | 1 / rank of first relevant chunk in the pre-presentation priority order |
+
+All per-query values are averaged across queries to produce the aggregates.
+
+#### Running an eval
+
+1. Build your eval file at `evals/eval.jsonl` (gitignored — never committed)
+2. In Settings → Debug → "Run RAG Eval": enter the file path and the chat ID of the indexed
+   conversation, then click **Run eval**
+3. A markdown report is written to Downloads (`rag-eval-<timestamp>.md`) and the aggregates
+   are displayed inline in the Debug panel
+
+### 10.4 Phase 4 deviations from the work order
+
+- **Observability panel rendering**: the existing panel renders unknown event types as formatted
+  JSON already — no renderer changes were needed for `rag_ingest` / `rag_query` events. This
+  was confirmed in the work order as acceptable.
+- **`coveragePct` for inline docs**: inline-mode docs skip chunking entirely, so `coveragePct`
+  is set to 100 by convention (whole text sent verbatim — no coverage loss possible).
+- **`hybrid+rerank` graceful skip**: if `RerankerService` fails to initialise, the mode is
+  included in the report with a `note: "reranker unavailable"` and metrics from the hybrid
+  (non-reranked) result so the report still has four rows.
+- **IPC channel naming**: `rag:export-chunks`, `rag:run-eval`, `rag:list-docs` (not in original
+  IPC channel enum — added to `shared/types.ts` as `RAG_EXPORT_CHUNKS`, `RAG_RUN_EVAL`,
+  `RAG_LIST_DOCS`).
+- **Test isolation**: `RagEvalService.test.ts` and `RagRetrievalOptions.test.ts` share the same
+  in-memory DB pattern as Phase 2–3 tests. The reranker pipeline initialises lazily and the
+  ablation test tolerates it (hybrid+rerank mode degrades gracefully if the reranker times out
+  in a short-lived test process).

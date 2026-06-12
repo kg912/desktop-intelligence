@@ -9,6 +9,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { registerRagSettingsHandlers } from './ipc/ragSettingsHandlers'
+import { registerRagDiagnosticsHandlers } from './ipc/ragDiagnosticsHandlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
@@ -156,6 +157,7 @@ app.whenReady().then(async () => {
   // handler" and crashes the main process.
   registerIpcHandlers(() => mainWindow?.webContents ?? null)
   registerRagSettingsHandlers()
+  registerRagDiagnosticsHandlers()
 
   // ── Fullscreen state bridge ───────────────────────────────────
   // Renderer needs to know fullscreen state so TopBar can conditionally

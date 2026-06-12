@@ -378,7 +378,10 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         let ragResult: Awaited<ReturnType<typeof ragRetrieve>> | null = null
         if (hasIndexed && lastUserMsg) {
           try {
-            ragResult = await ragRetrieve(userMessageText, payload.chatId)
+            const { readSettings: _rsRag } = await import('../services/SettingsStore')
+            const _ragVerbose = _rsRag().ragVerboseTrace ?? false
+            ragResult = await ragRetrieve(userMessageText, payload.chatId,
+              undefined, undefined, { captureTrace: _ragVerbose })
           } catch (err) {
             console.error('[RAG] retrieve() failed:', err)
           }
@@ -393,6 +396,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
             `final=${hits.length} tokens=${tokensUsed} ` +
             `degraded=${degradedMode} noHit=${noHit}`
           )
+          if (ragResult.trace) {
+            observabilityService.emitRagEvent({ type: 'rag_query', ts: Date.now(), payload: ragResult.trace as unknown as Record<string, unknown> })
+          } else {
+            observabilityService.emitRagEvent({
+              type: 'rag_query', ts: Date.now(),
+              payload: { query: userMessageText, chatId: payload.chatId, lexicalCount, vectorCount, fusedCount, hitsCount: hits.length, tokensUsed, degradedMode, noHit, rerankUsed: ragResult.rerankUsed },
+            })
+          }
         }
 
         // ── Build envelope and splice ────────────────────────────────────────

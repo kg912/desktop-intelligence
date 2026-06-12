@@ -14,7 +14,11 @@ import { knn } from './RagVectorStore'
 import { isVecAvailable } from './sqliteVecLoader'
 import { countTokens } from '../tokenUtils'
 import { readSettings } from '../SettingsStore'
-import type { RagRetrievalResult, RagPassage } from '../../../shared/types'
+import type {
+  RagRetrievalResult, RagPassage, RagQueryTrace,
+  RagTraceLexicalEntry, RagTraceVectorEntry, RagTraceFusedEntry,
+  RagTraceRerankEntry, RagTraceAllocationEntry, RagAllocationDecision,
+} from '../../../shared/types'
 import type { RerankerScoreFn } from './RerankerService'
 
 export type { RagRetrievalResult, RagPassage }
@@ -91,24 +95,6 @@ interface ChunkRow {
 
 // ── Retrieval helpers ─────────────────────────────────────────────────────────
 
-/** Lexical retrieval: FTS5 BM25 search scoped to this chat. */
-function lexicalSearch(query: string, chatId: string): Array<{ id: number }> {
-  const ftsQuery = sanitizeFts5Query(query)
-  if (!ftsQuery) return []
-  const db = getDB()
-  try {
-    return db.prepare(`
-      SELECT rowid AS id
-      FROM   chunks_fts
-      WHERE  chunks_fts MATCH ?
-        AND  rowid IN (SELECT id FROM rag_chunks WHERE chat_id = ?)
-      ORDER  BY rank
-      LIMIT  ${K_LEXICAL}
-    `).all(ftsQuery, chatId) as Array<{ id: number }>
-  } catch {
-    return []  // FTS5 syntax error → empty list
-  }
-}
 
 /** RRF score for a single candidate: Σ 1/(K + rank) over each list it appears in. */
 function rfScore(ranks: number[]): number {
@@ -241,6 +227,22 @@ export function buildContextEnvelope(opts: {
 export type EmbedFn = (text: string) => Promise<number[]>
 
 /**
+ * Options for retrieve() — all optional; omitting them is byte-identical to
+ * the pre-Phase-4 behaviour.
+ */
+export interface RetrieveOptions {
+  /** Force a single retrieval mode, bypassing the hybrid default. */
+  forceMode?: 'lexical' | 'vector' | 'hybrid'
+  /** Override the rerankEnabled setting from SettingsStore (eval harness use). */
+  rerankOverride?: boolean
+  /**
+   * When true, attach a full RagQueryTrace to the result.
+   * Zero-cost when false — no string building occurs.
+   */
+  captureTrace?: boolean
+}
+
+/**
  * Retrieve the most relevant passages for `query` within `chatId`.
  *
  * Hybrid strategy:
@@ -257,14 +259,20 @@ export type EmbedFn = (text: string) => Promise<number[]>
  *
  * embedFn and scoreFn are injectable — tests supply deterministic stubs so
  * neither the embedding model nor the reranker model is ever downloaded.
+ *
+ * options (5th param) is fully optional — omitting it is byte-identical to
+ * the pre-Phase-4 call signature.
  */
 export async function retrieve(
   query:    string,
   chatId:   string,
   embedFn?: EmbedFn,
-  scoreFn?: RerankerScoreFn
+  scoreFn?: RerankerScoreFn,
+  options?: RetrieveOptions
 ): Promise<RagRetrievalResult> {
   const db = getDB()
+  const captureTrace = options?.captureTrace === true
+  const forceMode    = options?.forceMode ?? 'hybrid'
 
   // ── 0. Get all indexed doc names for this chat (for no-hit message) ────────
   const docRows = db.prepare(
@@ -273,14 +281,39 @@ export async function retrieve(
   const docNames = docRows.map(r => r.name)
 
   // ── 1. Lexical (FTS5) ──────────────────────────────────────────────────────
-  const lexIds = lexicalSearch(query, chatId)
+  const sanitizedFts = sanitizeFts5Query(query)
+
+  // lexicalSearchRaw: returns {id, rank} with the BM25 rank value
+  function lexicalSearchWithRank(q: string, cId: string): Array<{ id: number; rank: number }> {
+    if (!q) return []
+    try {
+      return db.prepare(`
+        SELECT rowid AS id, rank
+        FROM   chunks_fts
+        WHERE  chunks_fts MATCH ?
+          AND  rowid IN (SELECT id FROM rag_chunks WHERE chat_id = ?)
+        ORDER  BY rank
+        LIMIT  ${K_LEXICAL}
+      `).all(q, cId) as Array<{ id: number; rank: number }>
+    } catch {
+      return []
+    }
+  }
+
+  const skipLexical = forceMode === 'vector'
+  const lexRaw = skipLexical ? [] : lexicalSearchWithRank(sanitizedFts, chatId)
+  const lexIds = lexRaw.map(r => ({ id: r.id }))
   const lexicalCount = lexIds.length
 
   // ── 2. Dense (vec KNN) ────────────────────────────────────────────────────
+  // raw vector results before floor filtering (needed for trace dropped candidates)
+  let vectorIdsRaw: Array<{ rowid: number; distance: number }> = []
   let vectorIds: Array<{ rowid: number }> = []
   let degradedMode = false
 
-  if (isVecAvailable()) {
+  const skipVector = forceMode === 'lexical'
+
+  if (!skipVector && isVecAvailable()) {
     try {
       let resolvedEmbed = embedFn
       if (!resolvedEmbed) {
@@ -289,12 +322,16 @@ export async function retrieve(
       }
       const qVecArr = await resolvedEmbed(query)
       const qVec    = new Float32Array(qVecArr)
-      const raw     = knn(qVec, K_VECTOR, chatId)
+      vectorIdsRaw  = knn(qVec, K_VECTOR, chatId)
       // Apply distance floor — discard noisy far-away candidates
-      vectorIds = raw.filter(r => r.distance <= VEC_DISTANCE_FLOOR)
+      vectorIds = vectorIdsRaw.filter(r => r.distance <= VEC_DISTANCE_FLOOR)
     } catch {
       degradedMode = true
     }
+  } else if (skipVector) {
+    // forceMode='lexical' — never call embedFn
+    vectorIdsRaw = []
+    vectorIds    = []
   }
 
   const vectorCount = vectorIds.length
@@ -302,11 +339,24 @@ export async function retrieve(
   // ── 3. Reciprocal Rank Fusion ─────────────────────────────────────────────
   // No candidates from either list → honest no-hit
   if (lexicalCount === 0 && vectorCount === 0) {
-    return {
+    const result: RagRetrievalResult = {
       hits: [], noHit: true, degradedMode,
       lexicalCount: 0, vectorCount: 0, fusedCount: 0,
       tokensUsed: 0, docNames, rerankUsed: false,
     }
+    if (captureTrace) {
+      result.trace = _buildTrace({
+        query, sanitizedFtsQuery: sanitizedFts, chatId,
+        mode: forceMode === 'hybrid' ? 'hybrid' : forceMode,
+        rerankUsed: false,
+        lexRaw, vectorIdsRaw, vectorIds, db,
+        scored: [], orderedCandidates: [], admittedWinners: [],
+        stitchAttempts: [], passages: [],
+        rerankEntries: null, rerankMs: undefined,
+        tokensUsed: 0,
+      })
+    }
+    return result
   }
 
   // Build rank maps
@@ -333,28 +383,19 @@ export async function retrieve(
   const fusedCount = scored.length
 
   // ── 3.5 Optional cross-encoder rerank ────────────────────────────────────────
-  // When rerankEnabled=true: take the top RERANK_CANDIDATES from RRF, re-score
-  // them with the cross-encoder, then carry the top FINAL_K_RERANKED into
-  // budget allocation (replacing the plain FINAL_K RRF path).
-  //
-  // Fallback rule: ANY error in the rerank step logs one [RAG] warning and falls
-  // back to the EXACT pure-RRF code path used when the flag is off — the budget
-  // allocation below is shared code, parameterised by `orderedCandidates` only.
-  //
-  // Fire-and-forget warm-up fires at the START of the rerank branch so the model
-  // is resident in memory for the NEXT call (the current call initialises it
-  // serially below if needed).
+  const settings    = readSettings()
+  const doRerank    = options?.rerankOverride !== undefined
+    ? options.rerankOverride
+    : (settings.rerankEnabled ?? false)
 
-  const settings = readSettings()
   let rerankUsed = false
   let rerankMs: number | undefined
+  let rerankEntries: RagTraceRerankEntry[] | null = null
 
-  // orderedCandidates: chunks to allocate against, in priority order (highest first)
   type Candidate = { id: number; rrfScore: number; rerankScore?: number }
   let orderedCandidates: Candidate[]
 
-  if (settings.rerankEnabled) {
-    // Fire-and-forget: warm up the model for the next query
+  if (doRerank) {
     void import('./RerankerService').then(m => m.ensureRerankerReady()).catch(() => {})
 
     try {
@@ -368,8 +409,12 @@ export async function retrieve(
       const { rerank } = await import('./RerankerService')
       const t0 = Date.now()
       const reranked = await rerank(query, rePassages, scoreFn)
-      rerankMs  = Date.now() - t0
+      rerankMs   = Date.now() - t0
       rerankUsed = true
+
+      if (captureTrace) {
+        rerankEntries = reranked.map(r => ({ rowid: r.rowid, rerankScore: r.score }))
+      }
 
       orderedCandidates = reranked.slice(0, FINAL_K_RERANKED).map(r => ({
         id:          r.rowid,
@@ -378,12 +423,10 @@ export async function retrieve(
       }))
     } catch (err) {
       console.warn('[RAG] ⚠️ Rerank failed, falling back to RRF order:', err)
-      // Fall through to the exact same code path as rerankEnabled=false
       orderedCandidates = scored.slice(0, FINAL_K).map(s => ({ id: s.id, rrfScore: s.score }))
       rerankUsed = false
     }
   } else {
-    // Pure-RRF path (default) — byte-identical to pre-Phase-3 behaviour
     orderedCandidates = scored.slice(0, FINAL_K).map(s => ({ id: s.id, rrfScore: s.score }))
   }
 
@@ -391,31 +434,19 @@ export async function retrieve(
   const chunkMap = fetchChunkRows(orderedCandidates.map(c => c.id))
 
   // ── 4. Priority-ordered budget allocation ────────────────────────────────────
-  //
-  // Shared code path — orderedCandidates drives priority regardless of whether
-  // they came from RRF or rerank.  This guarantees no logic drift between modes.
-  //
-  // Pass 1 — winners (descending priority order):
-  //   • The very first winner is always admitted regardless of size.
-  //   • Any subsequent winner that does not fit is SKIPPED with `continue` —
-  //     a smaller winner later in the list may still fit.
-  //
-  // Pass 2 — stitches (fills remaining budget only):
-  //   • For each admitted winner, attempt its ±1 neighbours.
-  //   • A neighbour is added only if it fits within the remaining budget.
-  //   • Guarantee: stitched neighbours can NEVER displace an un-admitted winner
-  //     because all winners are decided before any stitch is attempted.
-
   let tokensUsed = 0
 
   // Pass 1 — winners
   const admittedWinners: Array<{ row: ChunkRow; rrfScore: number; rerankScore?: number }> = []
+  // Track candidates skipped for "too big" (for trace)
+  const skippedTooBig = new Set<number>()
   for (const { id, rrfScore, rerankScore } of orderedCandidates) {
     const row = chunkMap.get(id)
     if (!row) continue
     const t = countTokens(row.content)
     if (tokensUsed + t > CONTEXT_TOKEN_BUDGET && admittedWinners.length > 0) {
-      continue  // too large for current budget; try the next winner
+      skippedTooBig.add(id)
+      continue
     }
     admittedWinners.push({ row, rrfScore, rerankScore })
     tokensUsed += t
@@ -429,9 +460,10 @@ export async function retrieve(
     ...(rerankScore !== undefined && { rerankScore }),
   }))
 
-  // Track all admitted ids to prevent duplicates (includes winners so a
-  // top-k chunk is not re-added as a neighbour stitch of another winner).
   const includedIds = new Set<number>(admittedWinners.map(w => w.row.id))
+
+  // Track stitch attempts for trace
+  const stitchAttempts: Array<{ row: ChunkRow; admitted: boolean }> = []
 
   // Pass 2 — stitches
   for (const { row } of admittedWinners) {
@@ -447,13 +479,15 @@ export async function retrieve(
             content: adj.content, stitched: true,
           })
           tokensUsed += t
+          if (captureTrace) stitchAttempts.push({ row: adj, admitted: true })
+        } else {
+          if (captureTrace) stitchAttempts.push({ row: adj, admitted: false })
         }
       }
     }
   }
 
   // ── 5. Sort admitted passages for presentation ────────────────────────────
-  // Budget allocation above is by priority; sorting is for readability only.
   passages.sort((a, b) =>
     a.docName.localeCompare(b.docName) || a.chunkIndex - b.chunkIndex
   )
@@ -465,7 +499,7 @@ export async function retrieve(
     (rerankMs != null ? ` rerankMs=${rerankMs}` : '')
   )
 
-  return {
+  const result: RagRetrievalResult = {
     hits: passages,
     noHit: false,
     degradedMode,
@@ -476,5 +510,145 @@ export async function retrieve(
     docNames,
     rerankUsed,
     rerankMs,
+  }
+
+  if (captureTrace) {
+    result.trace = _buildTrace({
+      query, sanitizedFtsQuery: sanitizedFts, chatId,
+      mode: forceMode === 'hybrid' ? 'hybrid' : forceMode,
+      rerankUsed, rerankEntries, rerankMs,
+      lexRaw, vectorIdsRaw, vectorIds, db,
+      scored, orderedCandidates, admittedWinners, skippedTooBig,
+      stitchAttempts, passages, tokensUsed,
+    })
+  }
+
+  return result
+}
+
+// ── Trace assembly ────────────────────────────────────────────────────────────
+
+interface TraceInput {
+  query:             string
+  sanitizedFtsQuery: string
+  chatId:            string
+  mode:              'lexical' | 'vector' | 'hybrid'
+  rerankUsed:        boolean
+  rerankEntries:     RagTraceRerankEntry[] | null
+  rerankMs?:         number
+  lexRaw:            Array<{ id: number; rank: number }>
+  vectorIdsRaw:      Array<{ rowid: number; distance: number }>
+  vectorIds:         Array<{ rowid: number }>
+  db:                ReturnType<typeof getDB>
+  scored:            Array<{ id: number; score: number }>
+  orderedCandidates: Array<{ id: number; rrfScore: number; rerankScore?: number }>
+  admittedWinners:   Array<{ row: { id: number; doc_name: string; chunk_index: number; content: string } }>
+  skippedTooBig?:    Set<number>
+  stitchAttempts?:   Array<{ row: { id: number; content: string }; admitted: boolean }>
+  passages:          RagPassage[]
+  tokensUsed:        number
+}
+
+function _buildTrace(t: TraceInput): RagQueryTrace {
+  // Lexical entries
+  const lexical: RagTraceLexicalEntry[] = t.lexRaw.map((r, idx) => {
+    const row = t.db.prepare(
+      'SELECT doc_name, chunk_index, content FROM rag_chunks WHERE id = ?'
+    ).get(r.id) as { doc_name: string; chunk_index: number; content: string } | undefined
+    return {
+      rowid:          r.id,
+      rank:           idx,
+      docName:        row?.doc_name ?? '',
+      chunkIndex:     row?.chunk_index ?? 0,
+      contentPreview: (row?.content ?? '').slice(0, 200),
+    }
+  })
+
+  // Vector entries — include ALL raw results (dropped ones have dropped:true)
+  const droppedSet = new Set(
+    t.vectorIdsRaw
+      .filter(r => !t.vectorIds.some(v => v.rowid === r.rowid))
+      .map(r => r.rowid)
+  )
+  const vector: RagTraceVectorEntry[] = t.vectorIdsRaw.map(r => {
+    const row = t.db.prepare(
+      'SELECT doc_name, chunk_index, content FROM rag_chunks WHERE id = ?'
+    ).get(r.rowid) as { doc_name: string; chunk_index: number; content: string } | undefined
+    return {
+      rowid:          r.rowid,
+      distance:       r.distance,
+      cosineSim:      1 - (r.distance * r.distance) / 2,
+      docName:        row?.doc_name ?? '',
+      chunkIndex:     row?.chunk_index ?? 0,
+      contentPreview: (row?.content ?? '').slice(0, 200),
+      dropped:        droppedSet.has(r.rowid),
+    }
+  })
+
+  // Fused entries
+  const lexSet = new Set(t.lexRaw.map(r => r.id))
+  const vecSet = new Set(t.vectorIds.map(r => r.rowid))
+  const fused: RagTraceFusedEntry[] = t.scored.map(s => ({
+    rowid:     s.id,
+    rrfScore:  s.score,
+    inLexical: lexSet.has(s.id),
+    inVector:  vecSet.has(s.id),
+  }))
+
+  // Allocation decisions
+  const admittedWinnerIds   = new Set(t.admittedWinners.map(w => w.row.id))
+  const skippedTooBigIds    = t.skippedTooBig ?? new Set<number>()
+  const stitchedIds         = new Set(
+    (t.stitchAttempts ?? []).filter(s => s.admitted).map(s => s.row.id)
+  )
+  const stitchRejectedIds   = new Set(
+    (t.stitchAttempts ?? []).filter(s => !s.admitted).map(s => s.row.id)
+  )
+
+  const allocation: RagTraceAllocationEntry[] = []
+
+  // All ordered candidates
+  for (const c of t.orderedCandidates) {
+    const row = t.db.prepare('SELECT content FROM rag_chunks WHERE id = ?')
+      .get(c.id) as { content: string } | undefined
+    const tokens = row ? countTokens(row.content) : 0
+    let decision: RagAllocationDecision
+    if (admittedWinnerIds.has(c.id)) decision = 'admitted'
+    else if (skippedTooBigIds.has(c.id)) decision = 'skipped_too_big'
+    else decision = 'not_reached'
+    allocation.push({ rowid: c.id, decision, tokens })
+  }
+
+  // Stitch attempts
+  for (const s of (t.stitchAttempts ?? [])) {
+    const tokens = countTokens(s.row.content)
+    allocation.push({
+      rowid:    s.row.id,
+      decision: s.admitted ? 'stitched' : 'stitch_rejected_budget',
+      tokens,
+    })
+  }
+
+  // Final passages — full decoded content of admitted non-stitched + stitched
+  const finalPassages: string[] = t.passages.map(p => {
+    const header = passageHeader(p.docName, p.sectionTitle, p.chunkIndex)
+    return `${header}\n${p.content}`
+  })
+
+  return {
+    query:             t.query,
+    sanitizedFtsQuery: t.sanitizedFtsQuery,
+    chatId:            t.chatId,
+    timestamp:         new Date().toISOString(),
+    mode:              t.mode,
+    rerankUsed:        t.rerankUsed,
+    lexical,
+    vector,
+    fused,
+    rerank:            t.rerankEntries,
+    rerankMs:          t.rerankMs,
+    allocation,
+    finalPassages,
+    envelopeTokens:    t.tokensUsed,
   }
 }

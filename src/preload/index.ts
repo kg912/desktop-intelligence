@@ -255,12 +255,22 @@ const api = {
   setChatSystemInstructions: (chatId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('chat:set-system-instructions', chatId, text),
 
-  // ── RAG v2 settings (Phase 3: reranker toggle) ───────────────
-  ragGetSettings: (): Promise<{ rerankEnabled: boolean }> =>
+  // ── RAG v2 settings (Phase 3+4) ─────────────────────────────
+  ragGetSettings: (): Promise<{ rerankEnabled: boolean; ragVerboseTrace: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_RAG),
 
-  ragSaveSettings: (patch: { rerankEnabled?: boolean }): Promise<void> =>
+  ragSaveSettings: (patch: { rerankEnabled?: boolean; ragVerboseTrace?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE_RAG, patch),
+
+  // ── RAG v2 diagnostics (Phase 4) ────────────────────────────
+  ragListDocs: (chatId: string): Promise<Array<{ docId: string; docName: string; mode: string; tokenCount: number; chunkCount: number }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RAG_LIST_DOCS, chatId),
+
+  ragExportChunks: (docId: string): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RAG_EXPORT_CHUNKS, docId),
+
+  ragRunEval: (opts: { filePath: string; chatId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RAG_RUN_EVAL, opts),
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),

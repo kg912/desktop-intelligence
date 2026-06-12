@@ -212,6 +212,8 @@ export interface RagRetrievalResult {
   rerankUsed:    boolean
   /** Wall-clock ms spent in the reranker (only present when rerankUsed=true) */
   rerankMs?:     number
+  /** Full retrieval trace (only populated when captureTrace=true in retrieve() options) */
+  trace?:        RagQueryTrace
 }
 
 export interface ChatSendPayload {
@@ -244,6 +246,79 @@ export interface GenerationStats {
  * string is the only edit needed to switch the default target model.
  */
 export const DEFAULT_MODEL_ID = 'mlx-community/Qwen3.5-35B-A3B-6bit'
+
+// ── RAG v2 Phase 4 — observability traces ────────────────────────────────────
+
+/** One lexical (FTS5) candidate captured in a trace. */
+export interface RagTraceLexicalEntry {
+  rowid:          number
+  rank:           number
+  docName:        string
+  chunkIndex:     number
+  contentPreview: string   // first 200 chars
+}
+
+/** One vector (KNN) candidate captured in a trace. */
+export interface RagTraceVectorEntry {
+  rowid:          number
+  distance:       number
+  cosineSim:      number   // 1 − distance²/2
+  docName:        string
+  chunkIndex:     number
+  contentPreview: string   // first 200 chars
+  /** true when this candidate exceeded VEC_DISTANCE_FLOOR and was dropped before fusion */
+  dropped:        boolean
+}
+
+/** One RRF-fused candidate. */
+export interface RagTraceFusedEntry {
+  rowid:     number
+  rrfScore:  number
+  inLexical: boolean
+  inVector:  boolean
+}
+
+/** One cross-encoder rerank entry. */
+export interface RagTraceRerankEntry {
+  rowid:       number
+  rerankScore: number
+}
+
+export type RagAllocationDecision =
+  | 'admitted'
+  | 'skipped_too_big'
+  | 'not_reached'
+  | 'stitched'
+  | 'stitch_rejected_budget'
+
+/** Budget allocation decision for one rowid. */
+export interface RagTraceAllocationEntry {
+  rowid:    number
+  decision: RagAllocationDecision
+  tokens:   number
+}
+
+/**
+ * Full retrieval trace produced when captureTrace=true in retrieve().
+ * When ragVerboseTrace is false, contentPreview / finalPassages text is omitted.
+ */
+export interface RagQueryTrace {
+  query:              string
+  sanitizedFtsQuery:  string
+  chatId:             string
+  timestamp:          string
+  mode:               'lexical' | 'vector' | 'hybrid'
+  rerankUsed:         boolean
+  lexical:            RagTraceLexicalEntry[]
+  vector:             RagTraceVectorEntry[]
+  fused:              RagTraceFusedEntry[]
+  rerank:             RagTraceRerankEntry[] | null
+  rerankMs?:          number
+  allocation:         RagTraceAllocationEntry[]
+  /** Full decoded content of every admitted passage — only populated when ragVerboseTrace=true */
+  finalPassages:      string[]
+  envelopeTokens:     number
+}
 
 // --- IPC Channel Names ---
 export const IPC_CHANNELS = {
@@ -340,6 +415,11 @@ export const IPC_CHANNELS = {
   // ── RAG v2 settings ────────────────────────────────────────────
   SETTINGS_GET_RAG:  'settings:getRag',
   SETTINGS_SAVE_RAG: 'settings:saveRag',
+
+  // ── RAG v2 diagnostics (Phase 4) ──────────────────────────────────────────────
+  RAG_EXPORT_CHUNKS: 'rag:export-chunks',
+  RAG_RUN_EVAL:      'rag:run-eval',
+  RAG_LIST_DOCS:     'rag:list-docs',
 
 } as const
 

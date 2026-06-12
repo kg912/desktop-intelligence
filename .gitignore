@@ -37,3 +37,6 @@ coverage/
 
 # ── Working specs (local-only, not committed) ────────────────
 specs/
+
+# ── RAG eval corpus (local-only, not committed) ──────────────
+evals/

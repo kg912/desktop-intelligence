@@ -69,6 +69,12 @@ export interface AppSettings {
    * before budget allocation. Requires a one-time model download (~7 MB). Default: false.
    */
   rerankEnabled?: boolean
+  /**
+   * When true, rag_query observability events include full retrieved chunk text
+   * (contentPreview + finalPassages). When false, text fields are omitted to keep
+   * events lightweight. Default: false.
+   */
+  ragVerboseTrace?: boolean
 }
 
 function settingsPath(): string {
