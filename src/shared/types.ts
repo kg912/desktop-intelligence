@@ -417,9 +417,13 @@ export const IPC_CHANNELS = {
   SETTINGS_SAVE_RAG: 'settings:saveRag',
 
   // ── RAG v2 diagnostics (Phase 4) ──────────────────────────────────────────────
-  RAG_EXPORT_CHUNKS: 'rag:export-chunks',
-  RAG_RUN_EVAL:      'rag:run-eval',
-  RAG_LIST_DOCS:     'rag:list-docs',
+  RAG_EXPORT_CHUNKS:    'rag:export-chunks',
+  RAG_RUN_EVAL:         'rag:run-eval',
+  RAG_LIST_DOCS:        'rag:list-docs',
+
+  // ── RAG v2 diagnostics (Phase 5 — chat selector + config) ────────────────────
+  RAG_LIST_DOC_CHATS:   'rag:list-doc-chats',
+  RAG_GET_CONFIG:       'rag:get-config',
 
 } as const
 

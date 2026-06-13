@@ -1,17 +1,127 @@
 /**
- * RAG v2 diagnostics IPC handlers — Phase 4.
+ * RAG v2 diagnostics IPC handlers — Phase 4 + Phase 5.
  *
  * Registered from index.ts via registerRagDiagnosticsHandlers().
  * Exposes:
- *   rag:list-docs    → list indexed docs for a chat with chunk counts
+ *   rag:list-docs         → list indexed docs for a chat with chunk counts
  *   rag:export-chunks(docId) → write markdown dump to Downloads, return path
  *   rag:run-eval({ filePath, chatId }) → run evaluation harness, return EvalReport
+ *   rag:list-doc-chats    → list all chats that have ≥1 document row
+ *   rag:get-config        → return live retrieval constant values
+ *
+ * The listDocChatsFromDB and assembleRagConfig helpers are exported for unit testing.
  */
 
 import { ipcMain, app } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { IPC_CHANNELS } from '../../shared/types'
+import type Database from 'better-sqlite3'
+
+// ── Exported pure helpers (testable without Electron) ────────────────────────
+
+export type DocChatEntry = {
+  chatId:          string
+  title:           string
+  docCount:        number
+  indexedDocCount: number
+  totalChunks:     number
+}
+
+/**
+ * Queries all chats that have ≥1 document row and returns summary info.
+ * Title falls back to the first user message when the chat still has the
+ * default "New Chat" placeholder, then to the bare chatId.
+ */
+export function listDocChatsFromDB(db: Database.Database): DocChatEntry[] {
+  const rows = db.prepare(`
+    SELECT
+      c.id                                                    AS chatId,
+      c.title                                                 AS title,
+      c.updated_at                                            AS updatedAt,
+      COUNT(DISTINCT d.id)                                    AS docCount,
+      COUNT(DISTINCT CASE WHEN d.mode = 'indexed' THEN d.id END) AS indexedDocCount,
+      (SELECT COUNT(*) FROM rag_chunks rc WHERE rc.chat_id = c.id) AS totalChunks
+    FROM   documents d
+    JOIN   chats c ON c.id = d.chat_id
+    WHERE  d.chat_id IS NOT NULL
+    GROUP  BY c.id
+    ORDER  BY c.updated_at DESC
+  `).all() as Array<{
+    chatId:          string
+    title:           string
+    updatedAt:       number
+    docCount:        number
+    indexedDocCount: number
+    totalChunks:     number
+  }>
+
+  return rows.map(r => {
+    let displayTitle = r.title
+    if (!displayTitle || displayTitle === 'New Chat') {
+      const firstMsg = db.prepare(
+        `SELECT content FROM chat_messages
+         WHERE chat_id = ? AND role = 'user'
+         ORDER BY created_at ASC LIMIT 1`
+      ).get(r.chatId) as { content: string } | undefined
+      if (firstMsg?.content) {
+        const t = firstMsg.content.trim().replace(/\s+/g, ' ')
+        displayTitle = t.length > 60 ? t.slice(0, 60) + '…' : t
+      } else {
+        displayTitle = r.chatId
+      }
+    }
+    return {
+      chatId:          r.chatId,
+      title:           displayTitle,
+      docCount:        r.docCount,
+      indexedDocCount: r.indexedDocCount,
+      totalChunks:     r.totalChunks,
+    }
+  })
+}
+
+export type RagConfigValues = {
+  CHUNK_TOKENS:         number
+  CHUNK_OVERLAP_TOKENS: number
+  FINAL_K:              number
+  FINAL_K_RERANKED:     number
+  K_LEXICAL:            number
+  K_VECTOR:             number
+  RRF_K:                number
+  VEC_DISTANCE_FLOOR:   number
+  CONTEXT_TOKEN_BUDGET: number
+  EMBEDDING_MODEL_ID:   string
+  EMBEDDING_DIM:        number
+  RERANKER_MODEL_ID:    string
+}
+
+export async function assembleRagConfig(): Promise<RagConfigValues> {
+  const { CHUNK_TOKENS, CHUNK_OVERLAP_TOKENS } = await import('../services/rag/RagChunker')
+  const {
+    FINAL_K, FINAL_K_RERANKED, K_LEXICAL, K_VECTOR,
+    RRF_K, VEC_DISTANCE_FLOOR, CONTEXT_TOKEN_BUDGET,
+  } = await import('../services/rag/RagRetrievalService')
+  const { EMBEDDING_MODEL_ID, EMBEDDING_DIM } = await import('../services/EmbeddingService')
+  const { RERANKER_MODEL_ID }                 = await import('../services/rag/RerankerService')
+
+  return {
+    CHUNK_TOKENS,
+    CHUNK_OVERLAP_TOKENS,
+    FINAL_K,
+    FINAL_K_RERANKED,
+    K_LEXICAL,
+    K_VECTOR,
+    RRF_K,
+    VEC_DISTANCE_FLOOR,
+    CONTEXT_TOKEN_BUDGET,
+    EMBEDDING_MODEL_ID,
+    EMBEDDING_DIM,
+    RERANKER_MODEL_ID,
+  }
+}
+
+// ── IPC registration ──────────────────────────────────────────────────────────
 
 export function registerRagDiagnosticsHandlers(): void {
 
@@ -47,14 +157,12 @@ export function registerRagDiagnosticsHandlers(): void {
     const { getDB } = await import('../services/DatabaseService')
     const db = getDB()
 
-    // Document metadata
     const doc = db.prepare(
       'SELECT name, mode, token_count FROM documents WHERE id = ?'
     ).get(docId) as { name: string; mode: string; token_count: number | null } | undefined
 
     if (!doc) throw new Error(`Document not found: ${docId}`)
 
-    // Chunk rows
     const chunks = db.prepare(`
       SELECT chunk_index, section_title, char_start, char_end, content
       FROM   rag_chunks
@@ -68,12 +176,7 @@ export function registerRagDiagnosticsHandlers(): void {
       content:       string
     }>
 
-    // coveragePct from last chunk
-    const lastChunk = chunks[chunks.length - 1]
-    const rawText   = db.prepare(
-      'SELECT text FROM doc_inline_text WHERE doc_id = ?'
-    ).get(docId) as { text: string } | undefined
-    // rag_chunks don't store the raw text length directly; approximate from char_end
+    const lastChunk  = chunks[chunks.length - 1]
     const approxTextLen = lastChunk?.char_end ?? 0
     const coveragePct   = approxTextLen > 0 && lastChunk
       ? Math.round((lastChunk.char_end ?? 0) / approxTextLen * 100 * 100) / 100
@@ -96,7 +199,6 @@ export function registerRagDiagnosticsHandlers(): void {
       const range   = (c.char_start != null && c.char_end != null)
         ? ` · ${c.char_start}–${c.char_end}`
         : ''
-      // Approximate tokens from content length
       const approxTok = Math.round(c.content.length / 3.5)
       lines.push(`## [#${c.chunk_index}${section}${range} · ~${approxTok} tokens]`)
       lines.push('')
@@ -104,10 +206,9 @@ export function registerRagDiagnosticsHandlers(): void {
       lines.push('')
     }
 
-    // Write to Downloads
-    const ts      = new Date().toISOString().replace(/[:.]/g, '-')
+    const ts       = new Date().toISOString().replace(/[:.]/g, '-')
     const safeName = doc.name.replace(/[^a-z0-9_.-]/gi, '_').slice(0, 60)
-    const outPath = path.join(app.getPath('downloads'), `rag-chunks-${safeName}-${ts}.md`)
+    const outPath  = path.join(app.getPath('downloads'), `rag-chunks-${safeName}-${ts}.md`)
     fs.writeFileSync(outPath, lines.join('\n'), 'utf8')
     console.log(`[RAG] Chunk export written to ${outPath}`)
     return outPath
@@ -118,9 +219,19 @@ export function registerRagDiagnosticsHandlers(): void {
     IPC_CHANNELS.RAG_RUN_EVAL,
     async (_, { filePath, chatId }: { filePath: string; chatId: string }) => {
       const { runEval } = await import('../services/rag/RagEvalService')
-      // embedFn and scoreFn are omitted → real models used at runtime
       const report = await runEval(filePath, chatId)
       return report
     }
   )
+
+  // ── LIST DOC CHATS ────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC_CHANNELS.RAG_LIST_DOC_CHATS, async () => {
+    const { getDB } = await import('../services/DatabaseService')
+    return listDocChatsFromDB(getDB())
+  })
+
+  // ── GET CONFIG ────────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC_CHANNELS.RAG_GET_CONFIG, async () => {
+    return assembleRagConfig()
+  })
 }

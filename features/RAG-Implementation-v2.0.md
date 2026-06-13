@@ -415,8 +415,15 @@ File structure:
 ```
 
 **RAG panel** — Settings → RAG → "RAG Diagnostics" subsection:
-- Chatid input → "Load docs" → lists indexed documents with name / mode / token count / chunk count
+- Chat selector (dropdown) populated by `rag:list-doc-chats` — each option shows title,
+  indexed-doc count, and total chunk count. A "Refresh" button re-fetches without reopening
+  settings. A "Enter chat ID manually" link reveals a free-text fallback input.
+- "Load docs" → lists indexed documents with name / mode / token count / chunk count
 - "Export chunks" button per document → triggers `rag:export-chunks`
+
+A read-only **Configuration** block is shown at the top of the RAG panel with the live values
+of all retrieval constants (`CHUNK_TOKENS`, `FINAL_K`, `VEC_DISTANCE_FLOOR`, etc.) imported
+directly from source. Caption: _"Tuning these requires a rebuild — shown for reference."_
 
 ### 10.3 Evaluation harness
 
@@ -485,10 +492,13 @@ All per-query values are averaged across queries to produce the aggregates.
 #### Running an eval
 
 1. Build your eval file at `evals/eval.jsonl` (gitignored — never committed)
-2. In Settings → RAG → "Run RAG Eval": enter the file path and the chat ID of the indexed
-   conversation, then click **Run eval**
-3. A markdown report is written to Downloads (`rag-eval-<timestamp>.md`) and the aggregates
-   are displayed inline in the RAG panel
+2. In Settings → RAG → "Run RAG Eval":
+   - Select the target chat from the dropdown (same selector shared with Diagnostics)
+   - Enter the eval file path and click **Run Eval**
+3. On success: a one-line summary is shown inline ("4 modes × N resolved queries — full report
+   at ~/Downloads/rag-eval-\<timestamp\>.md") followed by the aggregates table
+4. On error (bad path, no chat selected, missing JSONL): the error message is shown inline —
+   never fails silently
 
 ### 10.4 Phase 4 deviations from the work order
 

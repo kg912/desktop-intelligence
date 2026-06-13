@@ -272,6 +272,22 @@ const api = {
   ragRunEval: (opts: { filePath: string; chatId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.RAG_RUN_EVAL, opts),
 
+  // ── RAG v2 diagnostics (Phase 5 — chat selector + config) ───────
+  ragListDocChats: (): Promise<Array<{
+    chatId: string; title: string; docCount: number; indexedDocCount: number; totalChunks: number
+  }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RAG_LIST_DOC_CHATS),
+
+  ragGetConfig: (): Promise<{
+    CHUNK_TOKENS: number; CHUNK_OVERLAP_TOKENS: number
+    FINAL_K: number; FINAL_K_RERANKED: number
+    K_LEXICAL: number; K_VECTOR: number; RRF_K: number
+    VEC_DISTANCE_FLOOR: number; CONTEXT_TOKEN_BUDGET: number
+    EMBEDDING_MODEL_ID: string; EMBEDDING_DIM: number
+    RERANKER_MODEL_ID: string
+  }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RAG_GET_CONFIG),
+
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
 
