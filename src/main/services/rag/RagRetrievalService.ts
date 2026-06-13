@@ -194,8 +194,8 @@ export function buildContextEnvelope(opts: {
   if (noHit && indexedDocNames.length > 0) {
     const nameList = indexedDocNames.join(', ')
     sections.push(
-      `Retrieval found no passages relevant to this question in the attached files (${nameList}). ` +
-      `State this honestly if asked about their content.`
+      `The following document(s) are attached to this conversation: ${nameList}. ` +
+      `No passages directly relevant to this question were found — the user may need to ask something more specific about the document content.`
     )
   } else if (passages.length > 0) {
     for (const p of passages) {

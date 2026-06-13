@@ -29,7 +29,6 @@ import type {
   ProcessedAttachment,
   Chat,
   StoredMessage,
-  WireMessage,
   ModelConfig,
   ReloadModelPayload,
   ReloadResult,
@@ -325,6 +324,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     // entirely — the local RAG pipeline is always preferred over a network
     // call that may timeout and delay the response.
     let chatHasDocuments = false
+    let ragContextEnvelope: string | undefined
     if (payload.chatId) {
       try {
         const db  = getDB()
@@ -406,7 +406,11 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           }
         }
 
-        // ── Build envelope and splice ────────────────────────────────────────
+        // ── Build envelope and pass via ragContext ───────────────────────────
+        // The envelope is NOT spliced into enrichedMessages here — instead it is
+        // carried as payload.ragContext so buildMessages() can insert it as an
+        // untrimmed system message (immune to token-budget trim) immediately
+        // before the last user turn.
         const hasContent = inlineTexts.length > 0 || (ragResult !== null)
         if (hasContent) {
           const envelope = buildContextEnvelope({
@@ -418,20 +422,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           })
 
           if (envelope) {
-            const lastUserIdx = [...enrichedMessages].map((m) => m.role).lastIndexOf('user')
-            if (lastUserIdx !== -1) {
-              const ragMsg: WireMessage = { role: 'system', content: envelope }
-              enrichedMessages = [
-                ...enrichedMessages.slice(0, lastUserIdx),
-                ragMsg,
-                ...enrichedMessages.slice(lastUserIdx),
-              ]
-              console.log(
-                `[RAG] INJECTING CONTEXT ENVELOPE (chatId=${payload.chatId}, ` +
-                `${envelope.length} chars): ` +
-                envelope.slice(0, 120).replace(/\n/g, ' ') + '…'
-              )
-            }
+            ragContextEnvelope = envelope
+            console.log(
+              `[RAG] CONTEXT ENVELOPE READY — passing via ragContext field ` +
+              `(chatId=${payload.chatId}, ${envelope.length} chars): ` +
+              envelope.slice(0, 120).replace(/\n/g, ' ') + '…'
+            )
           }
         }
       } catch (ragErr) {
@@ -449,6 +445,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       messages:     enrichedMessages,
       systemPrompt: enrichedSystemPrompt,
       hasDocuments: chatHasDocuments,   // suppresses web search Step 1 when RAG docs are present
+      ...(ragContextEnvelope ? { ragContext: ragContextEnvelope } : {}),
     }
 
     if (payload.chatId && referencesPlot(userMessageText)) {
@@ -498,6 +495,11 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     console.log(`Attachments in payload: ${enrichedPayload.attachments?.length ?? 0}`)
     for (const _da of (enrichedPayload.attachments ?? [])) {
       console.log(`  attachment: name="${_da.name}" kind=${_da.kind} injectChars=${_da.inject?.length ?? 0} hasDataUrl=${!!_da.dataUrl}`)
+    }
+    if (enrichedPayload.ragContext) {
+      console.log(`ragContext: ${enrichedPayload.ragContext.length} chars — preview="${enrichedPayload.ragContext.slice(0, 120).replace(/\n/g, '↵')}…"`)
+    } else {
+      console.log(`ragContext: (none)`)
     }
     console.log(`${'='.repeat(80)}\n`)
 

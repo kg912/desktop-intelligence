@@ -2729,6 +2729,41 @@ export class ChatService {
       kept.unshift(m);
     }
 
+    // ── RAG context injection (never trimmed) ────────────────────
+    // payload.ragContext is the retrieval envelope built by handlers.ts.
+    // It is inserted HERE — after history trimming — so it can never be
+    // dropped by the token-budget walk above, regardless of history length.
+    // Position: immediately before the last user message so the model reads
+    // retrieved context directly before the question it must answer.
+    if (payload.ragContext && payload.ragContext.trim().length > 0) {
+      const maxRagBudget = Math.max(
+        512,
+        contextLength - maxOutputTokens - systemTokenCount - OVERHEAD,
+      );
+      let ragText = payload.ragContext;
+      const ragTokens = countTokens(ragText);
+      if (ragTokens > maxRagBudget) {
+        const approxChars = maxRagBudget * 4; // conservative 4 chars/token
+        ragText =
+          ragText.slice(0, approxChars) + "\n[context truncated to fit window]";
+        console.log(
+          `[ChatService] ✂️ ragContext truncated: ${ragTokens} tokens → ~${maxRagBudget} token budget ` +
+            `(contextLength=${contextLength})`,
+        );
+      }
+      const lastUserKeptIdx = kept.map((m) => m.role).lastIndexOf("user");
+      const insertAt =
+        lastUserKeptIdx !== -1 ? lastUserKeptIdx : kept.length;
+      kept.splice(
+        insertAt,
+        0,
+        { role: "system", content: ragText } as typeof processedMsgs[0],
+      );
+      console.log(
+        `[RAG] ragContext injected into buildMessages (${ragText.length} chars, insertAt=${insertAt})`,
+      );
+    }
+
     // ── Image attachments go on the last user message ────────────
     const images = (payload.attachments ?? []).filter(
       (a) => a.kind === "image" && a.dataUrl,

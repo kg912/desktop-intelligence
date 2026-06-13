@@ -228,6 +228,13 @@ export interface ChatSendPayload {
   thinkingMode?:  ThinkingMode
   /** True when the chat has RAG documents; suppresses web search Step 1 round */
   hasDocuments?:  boolean
+  /**
+   * RAG/inline context envelope built by handlers.ts retrieval block.
+   * Carried as a first-class field so buildMessages() can insert it as an
+   * untrimmed system message immediately before the last user turn — it is
+   * NEVER subject to the token-budget trim that applies to conversation history.
+   */
+  ragContext?:    string
 }
 
 export interface GenerationStats {
