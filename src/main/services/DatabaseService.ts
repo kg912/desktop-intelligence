@@ -274,6 +274,15 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE documents ADD COLUMN source_char_len INTEGER`)
   } catch { /* column already exists */ }
 
+  // Work Order F Bug 1: character offsets on rag_chunks — never persisted before 3.0.0-beta-18.
+  // NULL for chunks ingested before this version; export degrades gracefully (shows "n/a" range).
+  try {
+    _db.exec(`ALTER TABLE rag_chunks ADD COLUMN char_start INTEGER`)
+  } catch { /* column already exists */ }
+  try {
+    _db.exec(`ALTER TABLE rag_chunks ADD COLUMN char_end INTEGER`)
+  } catch { /* column already exists */ }
+
   return _db
 }
 

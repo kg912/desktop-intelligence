@@ -393,11 +393,11 @@ export function RagSettings() {
           <p className="text-xs text-content-secondary">
             Evaluate retrieval quality against a JSONL ground-truth file.
           </p>
-
-          {/* JSONL format example */}
-          <pre className="rounded-md bg-[#0a0a0a] border border-surface-border/30 px-3 py-2 text-[11px] font-mono text-content-muted overflow-x-auto leading-relaxed">
-            {'{"query":"What does the paper say about dropout?","relevant":["dropout regularizes","prevents overfitting"]}\n{"query":"Which optimiser is used?","relevant":["Adam optimiser","learning rate 3e-4"]}'}
-          </pre>
+          <p className="text-xs text-content-muted/70 italic">
+            <span className="not-italic font-medium text-content-muted mr-1.5">Format:</span>
+            <code className="font-mono text-[11px] not-italic">{'{"query": "…", "relevant": ["snippet from doc", "…"]}'}</code>
+            <span className="ml-1.5">(one object per line)</span>
+          </p>
 
           {/* File picker */}
           <div className="space-y-1.5">

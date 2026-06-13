@@ -143,8 +143,8 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
     VALUES (?, ?, '', ?, ?, ?, ?, 'indexed', ?)
   `)
   const insertChunk = db.prepare(`
-    INSERT INTO rag_chunks (doc_id, chat_id, doc_name, chunk_index, section_title, content)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO rag_chunks (doc_id, chat_id, doc_name, chunk_index, section_title, content, char_start, char_end)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   // Collect rowids so we can align with embedding vectors
@@ -164,7 +164,7 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
     for (let i = 0; i < N; i++) {
       const c = chunks[i]
       const info = insertChunk.run(
-        docId, effectiveChatId, fileName, c.chunkIndex, c.sectionTitle, c.content
+        docId, effectiveChatId, fileName, c.chunkIndex, c.sectionTitle, c.content, c.charStart, c.charEnd
       )
       insertedRowids.push(Number(info.lastInsertRowid))
     }

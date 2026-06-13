@@ -58,7 +58,9 @@ beforeAll(() => {
       doc_name    TEXT    NOT NULL,
       chunk_index INTEGER NOT NULL,
       section_title TEXT,
-      content     TEXT    NOT NULL
+      content     TEXT    NOT NULL,
+      char_start  INTEGER,
+      char_end    INTEGER
     );
 
     CREATE TABLE chat_messages (

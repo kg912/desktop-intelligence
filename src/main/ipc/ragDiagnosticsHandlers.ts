@@ -18,6 +18,70 @@ import path from 'path'
 import { IPC_CHANNELS } from '../../shared/types'
 import type Database from 'better-sqlite3'
 
+// ── Exported types ────────────────────────────────────────────────────────────
+
+export type ChunkExportDocInfo = {
+  name:            string
+  mode:            string
+  token_count:     number | null
+  source_char_len: number | null
+}
+
+export type ChunkExportRow = {
+  chunk_index:   number
+  section_title: string | null
+  char_start:    number | null
+  char_end:      number | null
+  content:       string
+}
+
+/**
+ * Build the markdown string for a chunk export.
+ * Exported for unit testing; the IPC handler calls this and writes the file.
+ *
+ * Degrades gracefully for chunks ingested before 3.0.0-beta-18 (char_start/char_end = NULL):
+ *   - Range field in each chunk header is omitted.
+ *   - coverage_pct shows "n/a (re-ingest to measure)" instead of a numeric value.
+ */
+export function buildChunkExportMarkdown(
+  doc:    ChunkExportDocInfo,
+  docId:  string,
+  chunks: ChunkExportRow[],
+): string {
+  const lastChunk = chunks[chunks.length - 1]
+  const srcLen    = doc.source_char_len
+  const coveragePct: number | null =
+    (srcLen != null && srcLen > 0 && lastChunk != null && lastChunk.char_end != null)
+      ? Math.min(Math.round(lastChunk.char_end / srcLen * 100 * 100) / 100, 100)
+      : null
+
+  const lines: string[] = []
+  lines.push(`# Chunk Export — ${doc.name}`)
+  lines.push('')
+  lines.push(`| Field | Value |`)
+  lines.push(`|---|---|`)
+  lines.push(`| doc_id | \`${docId}\` |`)
+  lines.push(`| mode | ${doc.mode} |`)
+  lines.push(`| token_count | ${doc.token_count ?? 'n/a'} |`)
+  lines.push(`| chunk_count | ${chunks.length} |`)
+  lines.push(`| coverage_pct | ${coveragePct != null ? coveragePct + '%' : 'n/a (re-ingest to measure)'} |`)
+  lines.push('')
+
+  for (const c of chunks) {
+    const section   = c.section_title ? ` · §${c.section_title}` : ''
+    const range     = (c.char_start != null && c.char_end != null)
+      ? ` · ${c.char_start}–${c.char_end}`
+      : ''
+    const approxTok = Math.round(c.content.length / 3.5)
+    lines.push(`## [#${c.chunk_index}${section}${range} · ~${approxTok} tokens]`)
+    lines.push('')
+    lines.push(c.content)
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
 // ── Exported pure helpers (testable without Electron) ────────────────────────
 
 export type DocChatEntry = {
@@ -188,7 +252,7 @@ export function registerRagDiagnosticsHandlers(): void {
 
     const doc = db.prepare(
       'SELECT name, mode, token_count, source_char_len FROM documents WHERE id = ?'
-    ).get(docId) as { name: string; mode: string; token_count: number | null; source_char_len: number | null } | undefined
+    ).get(docId) as ChunkExportDocInfo | undefined
 
     if (!doc) throw new Error(`Document not found: ${docId}`)
 
@@ -197,48 +261,14 @@ export function registerRagDiagnosticsHandlers(): void {
       FROM   rag_chunks
       WHERE  doc_id = ?
       ORDER  BY chunk_index ASC
-    `).all(docId) as Array<{
-      chunk_index:   number
-      section_title: string | null
-      char_start:    number | null
-      char_end:      number | null
-      content:       string
-    }>
+    `).all(docId) as ChunkExportRow[]
 
-    const lastChunk  = chunks[chunks.length - 1]
-    const srcLen     = doc.source_char_len
-    const coveragePct: number | null = (srcLen != null && srcLen > 0 && lastChunk)
-      ? Math.min(Math.round((lastChunk.char_end ?? 0) / srcLen * 100 * 100) / 100, 100)
-      : null
-
-    const lines: string[] = []
-    lines.push(`# Chunk Export — ${doc.name}`)
-    lines.push('')
-    lines.push(`| Field | Value |`)
-    lines.push(`|---|---|`)
-    lines.push(`| doc_id | \`${docId}\` |`)
-    lines.push(`| mode | ${doc.mode} |`)
-    lines.push(`| token_count | ${doc.token_count ?? 'n/a'} |`)
-    lines.push(`| chunk_count | ${chunks.length} |`)
-    lines.push(`| coverage_pct | ${coveragePct != null ? coveragePct + '%' : 'n/a (re-ingest to measure)'} |`)
-    lines.push('')
-
-    for (const c of chunks) {
-      const section = c.section_title ? ` · §${c.section_title}` : ''
-      const range   = (c.char_start != null && c.char_end != null)
-        ? ` · ${c.char_start}–${c.char_end}`
-        : ''
-      const approxTok = Math.round(c.content.length / 3.5)
-      lines.push(`## [#${c.chunk_index}${section}${range} · ~${approxTok} tokens]`)
-      lines.push('')
-      lines.push(c.content)
-      lines.push('')
-    }
+    const markdown = buildChunkExportMarkdown(doc, docId, chunks)
 
     const ts       = new Date().toISOString().replace(/[:.]/g, '-')
     const safeName = doc.name.replace(/[^a-z0-9_.-]/gi, '_').slice(0, 60)
     const outPath  = path.join(app.getPath('downloads'), `rag-chunks-${safeName}-${ts}.md`)
-    fs.writeFileSync(outPath, lines.join('\n'), 'utf8')
+    fs.writeFileSync(outPath, markdown, 'utf8')
     console.log(`[RAG] Chunk export written to ${outPath}`)
     return outPath
   })

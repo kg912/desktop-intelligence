@@ -74,7 +74,9 @@ beforeAll(() => {
       doc_name TEXT NOT NULL,
       chunk_index INTEGER NOT NULL,
       section_title TEXT,
-      content TEXT NOT NULL
+      content TEXT NOT NULL,
+      char_start INTEGER,
+      char_end INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_rag_chunks_chat ON rag_chunks(chat_id);
