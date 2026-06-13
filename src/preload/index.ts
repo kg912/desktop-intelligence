@@ -272,6 +272,9 @@ const api = {
   ragRunEval: (opts: { filePath: string; chatId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.RAG_RUN_EVAL, opts),
 
+  ragPickEvalFile: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RAG_PICK_EVAL_FILE),
+
   // ── RAG v2 diagnostics (Phase 5 — chat selector + config) ───────
   ragListDocChats: (): Promise<Array<{
     chatId: string; title: string; docCount: number; indexedDocCount: number; totalChunks: number

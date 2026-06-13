@@ -495,14 +495,28 @@ All per-query values are averaged across queries to produce the aggregates.
 
 #### Running an eval
 
-1. Build your eval file at `evals/eval.jsonl` (gitignored — never committed)
+1. Build your eval file anywhere on disk (gitignored `evals/` dir is convenient — never committed)
 2. In Settings → RAG → "Run RAG Eval":
+   - Click **Choose file…** to open a native file picker filtered to `.jsonl/.json/.txt`
+     (or click "Enter path manually" to type an absolute path directly)
+   - The chosen absolute path is shown read-only with a middle-truncated display; hover for the full path
    - Select the target chat from the dropdown (same selector shared with Diagnostics)
-   - Enter the eval file path and click **Run Eval**
+   - If the selected chat has no indexed documents, a warning is shown and **Run Eval** stays disabled
+   - Click **Run Eval** (disabled until both a file and a chat with ≥1 indexed doc are selected)
 3. On success: a one-line summary is shown inline ("4 modes × N resolved queries — full report
    at ~/Downloads/rag-eval-\<timestamp\>.md") followed by the aggregates table
 4. On error (bad path, no chat selected, missing JSONL): the error message is shown inline —
-   never fails silently
+   never fails silently; if the file is not found the error names every absolute path that was
+   checked (userData root, then process.cwd())
+
+#### Path resolution
+
+When a path is submitted via "Enter path manually":
+
+- **Absolute path**: used as-is; error if the file does not exist at that path.
+- **Relative path**: resolved against `app.getPath('userData')` first, then `process.cwd()`.
+  On failure the error message lists every absolute path that was attempted.
+- Paths chosen via the native file picker are always absolute — no resolution needed.
 
 ### 10.4 Phase 4 deviations from the work order
 

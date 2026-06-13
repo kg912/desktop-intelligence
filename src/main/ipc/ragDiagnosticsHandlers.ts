@@ -12,7 +12,7 @@
  * The listDocChatsFromDB and assembleRagConfig helpers are exported for unit testing.
  */
 
-import { ipcMain, app } from 'electron'
+import { ipcMain, app, dialog, BrowserWindow } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { IPC_CHANNELS } from '../../shared/types'
@@ -121,6 +121,35 @@ export async function assembleRagConfig(): Promise<RagConfigValues> {
   }
 }
 
+/**
+ * Resolves a (possibly relative) eval file path to an absolute path.
+ *
+ * - Absolute paths: used as-is; error if the file does not exist.
+ * - Relative paths: tried against each candidateRoot in order; first match wins.
+ *
+ * Returns { kind:'ok', resolved } or { kind:'error', checked } where checked lists
+ * every absolute path that was attempted, so the caller can surface a clear message.
+ * existsFn is injectable for unit testing.
+ */
+export function resolveEvalFilePath(
+  filePath: string,
+  candidateRoots: string[],
+  existsFn: (p: string) => boolean = (p) => fs.existsSync(p),
+): { kind: 'ok'; resolved: string } | { kind: 'error'; checked: string[] } {
+  if (path.isAbsolute(filePath)) {
+    return existsFn(filePath)
+      ? { kind: 'ok', resolved: filePath }
+      : { kind: 'error', checked: [filePath] }
+  }
+  const checked: string[] = []
+  for (const root of candidateRoots) {
+    const candidate = path.resolve(root, filePath)
+    checked.push(candidate)
+    if (existsFn(candidate)) return { kind: 'ok', resolved: candidate }
+  }
+  return { kind: 'error', checked }
+}
+
 // ── IPC registration ──────────────────────────────────────────────────────────
 
 export function registerRagDiagnosticsHandlers(): void {
@@ -218,11 +247,30 @@ export function registerRagDiagnosticsHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.RAG_RUN_EVAL,
     async (_, { filePath, chatId }: { filePath: string; chatId: string }) => {
+      const candidateRoots = [app.getPath('userData'), process.cwd()]
+      const resolution = resolveEvalFilePath(filePath, candidateRoots)
+      if (resolution.kind === 'error') {
+        const list = resolution.checked.map(p => `  • ${p}`).join('\n')
+        throw new Error(`Eval file not found. Checked:\n${list}`)
+      }
       const { runEval } = await import('../services/rag/RagEvalService')
-      const report = await runEval(filePath, chatId)
-      return report
+      return runEval(resolution.resolved, chatId)
     }
   )
+
+  // ── PICK EVAL FILE ────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC_CHANNELS.RAG_PICK_EVAL_FILE, async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win ?? BrowserWindow.getAllWindows()[0], {
+      title: 'Select Eval File',
+      filters: [
+        { name: 'JSONL / JSON / Text', extensions: ['jsonl', 'json', 'txt'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
 
   // ── LIST DOC CHATS ────────────────────────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.RAG_LIST_DOC_CHATS, async () => {

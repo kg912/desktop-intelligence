@@ -425,6 +425,9 @@ export const IPC_CHANNELS = {
   RAG_LIST_DOC_CHATS:   'rag:list-doc-chats',
   RAG_GET_CONFIG:       'rag:get-config',
 
+  // ── RAG v2 diagnostics (Phase 6 — eval file picker) ──────────────────────────
+  RAG_PICK_EVAL_FILE:   'rag:pick-eval-file',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]

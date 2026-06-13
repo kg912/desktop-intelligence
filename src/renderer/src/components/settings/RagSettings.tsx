@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FileDown, Play, RefreshCw } from 'lucide-react'
+import { FileDown, FolderOpen, Play, RefreshCw } from 'lucide-react'
 import type { EvalReport, EvalModeResult } from '../../../../main/services/rag/RagEvalService'
 
 // ── Shared primitives ────────────────────────────────────────────────────────
@@ -61,6 +61,14 @@ function Row({
   )
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function truncateMiddle(p: string, maxLen = 52): string {
+  if (p.length <= maxLen) return p
+  const half = Math.floor((maxLen - 1) / 2)
+  return p.slice(0, half) + '…' + p.slice(p.length - (maxLen - half - 1))
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type DocEntry  = { docId: string; docName: string; mode: string; tokenCount: number; chunkCount: number }
@@ -96,11 +104,12 @@ export function RagSettings() {
   const [diagMsg,     setDiagMsg]     = useState('')
 
   // Eval harness
-  const [evalFile,       setEvalFile]       = useState('evals/eval.jsonl')
-  const [evalRunning,    setEvalRunning]    = useState(false)
-  const [evalResult,     setEvalResult]     = useState<EvalReport | null>(null)
-  const [evalError,      setEvalError]      = useState('')
-  const [evalReportPath, setEvalReportPath] = useState('')
+  const [evalFile,        setEvalFile]        = useState('')
+  const [evalFileManual,  setEvalFileManual]  = useState(false)
+  const [evalRunning,     setEvalRunning]     = useState(false)
+  const [evalResult,      setEvalResult]      = useState<EvalReport | null>(null)
+  const [evalError,       setEvalError]       = useState('')
+  const [evalReportPath,  setEvalReportPath]  = useState('')
 
   const activeChatId = manualMode ? manualChatId.trim() : selectedChatId
 
@@ -172,6 +181,15 @@ export function RagSettings() {
     }
   }
 
+  const handlePickEvalFile = async () => {
+    try {
+      const p = await window.api.ragPickEvalFile()
+      if (p != null) setEvalFile(p)
+    } catch (err) {
+      console.error('File picker failed:', err)
+    }
+  }
+
   const handleRunEval = async () => {
     if (!evalFile.trim() || !activeChatId) return
     setEvalRunning(true)
@@ -193,6 +211,8 @@ export function RagSettings() {
   // ── Chat selector helper ──────────────────────────────────────────────────
 
   const noDocs = !chatListLoading && chatList.length === 0
+  const selectedChatEntry = !manualMode ? chatList.find(c => c.chatId === selectedChatId) : null
+  const hasIndexedDocs    = manualMode || (selectedChatEntry?.indexedDocCount ?? 0) > 0
 
   const handleChatChange = (chatId: string) => {
     setSelectedChatId(chatId)
@@ -371,20 +391,65 @@ export function RagSettings() {
         </p>
         <div className="rounded-xl border border-surface-border/40 p-4 space-y-3" style={{ background: '#111' }}>
           <p className="text-xs text-content-secondary">
-            Evaluate retrieval quality against a JSONL ground-truth file. Each line:{' '}
-            <code className="text-accent-400">{'{ "query": "…", "relevant": ["substring1", …] }'}</code>
+            Evaluate retrieval quality against a JSONL ground-truth file.
           </p>
-          <input
-            type="text"
-            placeholder="Eval file path (e.g. evals/eval.jsonl)"
-            value={evalFile}
-            onChange={e => setEvalFile(e.target.value)}
-            className="w-full text-xs rounded-md px-2.5 py-1.5 border border-surface-border bg-transparent text-content-primary placeholder:text-content-muted focus:outline-none focus:border-accent-700"
-          />
+
+          {/* JSONL format example */}
+          <pre className="rounded-md bg-[#0a0a0a] border border-surface-border/30 px-3 py-2 text-[11px] font-mono text-content-muted overflow-x-auto leading-relaxed">
+            {'{"query":"What does the paper say about dropout?","relevant":["dropout regularizes","prevents overfitting"]}\n{"query":"Which optimiser is used?","relevant":["Adam optimiser","learning rate 3e-4"]}'}
+          </pre>
+
+          {/* File picker */}
+          <div className="space-y-1.5">
+            {!evalFileManual ? (
+              <div className="flex gap-2 items-center min-w-0">
+                <button
+                  onClick={() => void handlePickEvalFile()}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border border-surface-border text-content-secondary hover:text-content-primary hover:border-accent-700 transition-colors"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  Choose file…
+                </button>
+                {evalFile ? (
+                  <span
+                    title={evalFile}
+                    className="flex-1 text-[11px] font-mono text-content-muted truncate min-w-0"
+                  >
+                    {truncateMiddle(evalFile)}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-content-muted italic">No file chosen</span>
+                )}
+              </div>
+            ) : (
+              <input
+                type="text"
+                placeholder="Absolute path to eval file"
+                value={evalFile}
+                onChange={e => setEvalFile(e.target.value)}
+                className="w-full text-xs rounded-md px-2.5 py-1.5 border border-surface-border bg-transparent text-content-primary placeholder:text-content-muted focus:outline-none focus:border-accent-700"
+              />
+            )}
+            <button
+              onClick={() => setEvalFileManual(m => !m)}
+              className="text-[11px] text-content-muted hover:text-content-secondary transition-colors underline underline-offset-2"
+            >
+              {evalFileManual ? '← Use file picker' : 'Enter path manually'}
+            </button>
+          </div>
+
           {ChatSelector}
+
+          {/* Guard: no indexed docs in selected chat */}
+          {activeChatId && !manualMode && !hasIndexedDocs && !noDocs && (
+            <p className="text-xs text-amber-500/80">
+              Selected chat has no indexed documents — upload a document to a chat and refresh.
+            </p>
+          )}
+
           <button
             onClick={handleRunEval}
-            disabled={evalRunning || !evalFile.trim() || !activeChatId || noDocs}
+            disabled={evalRunning || !evalFile.trim() || !activeChatId || noDocs || !hasIndexedDocs}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border border-accent-800/60 text-accent-400 hover:border-accent-700 hover:text-accent-300 transition-colors disabled:opacity-40"
           >
             <Play className="w-3 h-3" />
