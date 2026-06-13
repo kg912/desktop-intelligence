@@ -236,7 +236,7 @@ export function RagSettings() {
           <select
             value={selectedChatId}
             onChange={e => handleChatChange(e.target.value)}
-            className="flex-1 text-xs rounded-md px-2.5 py-1.5 border border-surface-border bg-[#0f0f0f] text-content-primary focus:outline-none focus:border-accent-700 appearance-none"
+            className="flex-1 min-w-0 text-xs rounded-md px-2.5 py-1.5 border border-surface-border bg-[#0f0f0f] text-content-primary focus:outline-none focus:border-accent-700 appearance-none"
           >
             {chatList.map(c => (
               <option key={c.chatId} value={c.chatId}>
