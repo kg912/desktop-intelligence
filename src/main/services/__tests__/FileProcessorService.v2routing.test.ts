@@ -24,7 +24,8 @@ function buildTestDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
       ts INTEGER NOT NULL, chat_id TEXT, content TEXT NOT NULL DEFAULT '',
-      mode TEXT NOT NULL DEFAULT 'indexed', content_hash TEXT, token_count INTEGER
+      mode TEXT NOT NULL DEFAULT 'indexed', content_hash TEXT, token_count INTEGER,
+      source_char_len INTEGER
     );
     CREATE TABLE IF NOT EXISTS doc_inline_text (
       doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,

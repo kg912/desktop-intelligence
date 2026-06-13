@@ -158,8 +158,8 @@ export function registerRagDiagnosticsHandlers(): void {
     const db = getDB()
 
     const doc = db.prepare(
-      'SELECT name, mode, token_count FROM documents WHERE id = ?'
-    ).get(docId) as { name: string; mode: string; token_count: number | null } | undefined
+      'SELECT name, mode, token_count, source_char_len FROM documents WHERE id = ?'
+    ).get(docId) as { name: string; mode: string; token_count: number | null; source_char_len: number | null } | undefined
 
     if (!doc) throw new Error(`Document not found: ${docId}`)
 
@@ -177,10 +177,10 @@ export function registerRagDiagnosticsHandlers(): void {
     }>
 
     const lastChunk  = chunks[chunks.length - 1]
-    const approxTextLen = lastChunk?.char_end ?? 0
-    const coveragePct   = approxTextLen > 0 && lastChunk
-      ? Math.round((lastChunk.char_end ?? 0) / approxTextLen * 100 * 100) / 100
-      : 0
+    const srcLen     = doc.source_char_len
+    const coveragePct: number | null = (srcLen != null && srcLen > 0 && lastChunk)
+      ? Math.min(Math.round((lastChunk.char_end ?? 0) / srcLen * 100 * 100) / 100, 100)
+      : null
 
     const lines: string[] = []
     lines.push(`# Chunk Export — ${doc.name}`)
@@ -191,7 +191,7 @@ export function registerRagDiagnosticsHandlers(): void {
     lines.push(`| mode | ${doc.mode} |`)
     lines.push(`| token_count | ${doc.token_count ?? 'n/a'} |`)
     lines.push(`| chunk_count | ${chunks.length} |`)
-    lines.push(`| coverage_pct | ${coveragePct}% |`)
+    lines.push(`| coverage_pct | ${coveragePct != null ? coveragePct + '%' : 'n/a (re-ingest to measure)'} |`)
     lines.push('')
 
     for (const c of chunks) {

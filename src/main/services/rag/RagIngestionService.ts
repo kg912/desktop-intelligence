@@ -139,8 +139,8 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
 
   // 5. Transaction: write documents row + rag_chunks (triggers auto-inserts chunks_fts)
   const insertDoc = db.prepare(`
-    INSERT OR REPLACE INTO documents (id, name, path, ts, chat_id, content_hash, token_count, mode)
-    VALUES (?, ?, '', ?, ?, ?, ?, 'indexed')
+    INSERT OR REPLACE INTO documents (id, name, path, ts, chat_id, content_hash, token_count, mode, source_char_len)
+    VALUES (?, ?, '', ?, ?, ?, ?, 'indexed', ?)
   `)
   const insertChunk = db.prepare(`
     INSERT INTO rag_chunks (doc_id, chat_id, doc_name, chunk_index, section_title, content)
@@ -160,7 +160,7 @@ export async function ingest(params: IngestParams): Promise<IngestResult> {
   }
 
   db.transaction(() => {
-    insertDoc.run(docId, fileName, Date.now(), effectiveChatId, contentHash, resolvedTokenCount)
+    insertDoc.run(docId, fileName, Date.now(), effectiveChatId, contentHash, resolvedTokenCount, text.length)
     for (let i = 0; i < N; i++) {
       const c = chunks[i]
       const info = insertChunk.run(

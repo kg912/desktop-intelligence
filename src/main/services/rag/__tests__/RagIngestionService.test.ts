@@ -9,6 +9,14 @@ import { describe, it, expect, beforeAll, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { ensureVecLoaded, _resetForTests } from '../../rag/sqliteVecLoader'
 import { EMBEDDING_DIM } from '../../EmbeddingService'
+import { chunk } from '../../rag/RagChunker'
+
+// Wrap chunk() in a spy so the sub-100% test can control charEnd without
+// touching the real chunker algorithm.
+vi.mock('../../rag/RagChunker', async (importActual) => {
+  const actual = await importActual<typeof import('../../rag/RagChunker')>()
+  return { ...actual, chunk: vi.fn(actual.chunk) }
+})
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -50,7 +58,8 @@ beforeAll(() => {
       content TEXT NOT NULL DEFAULT '',
       mode TEXT NOT NULL DEFAULT 'indexed',
       content_hash TEXT,
-      token_count INTEGER
+      token_count INTEGER,
+      source_char_len INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS doc_inline_text (
@@ -218,6 +227,48 @@ describe('RagIngestionService.ingest — empty', () => {
     insertDocRow(docId, 'chat-ws', 'ws.pdf')
     const result = await ingest({ docId, chatId: 'chat-ws', fileName: 'ws.pdf', text: '   \n\t  ', embedFn: stubEmbed })
     expect(result.status).toBe('empty')
+  })
+})
+
+// ── coveragePct computation ───────────────────────────────────────────────────
+
+describe('RagIngestionService.ingest — coveragePct', () => {
+  it('healthy: source_char_len persisted to DB equals text.length; coveragePct in [99, 100]', async () => {
+    const docId  = 'doc-coverage-healthy'
+    const chatId = 'chat-coverage-healthy'
+    insertDocRow(docId, chatId, 'coverage.pdf')
+    const text = 'Testing coverage percentage. '.repeat(300)
+
+    const result = await ingest({ docId, chatId, fileName: 'coverage.pdf', text, embedFn: stubEmbed })
+
+    expect(result.status).toBe('ingested')
+    expect(result.coveragePct).toBeGreaterThanOrEqual(99)
+    expect(result.coveragePct).toBeLessThanOrEqual(100)
+
+    const row = db.prepare('SELECT source_char_len FROM documents WHERE id = ?').get(docId) as { source_char_len: number | null }
+    expect(row.source_char_len).toBe(text.length)
+  })
+
+  it('sub-100%: coveragePct = round(charEnd/source_char_len*100, 2) — catches denominator regression', async () => {
+    // Stub chunk() to return one chunk with charEnd=800 while text.length=1000.
+    // If the formula regresses to charEnd/charEnd, the result would be 100 — not 80.
+    vi.mocked(chunk).mockReturnValueOnce([
+      { chunkIndex: 0, sectionTitle: null, charStart: 0, charEnd: 800, content: 'x'.repeat(100) }
+    ])
+
+    const docId  = 'doc-sub100'
+    const chatId = 'chat-sub100'
+    const text   = 'x'.repeat(1000)   // source_char_len = 1000
+    insertDocRow(docId, chatId, 'sub100.pdf')
+
+    const result = await ingest({ docId, chatId, fileName: 'sub100.pdf', text, embedFn: stubEmbed })
+
+    // round(800 / 1000 * 100, 2) = 80.00
+    expect(result.coveragePct).toBeCloseTo(80, 1)
+    expect(result.coveragePct).toBeLessThan(100)
+
+    const row = db.prepare('SELECT source_char_len FROM documents WHERE id = ?').get(docId) as { source_char_len: number | null }
+    expect(row.source_char_len).toBe(1000)
   })
 })
 

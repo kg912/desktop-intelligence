@@ -324,7 +324,7 @@ Emitted by `RagIngestionService` after every document ingest (both `indexed` and
     "inlineBudget": null,       // null when indexed; integer token cap when inline
     "chunkCount": 31,           // rag_chunks rows created (0 if inline)
     "vectorCount": 31,          // chunks_vec rows created (0 if embed failed)
-    "coveragePct": 100.00,      // (lastChunk.charEnd / rawText.length) × 100
+    "coveragePct": 100.00,      // (lastChunk.charEnd / source_char_len) × 100; null for pre-v15 docs
     "embedMsTotal": 2341,       // wall-clock ms for all embed() calls
     "durationMs": 2580,         // total ingest wall-clock ms
     "degraded": false           // true if embed failed and fell back to FTS5-only
@@ -332,9 +332,13 @@ Emitted by `RagIngestionService` after every document ingest (both `indexed` and
 }
 ```
 
-**`coveragePct`** proves the chunker consumed the whole document. A value < 100 would indicate a
-real chunker bug (the test suite asserts `coveragePct === 100` for normally-sized documents and
-will fail loudly if that guarantee ever breaks).
+**`coveragePct`** proves the chunker consumed the whole document.
+Formula: `round((lastChunk.charEnd / source_char_len) × 100, 2)` clamped to [0, 100].
+`source_char_len` is the raw source text character count persisted to `documents.source_char_len`
+at ingest time (added in v3.0.0-beta-15). Docs ingested before that version have
+`source_char_len = NULL` and report `coveragePct = null` in chunk exports
+("n/a — re-ingest to measure"). A value < 99 for a post-v15 doc would indicate a real chunker
+tail-drop bug (the test suite catches this with a sub-100% regression test).
 
 #### `rag_query`
 
@@ -403,7 +407,7 @@ File structure:
 - **Mode:** indexed
 - **Token count:** 12,480
 - **Chunk count:** 31
-- **Coverage:** 100.00%
+- **Coverage:** 100.00%  *(or "n/a — re-ingest to measure" for pre-v15 docs)*
 
 ---
 

@@ -268,6 +268,12 @@ export function getDB(): Database.Database {
     console.log('[DB] RAG v2 Phase 2 migration complete (user_version → 2). All stale RAG data wiped for clean re-ingest.')
   }
 
+  // Work Order E: raw source text length — denominator for correct coveragePct in chunk export.
+  // Persisted at ingest time; NULL for docs ingested before 3.0.0-beta-15.
+  try {
+    _db.exec(`ALTER TABLE documents ADD COLUMN source_char_len INTEGER`)
+  } catch { /* column already exists */ }
+
   return _db
 }
 

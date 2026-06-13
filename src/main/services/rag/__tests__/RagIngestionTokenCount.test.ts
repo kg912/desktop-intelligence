@@ -30,7 +30,8 @@ beforeAll(() => {
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',
       ts INTEGER NOT NULL, chat_id TEXT, content TEXT NOT NULL DEFAULT '',
-      mode TEXT NOT NULL DEFAULT 'indexed', content_hash TEXT, token_count INTEGER
+      mode TEXT NOT NULL DEFAULT 'indexed', content_hash TEXT, token_count INTEGER,
+      source_char_len INTEGER
     );
     CREATE TABLE IF NOT EXISTS rag_chunks (
       id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL, chat_id TEXT NOT NULL,
