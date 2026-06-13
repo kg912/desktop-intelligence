@@ -269,7 +269,7 @@ index-vs-data drift, no separate file to corrupt — the lesson of hnswlib.
 | `FINAL_K` / `FINAL_K_RERANKED` | 6 / 8 | Passages handed to budget allocation (RRF path / rerank path) |
 | `RERANK_CANDIDATES` | 20 | Top RRF candidates passed to the cross-encoder when rerank is on |
 | `CONTEXT_TOKEN_BUDGET` | 6,000 tok | Hard cap on the envelope |
-| `RERANK_ENABLED` | **off** (default) | Cross-encoder reranker toggle — Settings → Debug → "Re-rank retrieved passages". Requires one-time ~7 MB model download (jinaai/jina-reranker-v1-tiny-en). Adds ~215 ms warm (M5 Pro) / est. ~500 ms (M1 Pro). |
+| `RERANK_ENABLED` | **off** (default) | Cross-encoder reranker toggle — Settings → RAG → "Re-rank retrieved passages". Requires one-time ~7 MB model download (jinaai/jina-reranker-v1-tiny-en). Adds ~215 ms warm (M5 Pro) / est. ~500 ms (M1 Pro). |
 | Embedding model | all-MiniLM-L6-v2, 384-d | Shared `EmbeddingService` primitive; swappable constant |
 | Reranker model | jinaai/jina-reranker-v1-tiny-en | `RerankerService` — selected by Phase 3 spike; RERANKER_MODEL_ID constant |
 
@@ -343,7 +343,7 @@ Emitted by the `handlers.ts` retrieval path after every `retrieve()` call.
 When the **Verbose RAG tracing** toggle is **off** (default), `contentPreview` fields and
 `finalPassages` text are omitted from the event so the JSONL file stays compact.
 
-When **on**, every field is populated. Toggle lives in Settings → Debug → "Verbose RAG tracing
+When **on**, every field is populated. Toggle lives in Settings → RAG → "Verbose RAG tracing
 (logs full retrieved chunk text)".
 
 ```jsonc
@@ -414,7 +414,7 @@ File structure:
 ...
 ```
 
-**Debug panel** — Settings → Debug → "RAG Diagnostics" subsection:
+**RAG panel** — Settings → RAG → "RAG Diagnostics" subsection:
 - Chatid input → "Load docs" → lists indexed documents with name / mode / token count / chunk count
 - "Export chunks" button per document → triggers `rag:export-chunks`
 
@@ -485,10 +485,10 @@ All per-query values are averaged across queries to produce the aggregates.
 #### Running an eval
 
 1. Build your eval file at `evals/eval.jsonl` (gitignored — never committed)
-2. In Settings → Debug → "Run RAG Eval": enter the file path and the chat ID of the indexed
+2. In Settings → RAG → "Run RAG Eval": enter the file path and the chat ID of the indexed
    conversation, then click **Run eval**
 3. A markdown report is written to Downloads (`rag-eval-<timestamp>.md`) and the aggregates
-   are displayed inline in the Debug panel
+   are displayed inline in the RAG panel
 
 ### 10.4 Phase 4 deviations from the work order
 

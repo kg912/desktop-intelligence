@@ -1,13 +1,14 @@
 import { useState, useCallback } from "react";
-import { Settings, Globe, Info, Plug, Server, Bug } from "lucide-react";
+import { Settings, Globe, Info, Plug, Server, Bug, Database } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import { McpToolsPanel } from "./McpToolsPanel";
 import { InferenceProviderSettingsPanel } from "./InferenceProviderSettingsPanel";
 import { DebugSettings } from "./DebugSettings";
+import { RagSettings } from "./RagSettings";
 import { version, author } from "../../../../../package.json";
 
-type SettingsTab = "model" | "websearch" | "tools" | "backend" | "debug" | "about";
+type SettingsTab = "model" | "websearch" | "tools" | "backend" | "rag" | "debug" | "about";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -166,7 +167,7 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
     onClose();
   }, [isReloading, onClose]);
 
-  const paddingTop = tab === "about" ? 160 : tab === "tools" ? 40 : tab === "backend" ? 60 : tab === "debug" ? 60 : 60;
+  const paddingTop = tab === "about" ? 160 : tab === "tools" ? 40 : tab === "backend" ? 60 : tab === "rag" ? 60 : tab === "debug" ? 60 : 60;
 
   return (
     <div className="flex h-full w-full" style={{ background: "#0f0f0f" }}>
@@ -240,6 +241,12 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
               onClick={() => setTab("backend")}
             />
             <TabItem
+              icon={<Database size={15} />}
+              label="RAG"
+              active={tab === "rag"}
+              onClick={() => setTab("rag")}
+            />
+            <TabItem
               icon={<Bug size={15} />}
               label="Debug"
               active={tab === "debug"}
@@ -265,6 +272,7 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
           {tab === "websearch" && <MCPSettingsPanel />}
           {tab === "tools"     && <McpToolsPanel />}
           {tab === "backend"   && <InferenceProviderSettingsPanel />}
+          {tab === "rag"       && <RagSettings />}
           {tab === "debug"     && <DebugSettings />}
           {tab === "about"     && <AboutPanel />}
         </div>
