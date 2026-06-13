@@ -477,7 +477,8 @@ Snippet: `"l2 regularization prevents"` (after normalisation)
 | Hit@K | 1 if any relevant chunk is in the top-K admitted passages; 0 otherwise |
 | Precision@K | (relevant chunks in top-K) / (top-K count) |
 | Recall@K | (relevant chunks in top-K) / (total relevant chunks in corpus) |
-| MRR | 1 / rank of first relevant chunk in the pre-presentation priority order |
+| MRR | 1 / rank of first relevant chunk in the **priority order** (rerank score → RRF score). This is the order in which the pipeline actually ranks chunks for the model — NOT the alphabetical presentation order. |
+| Candidate Recall | (relevant chunks in top-20 candidate pool) / (all relevant chunks). The candidate pool is the pre-FINAL_K/pre-budget stage: `trace.lexical` for lexical-only, `trace.vector` (non-dropped) for vector-only, `trace.fused` (RRF-desc) for hybrid modes. **`CandRec=1.0` + `Recall@K=0.0` ⇒ the retriever found the chunk but FINAL_K or the token budget dropped it before presentation — raise `FINAL_K` or `CONTEXT_TOKEN_BUDGET`. `CandRec=0.0` ⇒ true retrieval miss — check embedding quality or add lexical synonyms.** |
 
 All per-query values are averaged across queries to produce the aggregates.
 
@@ -506,3 +507,32 @@ All per-query values are averaged across queries to produce the aggregates.
   in-memory DB pattern as Phase 2–3 tests. The reranker pipeline initialises lazily and the
   ablation test tolerates it (hybrid+rerank mode degrades gracefully if the reranker times out
   in a short-lived test process).
+
+### 10.5 Phase 4 hotfix — eval metric ordering (2026-06-13)
+
+**Root cause discovered:** `runEval` was deriving the ranked rowid list from `result.hits`, which
+`retrieve()` step 5 sorts **alphabetically** by docName for presentation. Rank-sensitive metrics
+(MRR, Precision@K, Recall@K, Hit@K) were therefore wrong whenever presentation order ≠ relevance
+order — e.g. a relevant chunk named "aaa.pdf" that ranked 3rd by relevance would appear at rank 1
+in `result.hits` → MRR = 1.0 instead of 1/3.
+
+**Fix (commit `3.0.0-beta-12`):**
+
+1. `captureTrace: true` passed to every `retrieve()` call in `runEval`.
+2. Ranked rowid list derived from `trace.allocation` entries with `decision === 'admitted'`,
+   **in the order they appear** — which is `orderedCandidates` priority order (rerank score
+   when reranking, RRF score otherwise). Stitched neighbours are excluded.
+3. Candidate Recall now computed from the correct pre-allocation stage in the trace:
+   - lexical-only → `trace.lexical` (BM25 rank order)
+   - vector-only → `trace.vector` (KNN distance order, non-dropped only)
+   - hybrid / hybrid+rerank → `trace.fused` (RRF-desc order)
+
+**New tests added** (3 cases):
+- Relevant chunk alphabetically first but priority-rank 3 → MRR = 1/3 (not 1.0).
+- 7 chunks with relevant at rank 7 (beyond FINAL_K=6): `CandRec=1.0`, `Recall@K=0.0`.
+- Stub `scoreFn` promoting relevant from RRF-rank 5 to rerank-rank 1: MRR 0.2 → 1.0.
+
+**Note on `scoreFn` contract:** `RerankerService.rerank()`'s injectable path returns the
+`scoreFn` result verbatim (no sort). The production path sorts descending. Stub scoreFns must
+therefore return results pre-sorted descending — this is consistent with all existing Phase 3
+test stubs.

@@ -162,7 +162,8 @@ export function resolveRelevantRowids(
 
 // ── Run eval ─────────────────────────────────────────────────────────────────
 
-const K = 6  // evaluation k (matches FINAL_K default)
+const K = 6            // evaluation k (matches FINAL_K default)
+const K_CANDIDATE = 20 // candidate pool cap for candidateRecall
 
 /**
  * Run the evaluation harness against a JSONL eval file.
@@ -227,8 +228,8 @@ export async function runEval(
       try {
         result = await retrieve(q.query, chatId, embedFn, scoreFn, {
           forceMode:      forceMode as 'lexical' | 'vector' | 'hybrid',
-          rerankOverride: isRerank ? true : false,
-          captureTrace:   false,
+          rerankOverride: isRerank,
+          captureTrace:   true,
         })
       } catch {
         modes.push({
@@ -242,20 +243,34 @@ export async function runEval(
         continue
       }
 
-      // Non-stitched hits in their presentation order
-      const nonStitched = result.hits.filter(h => !h.stitched).map(h => h.rowid)
-      // All hits (non-stitched + stitched) in presentation order
-      const allHitIds   = result.hits.map(h => h.rowid)
+      const trace = result.trace!
 
-      // Candidate-stage recall: how many relevant chunks were in the top-K candidates
-      // (before budget allocation). We use allHitIds as a proxy for what the
-      // retriever surfaced (this is conservative — we only have post-allocation data).
-      const candRecall = recallAtK(allHitIds, relevantSet, K)
+      // Admitted winners in priority order: rerank order when reranking, else RRF order.
+      // Stitched neighbours are excluded — they are context fillers, not ranked results.
+      const admittedOrdered: number[] = trace.allocation
+        .filter(a => a.decision === 'admitted')
+        .map(a => a.rowid)
 
-      const hit  = hitRate(nonStitched, relevantSet, K)
-      const prec = precisionAtK(nonStitched, relevantSet, K)
-      const rec  = recallAtK(nonStitched, relevantSet, K)
-      const m    = mrr(nonStitched, relevantSet)
+      // Candidate pool for candidateRecall: the retrieval stage before FINAL_K/budget
+      // allocation.  A chunk here but NOT in admittedOrdered means the retriever FOUND
+      // it but budget/FINAL_K dropped it — i.e. an allocation failure, not a retrieval
+      // failure.  Capped at K_CANDIDATE (20) per mode.
+      let candidateRowids: number[]
+      if (modeName === 'lexical-only') {
+        candidateRowids = trace.lexical.slice(0, K_CANDIDATE).map(e => e.rowid)
+      } else if (modeName === 'vector-only') {
+        candidateRowids = trace.vector.filter(e => !e.dropped).slice(0, K_CANDIDATE).map(e => e.rowid)
+      } else {
+        // hybrid / hybrid+rerank: fused entries are already in RRF-desc order
+        candidateRowids = trace.fused.slice(0, K_CANDIDATE).map(e => e.rowid)
+      }
+      const candRecall = relevantSet.size === 0 ? 0
+        : candidateRowids.filter(id => relevantSet.has(id)).length / relevantSet.size
+
+      const hit  = hitRate(admittedOrdered, relevantSet, K)
+      const prec = precisionAtK(admittedOrdered, relevantSet, K)
+      const rec  = recallAtK(admittedOrdered, relevantSet, K)
+      const m    = mrr(admittedOrdered, relevantSet)
 
       modes.push({
         mode:            modeName,
@@ -361,7 +376,11 @@ function _buildEvalMarkdown(r: EvalReport): string {
   lines.push('> - **Precision@K** — what fraction of the top-K were relevant?')
   lines.push('> - **Recall@K** — what fraction of all relevant chunks were in the top-K?')
   lines.push('> - **MRR** — mean reciprocal rank of the first relevant result (1.0 = always first).')
-  lines.push('> - **Candidate Recall** — how many relevant chunks made it past retrieval (pre-budget).')
+  lines.push('> - **Candidate Recall** — fraction of relevant chunks that entered the top-20 candidate pool')
+  lines.push('>   (before FINAL_K / budget allocation). Ranked in retrieval order, NOT presentation order.')
+  lines.push('>   `CandRec=1.0` + `Recall@K=0.0` ⇒ retrieval found it, FINAL_K/budget dropped it ⇒')
+  lines.push('>   raise `FINAL_K` or `CONTEXT_TOKEN_BUDGET` to surface it. `CandRec=0.0` ⇒ true')
+  lines.push('>   retrieval miss ⇒ check embedding quality or add lexical synonyms.')
   lines.push('> - If vector-only recall ≫ lexical-only: queries use paraphrasing that BM25 misses.')
   lines.push('> - If lexical-only recall ≫ vector-only: queries use exact identifiers/rare tokens.')
   lines.push('> - hybrid should dominate both; +rerank should improve MRR/Precision over hybrid.')
