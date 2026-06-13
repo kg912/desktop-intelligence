@@ -2736,19 +2736,31 @@ export class ChatService {
     // Position: immediately before the last user message so the model reads
     // retrieved context directly before the question it must answer.
     if (payload.ragContext && payload.ragContext.trim().length > 0) {
-      const maxRagBudget = Math.max(
-        512,
-        contextLength - maxOutputTokens - systemTokenCount - OVERHEAD,
+      // Cap output reservation at half the context window.
+      // In thinking mode maxOutputTokens == contextLength (both 32768), which
+      // drives contextLength - maxOutputTokens to 0 and collapses the budget to
+      // the 512 floor.  A practical half-window cap keeps thinking-mode ragContext
+      // from being needlessly truncated while still reserving space for output.
+      const outputReservation = Math.min(
+        maxOutputTokens,
+        Math.floor(contextLength / 2),
+      );
+      // Subtract tokenSum so kept history is accounted for.  Old messages were
+      // already dropped by the trim walk above, so tokenSum represents only the
+      // history the model will actually see — ragContext takes the remainder.
+      const ragBudget = Math.max(
+        256,
+        contextLength - outputReservation - systemTokenCount - tokenSum - OVERHEAD,
       );
       let ragText = payload.ragContext;
       const ragTokens = countTokens(ragText);
-      if (ragTokens > maxRagBudget) {
-        const approxChars = maxRagBudget * 4; // conservative 4 chars/token
+      if (ragTokens > ragBudget) {
+        const approxChars = Math.max(0, ragBudget * 4); // conservative 4 chars/token
         ragText =
           ragText.slice(0, approxChars) + "\n[context truncated to fit window]";
         console.log(
-          `[ChatService] ✂️ ragContext truncated: ${ragTokens} tokens → ~${maxRagBudget} token budget ` +
-            `(contextLength=${contextLength})`,
+          `[ChatService] ✂️ ragContext truncated: ${ragTokens} tokens → ~${ragBudget} token budget ` +
+            `(contextLength=${contextLength}, outputReservation=${outputReservation}, tokenSum=${tokenSum})`,
         );
       }
       const lastUserKeptIdx = kept.map((m) => m.role).lastIndexOf("user");

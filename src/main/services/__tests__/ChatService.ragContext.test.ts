@@ -53,6 +53,80 @@ function textOfTokens(n: number): string {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+describe('buildMessages — ragContext budget arithmetic', () => {
+  // ── Regression: thinking mode (the exact production failure) ──────────────
+
+  it('[regression] thinking mode: 6000-token ragContext is NOT truncated on 32k context', () => {
+    // This is the exact scenario that failed: thinking mode sets maxOutputTokens=32768
+    // which equalled contextLength, collapsing the old formula to the 512 floor.
+    mockReadSettings.mockReturnValue({ braveSearchEnabled: false, contextLength: 32768 })
+    const rag6k = '<attached_file_context>\n' + textOfTokens(6000) + '\n</attached_file_context>'
+    const result = buildMsg({
+      chatId: 'rt1',
+      messages: [{ role: 'user', content: 'What are the benchmarking results?' }],
+      ragContext: rag6k,
+      thinkingMode: 'thinking',
+    })
+    const sysMsgs = result.filter((m) => m.role === 'system' && m.content.includes('attached_file_context'))
+    expect(sysMsgs.length).toBe(1)
+    // Must NOT contain the truncation marker
+    expect(sysMsgs[0].content).not.toContain('[context truncated to fit window]')
+    // Must be the full original content
+    expect(sysMsgs[0].content).toBe(rag6k)
+  })
+
+  // ── Truncation uses correct budget, not a fixed 512 ───────────────────────
+
+  it('truncation budget scales with context, never collapses to fixed 512', () => {
+    // thinking mode at 32k context + 20k-token ragContext: old code truncated to
+    // 512*4=2048 chars.  New code uses outputReservation=16384 → budget ~7000 tokens
+    // → approxChars ~28000, well above the old 2048 ceiling.
+    mockReadSettings.mockReturnValue({ braveSearchEnabled: false, contextLength: 32768 })
+    const rag20k = '<attached_file_context>\n' + textOfTokens(20000) + '\n</attached_file_context>'
+    const result = buildMsg({
+      chatId: 'rt2',
+      messages: [{ role: 'user', content: 'Summarise.' }],
+      ragContext: rag20k,
+      thinkingMode: 'thinking',
+    })
+    const sysMsgs = result.filter((m) => m.role === 'system' && m.content.includes('attached_file_context'))
+    expect(sysMsgs.length).toBe(1)
+    // Must be truncated (ragContext is 20k tokens, budget is ~7k)
+    expect(sysMsgs[0].content).toContain('[context truncated to fit window]')
+    // Truncated length must be >> old fixed 512*4=2048 chars
+    expect(sysMsgs[0].content.length).toBeGreaterThan(512 * 8)
+  })
+
+  // ── Priority ordering: old history trimmed before ragContext is touched ────
+
+  it('old conversation history is trimmed before ragContext is touched', () => {
+    // Build a history where old messages are very large (well over historyBudget)
+    // and only the last user message is small.  ragContext should survive intact.
+    mockReadSettings.mockReturnValue({ braveSearchEnabled: false, contextLength: 32768 })
+    const OLD_UNIQUE = 'SHOULD_BE_TRIMMED_OLD_HISTORY_MARKER'
+    // ~12000-token old turn — far exceeds historyBudget (~7000) for 32k context
+    const oldContent = textOfTokens(12000)
+    const rag = '<attached_file_context>\nRAG_UNIQUE_MARKER\n</attached_file_context>'
+    const result = buildMsg({
+      chatId: 'rt3',
+      messages: [
+        { role: 'user',      content: OLD_UNIQUE + ' ' + oldContent },
+        { role: 'assistant', content: oldContent },
+        { role: 'user',      content: 'What is in the document?' },
+      ],
+      ragContext: rag,
+    })
+    const allContent = result.map((m) => m.content as string).join('\n')
+    // Old messages must have been trimmed (too large for historyBudget)
+    expect(allContent).not.toContain(OLD_UNIQUE)
+    // ragContext must be present and intact — no truncation marker
+    const ragMsg = result.find((m) => m.role === 'system' && m.content.includes('RAG_UNIQUE_MARKER'))
+    expect(ragMsg).toBeDefined()
+    expect(ragMsg!.content).not.toContain('[context truncated to fit window]')
+    expect(ragMsg!.content).toBe(rag)
+  })
+})
+
 describe('buildMessages — ragContext injection', () => {
   it('inserts ragContext verbatim as a system message immediately before the last user message', () => {
     mockReadSettings.mockReturnValue({ braveSearchEnabled: false, contextLength: 32768 })
