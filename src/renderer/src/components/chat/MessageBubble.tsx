@@ -423,7 +423,7 @@ function RailSegment({
         const rowKey = group.kind === 'merged-search' ? group.blocks[0].id : group.block.id
 
         return (
-          <div key={rowKey} className="flex" style={{ alignItems: 'flex-start' }}>
+          <div key={rowKey} className="flex" style={{ alignItems: 'stretch' }}>
             {/* Left gutter: 22px wide — icon node at top, connecting line fills height to next block */}
             <div style={{
               width: 22,
@@ -442,7 +442,8 @@ function RailSegment({
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                marginTop: 1,
+                alignSelf: 'flex-start',
+                marginTop: 3,
               }}>
                 {iconType === 'thinking' && (
                   <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />
@@ -463,17 +464,19 @@ function RailSegment({
               )}
             </div>
             {/* Right body: block content sits flush with the icon */}
-            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0, paddingBottom: (isLastGroup && !hasLiveSearch) ? 4 : 10 }}>
+            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0, paddingBottom: isLastGroup ? 6 : 14 }}>
               {group.kind === 'merged-search' && (
                 <MergedSearchGroup
                   blocks={group.blocks}
                   autoCollapse={hasNonSearch}
+                  className="!mb-0"
                 />
               )}
               {group.kind === 'single' && group.block.type === 'thinking' && (
                 <ThinkingAccordion
                   content={group.block.content}
                   isStreaming={isActiveThink}
+                  className="!mb-0"
                 />
               )}
               {group.kind === 'single' && group.block.type === 'search' && (
@@ -487,6 +490,7 @@ function RailSegment({
                   toolArgs={group.block.toolArgs}
                   toolImages={group.block.toolImages}
                   autoCollapse={hasNonSearch}
+                  className="!mb-0"
                 />
               )}
             </div>
