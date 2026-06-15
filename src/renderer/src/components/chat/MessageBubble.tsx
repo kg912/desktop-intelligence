@@ -442,8 +442,7 @@ function RailSegment({
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                alignSelf: 'flex-start',
-                marginTop: 3,
+                marginTop: 0,
               }}>
                 {iconType === 'thinking' && (
                   <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />
@@ -464,19 +463,19 @@ function RailSegment({
               )}
             </div>
             {/* Right body: block content sits flush with the icon */}
-            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0, paddingBottom: isLastGroup ? 6 : 14 }}>
+            <div style={{ flex: 1, paddingLeft: 8, paddingTop: 2, minWidth: 0, paddingBottom: isLastGroup ? 6 : 14 }}>
               {group.kind === 'merged-search' && (
                 <MergedSearchGroup
                   blocks={group.blocks}
                   autoCollapse={hasNonSearch}
-                  className="!mb-0"
+                  className="mb-0"
                 />
               )}
               {group.kind === 'single' && group.block.type === 'thinking' && (
                 <ThinkingAccordion
                   content={group.block.content}
                   isStreaming={isActiveThink}
-                  className="!mb-0"
+                  className="mb-0"
                 />
               )}
               {group.kind === 'single' && group.block.type === 'search' && (
@@ -490,7 +489,7 @@ function RailSegment({
                   toolArgs={group.block.toolArgs}
                   toolImages={group.block.toolImages}
                   autoCollapse={hasNonSearch}
-                  className="!mb-0"
+                  className="mb-0"
                 />
               )}
             </div>
