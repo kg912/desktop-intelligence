@@ -193,11 +193,6 @@ function ThinkingAccordion({
           {label}
         </span>
         <ChevronIcon open={open} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
-        {duration !== null && duration > 0 && (
-          <span className="font-mono text-[13px] text-white/25 leading-none">
-            {duration}s
-          </span>
-        )}
       </button>
       <div className={cn('accordion-body', open && 'open')}>
         <div style={{ overflow: 'hidden', paddingTop: 6 }}>
@@ -428,7 +423,7 @@ function RailSegment({
         const rowKey = group.kind === 'merged-search' ? group.blocks[0].id : group.block.id
 
         return (
-          <div key={rowKey} className="flex">
+          <div key={rowKey} className="flex" style={{ alignItems: 'flex-start' }}>
             {/* Left gutter: 22px wide — icon node at top, connecting line fills height to next block */}
             <div style={{
               width: 22,
@@ -447,6 +442,7 @@ function RailSegment({
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
+                marginTop: 1,
               }}>
                 {iconType === 'thinking' && (
                   <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />
