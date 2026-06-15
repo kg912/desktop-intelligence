@@ -317,11 +317,6 @@ function MergedSearchGroup({
         onClick={() => setExpanded(v => !v)}
         className="flex items-center gap-1.5 mb-0 group/sh select-none"
       >
-        {/* Inline search icon — no lucide dependency here */}
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0 text-white/25">
-          <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.2"/>
-          <line x1="7.5" y1="7.5" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-        </svg>
         <span className="font-mono text-[13px] text-white/40 font-medium
                          group-hover/sh:text-white/60 transition-colors duration-100">
           Searched the web
@@ -396,7 +391,7 @@ function RailSegment({
   const groups = groupBlocks(blocks)
 
   return (
-    <div style={{ marginBottom: '0.8rem' }}>
+    <div style={{ marginBottom: '0.5rem' }}>
       {groups.map((group, groupIdx) => {
         const isLastGroup  = groupIdx === groups.length - 1
         const isActiveLive = isStreaming && isLastGroup
@@ -472,19 +467,17 @@ function RailSegment({
               )}
             </div>
             {/* Right body: block content sits flush with the icon */}
-            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0 }}>
+            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0, paddingBottom: isLastGroup ? 4 : 10 }}>
               {group.kind === 'merged-search' && (
                 <MergedSearchGroup
                   blocks={group.blocks}
                   autoCollapse={hasNonSearch}
-                  className="!mb-0"
                 />
               )}
               {group.kind === 'single' && group.block.type === 'thinking' && (
                 <ThinkingAccordion
                   content={group.block.content}
                   isStreaming={isActiveThink}
-                  className="!mb-0"
                 />
               )}
               {group.kind === 'single' && group.block.type === 'search' && (
@@ -498,7 +491,6 @@ function RailSegment({
                   toolArgs={group.block.toolArgs}
                   toolImages={group.block.toolImages}
                   autoCollapse={hasNonSearch}
-                  className="!mb-0"
                 />
               )}
             </div>

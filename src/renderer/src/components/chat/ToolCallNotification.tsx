@@ -156,7 +156,6 @@ export function ToolCallNotification({
     return (
       <div className={cn('mb-2', className)}>
         <div className="flex items-center gap-2">
-          <Globe size={12} className="text-accent-700 shrink-0" />
           <span className="text-[13px] text-accent-700 font-medium font-mono">
             {webSearch ? 'Search failed' : 'Tool failed'}
           </span>
@@ -186,7 +185,6 @@ export function ToolCallNotification({
           onClick={() => setExpanded(v => !v)}
           className="flex items-center gap-1.5 mb-0 group/sh select-none"
         >
-          <Globe size={12} className="text-white/25 shrink-0" />
           <span className="font-mono text-[13px] text-white/40 font-medium
                            group-hover/sh:text-white/60 transition-colors duration-100">
             Searched the web
@@ -220,7 +218,6 @@ export function ToolCallNotification({
         onClick={() => setExpanded(v => !v)}
         className="flex items-center gap-1.5 group/tc select-none"
       >
-        <Plug size={12} className="shrink-0 transition-colors duration-100" style={{ color: 'rgb(255,77,77)' }} />
         <span className="font-mono text-[13px] leading-none
                          transition-colors duration-100"
              style={{ color: 'rgb(255,77,77)' }}>
