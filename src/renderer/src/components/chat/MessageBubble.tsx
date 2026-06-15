@@ -200,7 +200,7 @@ function ThinkingAccordion({
         )}
       </button>
       <div className={cn('accordion-body', open && 'open')}>
-        <div style={{ overflow: 'hidden' }}>
+        <div style={{ overflow: 'hidden', paddingTop: 6 }}>
           <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
             {content}
           </div>
@@ -328,7 +328,7 @@ function MergedSearchGroup({
       </button>
 
       <div className={cn('accordion-body', expanded && 'open')}>
-        <div style={{ overflow: 'hidden' }}>
+        <div style={{ overflow: 'hidden', paddingTop: 6 }}>
           <div className="mt-0.5 flex flex-col gap-0">
             {blocks.map((b, idx) => (
               <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
@@ -388,13 +388,17 @@ function RailSegment({
   allBlocks: MessageBlock[]
   isStreaming: boolean
 }) {
-  const groups = groupBlocks(blocks)
+  // A trailing live-searching block is excluded from the gutter rail and rendered
+  // as a plain WorkingIndicator below all done nodes.
+  const lastBlock     = blocks[blocks.length - 1]
+  const hasLiveSearch = lastBlock?.type === 'search' && (lastBlock as Extract<MessageBlock, { type: 'search' }>).phase === 'searching'
+  const doneBlocks    = hasLiveSearch ? blocks.slice(0, -1) : blocks
+  const groups        = groupBlocks(doneBlocks)
 
   return (
     <div style={{ marginBottom: '0.5rem' }}>
       {groups.map((group, groupIdx) => {
-        const isLastGroup  = groupIdx === groups.length - 1
-        const isActiveLive = isStreaming && isLastGroup
+        const isLastGroup = groupIdx === groups.length - 1
 
         // Determine icon type for the gutter node
         let iconType: 'thinking' | 'web-search' | 'mcp'
@@ -406,13 +410,9 @@ function RailSegment({
           iconType = isWebSearchBlock(group.block as SearchBlock) ? 'web-search' : 'mcp'
         }
 
-        // Node circle styles — active live node overrides type-default colours
-        const nodeBackground = isActiveLive
-          ? 'rgba(229,57,53,0.15)'
-          : iconType === 'mcp' ? 'rgba(229,57,53,0.08)' : 'rgba(255,255,255,0.06)'
-        const nodeBorder = isActiveLive
-          ? '0.5px solid rgba(229,57,53,0.5)'
-          : iconType === 'mcp' ? '0.5px solid rgba(229,57,53,0.35)' : '0.5px solid rgba(255,255,255,0.15)'
+        // Node circle styles — type-default colours only
+        const nodeBackground = iconType === 'mcp' ? 'rgba(229,57,53,0.08)' : 'rgba(255,255,255,0.06)'
+        const nodeBorder     = iconType === 'mcp' ? '0.5px solid rgba(229,57,53,0.35)' : '0.5px solid rgba(255,255,255,0.15)'
 
         // Per-block props computed before render to avoid inline complexity
         const globalLastBlock = group.kind === 'merged-search'
@@ -461,13 +461,13 @@ function RailSegment({
                   <Plug size={8} style={{ color: 'rgba(229,57,53,0.7)' }} />
                 )}
               </div>
-              {/* Connecting line from bottom of this icon to top of next icon */}
+              {/* Connecting line from bottom of this icon to top of next block */}
               {!isLastGroup && (
                 <div style={{ width: 1, flex: 1, minHeight: 8, background: 'rgba(255,255,255,0.1)' }} />
               )}
             </div>
             {/* Right body: block content sits flush with the icon */}
-            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0, paddingBottom: isLastGroup ? 4 : 10 }}>
+            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0, paddingBottom: (isLastGroup && !hasLiveSearch) ? 4 : 10 }}>
               {group.kind === 'merged-search' && (
                 <MergedSearchGroup
                   blocks={group.blocks}
@@ -497,6 +497,12 @@ function RailSegment({
           </div>
         )
       })}
+      {/* Live search: no gutter node — plain WorkingIndicator aligned with the body column */}
+      {hasLiveSearch && (
+        <div style={{ paddingLeft: 30 }}>
+          <WorkingIndicator />
+        </div>
+      )}
     </div>
   )
 }
