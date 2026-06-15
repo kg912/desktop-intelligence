@@ -165,11 +165,9 @@ export function ToolCallNotification({
           </span>
         </div>
         {errorMsg && (
-          <div className="border-l border-accent-900/40 pl-3 mt-1">
-            <p className="font-mono text-[11px] text-accent-700/50 leading-relaxed">
-              {errorMsg}
-            </p>
-          </div>
+          <p className="font-mono text-[11px] text-accent-700/50 leading-relaxed">
+            {errorMsg}
+          </p>
         )}
       </div>
     )
@@ -201,9 +199,7 @@ export function ToolCallNotification({
 
         <div className={cn('accordion-body', expanded && 'open')}>
           <div style={{ overflow: 'hidden' }}>
-            <div className="border-l border-white/[0.07] pl-3 mt-1">
-              <SearchResult query={label} results={results} isFirst />
-            </div>
+            <SearchResult query={label} results={results} isFirst />
           </div>
         </div>
       </div>
@@ -242,7 +238,6 @@ export function ToolCallNotification({
       {/* Expanded body */}
       <div className={cn('accordion-body', expanded && 'open')}>
         <div style={{ overflow: 'hidden' }}>
-          <div className="border-l border-white/[0.07] pl-3 mt-1">
           <div className="mt-1 flex flex-col gap-0">
 
             {/* Arguments */}
@@ -292,7 +287,6 @@ export function ToolCallNotification({
               </div>
             )}
 
-          </div>
           </div>
         </div>
       </div>

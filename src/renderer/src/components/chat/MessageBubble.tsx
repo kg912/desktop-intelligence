@@ -23,7 +23,7 @@ declare global {
 }
 
 import { useState, useEffect, useRef, memo } from 'react'
-import { Paperclip } from 'lucide-react'
+import { Paperclip, Plug } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
 import { ToolCallNotification, SearchResult } from './ToolCallNotification'
@@ -166,18 +166,16 @@ function ThinkingAccordion({
           </span>
         </div>
         {content && (
-          <div className="border-l border-white/[0.07] pl-3">
-            <div className="relative">
-              <div
-                className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
-                style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
-              />
-              <div
-                ref={scrollRef}
-                className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
-              >
-                {content}
-              </div>
+          <div className="relative">
+            <div
+              className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
+              style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
+            />
+            <div
+              ref={scrollRef}
+              className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
+            >
+              {content}
             </div>
           </div>
         )}
@@ -203,10 +201,8 @@ function ThinkingAccordion({
       </button>
       <div className={cn('accordion-body', open && 'open')}>
         <div style={{ overflow: 'hidden' }}>
-          <div className="border-l border-white/[0.07] pl-3 mt-1">
-            <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
-              {content}
-            </div>
+          <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
+            {content}
           </div>
         </div>
       </div>
@@ -338,19 +334,17 @@ function MergedSearchGroup({
 
       <div className={cn('accordion-body', expanded && 'open')}>
         <div style={{ overflow: 'hidden' }}>
-          <div className="border-l border-white/[0.07] pl-3 mt-1">
-            <div className="mt-0.5 flex flex-col gap-0">
-              {blocks.map((b, idx) => (
-                <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
-                  <SearchResult
-                    query={b.query}
-                    results={b.results ?? []}
-                    isFirst={idx === 0}
-                    showDot
-                  />
-                </div>
-              ))}
-            </div>
+          <div className="mt-0.5 flex flex-col gap-0">
+            {blocks.map((b, idx) => (
+              <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
+                <SearchResult
+                  query={b.query}
+                  results={b.results ?? []}
+                  isFirst={idx === 0}
+                  showDot
+                />
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -399,70 +393,118 @@ function RailSegment({
   allBlocks: MessageBlock[]
   isStreaming: boolean
 }) {
+  const groups = groupBlocks(blocks)
+
   return (
-    <div className="flex gap-0" style={{ alignItems: 'stretch', marginBottom: '0.8rem' }}>
-      <div style={{
-        width: '1px',
-        background: 'rgba(255,255,255,0.13)',
-        marginLeft: '2px',
-        marginRight: '12px',
-        borderRadius: '1px',
-        alignSelf: 'stretch',
-        flexShrink: 0,
-      }} />
-      <div className="flex flex-col flex-1 min-w-0" style={{ gap: '11px' }}>
-        {groupBlocks(blocks).map((group) => {
-          if (group.kind === 'merged-search') {
-            const lastBlock = group.blocks[group.blocks.length - 1]
-            const globalIdx = allBlocks.indexOf(lastBlock)
-            const hasNonSearchAfter = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
-            return (
-              <MergedSearchGroup
-                key={group.blocks[0].id}
-                blocks={group.blocks}
-                autoCollapse={hasNonSearchAfter}
-                className="!mb-0"
-              />
-            )
-          }
+    <div style={{ marginBottom: '0.8rem' }}>
+      {groups.map((group, groupIdx) => {
+        const isLastGroup  = groupIdx === groups.length - 1
+        const isActiveLive = isStreaming && isLastGroup
 
-          const block = group.block
-          const globalIdx = allBlocks.indexOf(block)
-          const hasNonSearchAfter = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
+        // Determine icon type for the gutter node
+        let iconType: 'thinking' | 'web-search' | 'mcp'
+        if (group.kind === 'merged-search') {
+          iconType = 'web-search'
+        } else if (group.block.type === 'thinking') {
+          iconType = 'thinking'
+        } else {
+          iconType = isWebSearchBlock(group.block as SearchBlock) ? 'web-search' : 'mcp'
+        }
 
-          if (block.type === 'thinking') {
-            const isActiveThink = isStreaming && block.id === allBlocks[allBlocks.length - 1].id
-            return (
-              <ThinkingAccordion
-                key={block.id}
-                content={block.content}
-                isStreaming={isActiveThink}
-                className="!mb-0"
-              />
-            )
-          }
+        // Node circle styles — active live node overrides type-default colours
+        const nodeBackground = isActiveLive
+          ? 'rgba(229,57,53,0.15)'
+          : iconType === 'mcp' ? 'rgba(229,57,53,0.08)' : 'rgba(255,255,255,0.06)'
+        const nodeBorder = isActiveLive
+          ? '0.5px solid rgba(229,57,53,0.5)'
+          : iconType === 'mcp' ? '0.5px solid rgba(229,57,53,0.35)' : '0.5px solid rgba(255,255,255,0.15)'
 
-          if (block.type === 'search') {
-            return (
-              <ToolCallNotification
-                key={block.id}
-                phase={block.phase}
-                query={block.query}
-                toolName={block.toolName}
-                results={block.results}
-                error={block.error}
-                formattedContent={block.formattedContent}
-                toolArgs={block.toolArgs}
-                toolImages={block.toolImages}
-                autoCollapse={hasNonSearchAfter}
-                className="!mb-0"
-              />
-            )
-          }
+        // Per-block props computed before render to avoid inline complexity
+        const globalLastBlock = group.kind === 'merged-search'
+          ? group.blocks[group.blocks.length - 1]
+          : group.block
+        const globalIdx    = allBlocks.indexOf(globalLastBlock)
+        const hasNonSearch = allBlocks.slice(globalIdx + 1).some(b => b.type !== 'search')
+        const isActiveThink = group.kind === 'single'
+          && group.block.type === 'thinking'
+          && isStreaming
+          && group.block.id === allBlocks[allBlocks.length - 1].id
 
-          return null
-        })}
-      </div>
+        const rowKey = group.kind === 'merged-search' ? group.blocks[0].id : group.block.id
+
+        return (
+          <div key={rowKey} className="flex">
+            {/* Left gutter: 22px wide — icon node at top, connecting line fills height to next block */}
+            <div style={{
+              width: 22,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              flexShrink: 0,
+            }}>
+              <div style={{
+                width: 16,
+                height: 16,
+                borderRadius: '50%',
+                background: nodeBackground,
+                border: nodeBorder,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                {iconType === 'thinking' && (
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />
+                )}
+                {iconType === 'web-search' && (
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                    <circle cx="3.5" cy="3.5" r="2.5" stroke="rgba(255,255,255,0.4)" strokeWidth="1"/>
+                    <line x1="5.5" y1="5.5" x2="7.5" y2="7.5" stroke="rgba(255,255,255,0.4)" strokeWidth="1" strokeLinecap="round"/>
+                  </svg>
+                )}
+                {iconType === 'mcp' && (
+                  <Plug size={8} style={{ color: 'rgba(229,57,53,0.7)' }} />
+                )}
+              </div>
+              {/* Connecting line from bottom of this icon to top of next icon */}
+              {!isLastGroup && (
+                <div style={{ width: 1, flex: 1, minHeight: 8, background: 'rgba(255,255,255,0.1)' }} />
+              )}
+            </div>
+            {/* Right body: block content sits flush with the icon */}
+            <div style={{ flex: 1, paddingLeft: 8, minWidth: 0 }}>
+              {group.kind === 'merged-search' && (
+                <MergedSearchGroup
+                  blocks={group.blocks}
+                  autoCollapse={hasNonSearch}
+                  className="!mb-0"
+                />
+              )}
+              {group.kind === 'single' && group.block.type === 'thinking' && (
+                <ThinkingAccordion
+                  content={group.block.content}
+                  isStreaming={isActiveThink}
+                  className="!mb-0"
+                />
+              )}
+              {group.kind === 'single' && group.block.type === 'search' && (
+                <ToolCallNotification
+                  phase={group.block.phase}
+                  query={group.block.query}
+                  toolName={group.block.toolName}
+                  results={group.block.results}
+                  error={group.block.error}
+                  formattedContent={group.block.formattedContent}
+                  toolArgs={group.block.toolArgs}
+                  toolImages={group.block.toolImages}
+                  autoCollapse={hasNonSearch}
+                  className="!mb-0"
+                />
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
