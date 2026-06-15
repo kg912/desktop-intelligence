@@ -310,14 +310,14 @@ function MergedSearchGroup({
     <div className={cn('mb-2', className)}>
       <button
         onClick={() => setExpanded(v => !v)}
-        className="flex items-center gap-1.5 mb-0 group/sh select-none"
+        className="flex items-center gap-1.5 mb-0 py-0 group/sh select-none"
       >
-        <span className="font-mono text-[13px] text-white/40 font-medium
+        <span className="font-mono text-[13px] leading-none text-white/40 font-medium
                          group-hover/sh:text-white/60 transition-colors duration-100">
           Searched the web
         </span>
         <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
-        <span className="font-mono text-[13px] text-white/20">
+        <span className="font-mono text-[13px] leading-none text-white/20">
           {totalResults} results · {blocks.length} searches
         </span>
       </button>
