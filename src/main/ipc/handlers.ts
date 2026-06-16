@@ -1035,24 +1035,26 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       ollamaApiKey:      s.ollamaApiKey     ?? '',
       ollamaModel:       s.ollamaModel      ?? '',
       ollamaBaseUrl:     s.ollamaBaseUrl    ?? 'https://ollama.com',
-      openrouterApiKey:  s.openrouterApiKey ?? '',
-      openrouterModel:   s.openrouterModel  ?? 'anthropic/claude-sonnet-4',
+      openrouterApiKey:            s.openrouterApiKey            ?? '',
+      openrouterModel:              s.openrouterModel             ?? 'anthropic/claude-sonnet-4',
+      openrouterReasoningEffort:    s.openrouterReasoningEffort   ?? 'auto',
     }
   })
 
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
-    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string }) => {
+    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string; openrouterReasoningEffort?: string }) => {
       const { writeSettings } = await import('../services/SettingsStore')
       const cleanPatch: Record<string, unknown> = {}
-      if (patch.provider          !== undefined) cleanPatch.backendProvider  = patch.provider
-      if (patch.nvidiaApiKey      !== undefined) cleanPatch.nvidiaApiKey     = patch.nvidiaApiKey
-      if (patch.nvidiaModel       !== undefined) cleanPatch.nvidiaModel      = patch.nvidiaModel
-      if (patch.ollamaApiKey      !== undefined) cleanPatch.ollamaApiKey     = patch.ollamaApiKey
-      if (patch.ollamaModel       !== undefined) cleanPatch.ollamaModel      = patch.ollamaModel
-      if (patch.ollamaBaseUrl     !== undefined) cleanPatch.ollamaBaseUrl    = patch.ollamaBaseUrl
-      if (patch.openrouterApiKey  !== undefined) cleanPatch.openrouterApiKey = patch.openrouterApiKey
-      if (patch.openrouterModel   !== undefined) cleanPatch.openrouterModel  = patch.openrouterModel
+      if (patch.provider                  !== undefined) cleanPatch.backendProvider           = patch.provider
+      if (patch.nvidiaApiKey              !== undefined) cleanPatch.nvidiaApiKey              = patch.nvidiaApiKey
+      if (patch.nvidiaModel               !== undefined) cleanPatch.nvidiaModel               = patch.nvidiaModel
+      if (patch.ollamaApiKey              !== undefined) cleanPatch.ollamaApiKey              = patch.ollamaApiKey
+      if (patch.ollamaModel               !== undefined) cleanPatch.ollamaModel               = patch.ollamaModel
+      if (patch.ollamaBaseUrl             !== undefined) cleanPatch.ollamaBaseUrl             = patch.ollamaBaseUrl
+      if (patch.openrouterApiKey          !== undefined) cleanPatch.openrouterApiKey          = patch.openrouterApiKey
+      if (patch.openrouterModel           !== undefined) cleanPatch.openrouterModel           = patch.openrouterModel
+      if (patch.openrouterReasoningEffort !== undefined) cleanPatch.openrouterReasoningEffort = patch.openrouterReasoningEffort
       writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
     },
   )

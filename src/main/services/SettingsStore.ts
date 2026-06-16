@@ -58,6 +58,8 @@ export interface AppSettings {
   openrouterApiKey?: string
   /** OpenRouter model slug e.g. "anthropic/claude-sonnet-4" */
   openrouterModel?:  string
+  /** OpenRouter reasoning effort level for extended thinking. Default: 'auto' (no reasoning param sent) */
+  openrouterReasoningEffort?: string
   /** When true, full session logs are captured to disk. Default: false */
   observabilityEnabled?: boolean
   /** When true, rendered charts/images are embedded in log folders. Default: false */

@@ -477,15 +477,25 @@ export interface ReloadResult {
   confirmedCtx?:  number
 }
 
+/** Controls extended thinking / reasoning on OpenRouter.
+ *  'auto'   — let OpenRouter decide (sends no reasoning param; default)
+ *  'high'   — reasoning: { effort: 'high' }
+ *  'medium' — reasoning: { effort: 'medium' }
+ *  'low'    — reasoning: { effort: 'low' }
+ */
+export type OpenRouterReasoningEffort = 'auto' | 'high' | 'medium' | 'low'
+
 export interface BackendSettings {
-  provider:          BackendProvider
-  nvidiaApiKey:      string
-  nvidiaModel:       string
-  ollamaApiKey:      string
-  ollamaModel:       string
-  ollamaBaseUrl:     string
-  openrouterApiKey:  string
-  openrouterModel:   string
+  provider:                   BackendProvider
+  nvidiaApiKey:               string
+  nvidiaModel:                string
+  ollamaApiKey:               string
+  ollamaModel:                string
+  ollamaBaseUrl:              string
+  openrouterApiKey:           string
+  openrouterModel:            string
+  /** Reasoning effort for OpenRouter models that support extended thinking. Default: 'auto' */
+  openrouterReasoningEffort?: OpenRouterReasoningEffort
 }
 
 // --- Model selection & first-launch onboarding ---

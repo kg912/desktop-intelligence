@@ -1508,9 +1508,14 @@ export class ChatService {
           const thinkingEnabled = payload.thinkingMode === "thinking";
           const openRouterMaxTokens = Math.min(maxOutputTokens ?? 32768, 32768);
           const openRouterTemp = temperature ?? (thinkingEnabled ? 0.6 : 0.7);
-          // Inject reasoning only when thinking is ON — omit field entirely in fast mode.
-          const reasoningParam = thinkingEnabled
-            ? { reasoning: { max_tokens: thinkingBudget } }
+          // Reasoning effort: read from persisted settings (default: 'auto' = no param).
+          // 'auto' → omit the reasoning field entirely (safest default; avoids 400s on
+          // models that don't support it, e.g. llama-4-scout routing through Google).
+          // Any other value → send reasoning: { effort: value } which OpenRouter
+          // translates appropriately for each provider.
+          const effortSetting = appSettings.openrouterReasoningEffort ?? 'auto'
+          const reasoningParam = (thinkingEnabled && effortSetting !== 'auto')
+            ? { reasoning: { effort: effortSetting } }
             : {};
           streamBody = JSON.stringify({
             ...commonFields,

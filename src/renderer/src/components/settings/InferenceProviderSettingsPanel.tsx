@@ -11,9 +11,9 @@
  * the in-memory provider differs from the one that was active at boot.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { AlertTriangle, Eye, EyeOff, RefreshCw, TrendingUp, Type, Image, Video, AudioLines, FileText } from 'lucide-react'
+import { AlertTriangle, Eye, EyeOff, RefreshCw, TrendingUp, Type, Image, Video, AudioLines, FileText, Brain } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import type { BackendProvider, BackendSettings } from '../../../../../shared/types'
+import type { BackendProvider, BackendSettings, OpenRouterReasoningEffort } from '../../../../../shared/types'
 
 // ── OpenRouter account stats ─────────────────────────────────────────────────
 interface ORCredits { total_credits: number; total_usage: number }
@@ -103,15 +103,16 @@ const PROVIDER_LABELS: Record<BackendProvider, string> = {
 }
 
 export function InferenceProviderSettingsPanel() {
-  const [settings, setSettings] = useState<BackendSettings>({
-    provider:         'lmstudio',
-    nvidiaApiKey:     '',
-    nvidiaModel:      'mistralai/mistral-medium-3.5-128b',
-    ollamaApiKey:     '',
-    ollamaModel:      '',
-    ollamaBaseUrl:    'https://ollama.com',
-    openrouterApiKey: '',
-    openrouterModel:  'anthropic/claude-sonnet-4',
+  const [settings, setSettings] = useState<BackendSettings>({ 
+    provider:                   'lmstudio',
+    nvidiaApiKey:               '',
+    nvidiaModel:                'mistralai/mistral-medium-3.5-128b',
+    ollamaApiKey:               '',
+    ollamaModel:                '',
+    ollamaBaseUrl:              'https://ollama.com',
+    openrouterApiKey:           '',
+    openrouterModel:            'anthropic/claude-sonnet-4',
+    openrouterReasoningEffort:  'auto',
   })
   const [loading, setLoading]           = useState(true)
   const [restartNeeded, setRestartNeeded] = useState(false)
@@ -631,6 +632,43 @@ export function InferenceProviderSettingsPanel() {
           </div>
 
           {/* Account stats — fetched on tab focus */}
+          {/* Reasoning effort selector */}
+          <div className="space-y-2 pt-3 border-t border-surface-border/30">
+            <div className="flex items-center gap-2">
+              <Brain size={13} className="text-content-muted flex-shrink-0" />
+              <label className="text-sm font-medium text-content-primary">Reasoning Effort</label>
+            </div>
+            <p className="text-xs text-content-muted">
+              Controls extended thinking on models that support it (e.g. claude-3.7-sonnet, deepseek-r1).
+              Set to <span className="font-mono">Auto</span> to omit the parameter entirely—safest for most models.
+            </p>
+            <div className="flex gap-2">
+              {(['auto', 'low', 'medium', 'high'] as OpenRouterReasoningEffort[]).map((level) => {
+                const labels: Record<OpenRouterReasoningEffort, string> = {
+                  auto: 'Auto',
+                  low: 'Low',
+                  medium: 'Medium',
+                  high: 'High',
+                }
+                const isActive = (settings.openrouterReasoningEffort ?? 'auto') === level
+                return (
+                  <button
+                    key={level}
+                    onClick={() => update('openrouterReasoningEffort', level)}
+                    className={cn(
+                      'flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-colors',
+                      isActive
+                        ? 'bg-accent-950/60 border-accent-700/60 text-accent-300'
+                        : 'bg-surface-hover border-surface-border/40 text-content-secondary hover:text-content-primary',
+                    )}
+                  >
+                    {labels[level]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <OpenRouterStats apiKey={settings.openrouterApiKey} />
         </div>
       )}
