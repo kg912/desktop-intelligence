@@ -159,7 +159,7 @@ function ThinkingAccordion({
       <div className={cn('mb-2', className)}>
         <div className="flex items-center gap-1.5 h-5 mb-1">
           <span
-            className="shimmer-text font-mono text-[13px] tracking-[0.06em] capitalize"
+            className="shimmer-text font-mono text-[13px] leading-none tracking-[0.06em] capitalize"
             style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
           >
             Reasoning
