@@ -137,7 +137,8 @@ function ThinkingAccordion({
   const [duration, setDuration] = useState<number | null>(null)
   const startedAtRef            = useRef<number>(Date.now())
   const scrollRef               = useRef<HTMLDivElement>(null)
-  const label = (duration !== null && duration > 0) ? `Thought for ${duration}s` : 'Thought Process'
+  const hasThoughtDuration = duration !== null && duration > 0;
+  const label = hasThoughtDuration ? `Thought for ${duration}s` : 'Thought Process'
 
   // Record elapsed seconds when streaming ends
   useEffect(() => {
@@ -189,7 +190,7 @@ function ThinkingAccordion({
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-2 mb-0 py-0 group/tp text-left cursor-pointer select-none"
       >
-        <span className="font-mono text-[13px] tracking-[0.03em] capitalize text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none">
+        <span className={`font-mono text-[13px] tracking-[0.03em] ${!hasThoughtDuration ? 'capitalize' : ''} text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none`}>
           {label}
         </span>
         <ChevronIcon open={open} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
