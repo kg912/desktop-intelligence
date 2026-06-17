@@ -10,7 +10,7 @@ able to read this and understand the whole feature without reverse-engineering t
 re-reading the spec. Updated at the end of every build phase. Same discipline as
 `features/RAG-Implementation-v2.0.md`.
 
-**As of:** `3.0.0-beta-31` — Phase 1 prompt 2 merged: SQLite migration (`applyMultiAgentMigration`).
+**As of:** `3.0.0-beta-32` — Phase 1 prompt 3 merged: IPC channels + sidecar-manager skeleton.
 
 ---
 
@@ -75,7 +75,7 @@ windows). We can.
       system, returns result) ────────────────────►        each = own graph + own thread_id
                                                          reflection node    (per worker, retry edge)
    SQLite (better-sqlite3)                              synthesis node      (1×)
-     conversations.{mode, agent_graph,                        │
+     chats.{mode, agent_graph,                                │
       execution_trace, run_status}                            ▼
    ObservabilityService (trace append)                  OpenRouter API (1 key, many models)
 ```
@@ -253,6 +253,11 @@ Pre-existing rows backfill `mode = 'single'` and `run_status = 'idle'` from thei
 
 ## 11. Failure behaviour (graceful, never a hung app)
 
+The five IPC channels (`multi-agent:start`, `multi-agent:hitl-respond`, `multi-agent:abort`,
+`multi-agent:sidecar-status`, `multi-agent:event`) are wired and typed as of Phase 1 prompt 3.
+Until the Phase 2 sidecar exists, `sidecar-status` always returns `'stopped'` and `start`
+always returns `{ ok: false, reason: 'sidecar_unavailable' }` — the renderer can gate its UI on this.
+
 ```
 sidecar not running    ──► IPC returns synthetic ready-state; button still renders   app fine
 sidecar crashes        ──► health-check loop (10s) restarts it                        app fine
@@ -273,7 +278,7 @@ inspection between each; this table is the source of truth for "done."
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 ✅ event contract merged; prompt 2 ✅ SQLite migration merged (`applyMultiAgentMigration` in `DatabaseService.ts`, 17 new tests) |
+| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 ✅ event contract merged; prompt 2 ✅ SQLite migration merged (`applyMultiAgentMigration` in `DatabaseService.ts`, 17 new tests); prompt 3 ✅ IPC surface + sidecar-manager skeleton merged (`MultiAgentSidecarManager.ts`, 11 new tests, 5 IPC channels, preload bridge) |
 | 2 | **Basic orchestration** — FastAPI sidecar, LangGraph orchestrator → workers → synthesizer, parallel execution, events streaming, layout state machine, one real end-to-end run. No reflection yet. | ⏳ |
 | 3 | **Reflection + HITL** — reflection nodes w/ pass/fail + retry, HITL popup w/ agent identity, per-agent parallel pause/resume, pre-flight approval + cost estimate, budget cap enforcement. | ⏳ |
 | 4 | **Polish + observability** — provenance tags in synthesis, collapsed-card transitions, live cost/token counters, trace extension, settings panel for all knobs, full state-machine test. | ⏳ |

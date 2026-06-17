@@ -435,6 +435,13 @@ export const IPC_CHANNELS = {
   // ── RAG v2 diagnostics (Phase 6 — eval file picker) ──────────────────────────
   RAG_PICK_EVAL_FILE:   'rag:pick-eval-file',
 
+  // ── Multi-Agent Orchestration ──────────────────────────────────────────────
+  MULTI_AGENT_START:          'multi-agent:start',
+  MULTI_AGENT_HITL_RESPOND:   'multi-agent:hitl-respond',
+  MULTI_AGENT_ABORT:          'multi-agent:abort',
+  MULTI_AGENT_SIDECAR_STATUS: 'multi-agent:sidecar-status',
+  MULTI_AGENT_EVENT:          'multi-agent:event',   // main → renderer push (AgentEvent)
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -597,6 +604,19 @@ export interface HitlResponse {
   agentId:  string
   approved: boolean
 }
+
+export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'error'
+
+export interface MultiAgentStartPayload {
+  chatId: string
+  task:   string
+  config: MultiAgentConfig
+}
+
+// Phase 1 always returns the failure branch (sidecar not built yet).
+export type StartRunResult =
+  | { ok: true;  runId: string }
+  | { ok: false; reason: string }
 
 // --- LM Studio API shapes ---
 export interface LMStudioModelsResponse {

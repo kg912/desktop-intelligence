@@ -37,7 +37,10 @@ import type {
   StorePlotPayload,
   CompactPayload,
   CompactResult,
+  MultiAgentStartPayload,
+  HitlResponse,
 } from '../../shared/types'
+import { multiAgentSidecar } from '../services/MultiAgentSidecarManager'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
@@ -1347,5 +1350,26 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle('chat:set-system-instructions', (_event, chatId: string, text: string) => {
     setChatSystemInstructions(chatId, text)
   })
+
+  // ── Multi-Agent Orchestration ──────────────────────────────────────────────
+  // MULTI_AGENT_EVENT is a push channel (main → renderer); the renderer
+  // subscribes via preload.onMultiAgentEvent. Phase 2 adds the emission seam
+  // here once the sidecar SSE stream exists — no ipcMain.handle for it now.
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, (_, payload: MultiAgentStartPayload) =>
+    multiAgentSidecar.startRun(payload)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: HitlResponse) =>
+    multiAgentSidecar.respondHitl(r)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ABORT, (_, runId: string) =>
+    multiAgentSidecar.abortRun(runId)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>
+    multiAgentSidecar.getStatus()
+  )
 
 }
