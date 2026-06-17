@@ -1,8 +1,9 @@
 # Multi-Agent Orchestration — How It Works, End to End
 
 **Project:** Desktop Intelligence
-**Status:** Phase 1 (Foundation) in progress. Event contract + validator merged (prompt 1);
-sidecar, IPC, migration, and UI still pending — nothing user-facing yet.
+**Status:** Phase 1 (Foundation) in progress. Event contract, SQLite migration, and IPC surface
+merged (prompts 1–3); the real sidecar process and the renderer UI are still pending — nothing
+user-facing yet.
 The full design lives in `specs/MULTI_AGENT_SPEC.html`; this file is the standing, human-readable
 companion that tracks **what we're building, why, and what is actually implemented**.
 **Purpose of this file:** Kill comprehension debt. Anyone — including future-you — should be
