@@ -439,6 +439,165 @@ export const IPC_CHANNELS = {
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
 
+// ── Multi-Agent Orchestration ─────────────────────────────────────────────────
+
+export type ConversationMode = 'single' | 'multi-agent'
+
+export type RunStatus = 'idle' | 'running' | 'paused_hitl' | 'completed' | 'failed'
+
+export type AgentStageType = 'orchestrator' | 'worker' | 'reflection' | 'synthesizer'
+
+export interface AgentStep {
+  id:    string          // e.g. "1.1", "1.2", "2.1"
+  label: string          // human-readable, e.g. "Market research"
+  stage: AgentStageType
+  role:  string          // display role for workers; same as stage for fixed roles
+  model: string          // OpenRouter model id
+  phase: number          // steps sharing a phase run in parallel; phases run in sequence
+}
+
+export interface MultiAgentConfig {
+  maxAgents:               number
+  budgetCapUsd:            number
+  models: {
+    orchestrator: string
+    worker:       string
+    reflection:   string
+    synthesizer:  string
+  }
+  reflectionPassThreshold: number   // 1–5, min score to pass without retry
+  maxRetriesPerAgent:      number
+  hitlTimeoutMs:           number
+  requirePermissions:      boolean  // HITL default for multi-agent runs
+}
+
+export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
+  maxAgents:               4,
+  budgetCapUsd:            0.5,
+  models: {
+    orchestrator: '',
+    worker:       '',
+    reflection:   '',
+    synthesizer:  '',
+  },
+  reflectionPassThreshold: 3,
+  maxRetriesPerAgent:      2,
+  hitlTimeoutMs:           300000,
+  requirePermissions:      true,
+}
+
+// AgentEvent base envelope — every event carries these so the trace can be ordered and replayed.
+export interface AgentEventBase {
+  runId: string
+  seq:   number   // monotonically increasing per run, assigned by the sidecar
+  ts:    number   // epoch ms
+}
+
+export interface OrchestratorPlanEvent extends AgentEventBase {
+  type:  'orchestrator_plan'
+  steps: AgentStep[]
+}
+
+export interface AgentStartEvent extends AgentEventBase {
+  type:    'agent_start'
+  agentId: string
+  role:    string
+  model:   string
+}
+
+export interface AgentTokenEvent extends AgentEventBase {
+  type:    'agent_token'
+  agentId: string
+  token:   string
+}
+
+export interface AgentCompleteEvent extends AgentEventBase {
+  type:       'agent_complete'
+  agentId:    string
+  output:     string
+  tokenCount: number
+  costUsd:    number
+}
+
+export interface ReflectionStartEvent extends AgentEventBase {
+  type:    'reflection_start'
+  agentId: string
+}
+
+export interface ReflectionResultEvent extends AgentEventBase {
+  type:    'reflection_result'
+  agentId: string
+  score:   number
+  passed:  boolean
+  reason:  string
+}
+
+export interface RetryEvent extends AgentEventBase {
+  type:    'retry'
+  agentId: string
+  attempt: number
+  reason:  string
+}
+
+export interface HitlPauseEvent extends AgentEventBase {
+  type:       'hitl_pause'
+  agentId:    string
+  role:       string
+  toolName:   string
+  serverName: string
+  args:       Record<string, unknown>
+}
+
+export interface HitlResumeEvent extends AgentEventBase {
+  type:     'hitl_resume'
+  agentId:  string
+  approved: boolean
+}
+
+export interface SynthesisStartEvent extends AgentEventBase {
+  type: 'synthesis_start'
+}
+
+export interface SynthesisTokenEvent extends AgentEventBase {
+  type:  'synthesis_token'
+  token: string
+}
+
+export interface TaskCompleteEvent extends AgentEventBase {
+  type:         'task_complete'
+  finalOutput:  string
+  totalCostUsd: number
+  totalTokens:  number
+}
+
+export interface TaskFailedEvent extends AgentEventBase {
+  type:             'task_failed'
+  reason:           string
+  partialOutputs?:  Record<string, string>
+}
+
+export type AgentEvent =
+  | OrchestratorPlanEvent
+  | AgentStartEvent
+  | AgentTokenEvent
+  | AgentCompleteEvent
+  | ReflectionStartEvent
+  | ReflectionResultEvent
+  | RetryEvent
+  | HitlPauseEvent
+  | HitlResumeEvent
+  | SynthesisStartEvent
+  | SynthesisTokenEvent
+  | TaskCompleteEvent
+  | TaskFailedEvent
+
+// Outbound type — Electron → sidecar HITL response
+export interface HitlResponse {
+  runId:    string
+  agentId:  string
+  approved: boolean
+}
+
 // --- LM Studio API shapes ---
 export interface LMStudioModelsResponse {
   object: 'list'
