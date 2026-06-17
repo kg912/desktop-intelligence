@@ -1,15 +1,16 @@
 # Multi-Agent Orchestration — How It Works, End to End
 
 **Project:** Desktop Intelligence
-**Status:** Pre-implementation → Phase 1 (Foundation) starting. Nothing live yet.
-The full design lives in `MULTI_AGENT_SPEC.html`; this file is the standing, human-readable
+**Status:** Phase 1 (Foundation) in progress. Event contract + validator merged (prompt 1);
+sidecar, IPC, migration, and UI still pending — nothing user-facing yet.
+The full design lives in `specs/MULTI_AGENT_SPEC.html`; this file is the standing, human-readable
 companion that tracks **what we're building, why, and what is actually implemented**.
 **Purpose of this file:** Kill comprehension debt. Anyone — including future-you — should be
 able to read this and understand the whole feature without reverse-engineering the code or
 re-reading the spec. Updated at the end of every build phase. Same discipline as
 `features/RAG-Implementation-v2.0.md`.
 
-**As of:** `3.0.0-beta-30` — Phase 1 prompt 1 merged: `AgentEvent` contract + validator.
+**As of:** `3.0.0-beta-31` — Phase 1 prompt 2 merged: SQLite migration (`applyMultiAgentMigration`).
 
 ---
 
@@ -220,14 +221,18 @@ bytes rather than erroring on overload. Budget/agent caps are the backstop.
 ## 9. Data model (Phase 1 migration)
 
 ```
-conversations  (existing table — add 4 columns)
-  + mode             'single' | 'multi-agent'
-  + agent_graph      JSON   — the orchestrator plan (AgentStep[])
-  + execution_trace  JSON   — ordered AgentEvent[] for replay
-  + run_status       'idle' | 'running' | 'paused_hitl' | 'completed' | 'failed'
+chats  (existing table — add 4 columns)
+  + mode             TEXT NOT NULL DEFAULT 'single'   — 'single' | 'multi-agent'
+  + run_status       TEXT NOT NULL DEFAULT 'idle'     — 'idle' | 'running' | 'paused_hitl' | 'completed' | 'failed'
+  + agent_graph      TEXT                             — JSON AgentStep[] (NULL for single-mode)
+  + execution_trace  TEXT                             — JSON ordered AgentEvent[] for replay (NULL until first run)
 ```
 
-Migration runs automatically on app start, version-gated (same pattern as RAG schema bumps).
+Migration is implemented in `applyMultiAgentMigration(db)` in `DatabaseService.ts` and called from
+`getDB()` on every launch. Uses the try/catch `ALTER TABLE … ADD COLUMN` pattern — **no
+`PRAGMA user_version` bump** (reserved for destructive migrations). Idempotent: re-runs are safe.
+Pre-existing rows backfill `mode = 'single'` and `run_status = 'idle'` from their column defaults.
+
 `execution_trace` + `agent_graph` are what power the per-chat "show last plan" replay view.
 
 ---
@@ -263,12 +268,12 @@ app quits mid-run      ──► sidecar terminated cleanly on quit             
 
 ## 12. Build status
 
-Phases mirror `MULTI_AGENT_SPEC.html` §11. Claude Code prompts are run sequentially with
+Phases mirror `specs/MULTI_AGENT_SPEC.html` §11. Claude Code prompts are run sequentially with
 inspection between each; this table is the source of truth for "done."
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 (event contract) ✅ merged (`src/shared/types.ts` + `agentEvents.ts`, 49 new tests) |
+| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 ✅ event contract merged; prompt 2 ✅ SQLite migration merged (`applyMultiAgentMigration` in `DatabaseService.ts`, 17 new tests) |
 | 2 | **Basic orchestration** — FastAPI sidecar, LangGraph orchestrator → workers → synthesizer, parallel execution, events streaming, layout state machine, one real end-to-end run. No reflection yet. | ⏳ |
 | 3 | **Reflection + HITL** — reflection nodes w/ pass/fail + retry, HITL popup w/ agent identity, per-agent parallel pause/resume, pre-flight approval + cost estimate, budget cap enforcement. | ⏳ |
 | 4 | **Polish + observability** — provenance tags in synthesis, collapsed-card transitions, live cost/token counters, trace extension, settings panel for all knobs, full state-machine test. | ⏳ |
