@@ -130,12 +130,14 @@ function ThinkingAccordion({
   className,
   expanded,
   onToggle,
+  onScrollableChange,
 }: {
   content: string
   isStreaming?: boolean
   className?: string
   expanded?: boolean
   onToggle?: () => void
+  onScrollableChange?: (scrollable: boolean) => void
 }) {
   const [localOpen, setLocalOpen] = useState(false)
   const open = expanded !== undefined ? expanded : localOpen
@@ -146,6 +148,7 @@ function ThinkingAccordion({
   const [measuredHeight, setMeasuredHeight] = useState<number>(20)
   const [showTopShadow, setShowTopShadow] = useState(false)
   const [showBottomShadow, setShowBottomShadow] = useState(false)
+  const [isScrollable, setIsScrollable] = useState(false)
   const hasThoughtDuration = duration !== null && duration > 0;
   const label = hasThoughtDuration ? `Thought for ${duration}s` : 'Thought Process'
 
@@ -164,22 +167,35 @@ function ThinkingAccordion({
     }
   }, [isStreaming, duration])
 
+  // Propagate scrollability to parent
+  useEffect(() => {
+    onScrollableChange?.(isScrollable)
+  }, [isScrollable, onScrollableChange])
+
   // Measure height dynamically using ResizeObserver
   useEffect(() => {
     if ((!isStreaming && !open) || !contentRef.current) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const height = Math.ceil(entry.target.getBoundingClientRect().height)
+        const rectHeight = Math.ceil(entry.target.getBoundingClientRect().height)
         if (isStreaming) {
-          setMeasuredHeight(Math.max(20, Math.min(96, height)))
+          setMeasuredHeight(Math.max(20, Math.min(96, rectHeight)))
+          setIsScrollable(false)
         } else {
-          setMeasuredHeight(Math.max(20, Math.min(330, height)))
+          const naturalHeight = isScrollable ? (rectHeight - 12) : rectHeight
+          const scrollable = naturalHeight > 318
+          setIsScrollable(scrollable)
+          if (scrollable) {
+            setMeasuredHeight(330)
+          } else {
+            setMeasuredHeight(Math.max(20, naturalHeight))
+          }
         }
       }
     })
     observer.observe(contentRef.current)
     return () => observer.disconnect()
-  }, [isStreaming, open])
+  }, [isStreaming, open, isScrollable])
 
   // Auto-scroll to bottom while streaming
   useEffect(() => {
@@ -247,7 +263,7 @@ function ThinkingAccordion({
             style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
           />
         )}
-        {!isStreaming && open && (
+        {!isStreaming && open && isScrollable && (
           <>
             {/* Top scroll shadow */}
             <div
@@ -284,7 +300,7 @@ function ThinkingAccordion({
             ref={contentRef}
             className={cn(
               "whitespace-pre-wrap pt-[6px] selectable",
-              isStreaming ? "pb-0" : "pb-3"
+              (isStreaming || !isScrollable) ? "pb-0" : "pb-3"
             )}
           >
             {content}
@@ -496,6 +512,7 @@ function RailSegment({
   const groups        = groupBlocks(doneBlocks)
 
   const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({})
+  const [scrollableStates, setScrollableStates] = useState<Record<string, boolean>>({})
 
   return (
     <div style={{ marginBottom: '0.5rem' }}>
@@ -529,6 +546,7 @@ function RailSegment({
 
         const isThinkingBlock = group.kind === 'single' && group.block.type === 'thinking'
         const rowKey = group.kind === 'merged-search' ? group.blocks[0].id : group.block.id
+        const isScrollable = scrollableStates[rowKey] ?? false
 
         // Compute default expanded state
         let defaultExpanded = false
@@ -614,7 +632,7 @@ function RailSegment({
                 paddingLeft: 8,
                 paddingTop: 2,
                 minWidth: 0,
-                paddingBottom: (isLastGroup && isExpanded && isThinkingBlock && !isStreaming)
+                paddingBottom: (isLastGroup && isExpanded && isThinkingBlock && isScrollable && !isStreaming)
                   ? 2
                   : ((isLastGroup && !isExpanded) ? 6 : 14)
               }}
@@ -635,6 +653,14 @@ function RailSegment({
                   className="mb-0"
                   expanded={isExpanded}
                   onToggle={handleToggle}
+                  onScrollableChange={(scrollable) => {
+                    if (scrollableStates[rowKey] !== scrollable) {
+                      setScrollableStates(prev => ({
+                        ...prev,
+                        [rowKey]: scrollable
+                      }))
+                    }
+                  }}
                 />
               )}
               {group.kind === 'single' && group.block.type === 'search' && (
