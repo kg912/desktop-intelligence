@@ -50,6 +50,8 @@ export default defineConfig({
         test: {
           include: [
             'src/main/**/__tests__/**/*.test.ts',
+            // Shared types and validators (no DOM or Electron dependencies)
+            'src/shared/__tests__/**/*.test.ts',
             // Renderer pure-function utilities (no React/DOM dependencies)
             'src/renderer/src/lib/__tests__/**/*.test.ts',
             // HITL feature tests that exercise pure Node.js logic
