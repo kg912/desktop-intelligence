@@ -27,6 +27,11 @@ import type {
   ExportChatPdfResult,
   SandboxViolationTraceEvent,
   SandboxViolationLogEntry,
+  MultiAgentStartPayload,
+  StartRunResult,
+  SidecarStatus,
+  HitlResponse,
+  AgentEvent,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
 
@@ -310,6 +315,25 @@ const api = {
     RERANKER_MODEL_ID: string
   }> =>
     ipcRenderer.invoke(IPC_CHANNELS.RAG_GET_CONFIG),
+
+  // ── Multi-Agent Orchestration ──────────────────────────────────────────────
+  startMultiAgentRun: (payload: MultiAgentStartPayload): Promise<StartRunResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_START, payload),
+
+  respondMultiAgentHitl: (r: HitlResponse): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, r),
+
+  abortMultiAgentRun: (runId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ABORT, runId),
+
+  getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS),
+
+  onMultiAgentEvent: (cb: (e: AgentEvent) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, e: AgentEvent): void => cb(e)
+    ipcRenderer.on(IPC_CHANNELS.MULTI_AGENT_EVENT, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MULTI_AGENT_EVENT, h)
+  },
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
