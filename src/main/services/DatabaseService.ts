@@ -26,6 +26,23 @@ import { EMBEDDING_DIM } from './EmbeddingService'
 
 let _db: Database.Database | null = null
 
+/**
+ * Multi-Agent Phase 1 — adds run-persistence columns to the chats table.
+ * Additive, try/catch-guarded, idempotent (runs every launch).
+ * NOTE: chats.mode ('single' | 'multi-agent') is unrelated to documents.mode
+ *       ('inline' | 'indexed') — different table, different meaning.
+ */
+export function applyMultiAgentMigration(db: Database.Database): void {
+  // mode: which kind of conversation this is. Existing chats backfill to 'single'.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'`) } catch { /* column already exists */ }
+  // run_status: lifecycle of the most recent multi-agent run on this chat.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN run_status TEXT NOT NULL DEFAULT 'idle'`) } catch { /* column already exists */ }
+  // agent_graph: JSON-encoded AgentStep[] (the orchestrator plan). NULL for single-mode chats.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN agent_graph TEXT`) } catch { /* column already exists */ }
+  // execution_trace: JSON-encoded ordered AgentEvent[] for replay. NULL until a run produces one.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN execution_trace TEXT`) } catch { /* column already exists */ }
+}
+
 export function getDB(): Database.Database {
   if (_db) return _db
 
@@ -144,6 +161,9 @@ export function getDB(): Database.Database {
   try {
     _db.exec(`ALTER TABLE chats ADD COLUMN system_instructions TEXT`)
   } catch { /* column already exists */ }
+
+  // Multi-Agent Orchestration Phase 1 — run-persistence columns on chats
+  applyMultiAgentMigration(_db)
 
   // ── RAG v2 Phase 1 — load sqlite-vec extension (before migration) ────────────
   // Must run on every launch so that if the extension was unavailable on a prior
