@@ -144,6 +144,8 @@ function ThinkingAccordion({
   const scrollRef               = useRef<HTMLDivElement>(null)
   const contentRef              = useRef<HTMLDivElement>(null)
   const [measuredHeight, setMeasuredHeight] = useState<number>(20)
+  const [showTopShadow, setShowTopShadow] = useState(false)
+  const [showBottomShadow, setShowBottomShadow] = useState(false)
   const hasThoughtDuration = duration !== null && duration > 0;
   const label = hasThoughtDuration ? `Thought for ${duration}s` : 'Thought Process'
 
@@ -167,11 +169,11 @@ function ThinkingAccordion({
     if ((!isStreaming && !open) || !contentRef.current) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const height = entry.contentRect.height
+        const height = Math.ceil(entry.target.getBoundingClientRect().height)
         if (isStreaming) {
           setMeasuredHeight(Math.max(20, Math.min(96, height)))
         } else {
-          setMeasuredHeight(height)
+          setMeasuredHeight(Math.max(20, Math.min(330, height)))
         }
       }
     })
@@ -185,6 +187,28 @@ function ThinkingAccordion({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [content, isStreaming])
+
+  const updateScrollShadows = (target: HTMLDivElement) => {
+    const { scrollTop, scrollHeight, clientHeight } = target
+    const hasMore = scrollHeight > clientHeight
+    if (!hasMore) {
+      setShowTopShadow(false)
+      setShowBottomShadow(false)
+    } else {
+      setShowTopShadow(scrollTop > 2)
+      setShowBottomShadow(scrollTop + clientHeight < scrollHeight - 2)
+    }
+  }
+
+  // Update scroll shadows when state or size changes
+  useEffect(() => {
+    if (!scrollRef.current) return
+    updateScrollShadows(scrollRef.current)
+  }, [open, isStreaming, measuredHeight])
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    updateScrollShadows(e.currentTarget)
+  }
 
   const containerHeight = isStreaming ? `${measuredHeight}px` : (open ? `${measuredHeight}px` : '0px')
   const containerOpacity = (isStreaming || open) ? 1 : 0
@@ -223,16 +247,46 @@ function ThinkingAccordion({
             style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
           />
         )}
+        {!isStreaming && open && (
+          <>
+            {/* Top scroll shadow */}
+            <div
+              className="pointer-events-none absolute top-0 left-0 right-0 h-12 z-10 transition-opacity duration-150"
+              style={{
+                background: 'linear-gradient(to bottom, #0f0f0f, transparent)',
+                opacity: showTopShadow ? 1 : 0
+              }}
+            />
+            {/* Bottom scroll shadow */}
+            <div
+              className="pointer-events-none absolute left-0 right-0 h-8 z-10 transition-opacity duration-150"
+              style={{
+                bottom: -2,
+                background: 'linear-gradient(to top, #0f0f0f, transparent)',
+                opacity: showBottomShadow ? 1 : 0
+              }}
+            />
+          </>
+        )}
         <div
           ref={scrollRef}
-          className="overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed"
+          onScroll={handleScroll}
+          className="font-mono text-[11px] text-white/30 leading-relaxed scrollbar-none"
           style={{
             height: containerHeight,
             opacity: containerOpacity,
+            overflowY: isStreaming ? 'hidden' : (open ? 'auto' : 'hidden'),
+            overflowX: 'hidden',
             transition: 'height 200ms ease-out, opacity 150ms ease-out'
           }}
         >
-          <div ref={contentRef} className="whitespace-pre-wrap pt-[6px] selectable">
+          <div
+            ref={contentRef}
+            className={cn(
+              "whitespace-pre-wrap pt-[6px] selectable",
+              isStreaming ? "pb-0" : "pb-3"
+            )}
+          >
             {content}
           </div>
         </div>
@@ -473,6 +527,7 @@ function RailSegment({
           && isStreaming
           && group.block.id === allBlocks[allBlocks.length - 1].id
 
+        const isThinkingBlock = group.kind === 'single' && group.block.type === 'thinking'
         const rowKey = group.kind === 'merged-search' ? group.blocks[0].id : group.block.id
 
         // Compute default expanded state
@@ -553,7 +608,17 @@ function RailSegment({
               ) : null}
             </div>
             {/* Right body: block content sits flush with the icon */}
-            <div style={{ flex: 1, paddingLeft: 8, paddingTop: 2, minWidth: 0, paddingBottom: (isLastGroup && !isExpanded) ? 6 : 14 }}>
+            <div
+              style={{
+                flex: 1,
+                paddingLeft: 8,
+                paddingTop: 2,
+                minWidth: 0,
+                paddingBottom: (isLastGroup && isExpanded && isThinkingBlock && !isStreaming)
+                  ? 2
+                  : ((isLastGroup && !isExpanded) ? 6 : 14)
+              }}
+            >
               {group.kind === 'merged-search' && (
                 <MergedSearchGroup
                   blocks={group.blocks}
