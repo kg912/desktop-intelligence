@@ -128,17 +128,32 @@ function ThinkingAccordion({
   content,
   isStreaming,
   className,
+  expanded,
+  onToggle,
 }: {
   content: string
   isStreaming?: boolean
   className?: string
+  expanded?: boolean
+  onToggle?: () => void
 }) {
-  const [open, setOpen]         = useState(false)
+  const [localOpen, setLocalOpen] = useState(false)
+  const open = expanded !== undefined ? expanded : localOpen
   const [duration, setDuration] = useState<number | null>(null)
   const startedAtRef            = useRef<number>(Date.now())
   const scrollRef               = useRef<HTMLDivElement>(null)
+  const contentRef              = useRef<HTMLDivElement>(null)
+  const [measuredHeight, setMeasuredHeight] = useState<number>(20)
   const hasThoughtDuration = duration !== null && duration > 0;
   const label = hasThoughtDuration ? `Thought for ${duration}s` : 'Thought Process'
+
+  const handleToggle = () => {
+    if (onToggle) {
+      onToggle()
+    } else {
+      setLocalOpen(v => !v)
+    }
+  }
 
   // Record elapsed seconds when streaming ends
   useEffect(() => {
@@ -147,6 +162,23 @@ function ThinkingAccordion({
     }
   }, [isStreaming, duration])
 
+  // Measure height dynamically using ResizeObserver
+  useEffect(() => {
+    if ((!isStreaming && !open) || !contentRef.current) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = entry.contentRect.height
+        if (isStreaming) {
+          setMeasuredHeight(Math.max(20, Math.min(96, height)))
+        } else {
+          setMeasuredHeight(height)
+        }
+      }
+    })
+    observer.observe(contentRef.current)
+    return () => observer.disconnect()
+  }, [isStreaming, open])
+
   // Auto-scroll to bottom while streaming
   useEffect(() => {
     if (isStreaming && scrollRef.current) {
@@ -154,50 +186,53 @@ function ThinkingAccordion({
     }
   }, [content, isStreaming])
 
-  // ── Active: shimmer header + scrolling content ──
-  if (isStreaming) {
-    return (
-      <div className={cn('mb-2', className)}>
-        <div className="flex items-center gap-1.5 mb-1">
-          <span
-            className="shimmer-text font-mono text-[13px] leading-none tracking-[0.06em] capitalize"
-            style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
-          >
-            Reasoning
-          </span>
-        </div>
-        {content && (
-          <div className="relative">
-            <div
-              className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
-              style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
-            />
-            <div
-              ref={scrollRef}
-              className="max-h-[96px] overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap"
-            >
-              {content}
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
+  const containerHeight = isStreaming ? `${measuredHeight}px` : (open ? `${measuredHeight}px` : '0px')
+  const containerOpacity = (isStreaming || open) ? 1 : 0
 
   return (
     <div className={cn('mb-2', className)}>
       <button
-        onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-2 mb-0 py-0 group/tp text-left cursor-pointer select-none"
+        disabled={isStreaming}
+        onClick={handleToggle}
+        className={cn(
+          "flex items-center gap-2 mb-0 py-0 text-left select-none transition-colors duration-100",
+          isStreaming ? "cursor-default" : "cursor-pointer group/tp"
+        )}
       >
-        <span className={`font-mono text-[13px] tracking-[0.03em] ${!hasThoughtDuration ? 'capitalize' : ''} text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none`}>
-          {label}
-        </span>
-        <ChevronIcon open={open} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
+        {isStreaming ? (
+          <span
+            className="shimmer-text font-mono text-[13px] leading-none font-medium text-white/45 tracking-[0.03em] select-none"
+            style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
+          >
+            Reasoning
+          </span>
+        ) : (
+          <>
+            <span className={`font-mono text-[13px] tracking-[0.03em] ${!hasThoughtDuration ? 'capitalize' : ''} text-white/40 group-hover/tp:text-white/60 transition-colors duration-100 leading-none`}>
+              {label}
+            </span>
+            <ChevronIcon open={open} className="text-white/35 group-hover/tp:text-white/55 transition-colors duration-150" />
+          </>
+        )}
       </button>
-      <div className={cn('accordion-body', open && 'open')}>
-        <div style={{ overflow: 'hidden', paddingTop: 6 }}>
-          <div className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap selectable">
+
+      <div className="relative mt-1">
+        {isStreaming && measuredHeight >= 96 && (
+          <div
+            className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10"
+            style={{ background: 'linear-gradient(to bottom, #0f0f0f, transparent)' }}
+          />
+        )}
+        <div
+          ref={scrollRef}
+          className="overflow-hidden font-mono text-[11px] text-white/30 leading-relaxed"
+          style={{
+            height: containerHeight,
+            opacity: containerOpacity,
+            transition: 'height 200ms ease-out, opacity 150ms ease-out'
+          }}
+        >
+          <div ref={contentRef} className="whitespace-pre-wrap pt-[6px] selectable">
             {content}
           </div>
         </div>
@@ -295,22 +330,37 @@ function MergedSearchGroup({
   blocks,
   className,
   autoCollapse,
+  expanded: propExpanded,
+  onToggle,
 }: {
   blocks: SearchBlock[]
   className?: string
   autoCollapse?: boolean
+  expanded?: boolean
+  onToggle?: () => void
 }) {
-  const [expanded, setExpanded] = useState(true)
+  const [localExpanded, setLocalExpanded] = useState(true)
+  const expanded = propExpanded !== undefined ? propExpanded : localExpanded
   const totalResults = blocks.reduce((sum, b) => sum + (b.results?.length ?? 0), 0)
 
+  const handleToggle = () => {
+    if (onToggle) {
+      onToggle()
+    } else {
+      setLocalExpanded(v => !v)
+    }
+  }
+
   useEffect(() => {
-    if (autoCollapse) setExpanded(false)
-  }, [autoCollapse])
+    if (autoCollapse && !onToggle) {
+      setLocalExpanded(false)
+    }
+  }, [autoCollapse, onToggle])
 
   return (
     <div className={cn('mb-2', className)}>
       <button
-        onClick={() => setExpanded(v => !v)}
+        onClick={handleToggle}
         className="flex items-center gap-1.5 mb-0 py-0 group/sh select-none"
       >
         <span className="font-mono text-[13px] leading-none text-white/40 font-medium
@@ -391,6 +441,8 @@ function RailSegment({
   const doneBlocks    = hasLiveSearch ? blocks.slice(0, -1) : blocks
   const groups        = groupBlocks(doneBlocks)
 
+  const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({})
+
   return (
     <div style={{ marginBottom: '0.5rem' }}>
       {groups.map((group, groupIdx) => {
@@ -422,6 +474,30 @@ function RailSegment({
           && group.block.id === allBlocks[allBlocks.length - 1].id
 
         const rowKey = group.kind === 'merged-search' ? group.blocks[0].id : group.block.id
+
+        // Compute default expanded state
+        let defaultExpanded = false
+        if (group.kind === 'merged-search') {
+          defaultExpanded = !hasNonSearch
+        } else if (group.block.type === 'thinking') {
+          defaultExpanded = isActiveThink
+        } else if (group.block.type === 'search') {
+          const isWebSearch = isWebSearchBlock(group.block as SearchBlock)
+          if (group.block.phase === 'done') {
+            defaultExpanded = isWebSearch ? !hasNonSearch : false
+          } else {
+            defaultExpanded = false
+          }
+        }
+
+        const isExpanded = expandedStates[rowKey] ?? defaultExpanded
+
+        const handleToggle = () => {
+          setExpandedStates(prev => ({
+            ...prev,
+            [rowKey]: !isExpanded
+          }))
+        }
 
         return (
           <div key={rowKey} className="flex" style={{ alignItems: 'stretch' }}>
@@ -459,17 +535,32 @@ function RailSegment({
                 )}
               </div>
               {/* Connecting line from bottom of this icon to top of next block */}
-              {!isLastGroup && (
+              {!isLastGroup ? (
                 <div style={{ width: 1, flex: 1, minHeight: 8, background: 'rgba(255,255,255,0.1)' }} />
-              )}
+              ) : isExpanded ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, width: '100%' }}>
+                  <div style={{ width: 1, flex: 1, background: 'rgba(255,255,255,0.1)' }} />
+                  <div style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: iconType === 'mcp' ? 'rgba(229,57,53,0.2)' : 'rgba(255,255,255,0.1)',
+                    flexShrink: 0,
+                    marginTop: 0,
+                    marginBottom: 2
+                  }} />
+                </div>
+              ) : null}
             </div>
             {/* Right body: block content sits flush with the icon */}
-            <div style={{ flex: 1, paddingLeft: 8, paddingTop: 2, minWidth: 0, paddingBottom: isLastGroup ? 6 : 14 }}>
+            <div style={{ flex: 1, paddingLeft: 8, paddingTop: 2, minWidth: 0, paddingBottom: (isLastGroup && !isExpanded) ? 6 : 14 }}>
               {group.kind === 'merged-search' && (
                 <MergedSearchGroup
                   blocks={group.blocks}
                   autoCollapse={hasNonSearch}
                   className="mb-0"
+                  expanded={isExpanded}
+                  onToggle={handleToggle}
                 />
               )}
               {group.kind === 'single' && group.block.type === 'thinking' && (
@@ -477,6 +568,8 @@ function RailSegment({
                   content={group.block.content}
                   isStreaming={isActiveThink}
                   className="mb-0"
+                  expanded={isExpanded}
+                  onToggle={handleToggle}
                 />
               )}
               {group.kind === 'single' && group.block.type === 'search' && (
@@ -491,6 +584,8 @@ function RailSegment({
                   toolImages={group.block.toolImages}
                   autoCollapse={hasNonSearch}
                   className="mb-0"
+                  expanded={isExpanded}
+                  onToggle={handleToggle}
                 />
               )}
             </div>

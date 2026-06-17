@@ -19,15 +19,17 @@ interface ToolCallNotificationProps {
   toolImages?: Array<{ mimeType: string; data: string }>
   className?: string
   autoCollapse?: boolean
+  expanded?: boolean
+  onToggle?: () => void
 }
 
 // Format the query label for display.
-// For MCP tools stored as "serverName__toolName", show "serverName: toolName".
-// For search queries, show as-is.
+// MCP tools have double underscores e.g. "mcpServer__toolName".
+// Show them as "mcpServer: toolName" in the UI.
 function formatQueryLabel(query: string): string {
   if (query.includes('__')) {
-    const [server, ...rest] = query.split('__')
-    return `${server}: ${rest.join('__')}`
+    const parts = query.split('__')
+    return `${parts[0]}: ${parts.slice(1).join('__')}`
   }
   return query
 }
@@ -126,16 +128,29 @@ export function ToolCallNotification({
   toolImages,
   className = '',
   autoCollapse,
+  expanded: propExpanded,
+  onToggle,
 }: ToolCallNotificationProps) {
   const label = formatQueryLabel(query)
   const webSearch = resolveIsWebSearch(toolName, query)
   // Web search: expanded by default so results are immediately visible.
   // MCP tools: collapsed by default — header shows server·tool summary.
-  const [expanded, setExpanded] = useState(webSearch)
+  const [localExpanded, setLocalExpanded] = useState(webSearch)
+  const expanded = propExpanded !== undefined ? propExpanded : localExpanded
+
+  const handleToggle = () => {
+    if (onToggle) {
+      onToggle()
+    } else {
+      setLocalExpanded(v => !v)
+    }
+  }
 
   useEffect(() => {
-    if (autoCollapse && webSearch && phase === 'done') setExpanded(false)
-  }, [autoCollapse, webSearch, phase])
+    if (autoCollapse && webSearch && phase === 'done' && !onToggle) {
+      setLocalExpanded(false)
+    }
+  }, [autoCollapse, webSearch, phase, onToggle])
 
   // ── Searching: shimmer "Working" ──────────────────────────────
   if (phase === 'searching') {
@@ -182,7 +197,7 @@ export function ToolCallNotification({
       <div className={cn('mb-2', className)}>
         {/* Header row: "Searched the web  ›  N results" — toggles results */}
         <button
-          onClick={() => setExpanded(v => !v)}
+          onClick={handleToggle}
           className="flex items-center gap-1.5 mb-0 py-0 group/sh select-none"
         >
           <span className="font-mono text-[13px] leading-none text-white/40 font-medium
@@ -215,7 +230,7 @@ export function ToolCallNotification({
 
       {/* Header: server · tool_name › */}
       <button
-        onClick={() => setExpanded(v => !v)}
+        onClick={handleToggle}
         className="flex items-center gap-1.5 group/tc select-none"
       >
         <span className="font-mono text-[13px] leading-none
