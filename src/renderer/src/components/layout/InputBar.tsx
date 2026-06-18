@@ -9,7 +9,7 @@ import {
   type DragEvent
 } from 'react'
 import { useSignals } from '@preact/signals-react/runtime'
-import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug, Shield, ShieldOff } from 'lucide-react'
+import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug, Shield, ShieldOff, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
 import { isStreamingSignal } from '../../signals/chatSignals'
@@ -88,6 +88,39 @@ export function BypassPermissionsButton({
 }
 
 // ----------------------------------------------------------------
+// Multi-Agent mode toggle button (exported for tests)
+// ----------------------------------------------------------------
+export function MultiAgentModeButton({
+  active,
+  onToggle,
+}: {
+  active:   boolean
+  onToggle: (next: boolean) => void
+}) {
+  return (
+    <button
+      onClick={() => onToggle(!active)}
+      data-active={active}
+      title={active
+        ? 'Multi-agent mode on — click to disable'
+        : 'Multi-agent mode off — click to enable'
+      }
+      className={cn(
+        'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+        'text-[10px] font-medium transition-all duration-150',
+        'focus:outline-none',
+        active
+          ? 'bg-accent-950/70 text-accent-300 border border-accent-700 ma-pulse'
+          : 'border border-accent-900/40 text-accent-500/70 hover:text-accent-400'
+      )}
+    >
+      <Network className="w-3 h-3" />
+      <span>Multi-Agent</span>
+    </button>
+  )
+}
+
+// ----------------------------------------------------------------
 // InputBar
 // ----------------------------------------------------------------
 export interface InputBarProps {
@@ -112,7 +145,8 @@ export const InputBar = memo(function InputBar({
 }: InputBarProps) {
   useSignals()
   const isStreaming = isStreamingSignal.value
-  const { thinkingMode, setThinkingMode } = useModelStore()
+  const { thinkingMode, setThinkingMode, multiAgentMode, setMultiAgentMode } = useModelStore()
+  const [isOpenRouter, setIsOpenRouter] = useState(false)
   const [text, setText] = useState('')
   const [localAttachments, setLocalAttachments] = useState<Attachment[]>([])
   const [isDraggingOver, setIsDraggingOver] = useState(false)
@@ -133,6 +167,13 @@ export const InputBar = memo(function InputBar({
       @keyframes fadeScaleIn {
         from { opacity: 0; transform: scale(0.85) translateY(4px); }
         to   { opacity: 1; transform: scale(1) translateY(0); }
+      }
+      @keyframes ma-pulse-kf {
+        from { box-shadow: 0 0 0px 0px rgba(229, 57, 53, 0); }
+        to   { box-shadow: 0 0 8px 2px rgba(229, 57, 53, 0.25); }
+      }
+      .ma-pulse {
+        animation: ma-pulse-kf 1.8s ease-in-out infinite alternate;
       }
       @keyframes ib-revolve {
         to { transform: translate(-50%, -50%) rotate(360deg); }
@@ -196,6 +237,12 @@ export const InputBar = memo(function InputBar({
       }
     `
     document.head.appendChild(s)
+  }, [])
+
+  useEffect(() => {
+    window.api.getBackendSettings()
+      .then((s) => setIsOpenRouter(s.provider === 'openrouter'))
+      .catch(() => {/* non-fatal */})
   }, [])
 
   useEffect(() => {
@@ -359,7 +406,10 @@ export const InputBar = memo(function InputBar({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message… (Shift+Enter for newline)"
+          placeholder={multiAgentMode
+            ? 'Describe a complex task for the agent network…'
+            : 'Message… (Shift+Enter for newline)'
+          }
           rows={1}
           className={cn(
             'flex-1 resize-none bg-transparent',
@@ -411,6 +461,9 @@ export const InputBar = memo(function InputBar({
             <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
           </button>
           <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
+          {isOpenRouter && (
+            <MultiAgentModeButton active={multiAgentMode} onToggle={setMultiAgentMode} />
+          )}
         </div>
         <div className="flex items-center gap-2">
           {mcpActivity && (

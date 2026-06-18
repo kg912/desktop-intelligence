@@ -1,9 +1,9 @@
 # Multi-Agent Orchestration — How It Works, End to End
 
 **Project:** Desktop Intelligence
-**Status:** Phase 1 (Foundation) in progress. Event contract, SQLite migration, and IPC surface
-merged (prompts 1–3); the real sidecar process and the renderer UI are still pending — nothing
-user-facing yet.
+**Status:** Phase 1 (Foundation) in progress. Event contract, SQLite migration, IPC surface, and
+OpenRouter-gated mode button merged (prompts 1–4); the real sidecar process and the multi-agent
+panel UI are still pending.
 The full design lives in `specs/MULTI_AGENT_SPEC.html`; this file is the standing, human-readable
 companion that tracks **what we're building, why, and what is actually implemented**.
 **Purpose of this file:** Kill comprehension debt. Anyone — including future-you — should be
@@ -11,7 +11,7 @@ able to read this and understand the whole feature without reverse-engineering t
 re-reading the spec. Updated at the end of every build phase. Same discipline as
 `features/RAG-Implementation-v2.0.md`.
 
-**As of:** `3.0.0-beta-32` — Phase 1 prompt 3 merged: IPC channels + sidecar-manager skeleton.
+**As of:** `3.0.0-beta-33` — Phase 1 prompt 4 merged: OpenRouter-gated Multi-Agent mode button in InputBar.
 
 ---
 
@@ -279,7 +279,7 @@ inspection between each; this table is the source of truth for "done."
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 ✅ event contract merged; prompt 2 ✅ SQLite migration merged (`applyMultiAgentMigration` in `DatabaseService.ts`, 17 new tests); prompt 3 ✅ IPC surface + sidecar-manager skeleton merged (`MultiAgentSidecarManager.ts`, 11 new tests, 5 IPC channels, preload bridge) |
+| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 ✅ event contract merged; prompt 2 ✅ SQLite migration merged (`applyMultiAgentMigration` in `DatabaseService.ts`, 17 new tests); prompt 3 ✅ IPC surface + sidecar-manager skeleton merged (`MultiAgentSidecarManager.ts`, 11 new tests, 5 IPC channels, preload bridge); prompt 4 ✅ OpenRouter-gated `MultiAgentModeButton` in InputBar merged (`multiAgentMode` in ModelStore, 8 unit tests + 2 gating tests — button toggles session UI state only, does not start a run until Phase 2) |
 | 2 | **Basic orchestration** — FastAPI sidecar, LangGraph orchestrator → workers → synthesizer, parallel execution, events streaming, layout state machine, one real end-to-end run. No reflection yet. | ⏳ |
 | 3 | **Reflection + HITL** — reflection nodes w/ pass/fail + retry, HITL popup w/ agent identity, per-agent parallel pause/resume, pre-flight approval + cost estimate, budget cap enforcement. | ⏳ |
 | 4 | **Polish + observability** — provenance tags in synthesis, collapsed-card transitions, live cost/token counters, trace extension, settings panel for all knobs, full state-machine test. | ⏳ |

@@ -43,6 +43,9 @@ interface ModelConfigValue {
   /** Stub for future multi-agent orchestrator — always false until implemented */
   isMultiAgentRunning: boolean;
   setIsMultiAgentRunning: (v: boolean) => void;
+  /** Whether multi-agent orchestration mode is enabled for this session (UI toggle). */
+  multiAgentMode: boolean;
+  setMultiAgentMode: (v: boolean) => void;
 }
 
 /** Volatile runtime state that changes during/after streaming. */
@@ -73,6 +76,7 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
   const [selectedModel,        setSelectedModel]        = useState<string>("");
   const [thinkingMode,         setThinkingMode]         = useState<ThinkingMode>("thinking");
   const [isMultiAgentRunning,  setIsMultiAgentRunning]  = useState<boolean>(false);
+  const [multiAgentMode,       setMultiAgentMode]       = useState<boolean>(false);
 
   const [compactToast, setCompactToast] = useState<{
     tokensBefore: number;
@@ -103,6 +107,8 @@ export function ModelStoreProvider({ children }: { children: ReactNode }) {
     setThinkingMode,
     isMultiAgentRunning,
     setIsMultiAgentRunning,
+    multiAgentMode,
+    setMultiAgentMode,
   };
 
   const runtimeValue: ModelRuntimeValue = {

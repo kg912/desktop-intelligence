@@ -325,6 +325,41 @@ function StockChartBlock({
 }) {
   const wvRef = useRef<HTMLElement>(null)
 
+  useEffect(() => {
+    const webviewEl = wvRef.current
+    if (!webviewEl) return
+
+    const handleConsoleMessage = (e: any) => {
+      try {
+        const data = JSON.parse(e.message)
+        if (data.type === 'webview-zoom') {
+          const currentZoom = window.api.getZoomLevel()
+          if (data.action === '+' || data.action === '=') {
+            window.api.setZoomLevel(currentZoom + 0.5)
+          } else if (data.action === '-') {
+            window.api.setZoomLevel(currentZoom - 0.5)
+          } else if (data.action === '0') {
+            window.api.setZoomLevel(0)
+          }
+        } else if (data.type === 'webview-zoom-wheel') {
+          const currentZoom = window.api.getZoomLevel()
+          if (data.deltaY < 0) {
+            window.api.setZoomLevel(currentZoom + 0.1)
+          } else if (data.deltaY > 0) {
+            window.api.setZoomLevel(currentZoom - 0.1)
+          }
+        }
+      } catch (err) {
+        // Not a JSON zoom message, ignore
+      }
+    }
+
+    webviewEl.addEventListener('console-message', handleConsoleMessage as any)
+    return () => {
+      webviewEl.removeEventListener('console-message', handleConsoleMessage as any)
+    }
+  }, [phase])
+
   if (phase === 'error') {
     return (
       <div className="mb-2 text-[13px] text-red-400 font-mono">

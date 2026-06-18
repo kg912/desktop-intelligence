@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react'
 
 // Mock Preact signals React runtime to avoid concurrent work tracking errors in jsdom
 vi.mock('@preact/signals-react/runtime', () => ({
@@ -13,11 +13,14 @@ import { isStreamingSignal } from '../../renderer/src/signals/chatSignals'
 // Mock Electron IPC bridge on existing window object without overwriting it!
 const mockSetBypassPermissions = vi.fn().mockResolvedValue(undefined)
 const mockGetFilePath = vi.fn().mockImplementation((file: any) => file.path || `/mock/${file.name}`)
+// Default to lmstudio so Multi-Agent button stays hidden in existing tests.
+const mockGetBackendSettings = vi.fn().mockResolvedValue({ provider: 'lmstudio' })
 
 if (typeof window !== 'undefined') {
   (window as any).api = {
     setBypassPermissions: (...args: any[]) => mockSetBypassPermissions(...args),
     getFilePath: (...args: any[]) => mockGetFilePath(...args),
+    getBackendSettings: (...args: any[]) => mockGetBackendSettings(...args),
   }
 }
 
@@ -338,14 +341,30 @@ describe('InputBar', () => {
     renderInputBar()
     const paperclipBtn = screen.getByTitle('Attach file or image')
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
-    
+
     const clickSpy = vi.spyOn(input, 'click').mockImplementation(() => {})
-    
+
     act(() => {
       fireEvent.click(paperclipBtn)
     })
-    
+
     expect(clickSpy).toHaveBeenCalled()
     clickSpy.mockRestore()
+  })
+
+  // ── Multi-Agent button gating ────────────────────────────────────
+
+  it('shows Multi-Agent button when backend is openrouter', async () => {
+    mockGetBackendSettings.mockResolvedValue({ provider: 'openrouter' })
+    renderInputBar()
+    await waitFor(() => expect(screen.getByText('Multi-Agent')).toBeTruthy())
+  })
+
+  it('hides Multi-Agent button when backend is not openrouter', async () => {
+    mockGetBackendSettings.mockResolvedValue({ provider: 'lmstudio' })
+    renderInputBar()
+    // Flush the resolved Promise microtask before asserting absence
+    await act(async () => {})
+    expect(screen.queryByText('Multi-Agent')).toBeNull()
   })
 })

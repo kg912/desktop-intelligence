@@ -1015,7 +1015,7 @@ function buildChartHtml(symbol: string, init: {
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0e0e0e;
 color:rgba(255,255,255,0.85);font-family:system-ui,-apple-system,sans-serif;
-display:flex;flex-direction:column}
+display:flex;flex-direction:column;touch-action:none}
 .hdr{padding:10px 16px 5px;flex-shrink:0}
 .htop{display:flex;align-items:baseline;gap:6px}
 .co{font-size:13px;font-weight:600;color:rgba(255,255,255,0.9)}
@@ -1217,6 +1217,22 @@ align-content:start}
   } else {
     loadRange('1d', '5m');
   }
+
+  // Prevent visual and layout zoom inside the webview, and forward zoom keys to the host
+  window.addEventListener('keydown', function(e) {
+    var isCmdOrCtrl = e.metaKey || e.ctrlKey;
+    if (isCmdOrCtrl && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')) {
+      e.preventDefault();
+      console.log(JSON.stringify({ type: 'webview-zoom', action: e.key }));
+    }
+  });
+
+  window.addEventListener('wheel', function(e) {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      console.log(JSON.stringify({ type: 'webview-zoom-wheel', deltaY: e.deltaY }));
+    }
+  }, { passive: false });
 })();
 </script>
 </body>
