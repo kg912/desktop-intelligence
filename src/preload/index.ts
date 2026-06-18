@@ -2,7 +2,7 @@
  * Preload — contextBridge surface exposed as window.api
  * Every method typed; no raw ipcRenderer exposed.
  */
-import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, shell, webUtils, webFrame } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import type {
   ConnectionState,
@@ -400,6 +400,9 @@ const api = {
   // all messages (including async Mermaid/ECharts renders) have settled.
   notifyPrintReady: (): void =>
     ipcRenderer.send(IPC_CHANNELS.CHAT_EXPORT_PDF_READY),
+  // ── Zoom Utilities ───────────────────────────────────────────
+  getZoomLevel: (): number => webFrame.getZoomLevel(),
+  setZoomLevel: (level: number): void => webFrame.setZoomLevel(level),
 }
 
 contextBridge.exposeInMainWorld('api', api)

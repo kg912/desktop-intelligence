@@ -13,12 +13,13 @@ export interface InputTextAreaProps {
     handleKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void
     textareaRef: React.RefObject<HTMLTextAreaElement>
     textAreaSignal: Signal<string>
+    placeholder?: string
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
 const MIN_TEXTAREA_HEIGHT = 24
 
-export const InputTextArea = ({ textareaRef, handleKeyDown, textAreaSignal }: InputTextAreaProps) => {
+export const InputTextArea = ({ textareaRef, handleKeyDown, textAreaSignal, placeholder = 'Message… (Shift+Enter for newline)' }: InputTextAreaProps) => {
     useSignals();
     return (
         <textarea
@@ -28,7 +29,7 @@ export const InputTextArea = ({ textareaRef, handleKeyDown, textAreaSignal }: In
                 textAreaSignal.value = e.target.value
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Message… (Shift+Enter for newline)"
+            placeholder={placeholder}
             rows={1}
             className={cn(
                 'flex-1 resize-none bg-transparent',
