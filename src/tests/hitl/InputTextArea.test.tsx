@@ -122,4 +122,38 @@ describe('InputTextArea', () => {
     expect(refCurrentValue).not.toBeNull()
     expect(refCurrentValue instanceof HTMLTextAreaElement).toBe(true)
   })
+
+  it('does not read scrollHeight during render', () => {
+    const scrollHeightSpy = vi.fn().mockReturnValue(100)
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      get: scrollHeightSpy,
+      configurable: true,
+    })
+
+    const TestComponent = () => {
+      const signal = useSignal('Some text')
+      const ref = useRef<HTMLTextAreaElement>(null)
+      return (
+        <InputTextArea
+          textareaRef={ref}
+          handleKeyDown={vi.fn()}
+          textAreaSignal={signal}
+        />
+      )
+    }
+
+    render(<TestComponent />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    
+    // Trigger a change to update the signal and trigger a re-render where ref is populated
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'Some more text' } })
+    })
+
+    expect(scrollHeightSpy).not.toHaveBeenCalled()
+    
+    // Clean up definition
+    delete (HTMLTextAreaElement.prototype as any).scrollHeight
+  })
 })
+

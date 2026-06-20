@@ -39,12 +39,7 @@ export const InputTextArea = ({ textareaRef, handleKeyDown, textAreaSignal }: In
                 height: MIN_TEXTAREA_HEIGHT,
                 maxHeight: MAX_TEXTAREA_HEIGHT,
                 fontFamily: 'inherit',
-                overflowY:
-                    textAreaSignal.value.length > 0 &&
-                        textareaRef.current &&
-                        textareaRef.current.scrollHeight > MAX_TEXTAREA_HEIGHT
-                        ? 'auto'
-                        : 'hidden'
+                overflowY: 'hidden'
             }}
         />)
 }

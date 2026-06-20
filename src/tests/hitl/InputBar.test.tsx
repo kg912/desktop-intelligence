@@ -378,4 +378,114 @@ describe('InputBar', () => {
     expect(clickSpy).toHaveBeenCalled()
     clickSpy.mockRestore()
   })
+
+  it('resizes the textarea based on scrollHeight and handles overflow on content change', async () => {
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight')
+    let mockScrollHeight = 24
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      get: () => mockScrollHeight,
+      configurable: true,
+    })
+
+    const originalRaf = window.requestAnimationFrame
+    window.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    }
+
+    renderInputBar()
+    const textarea = screen.getByPlaceholderText('Message… (Shift+Enter for newline)') as HTMLTextAreaElement
+
+    // Initially default height (24px)
+    expect(textarea.style.height).toBe('24px')
+
+    // Change height
+    mockScrollHeight = 50
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2' } })
+    })
+
+    expect(textarea.style.height).toBe('50px')
+
+    // Grow beyond max height (200px)
+    mockScrollHeight = 250
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8' } })
+    })
+
+    expect(textarea.style.height).toBe('200px')
+    expect(textarea.style.overflowY).toBe('auto')
+
+    window.requestAnimationFrame = originalRaf
+    if (originalScrollHeight) {
+      Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', originalScrollHeight)
+    } else {
+      delete (HTMLTextAreaElement.prototype as any).scrollHeight
+    }
+  })
+
+  it('implements a fast path that skips resizing when already at max height and text is growing', () => {
+    const originalRaf = window.requestAnimationFrame
+    const rafSpy = vi.fn().mockImplementation((cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    })
+    window.requestAnimationFrame = rafSpy
+
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight')
+    let mockScrollHeight = 24
+    let scrollHeightReadCount = 0
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      get: () => {
+        scrollHeightReadCount++
+        return mockScrollHeight
+      },
+      configurable: true,
+    })
+
+    renderInputBar()
+    const textarea = screen.getByPlaceholderText('Message… (Shift+Enter for newline)') as HTMLTextAreaElement
+
+    // Clear initial render calls
+    rafSpy.mockClear()
+    scrollHeightReadCount = 0
+
+    // Set mock to max height value before typing
+    mockScrollHeight = 250
+
+    // 1. Initial typing that pushes height to max
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8' } })
+    })
+
+    expect(textarea.style.height).toBe('200px')
+    expect(rafSpy).toHaveBeenCalledTimes(1)
+    expect(scrollHeightReadCount).toBeGreaterThan(0)
+
+    rafSpy.mockClear()
+    const readsBeforeGrowing = scrollHeightReadCount
+
+    // 2. Type more (growing, already at max height)
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8 extra words' } })
+    })
+
+    // The fast path should prevent calling requestAnimationFrame and reading scrollHeight
+    expect(rafSpy).not.toHaveBeenCalled()
+    expect(scrollHeightReadCount).toBe(readsBeforeGrowing)
+
+    // 3. Shrink text (must trigger resize/measure again)
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'Fewer lines' } })
+    })
+    expect(rafSpy).toHaveBeenCalledTimes(1)
+
+    window.requestAnimationFrame = originalRaf
+    if (originalScrollHeight) {
+      Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', originalScrollHeight)
+    } else {
+      delete (HTMLTextAreaElement.prototype as any).scrollHeight
+    }
+  })
 })
+

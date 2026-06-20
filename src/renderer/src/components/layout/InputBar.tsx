@@ -233,14 +233,35 @@ export const InputBar = memo(function InputBar({
     const newlines = (currentText.match(/\n/g) || []).length
     prevTextLengthRef.current = currentText.length
     prevNewlineCountRef.current = newlines
+
+    // Fast Path: if already at max height and only appending text, skip measuring/resizing
+    const isAtMaxHeight = el.style.height === `${MAX_TEXTAREA_HEIGHT}px`
+    const isGrowing = currentText.length >= prevLength && newlines >= prevNewlines
+    if (isAtMaxHeight && isGrowing) {
+      return
+    }
+
     const needsShrinkCheck = currentText.length < prevLength || newlines < prevNewlines || currentText === ''
     resizeRafRef.current = requestAnimationFrame(() => {
       resizeRafRef.current = null
       const prevHeight = el.style.height
       if (needsShrinkCheck) el.style.height = `${MIN_TEXTAREA_HEIGHT}px`
-      const targetHeight = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`
-      if (prevHeight !== targetHeight) el.style.height = targetHeight
-      else if (needsShrinkCheck) el.style.height = prevHeight
+      
+      const scrollHeight = el.scrollHeight
+      const targetHeightVal = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT)
+      const targetHeight = `${targetHeightVal}px`
+      
+      if (prevHeight !== targetHeight) {
+        el.style.height = targetHeight
+      } else if (needsShrinkCheck) {
+        el.style.height = prevHeight
+      }
+
+      // Manage overflow state directly on DOM node to prevent render pipeline overhead
+      const targetOverflow = scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden'
+      if (el.style.overflowY !== targetOverflow) {
+        el.style.overflowY = targetOverflow
+      }
     })
   }, [])
 
