@@ -2,9 +2,39 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 
 // Mock Preact signals React runtime to avoid concurrent work tracking errors in jsdom
-vi.mock('@preact/signals-react/runtime', () => ({
-  useSignals: () => {},
-}))
+vi.mock('@preact/signals-react/runtime', () => {
+  const { useState, useEffect, useRef } = require('react')
+  return {
+    useSignals: () => {},
+    useSignal: (init: any) => {
+      const ref = useRef<any>(null)
+      const [, forceUpdate] = useState(0)
+      if (!ref.current) {
+        ref.current = {
+          _val: init,
+          get value() { return this._val },
+          set value(v) {
+            this._val = v
+            forceUpdate((x: number) => x + 1)
+          },
+          peek() { return this._val }
+        }
+      }
+      return ref.current
+    },
+    useSignalEffect: (cb: any) => {
+      useEffect(() => {
+        cb()
+      })
+    },
+    useComputed: (cb: any) => {
+      return {
+        get value() { return cb() },
+        peek() { return cb() }
+      }
+    }
+  }
+})
 
 import { InputBar } from '../../renderer/src/components/layout/InputBar'
 import { ModelStoreProvider } from '../../renderer/src/store/ModelStore'

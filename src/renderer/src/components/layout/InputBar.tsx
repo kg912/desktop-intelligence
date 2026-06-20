@@ -8,11 +8,12 @@ import {
   type ChangeEvent,
   type DragEvent
 } from 'react'
-import { useSignals } from '@preact/signals-react/runtime'
+import { useSignals, useSignal, useSignalEffect, useComputed } from '@preact/signals-react/runtime'
 import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug, Shield, ShieldOff } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
 import { isStreamingSignal } from '../../signals/chatSignals'
+import { InputTextArea } from './InputTextArea'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
 
@@ -20,10 +21,10 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
 // File attachment badge
 // ----------------------------------------------------------------
 export interface Attachment {
-  id:       string
-  name:     string
-  type:     'image' | 'document'
-  size:     number
+  id: string
+  name: string
+  type: 'image' | 'document'
+  size: number
   filePath: string
   mimeType: string
 }
@@ -62,7 +63,7 @@ export function BypassPermissionsButton({
   active,
   onToggle,
 }: {
-  active:   boolean
+  active: boolean
   onToggle: (next: boolean) => void
 }) {
   return (
@@ -91,12 +92,12 @@ export function BypassPermissionsButton({
 // InputBar
 // ----------------------------------------------------------------
 export interface InputBarProps {
-  onSend?:        (text: string, attachments?: Attachment[]) => void
-  onAbort?:       () => void
-  disabled?:      boolean
-  attachments?:   Attachment[]
+  onSend?: (text: string, attachments?: Attachment[]) => void
+  onAbort?: () => void
+  disabled?: boolean
+  attachments?: Attachment[]
   onAttachments?: (a: Attachment[]) => void
-  mcpActivity?:   { serverName: string; toolName: string } | null
+  mcpActivity?: { serverName: string; toolName: string } | null
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
@@ -106,14 +107,14 @@ export const InputBar = memo(function InputBar({
   onSend,
   onAbort,
   disabled = false,
-  attachments:    externalAttachments,
+  attachments: externalAttachments,
   onAttachments,
   mcpActivity = null,
 }: InputBarProps) {
-  useSignals()
+  useSignals();
   const isStreaming = isStreamingSignal.value
-  const { thinkingMode, setThinkingMode } = useModelStore()
-  const [text, setText] = useState('')
+  const { thinkingMode, setThinkingMode } = useModelStore();
+  const textAreaSignal = useSignal('');
   const [localAttachments, setLocalAttachments] = useState<Attachment[]>([])
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [sizeError, setSizeError] = useState<string | null>(null)
@@ -204,14 +205,16 @@ export const InputBar = memo(function InputBar({
     }
   }, [])
 
-  const attachments    = externalAttachments ?? localAttachments
+  const attachments = externalAttachments ?? localAttachments
   const setAttachments = useCallback((updater: Attachment[] | ((prev: Attachment[]) => Attachment[])) => {
     const next = typeof updater === 'function' ? updater(attachments) : updater
     if (onAttachments) onAttachments(next)
     else setLocalAttachments(next)
   }, [attachments, onAttachments])
 
-  const canSend = (text.trim().length > 0 || attachments.length > 0) && !disabled
+  const canSend = useComputed(() => {
+    return (textAreaSignal.value.trim().length > 0 || attachments.length > 0) && !disabled
+  })
 
   const handleBypassToggle = useCallback((next: boolean) => {
     setBypassPermissions(next)
@@ -225,10 +228,10 @@ export const InputBar = memo(function InputBar({
     if (!el) return
     if (resizeRafRef.current !== null) cancelAnimationFrame(resizeRafRef.current)
     const currentText = el.value
-    const prevLength  = prevTextLengthRef.current
+    const prevLength = prevTextLengthRef.current
     const prevNewlines = prevNewlineCountRef.current
-    const newlines    = (currentText.match(/\n/g) || []).length
-    prevTextLengthRef.current  = currentText.length
+    const newlines = (currentText.match(/\n/g) || []).length
+    prevTextLengthRef.current = currentText.length
     prevNewlineCountRef.current = newlines
     const needsShrinkCheck = currentText.length < prevLength || newlines < prevNewlines || currentText === ''
     resizeRafRef.current = requestAnimationFrame(() => {
@@ -241,18 +244,23 @@ export const InputBar = memo(function InputBar({
     })
   }, [])
 
-  useEffect(() => { resize() }, [text, resize])
+  useSignalEffect(() => {
+    // subscribing here
+    textAreaSignal.value;
+
+    resize();
+  })
 
   const handleSend = useCallback(() => {
-    if (!canSend || isStreaming) return
-    const trimmed = text.trim()
+    if (!canSend.peek() || isStreaming) return
+    const trimmed = textAreaSignal.peek().trim()
     if (!trimmed && attachments.length === 0) return
     onSend?.(trimmed, attachments)
-    setText('')
+    textAreaSignal.value = '';
     setAttachments([])
     setSizeError(null)
     if (textareaRef.current) textareaRef.current.style.height = `${MIN_TEXTAREA_HEIGHT}px`
-  }, [canSend, isStreaming, text, attachments, onSend, setAttachments])
+  }, [isStreaming, attachments, onSend, setAttachments])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
@@ -284,7 +292,7 @@ export const InputBar = memo(function InputBar({
     e.target.value = ''
   }, [addAttachment])
 
-  const handleDragOver  = useCallback((e: DragEvent) => { e.preventDefault(); setIsDraggingOver(true) }, [])
+  const handleDragOver = useCallback((e: DragEvent) => { e.preventDefault(); setIsDraggingOver(true) }, [])
   const handleDragLeave = useCallback((e: DragEvent) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDraggingOver(false)
   }, [])
@@ -354,34 +362,25 @@ export const InputBar = memo(function InputBar({
           className="hidden"
           onChange={handleFileInput}
         />
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Message… (Shift+Enter for newline)"
-          rows={1}
-          className={cn(
-            'flex-1 resize-none bg-transparent',
-            'text-sm text-content-primary placeholder:text-content-muted',
-            'focus:outline-none leading-6 py-px selectable'
-          )}
-          style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT, fontFamily: 'inherit', overflowY: text.length > 0 && textareaRef.current && textareaRef.current.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden' }}
+        <InputTextArea
+          handleKeyDown={handleKeyDown}
+          textareaRef={textareaRef}
+          textAreaSignal={textAreaSignal}
         />
         <button
           onClick={isStreaming ? onAbort : handleSend}
-          disabled={!isStreaming && !canSend}
+          disabled={!isStreaming && !canSend.value}
           className={cn(
             'flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-xl self-end mb-px',
             'transition-all duration-150 active:scale-95',
             'focus:outline-none focus:ring-2 focus:ring-accent-700/50',
             isStreaming
               ? 'bg-surface-active border border-surface-border text-content-secondary hover:text-content-primary'
-              : canSend
+              : canSend.value
                 ? 'bg-accent-700 hover:bg-accent-600 active:bg-accent-800 text-white'
                 : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed'
           )}
-          style={canSend && !isStreaming ? { boxShadow: '0 0 12px rgba(185,28,28,0.35)' } : undefined}
+          style={canSend.value && !isStreaming ? { boxShadow: '0 0 12px rgba(185,28,28,0.35)' } : undefined}
         >
           <div className="relative w-4 h-4">
             <div style={{ opacity: isStreaming ? 1 : 0, position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.12s' }}>
