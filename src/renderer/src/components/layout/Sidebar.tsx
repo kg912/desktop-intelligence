@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   MessageSquare,
   Network,
@@ -108,10 +108,54 @@ interface ChatItemProps {
   isActive: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onRename: (id: string, title: string) => void
 }
 
-function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
-  const [hovered, setHovered] = useState(false)
+function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProps) {
+  const [hovered,   setHovered]   = useState(false)
+  const [editing,   setEditing]   = useState(false)
+  const [draftTitle, setDraftTitle] = useState(chat.title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Sync draft when the prop changes (e.g. optimistic update resolves)
+  useEffect(() => {
+    if (!editing) setDraftTitle(chat.title)
+  }, [chat.title, editing])
+
+  // Auto-focus and select-all when entering edit mode
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editing])
+
+  const commitRename = useCallback(() => {
+    const trimmed = draftTitle.trim()
+    if (trimmed && trimmed !== chat.title) {
+      onRename(chat.id, trimmed)
+    } else {
+      // Revert draft if empty or unchanged
+      setDraftTitle(chat.title)
+    }
+    setEditing(false)
+  }, [chat.id, chat.title, draftTitle, onRename])
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setDraftTitle(chat.title)
+    setEditing(true)
+  }, [chat.title])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitRename()
+    } else if (e.key === 'Escape') {
+      setDraftTitle(chat.title)
+      setEditing(false)
+    }
+  }, [commitRename, chat.title])
 
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -120,15 +164,15 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
 
   return (
     <div
-      onClick={() => onSelect(chat.id)}
+      onClick={() => !editing && onSelect(chat.id)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         display:         'flex',
         alignItems:      'stretch',
         borderBottom:    '0.5px solid rgba(255,255,255,0.03)',
-        cursor:          'pointer',
-        background:      'transparent',
+        cursor:          editing ? 'default' : 'pointer',
+        background:      editing ? 'rgba(229,57,53,0.04)' : 'transparent',
         transition:      'background 120ms ease',
       }}
     >
@@ -137,7 +181,9 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
         style={{
           width:      2,
           flexShrink: 0,
-          background: isActive
+          background: editing
+            ? 'rgba(229,57,53,0.5)'
+            : isActive
             ? 'rgba(229,57,53,0.6)'
             : hovered
             ? 'rgba(255,255,255,0.1)'
@@ -149,48 +195,81 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
       {/* Content */}
       <div
         style={{
-          flex:       1,
-          minWidth:   0,
-          padding:    '9px 10px',
+          flex:      1,
+          minWidth:  0,
+          padding:   '9px 10px',
         }}
       >
-        <p
-          style={{
-            fontFamily:   'inherit',
-            fontSize:     12,
-            fontWeight:   isActive ? 500 : 400,
-            color:        isActive
-              ? 'rgba(255,255,255,0.85)'
-              : hovered
-              ? 'rgba(255,255,255,0.65)'
-              : 'rgba(255,255,255,0.38)',
-            whiteSpace:   'nowrap',
-            overflow:     'hidden',
-            textOverflow: 'ellipsis',
-            lineHeight:   1.35,
-            transition:   'color 120ms ease',
-            margin:       0,
-          }}
-        >
-          {chat.title}
-        </p>
-        <p
-          style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize:   9,
-            color:      isActive
-              ? 'rgba(229,57,53,0.4)'
-              : 'rgba(255,255,255,0.15)',
-            marginTop:  2,
-            transition: 'color 120ms ease',
-          }}
-        >
-          {timeAgo(chat.updatedAt)}
-        </p>
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={handleKeyDown}
+            onClick={(e) => e.stopPropagation()}
+            className="selectable"
+            style={{
+              display:      'block',
+              width:        '100%',
+              fontFamily:   'inherit',
+              fontSize:     12,
+              fontWeight:   500,
+              color:        'rgba(255,255,255,0.85)',
+              background:   'rgba(255,255,255,0.05)',
+              border:       '0.5px solid rgba(229,57,53,0.4)',
+              borderRadius: 4,
+              padding:      '1px 5px',
+              outline:      'none',
+              lineHeight:   1.35,
+              boxSizing:    'border-box',
+            }}
+            maxLength={120}
+          />
+        ) : (
+          <p
+            onDoubleClick={handleDoubleClick}
+            title="Double-click to rename"
+            style={{
+              fontFamily:   'inherit',
+              fontSize:     12,
+              fontWeight:   isActive ? 500 : 400,
+              color:        isActive
+                ? 'rgba(255,255,255,0.85)'
+                : hovered
+                ? 'rgba(255,255,255,0.65)'
+                : 'rgba(255,255,255,0.38)',
+              whiteSpace:   'nowrap',
+              overflow:     'hidden',
+              textOverflow: 'ellipsis',
+              lineHeight:   1.35,
+              transition:   'color 120ms ease',
+              margin:       0,
+              userSelect:   'none',
+            }}
+          >
+            {chat.title}
+          </p>
+        )}
+        {!editing && (
+          <p
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize:   9,
+              color:      isActive
+                ? 'rgba(229,57,53,0.4)'
+                : 'rgba(255,255,255,0.15)',
+              marginTop:  2,
+              transition: 'color 120ms ease',
+            }}
+          >
+            {timeAgo(chat.updatedAt)}
+          </p>
+        )}
       </div>
 
-      {/* Delete button — only on hover */}
-      {hovered && (
+      {/* Delete button — only on hover, hidden while editing */}
+      {hovered && !editing && (
         <button
           onClick={handleDelete}
           title="Delete chat"
@@ -220,13 +299,14 @@ function ChatItem({ chat, isActive, onSelect, onDelete }: ChatItemProps) {
 // ChatGroup
 // ----------------------------------------------------------------
 function ChatGroup({
-  label, chats, activeChatId, onSelect, onDelete,
+  label, chats, activeChatId, onSelect, onDelete, onRename,
 }: {
   label:        string
   chats:        Chat[]
   activeChatId: string | null
   onSelect:     (id: string) => void
   onDelete:     (id: string) => void
+  onRename:     (id: string, title: string) => void
 }) {
   return (
     <div style={{ marginBottom: 4 }}>
@@ -250,6 +330,7 @@ function ChatGroup({
             isActive={chat.id === activeChatId}
             onSelect={onSelect}
             onDelete={onDelete}
+            onRename={onRename}
           />
         ))}
       </div>
@@ -268,6 +349,7 @@ interface SidebarProps {
   onSelectChat:   (chatId: string) => void
   onNewChat:      () => void
   onDeleteChat:   (chatId: string) => void
+  onRenameChat:   (chatId: string, title: string) => void
   onOpenSettings: () => void
 }
 
@@ -281,6 +363,7 @@ export function Sidebar({
   onSelectChat,
   onNewChat,
   onDeleteChat,
+  onRenameChat,
   onOpenSettings,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -404,6 +487,7 @@ export function Sidebar({
                     activeChatId={activeChatId}
                     onSelect={onSelectChat}
                     onDelete={onDeleteChat}
+                    onRename={onRenameChat}
                   />
                 ))
               : (

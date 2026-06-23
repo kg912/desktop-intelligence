@@ -331,6 +331,9 @@ const api = {
   deleteChat: (chatId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.DB_DELETE_CHAT, chatId),
 
+  renameChat: (chatId: string, title: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_RENAME_CHAT, chatId, title),
+
   saveMessage: (
     chatId:           string,
     id:               string,

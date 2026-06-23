@@ -455,6 +455,14 @@ export function getChatSystemInstructions(chatId: string): string | null {
   return row?.system_instructions ?? null
 }
 
+export function renameChatById(chatId: string, title: string): void {
+  const trimmed = title.trim()
+  if (!trimmed) return
+  getDB()
+    .prepare('UPDATE chats SET title = ? WHERE id = ?')
+    .run(trimmed, chatId)
+}
+
 export function setChatSystemInstructions(chatId: string, text: string): void {
   const value = text.trim() || null
   getDB()

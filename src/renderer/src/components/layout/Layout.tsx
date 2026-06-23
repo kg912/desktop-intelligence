@@ -126,6 +126,19 @@ export function Layout() {
     setActiveChatId(null)
   }, [clearMessages])
 
+  // ── Sidebar: rename a chat ────────────────────────────────────
+  const handleRenameChat = useCallback(async (chatId: string, title: string) => {
+    // Optimistic update so the sidebar reflects the new name immediately
+    setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, title } : c))
+    try {
+      await window.api.renameChat(chatId, title)
+    } catch (err) {
+      console.warn('[DB] renameChat failed:', err)
+      // Revert on failure
+      await refreshChats()
+    }
+  }, [refreshChats])
+
   // ── Sidebar: delete a chat ────────────────────────────────────
   const handleDeleteChat = useCallback(async (chatId: string) => {
     try {
@@ -353,6 +366,7 @@ export function Layout() {
               onSelectChat={handleSelectChat}
               onNewChat={handleNewChat}
               onDeleteChat={handleDeleteChat}
+              onRenameChat={handleRenameChat}
               onOpenSettings={() => { if (!isStreaming) setSettingsOpen(true) }}
             />
             {/* Streaming lock — blocks all sidebar interactions while a response is in flight */}

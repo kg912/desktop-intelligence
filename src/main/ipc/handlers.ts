@@ -16,6 +16,7 @@ import {
   getChatMessages,
   saveMessage,
   deleteChatById,
+  renameChatById,
   setCompactedSummary,
   getChatSystemInstructions,
   setChatSystemInstructions,
@@ -643,6 +644,10 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.DB_DELETE_CHAT, (_, chatId: string): void =>
     deleteChatById(chatId)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.DB_RENAME_CHAT, (_, chatId: string, title: string): void =>
+    renameChatById(chatId, title)
   )
 
   ipcMain.handle(

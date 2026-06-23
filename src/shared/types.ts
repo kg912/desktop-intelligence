@@ -360,6 +360,7 @@ export const IPC_CHANNELS = {
   DB_GET_MESSAGES:     'db:getMessages',
   DB_NEW_CHAT:         'db:newChat',
   DB_DELETE_CHAT:      'db:deleteChat',
+  DB_RENAME_CHAT:      'db:renameChat',
   DB_SAVE_MESSAGE:     'db:saveMessage',
 
   PYTHON_RENDER:       'python:render',
