@@ -346,7 +346,8 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
               display:        'flex',
               alignItems:     'center',
               justifyContent: 'center',
-              width:          26,
+              width:          22,
+              height:         22,
               flexShrink:     0,
               marginRight:    6,
               background:     menuOpen ? 'rgba(255,255,255,0.07)' : 'transparent',
@@ -359,8 +360,8 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
                 ? 'rgba(255,255,255,0.45)'
                 : 'transparent',
               transition:     'color 120ms ease, background 120ms ease, border-color 120ms ease',
-              alignSelf:      'center',
               padding:        0,
+              alignSelf:      'center',
             }}
           >
             <MoreVertical style={{ width: 13, height: 13 }} />
