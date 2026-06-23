@@ -4,6 +4,8 @@ import {
   Network,
   Settings,
   Search,
+  MoreVertical,
+  Pencil,
   Trash2,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -112,17 +114,21 @@ interface ChatItemProps {
 }
 
 function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProps) {
-  const [hovered,   setHovered]   = useState(false)
-  const [editing,   setEditing]   = useState(false)
-  const [draftTitle, setDraftTitle] = useState(chat.title)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [hovered,      setHovered]      = useState(false)
+  const [menuOpen,     setMenuOpen]     = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editing,      setEditing]      = useState(false)
+  const [draftTitle,   setDraftTitle]   = useState(chat.title)
+  const inputRef  = useRef<HTMLInputElement>(null)
+  const menuRef   = useRef<HTMLDivElement>(null)
+  const dotBtnRef = useRef<HTMLButtonElement>(null)
 
-  // Sync draft when the prop changes (e.g. optimistic update resolves)
+  // Sync draft when prop changes (optimistic update resolves)
   useEffect(() => {
     if (!editing) setDraftTitle(chat.title)
   }, [chat.title, editing])
 
-  // Auto-focus and select-all when entering edit mode
+  // Auto-focus + select-all on entering edit mode
   useEffect(() => {
     if (editing && inputRef.current) {
       inputRef.current.focus()
@@ -130,22 +136,57 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
     }
   }, [editing])
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (
+        menuRef.current   && !menuRef.current.contains(e.target as Node) &&
+        dotBtnRef.current && !dotBtnRef.current.contains(e.target as Node)
+      ) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
+  // Close confirm strip when clicking outside this item
+  useEffect(() => {
+    if (!confirmDelete) return
+    const handler = (e: MouseEvent) => {
+      const row = dotBtnRef.current?.closest('[data-chat-item]') as HTMLElement | null
+      if (row && !row.contains(e.target as Node)) {
+        setConfirmDelete(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [confirmDelete])
+
+  const enterEditing = useCallback(() => {
+    setMenuOpen(false)
+    setConfirmDelete(false)
+    setDraftTitle(chat.title)
+    setEditing(true)
+  }, [chat.title])
+
   const commitRename = useCallback(() => {
     const trimmed = draftTitle.trim()
     if (trimmed && trimmed !== chat.title) {
       onRename(chat.id, trimmed)
     } else {
-      // Revert draft if empty or unchanged
       setDraftTitle(chat.title)
     }
     setEditing(false)
   }, [chat.id, chat.title, draftTitle, onRename])
 
-  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation()
-    setDraftTitle(chat.title)
-    setEditing(true)
-  }, [chat.title])
+  const handleRowDoubleClick = useCallback((e: React.MouseEvent) => {
+    // Don't trigger rename if the user double-clicked the ⋮ button itself
+    if (dotBtnRef.current && dotBtnRef.current.contains(e.target as Node)) return
+    if (editing) return
+    enterEditing()
+  }, [editing, enterEditing])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -157,139 +198,338 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
     }
   }, [commitRename, chat.title])
 
-  const handleDelete = useCallback((e: React.MouseEvent) => {
+  const handleDotBtn = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmDelete(false)
+    setMenuOpen((v) => !v)
+  }, [])
+
+  const handleMenuRename = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setMenuOpen(false)
+    enterEditing()
+  }, [enterEditing])
+
+  const handleMenuDelete = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setMenuOpen(false)
+    setConfirmDelete(true)
+  }, [])
+
+  const handleConfirmDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     onDelete(chat.id)
   }, [chat.id, onDelete])
 
+  const handleCancelDelete = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmDelete(false)
+  }, [])
+
+  const isInteractive = !editing && !confirmDelete
+
   return (
     <div
-      onClick={() => !editing && onSelect(chat.id)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        display:         'flex',
-        alignItems:      'stretch',
-        borderBottom:    '0.5px solid rgba(255,255,255,0.03)',
-        cursor:          editing ? 'default' : 'pointer',
-        background:      editing ? 'rgba(229,57,53,0.04)' : 'transparent',
-        transition:      'background 120ms ease',
-      }}
+      data-chat-item
+      style={{ borderBottom: '0.5px solid rgba(255,255,255,0.03)' }}
     >
-      {/* Left accent bar */}
+      {/* ── Main row ── */}
       <div
+        onClick={() => isInteractive && onSelect(chat.id)}
+        onDoubleClick={handleRowDoubleClick}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         style={{
-          width:      2,
-          flexShrink: 0,
-          background: editing
-            ? 'rgba(229,57,53,0.5)'
-            : isActive
-            ? 'rgba(229,57,53,0.6)'
-            : hovered
-            ? 'rgba(255,255,255,0.1)'
+          display:    'flex',
+          alignItems: 'stretch',
+          cursor:     isInteractive ? 'pointer' : 'default',
+          background: (editing || menuOpen || confirmDelete || hovered)
+            ? 'rgba(229,57,53,0.04)'
             : 'transparent',
           transition: 'background 120ms ease',
-        }}
-      />
-
-      {/* Content */}
-      <div
-        style={{
-          flex:      1,
-          minWidth:  0,
-          padding:   '9px 10px',
+          position:   'relative',
         }}
       >
-        {editing ? (
-          <input
-            ref={inputRef}
-            value={draftTitle}
-            onChange={(e) => setDraftTitle(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={handleKeyDown}
-            onClick={(e) => e.stopPropagation()}
-            className="selectable"
+        {/* Left accent bar */}
+        <div
+          style={{
+            width:      2,
+            flexShrink: 0,
+            background: (editing || confirmDelete)
+              ? 'rgba(229,57,53,0.4)'
+              : isActive
+              ? 'rgba(229,57,53,0.6)'
+              : hovered
+              ? 'rgba(255,255,255,0.1)'
+              : 'transparent',
+            transition: 'background 120ms ease',
+          }}
+        />
+
+        {/* Content */}
+        <div style={{ flex: 1, minWidth: 0, padding: editing ? '9px 8px 7px 10px' : '9px 8px 9px 10px' }}>
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={handleKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              className="selectable"
+              style={{
+                display:      'block',
+                width:        '100%',
+                fontFamily:   'inherit',
+                fontSize:     12,
+                fontWeight:   500,
+                color:        'rgba(255,255,255,0.85)',
+                background:   'rgba(255,255,255,0.05)',
+                border:       '0.5px solid rgba(229,57,53,0.4)',
+                borderRadius: 4,
+                padding:      '1px 5px',
+                outline:      'none',
+                lineHeight:   1.35,
+                boxSizing:    'border-box',
+              }}
+              maxLength={120}
+            />
+          ) : (
+            <>
+              <p
+                style={{
+                  fontFamily:   'inherit',
+                  fontSize:     12,
+                  fontWeight:   isActive ? 500 : 400,
+                  color:        confirmDelete
+                    ? 'rgba(255,255,255,0.35)'
+                    : isActive
+                    ? 'rgba(255,255,255,0.85)'
+                    : hovered
+                    ? 'rgba(255,255,255,0.65)'
+                    : 'rgba(255,255,255,0.38)',
+                  whiteSpace:   'nowrap',
+                  overflow:     'hidden',
+                  textOverflow: 'ellipsis',
+                  lineHeight:   1.35,
+                  transition:   'color 120ms ease',
+                  margin:       0,
+                  userSelect:   'none',
+                }}
+              >
+                {chat.title}
+              </p>
+              <p
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize:   9,
+                  color:      isActive
+                    ? 'rgba(229,57,53,0.4)'
+                    : 'rgba(255,255,255,0.15)',
+                  marginTop:  2,
+                  transition: 'color 120ms ease',
+                }}
+              >
+                {timeAgo(chat.updatedAt)}
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* Three-dot button — visible on hover or when menu is open, hidden during editing/confirm */}
+        {!editing && !confirmDelete && (
+          <button
+            ref={dotBtnRef}
+            onClick={handleDotBtn}
+            title="More options"
             style={{
-              display:      'block',
-              width:        '100%',
-              fontFamily:   'inherit',
-              fontSize:     12,
-              fontWeight:   500,
-              color:        'rgba(255,255,255,0.85)',
-              background:   'rgba(255,255,255,0.05)',
-              border:       '0.5px solid rgba(229,57,53,0.4)',
-              borderRadius: 4,
-              padding:      '1px 5px',
-              outline:      'none',
-              lineHeight:   1.35,
-              boxSizing:    'border-box',
-            }}
-            maxLength={120}
-          />
-        ) : (
-          <p
-            onDoubleClick={handleDoubleClick}
-            title="Double-click to rename"
-            style={{
-              fontFamily:   'inherit',
-              fontSize:     12,
-              fontWeight:   isActive ? 500 : 400,
-              color:        isActive
-                ? 'rgba(255,255,255,0.85)'
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              width:          26,
+              flexShrink:     0,
+              marginRight:    6,
+              background:     menuOpen ? 'rgba(255,255,255,0.07)' : 'transparent',
+              border:         menuOpen ? '0.5px solid rgba(255,255,255,0.1)' : '0.5px solid transparent',
+              borderRadius:   4,
+              cursor:         'pointer',
+              color:          menuOpen
+                ? 'rgba(255,255,255,0.7)'
                 : hovered
-                ? 'rgba(255,255,255,0.65)'
-                : 'rgba(255,255,255,0.38)',
-              whiteSpace:   'nowrap',
-              overflow:     'hidden',
-              textOverflow: 'ellipsis',
-              lineHeight:   1.35,
-              transition:   'color 120ms ease',
-              margin:       0,
-              userSelect:   'none',
+                ? 'rgba(255,255,255,0.45)'
+                : 'transparent',
+              transition:     'color 120ms ease, background 120ms ease, border-color 120ms ease',
+              alignSelf:      'center',
+              padding:        0,
             }}
           >
-            {chat.title}
-          </p>
+            <MoreVertical style={{ width: 13, height: 13 }} />
+          </button>
         )}
-        {!editing && (
-          <p
+
+        {/* Dropdown menu */}
+        {menuOpen && (
+          <div
+            ref={menuRef}
+            onClick={(e) => e.stopPropagation()}
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize:   9,
-              color:      isActive
-                ? 'rgba(229,57,53,0.4)'
-                : 'rgba(255,255,255,0.15)',
-              marginTop:  2,
-              transition: 'color 120ms ease',
+              position:     'absolute',
+              right:        6,
+              top:          '100%',
+              zIndex:       50,
+              width:        148,
+              background:   '#1a1a1a',
+              border:       '0.5px solid rgba(255,255,255,0.1)',
+              borderRadius: 7,
+              padding:      4,
+              marginTop:    2,
             }}
           >
-            {timeAgo(chat.updatedAt)}
-          </p>
+            <button
+              onClick={handleMenuRename}
+              style={{
+                display:      'flex',
+                alignItems:   'center',
+                gap:          8,
+                width:        '100%',
+                padding:      '6px 9px',
+                borderRadius: 5,
+                background:   'transparent',
+                border:       'none',
+                cursor:       'pointer',
+                fontSize:     11,
+                color:        'rgba(255,255,255,0.65)',
+                textAlign:    'left',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+            >
+              <Pencil style={{ width: 13, height: 13, flexShrink: 0 }} />
+              Rename
+            </button>
+            <div style={{ borderTop: '0.5px solid rgba(255,255,255,0.07)', margin: '3px 0' }} />
+            <button
+              onClick={handleMenuDelete}
+              style={{
+                display:      'flex',
+                alignItems:   'center',
+                gap:          8,
+                width:        '100%',
+                padding:      '6px 9px',
+                borderRadius: 5,
+                background:   'transparent',
+                border:       'none',
+                cursor:       'pointer',
+                fontSize:     11,
+                color:        'rgba(229,57,53,0.8)',
+                textAlign:    'left',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(229,57,53,0.08)' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+            >
+              <Trash2 style={{ width: 13, height: 13, flexShrink: 0 }} />
+              Delete
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Delete button — only on hover, hidden while editing */}
-      {hovered && !editing && (
-        <button
-          onClick={handleDelete}
-          title="Delete chat"
+      {/* ── Rename hint bar (only while editing) ── */}
+      {editing && (
+        <div
           style={{
-            display:        'flex',
-            alignItems:     'center',
-            justifyContent: 'center',
-            background:     'transparent',
-            border:         'none',
-            cursor:         'pointer',
-            paddingRight:   10,
-            paddingLeft:    4,
-            color:          'rgba(229,57,53,0.45)',
-            flexShrink:     0,
-            fontSize:       11,
-            lineHeight:     1,
+            padding:    '3px 12px 7px',
+            fontSize:   10,
+            color:      'rgba(255,255,255,0.2)',
+            fontFamily: "'JetBrains Mono', monospace",
+            display:    'flex',
+            gap:        10,
+            background: 'rgba(229,57,53,0.04)',
           }}
         >
-          <Trash2 style={{ width: 12, height: 12 }} />
-        </button>
+          {(['↵ confirm', 'Esc cancel'] as const).map((label) => (
+            <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span
+                style={{
+                  fontSize:     9,
+                  background:   'rgba(255,255,255,0.07)',
+                  border:       '0.5px solid rgba(255,255,255,0.12)',
+                  borderRadius: 3,
+                  padding:      '1px 4px',
+                  color:        'rgba(255,255,255,0.35)',
+                  fontFamily:   "'JetBrains Mono', monospace",
+                }}
+              >
+                {label.split(' ')[0]}
+              </span>
+              {label.split(' ')[1]}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* ── Inline delete confirm strip (state 6) ── */}
+      {confirmDelete && (
+        <div
+          style={{
+            background:   '#151209',
+            border:       '0.5px solid rgba(229,57,53,0.25)',
+            borderTop:    'none',
+            borderRadius: '0 0 6px 6px',
+            padding:      '7px 10px',
+          }}
+        >
+          <p
+            style={{
+              fontSize:   11,
+              color:      'rgba(255,255,255,0.4)',
+              lineHeight: 1.5,
+              margin:     '0 0 6px',
+            }}
+          >
+            Delete{' '}
+            <span style={{ color: 'rgba(255,255,255,0.7)', fontWeight: 500 }}>
+              &ldquo;{chat.title}&rdquo;
+            </span>
+            ? This can&apos;t be undone.
+          </p>
+          <div style={{ display: 'flex', gap: 5 }}>
+            <button
+              onClick={handleCancelDelete}
+              style={{
+                flex:         1,
+                padding:      '4px 0',
+                borderRadius: 5,
+                fontSize:     10,
+                fontWeight:   500,
+                textAlign:    'center',
+                background:   'rgba(255,255,255,0.04)',
+                border:       '0.5px solid rgba(255,255,255,0.1)',
+                color:        'rgba(255,255,255,0.35)',
+                cursor:       'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              style={{
+                flex:         1,
+                padding:      '4px 0',
+                borderRadius: 5,
+                fontSize:     10,
+                fontWeight:   500,
+                textAlign:    'center',
+                background:   'rgba(229,57,53,0.12)',
+                border:       '0.5px solid rgba(229,57,53,0.35)',
+                color:        'rgba(229,57,53,0.8)',
+                cursor:       'pointer',
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
