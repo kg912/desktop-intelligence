@@ -57,6 +57,7 @@ import {
   parseRawToolCall,
   detectMidStreamToolCall,
   parseDsmlToolCalls,
+  parseGlmToolCalls,
   CODE_FENCE_TOOL_NAMES,
   buildUnregisteredToolMessage,
   partialContentOrNull,
@@ -626,6 +627,37 @@ describe('parseDsmlToolCalls — edge cases and robustness', () => {
     expect(result).toHaveLength(1)
     expect(result[0].name).toBe('brave_web_search')
     expect(JSON.parse(result[0].argsRaw).query).toBe('electron window shadow')
+  })
+
+  it('parses parameter with string="false" attribute (exact format from DeepSeek logs)', () => {
+    // DeepSeek emits string="false" for JSON-valued parameters (not string="true").
+    // The [^>]* in the param regex must match this attribute without breaking.
+    const buf =
+      `<${FB}DSML${FB}tool_calls>\n` +
+      `<${FB}DSML${FB}invoke name="memory__add_observations">\n` +
+      `<${FB}DSML${FB}parameter name="observations" string="false">[{"entityName":"Stock Ticker Analysis Workflow","contents":"CBRS executed"}]</${FB}DSML${FB}parameter>\n` +
+      `</${FB}DSML${FB}invoke>\n` +
+      `</${FB}DSML${FB}tool_calls>`
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('memory__add_observations')
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args['observations']).toContain('Stock Ticker Analysis Workflow')
+  })
+
+  it('parses real DeepSeek payload with </think> preamble before the DSML block', () => {
+    // Observed in production: DeepSeek emits </think>...text... before the DSML block.
+    // parseDsmlToolCalls must find the invoke block regardless of leading content.
+    const buf =
+      `</think>Let me save this to memory and deliver the full briefing.\n` +
+      `<${FB}DSML${FB}tool_calls>\n` +
+      `<${FB}DSML${FB}invoke name="memory__add_observations">\n` +
+      `<${FB}DSML${FB}parameter name="observations" string="false">[{"entityName":"Karan","contents":"test"}]</${FB}DSML${FB}parameter>\n` +
+      `</${FB}DSML${FB}invoke>\n` +
+      `</${FB}DSML${FB}tool_calls>`
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('memory__add_observations')
   })
 })
 
@@ -1543,6 +1575,163 @@ describe('buildMessages (private helper)', () => {
     const lastMsg = result[result.length - 1]
     expect(lastMsg.role).toBe('assistant')
     expect(lastMsg.content).toBe('<|channel>thought\n')
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// parseGlmToolCalls — GLM-5.2 / ZhipuAI inline format
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseGlmToolCalls — observed GLM-5.2 malformed format', () => {
+  // Exact format observed in z-ai/glm-5.2 logs: the model emits <arg_value>
+  // for both the key and value slots (i.e. <arg_key> is never used).
+  const glmObservedPayload = [
+    '<tool_call>',
+    'memory__add_observations',
+    '<arg_value>entity_name</arg_key>',
+    '<arg_value>Stock Ticker Analysis Workflow</arg_value>',
+    '<arg_value>observations</arg_key>',
+    '<arg_value>["GOOGL executed on Jun 23, 2026: Price $346.21"]</arg_value>',
+    '</tool_call>',
+  ].join('')
+
+  it('extracts the tool name', () => {
+    const result = parseGlmToolCalls(glmObservedPayload)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('memory__add_observations')
+  })
+
+  it('id is a non-empty string', () => {
+    const result = parseGlmToolCalls(glmObservedPayload)
+    expect(result[0].id.length).toBeGreaterThan(0)
+  })
+
+  it('argsRaw is valid JSON', () => {
+    const result = parseGlmToolCalls(glmObservedPayload)
+    expect(() => JSON.parse(result[0].argsRaw)).not.toThrow()
+  })
+
+  it('maps entity_name to its value', () => {
+    const result = parseGlmToolCalls(glmObservedPayload)
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args['entity_name']).toBe('Stock Ticker Analysis Workflow')
+  })
+
+  it('maps observations to its value', () => {
+    const result = parseGlmToolCalls(glmObservedPayload)
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args['observations']).toBe('["GOOGL executed on Jun 23, 2026: Price $346.21"]')
+  })
+})
+
+describe('parseGlmToolCalls — well-formed arg_key/arg_value pairs', () => {
+  // Some models (or better-behaved GLM emissions) use proper <arg_key> for keys.
+  const wellFormed =
+    '<tool_call>brave_web_search' +
+    '<arg_key>query</arg_key><arg_value>GOOGL stock price</arg_value>' +
+    '<arg_key>count</arg_key><arg_value>5</arg_value>' +
+    '</tool_call>'
+
+  it('parses tool name', () => {
+    const result = parseGlmToolCalls(wellFormed)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('brave_web_search')
+  })
+
+  it('parses query argument', () => {
+    const result = parseGlmToolCalls(wellFormed)
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args['query']).toBe('GOOGL stock price')
+  })
+
+  it('parses count argument', () => {
+    const result = parseGlmToolCalls(wellFormed)
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args['count']).toBe('5')
+  })
+})
+
+describe('parseGlmToolCalls — edge cases', () => {
+  it('returns [] for empty string', () => {
+    expect(parseGlmToolCalls('')).toHaveLength(0)
+  })
+
+  it('returns [] when no <tool_call> tag is present', () => {
+    expect(parseGlmToolCalls('The answer is 42.')).toHaveLength(0)
+  })
+
+  it('returns [] when only the open tag is present (no close tag yet)', () => {
+    expect(
+      parseGlmToolCalls('<tool_call>memory__add_observations<arg_value>entity_name</arg_key>')
+    ).toHaveLength(0)
+  })
+
+  it('handles multiple consecutive tool_call blocks', () => {
+    const two =
+      '<tool_call>brave_web_search<arg_key>query</arg_key><arg_value>AI news</arg_value></tool_call>' +
+      '<tool_call>memory__search_nodes<arg_key>query</arg_key><arg_value>Karan</arg_value></tool_call>'
+    const result = parseGlmToolCalls(two)
+    expect(result).toHaveLength(2)
+    expect(result[0].name).toBe('brave_web_search')
+    expect(result[1].name).toBe('memory__search_nodes')
+    expect(JSON.parse(result[0].argsRaw)['query']).toBe('AI news')
+    expect(JSON.parse(result[1].argsRaw)['query']).toBe('Karan')
+  })
+
+  it('tolerates preamble text before the tool_call block', () => {
+    const buf =
+      '</think>Let me save this.\n' +
+      '<tool_call>memory__add_observations' +
+      '<arg_value>entity_name</arg_key><arg_value>Karan</arg_value>' +
+      '</tool_call>'
+    const result = parseGlmToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('memory__add_observations')
+    const args = JSON.parse(result[0].argsRaw) as Record<string, string>
+    expect(args['entity_name']).toBe('Karan')
+  })
+
+  it('handles namespaced tool names (serverName__toolName)', () => {
+    const buf =
+      '<tool_call>my_server__my_tool' +
+      '<arg_key>param1</arg_key><arg_value>value1</arg_value>' +
+      '</tool_call>'
+    const result = parseGlmToolCalls(buf)
+    expect(result[0].name).toBe('my_server__my_tool')
+  })
+
+  it('returns [] for a DSML block — does not cross-fire', () => {
+    const FB = '\uFF5C'
+    const dsml =
+      `<${FB}DSML${FB}tool_calls>\n` +
+      `<${FB}DSML${FB}invoke name="brave_web_search">\n` +
+      `  <${FB}DSML${FB}parameter name="query" string="true">test</${FB}DSML${FB}parameter>\n` +
+      `</${FB}DSML${FB}invoke>\n` +
+      `</${FB}DSML${FB}tool_calls>`
+    expect(parseGlmToolCalls(dsml)).toHaveLength(0)
+  })
+
+  it('each result gets a unique id', () => {
+    const two =
+      '<tool_call>tool_a<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>' +
+      '<tool_call>tool_b<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>'
+    const result = parseGlmToolCalls(two)
+    expect(result[0].id).not.toBe(result[1].id)
+  })
+})
+
+describe('parseGlmToolCalls — does not disturb other tool call parsers', () => {
+  it('parseDsmlToolCalls returns [] for a GLM block', () => {
+    const glm =
+      '<tool_call>memory__add_observations' +
+      '<arg_value>entity_name</arg_key><arg_value>Karan</arg_value>' +
+      '</tool_call>'
+    expect(parseDsmlToolCalls(glm)).toHaveLength(0)
+  })
+
+  it('parseGlmToolCalls returns [] for a pipe-delimited <|tool_call> block', () => {
+    const pipe = '<|tool_call>call:brave_web_search{"query":"test"}<tool_call|>'
+    expect(parseGlmToolCalls(pipe)).toHaveLength(0)
   })
 })
 

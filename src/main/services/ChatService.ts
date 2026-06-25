@@ -490,6 +490,81 @@ export function parseDsmlToolCalls(
   return results;
 }
 
+/**
+ * Parse GLM-5.2 (ZhipuAI) inline tool call format emitted in delta.content.
+ *
+ * GLM-5.2 on OpenRouter may bypass delta.tool_calls and instead emit tool
+ * calls as text using a proprietary XML-like format with <tool_call> tags
+ * and interleaved <arg_key>/<arg_value> children.
+ *
+ * Observed format (from z-ai/glm-5.2 via OpenRouter):
+ *   <tool_call>serverName__toolName<arg_value>key1</arg_key><arg_value>val1</arg_value>
+ *              <arg_value>key2</arg_key><arg_value>val2</arg_value></tool_call>
+ *
+ * Note: GLM emits <arg_value> where <arg_key> is expected (malformed XML).
+ * The parser tolerates both <arg_key>k</arg_key> and <arg_value>k</arg_value>
+ * as the key tag to handle this inconsistency.
+ *
+ * Returns an array of { id, name, argsRaw } objects ready to populate
+ * pendingToolCalls, which the existing post-stream handler then executes.
+ * Returns [] if no complete GLM tool_call block is found.
+ */
+export function parseGlmToolCalls(
+  buffer: string,
+): Array<{ id: string; name: string; argsRaw: string }> {
+  const results: Array<{ id: string; name: string; argsRaw: string }> = [];
+
+  // Match complete <tool_call>...</tool_call> blocks.
+  const blockRe = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = blockRe.exec(buffer)) !== null) {
+    const inner = blockMatch[1];
+
+    // First token before any tag = tool name.
+    const nameMatch = inner.match(/^([^\s<]+)/);
+    if (!nameMatch) continue;
+    const toolName = nameMatch[1].trim();
+    const rest = inner.slice(nameMatch[0].length);
+
+    // GLM interleaves key and value in consecutive <arg_value> tags:
+    //   <arg_value>key</arg_key><arg_value>value</arg_value>
+    // Some emissions use proper <arg_key> for the key tag; handle both.
+    // Strategy: collect all tag content in document order, then pair them as
+    // alternating (key, value) from the first tag onward.
+    const tagRe = /<(?:arg_key|arg_value)>([\s\S]*?)<\/(?:arg_key|arg_value)>/gi;
+    const tokens: string[] = [];
+    let tagMatch: RegExpExecArray | null;
+    while ((tagMatch = tagRe.exec(rest)) !== null) {
+      tokens.push(tagMatch[1].trim());
+    }
+
+    const args: Record<string, string> = {};
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+      const k = tokens[i];
+      const v = tokens[i + 1];
+      if (k) args[k] = v ?? '';
+    }
+
+    // Fallback: if the alternating strategy yielded nothing, try well-formed
+    // arg_key/arg_value pairs (handles non-GLM models using the same tag names).
+    if (Object.keys(args).length === 0) {
+      const xmlRe = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/gi;
+      let xm: RegExpExecArray | null;
+      while ((xm = xmlRe.exec(rest)) !== null) {
+        args[xm[1].trim()] = xm[2].trim();
+      }
+    }
+
+    results.push({
+      id:      `call_glm_${Date.now()}_${results.length}`,
+      name:    toolName,
+      argsRaw: JSON.stringify(args),
+    });
+  }
+
+  return results;
+}
+
 // FALLBACK ONLY: handles models that ignore the tools array and
 // emit tool call syntax as raw text. With LM Studio native tool
 // calling active this path should rarely fire. Do not remove —
@@ -1996,9 +2071,40 @@ export class ChatService {
                       dsmlParsed.map((t) => t.name).join(", "),
                     );
                   // Strip the DSML block from streamBuffer to prevent it reaching the UI.
+                  // Also strip any orphaned </think> close tag left at the front —
+                  // DeepSeek often emits </think>...preamble... immediately before the
+                  // DSML block, leaving a dangling close tag that confuses the model
+                  // on the next inference turn.
+                  streamBuffer = stripLeadingThinkClose(
+                    streamBuffer
+                      .replace(/<\uFF5CDSML\uFF5Ctool_calls>[\s\S]*?<\/\uFF5CDSML\uFF5Ctool_calls>/g, "")
+                      .replace(/<\|DSML\|tool_calls>[\s\S]*?<\/\|DSML\|tool_calls>/g, "")
+                      .trim()
+                  );
+                }
+              }
+
+              // ── GLM-5.2 (ZhipuAI) tool call detection ────────────────────────────────────
+              // GLM-5.2 on OpenRouter emits tool calls as <tool_call>name<arg_value>k</arg_key>
+              // <arg_value>v</arg_value></tool_call> directly in delta.content.
+              // Parse these into pendingToolCalls and strip them from the buffer so they
+              // are executed by the post-stream handler rather than rendered as text.
+              // Only fire when a complete </tool_call> close tag is present so partial
+              // blocks mid-stream are not prematurely parsed (the hasOpenToolCallTag
+              // suppression below keeps them hidden from the UI while accumulating).
+              if (streamBuffer.includes("</tool_call>")) {
+                const glmParsed = parseGlmToolCalls(streamBuffer);
+                if (glmParsed.length > 0) {
+                  const offset = pendingToolCalls.size;
+                  glmParsed.forEach((tc, idx) => pendingToolCalls.set(offset + idx, tc));
+                  if (DEBUG)
+                    console.log(
+                      `[DEBUG][ChatService][GLM] Parsed ${glmParsed.length} GLM tool call(s):`,
+                      glmParsed.map((t) => t.name).join(", "),
+                    );
+                  // Strip the GLM block from streamBuffer to prevent it reaching the UI.
                   streamBuffer = streamBuffer
-                    .replace(/<\uFF5CDSML\uFF5Ctool_calls>[\s\S]*?<\/\uFF5CDSML\uFF5Ctool_calls>/g, "")
-                    .replace(/<\|DSML\|tool_calls>[\s\S]*?<\/\|DSML\|tool_calls>/g, "")
+                    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
                     .trim();
                 }
               }
