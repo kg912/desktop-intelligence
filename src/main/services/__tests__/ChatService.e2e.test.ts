@@ -328,7 +328,7 @@ describe('ChatService Agent Loop E2E integration', () => {
     
     // Ensure loop-limit system instructions were appended
     const lastMsg = secondBody.messages[secondBody.messages.length - 1]
-    expect(lastMsg.role).toBe('user')
+    expect(lastMsg.role).toBe('system')
     expect(lastMsg.content).toContain('used all permitted web searches')
   })
 

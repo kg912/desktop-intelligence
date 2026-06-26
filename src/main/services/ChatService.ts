@@ -1455,12 +1455,15 @@ export class ChatService {
           ? [
               ...currentMessages,
               {
-                role: "user" as const,
+                // role:system so the instruction ranks above user/assistant turns
+                // and is treated as an authoritative directive by the model rather
+                // than as user content it can choose to ignore.
+                role: "system" as const,
                 content:
-                  "[SYSTEM: You have used all permitted web searches. " +
-                  "Do NOT emit any tool calls or <tool_call> tags. " +
+                  "You have used all permitted web searches. " +
+                  "Do NOT emit any tool calls. " +
                   "Write your complete final answer now using only the " +
-                  "search results already provided above.]",
+                  "search results already provided above.",
               },
             ]
           : currentMessages;
@@ -1884,17 +1887,26 @@ export class ChatService {
               }
 
               const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-              if (deltaToolCalls && deltaToolCalls.length > 0 && !toolCallIntercepted) {
+              // Guard 1: never accumulate tool calls when forceFinalAnswer is active
+              // (search budget exhausted — model must write its answer as text).
+              // Guard 2: never default a missing function name to brave_web_search.
+              // When tc.function?.name is absent on the first delta chunk, the name
+              // lands as an empty string and gets corrected by buildUnregisteredToolMessage
+              // on the next loop iteration rather than silently firing a spurious search.
+              if (deltaToolCalls && deltaToolCalls.length > 0 && !toolCallIntercepted && !forceFinalAnswer) {
                 for (const tc of deltaToolCalls) {
                   const idx = (tc as { index?: number }).index ?? 0;
                   const existing = pendingToolCalls.get(idx);
                   if (!existing) {
                     pendingToolCalls.set(idx, {
                       id:      tc.id ?? `call_${Date.now()}_${idx}`,
-                      name:    tc.function?.name ?? "brave_web_search",
+                      name:    tc.function?.name ?? "",
                       argsRaw: tc.function?.arguments ?? "",
                     });
                   } else {
+                    // Name arrives on the first chunk; subsequent chunks only append args.
+                    // Only overwrite name if the slot currently has an empty placeholder.
+                    if (!existing.name && tc.function?.name) existing.name = tc.function.name;
                     existing.argsRaw += tc.function?.arguments ?? "";
                   }
                 }
@@ -2458,6 +2470,20 @@ export class ChatService {
               (q) => q.name === "brave_web_search",
             );
             if (hadBraveCall) searchLoopCount++;
+
+            // If EVERY query was rejected by the registry screen (all unregistered
+            // names, including code-fence pseudo-tools like matplotlib/python), no
+            // real tool executed. Force a final-answer iteration on the next loop so
+            // the model writes its response as text instead of retrying the same
+            // unregistered call indefinitely.
+            const allRejected = queries.every((q) => !validToolNames.has(q.name));
+            if (allRejected) {
+              searchLoopCount = MAX_SEARCH_LOOPS;
+              if (DEBUG)
+                console.log(
+                  `[Debug][ChatService][NativeToolExit] All ${queries.length} tool call(s) were registry-screen rejections — forcing forceFinalAnswer on next iteration`,
+                );
+            }
             if (DEBUG)
               console.log(
                 `[Debug][ChatService][NativeToolExit] hadBraveCall=${hadBraveCall} searchLoopCount now=${searchLoopCount} toolCallIntercepted=${toolCallIntercepted}`,

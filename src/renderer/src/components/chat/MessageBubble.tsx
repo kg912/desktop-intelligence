@@ -235,13 +235,13 @@ function ThinkingAccordion({
         disabled={isStreaming}
         onClick={handleToggle}
         className={cn(
-          "flex items-center gap-2 mb-0 py-0 text-left select-none transition-colors duration-100",
+          "flex items-center gap-2 mb-0 py-0 text-left select-none transition-colors duration-100 min-w-0 overflow-hidden",
           isStreaming ? "cursor-default" : "cursor-pointer group/tp"
         )}
       >
         {isStreaming ? (
           <span
-            className="shimmer-text font-mono text-[13px] leading-none font-medium text-white/45 tracking-[0.03em] select-none"
+            className="shimmer-text font-mono text-[13px] leading-none font-medium text-white/45 tracking-[0.03em] select-none truncate"
             style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
           >
             Reasoning
