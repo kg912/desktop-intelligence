@@ -438,7 +438,7 @@ export function Layout() {
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
               sidebarCollapsed={!chatPanelOpen}
-              onSidebarToggle={() => setChatPanelOpen((v) => !v)}
+              onSidebarToggle={() => { setChatPanelOpen((v) => !v); setStarredPanelOpen(false) }}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
