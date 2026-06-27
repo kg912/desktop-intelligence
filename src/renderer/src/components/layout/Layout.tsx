@@ -54,16 +54,14 @@ export function Layout() {
   }, [])
 
   // Called by useChat when it auto-creates a new chat row.
-  // 1. Immediately set activeChatId so subsequent messages go to this chat.
-  // 2. Optimistically prepend so the sidebar reacts instantly.
-  // 3. Also do a real DB round-trip so the persisted title/timestamp is shown.
+  // Optimistic prepend is sufficient — the refreshChats() that fires when
+  // isStreaming → false canonically syncs from DB after all messages are saved.
+  // The previous fire-and-forget getChats() here raced against in-flight
+  // saveMessage calls and could overwrite chats state with stale data, causing
+  // starred chats to reorder unexpectedly.
   const handleChatCreated = useCallback((chat: Chat) => {
     setActiveChatId(chat.id)
     setChats((prev) => [chat, ...prev.filter((c) => c.id !== chat.id)])
-    // Refresh from DB to guarantee the sidebar reflects what was actually written
-    window.api.getChats()
-      .then(setChats)
-      .catch((err) => console.warn('[DB] post-create refresh failed:', err))
   }, [])
 
   // ── useChat (streaming + DB persistence) ─────────────────────
