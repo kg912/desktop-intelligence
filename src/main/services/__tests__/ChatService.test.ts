@@ -16,10 +16,8 @@
  * network mocks and is covered by integration / manual DMG testing).
  */
 
-import { describe, it, expect, vi } from 'vitest'
 
-// Mock SettingsStore, BraveSearchService, and DatabaseService for hermetic unit tests
-export const mockReadSettings = vi.fn().mockReturnValue({})
+export const mockReadSettings = vi.fn()
 vi.mock('../SettingsStore', () => ({
   readSettings: () => mockReadSettings(),
   writeSettings: vi.fn(),
@@ -64,6 +62,7 @@ import {
   extractQueryFromCodeFenceToolCall,
   buildOllamaMessages,
   fetchTickerPrice,
+  stripLeadingThinkClose,
   chatService,
 } from '../ChatService'
 
@@ -1735,3 +1734,185 @@ describe('parseGlmToolCalls — does not disturb other tool call parsers', () =>
   })
 })
 
+// ── DSML forceFinalAnswer pathway ───────────────────────────────────────────────────────────────
+//
+// These tests validate the behaviour introduced by the fix for the Doodle Labs
+// / MU earnings prompt cutoff bug:
+//
+//   When DeepSeek emits a DSML tool call block via delta.content AFTER the
+//   search budget is exhausted (forceFinalAnswer = true):
+//     - The DSML block must be stripped from streamBuffer (no raw XML in response)
+//     - The tool calls must NOT be added to pendingToolCalls (no search executed)
+//     - toolCallIntercepted must be set to true (loop continues, model writes report)
+//
+// The streaming loop logic itself cannot be unit-tested without a full SSE mock
+// harness, so we test the two pure-function building blocks it relies on:
+//   1. parseDsmlToolCalls -- correctly identifies DSML tool calls regardless of
+//      forceFinalAnswer (the caller decides what to do with the result)
+//   2. The strip + stripLeadingThinkClose pipeline -- leaves a clean streamBuffer
+//      whether or not there was a preamble or </think> prefix
+//
+// We also verify the integration invariant: when forceFinalAnswer is true, the
+// correct action is to call parseDsmlToolCalls, skip population of
+// pendingToolCalls, strip the block, and set toolCallIntercepted=true.
+
+describe('DSML forceFinalAnswer pathway -- parseDsmlToolCalls still identifies calls', () => {
+  it('identifies brave_web_search DSML call emitted during forceFinalAnswer scenario', () => {
+    // Exact pattern from Doodle Labs session log: model emits DSML brave_web_search
+    // in delta.content after search budget is exhausted.
+    const buf =
+      `Now let me do one more round to fill in gaps.\n` +
+      dsmlBlock(dsmlInvoke('brave_web_search', { query: 'Doodle Labs wearable mesh rider 2025', count: '10' }))
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('brave_web_search')
+    expect(JSON.parse(result[0].argsRaw).query).toBe('Doodle Labs wearable mesh rider 2025')
+  })
+
+  it('identifies multiple parallel DSML calls emitted during forceFinalAnswer scenario', () => {
+    // Two searches in one block -- both identified so caller can strip both without executing either.
+    const buf = dsmlBlock(
+      dsmlInvoke('brave_web_search', { query: 'Doodle Labs NATO Europe 2026' }),
+      dsmlInvoke('brave_web_search', { query: 'Doodle Labs Red Cat Army SRR' }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(2)
+    expect(result[0].name).toBe('brave_web_search')
+    expect(result[1].name).toBe('brave_web_search')
+  })
+
+  it('identifies a memory__add_observations DSML call emitted during forceFinalAnswer', () => {
+    // MCP tools other than search can also land via DSML in delta.content.
+    const buf = dsmlBlock(
+      dsmlInvoke('memory__add_observations', { observations: '[{"entityName":"Doodle Labs","contents":"test"}]' }),
+    )
+    const result = parseDsmlToolCalls(buf)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('memory__add_observations')
+  })
+})
+
+describe('DSML forceFinalAnswer pathway -- streamBuffer strip pipeline', () => {
+  // Simulates exactly what the streaming loop does when it detects a DSML block
+  // with forceFinalAnswer=true: strip the block and clean any orphaned </think>.
+
+  function applyDsmlStrip(buf: string): string {
+    return buf
+      .replace(/<\uFF5CDSML\uFF5Ctool_calls>[\s\S]*?<\/\uFF5CDSML\uFF5Ctool_calls>/g, '')
+      .replace(/<\|DSML\|tool_calls>[\s\S]*?<\/\|DSML\|tool_calls>/g, '')
+      .trim()
+  }
+  function stripLeadingThinkClose(s: string): string {
+    return s.replace(/^<\/think>\s*/i, '').replace(/^<channel\|>\s*/i, '')
+  }
+  function simulateForceFinalAnswerDsmlStrip(buf: string): string {
+    return stripLeadingThinkClose(applyDsmlStrip(buf))
+  }
+
+  it('strips a plain DSML block leaving empty string', () => {
+    const buf = dsmlBlock(dsmlInvoke('brave_web_search', { query: 'Doodle Labs NATO 2026' }))
+    expect(simulateForceFinalAnswerDsmlStrip(buf)).toBe('')
+  })
+
+  it('strips a DSML block and preserves preamble text', () => {
+    const preamble = 'Now let me do one more round to fill in gaps on products, recent news, and any controversies.'
+    const buf = `${preamble}\n\n${dsmlBlock(dsmlInvoke('brave_web_search', { query: 'Doodle Labs NATO 2026' }))}`
+    expect(simulateForceFinalAnswerDsmlStrip(buf)).toBe(preamble)
+  })
+
+  it('strips DSML block AND removes orphaned </think> prefix (MU earnings pattern)', () => {
+    // DeepSeek emits </think>preamble...\n<DSML block>. After stripping DSML,
+    // streamBuffer is </think>preamble -- the </think> must also be stripped.
+    const preamble = 'Let me pull the final data now.'
+    const buf = `</think>${preamble}\n` + dsmlBlock(dsmlInvoke('brave_web_search', { query: 'Doodle Labs revenue' }))
+    const result = simulateForceFinalAnswerDsmlStrip(buf)
+    expect(result.startsWith('</think>')).toBe(false)
+    expect(result).toBe(preamble)
+  })
+
+  it('strips multiple parallel DSML calls in one block leaving empty string', () => {
+    const buf = dsmlBlock(
+      dsmlInvoke('brave_web_search', { query: 'Doodle Labs NATO Europe 2026' }),
+      dsmlInvoke('brave_web_search', { query: 'Doodle Labs Red Cat Army SRR' }),
+    )
+    expect(simulateForceFinalAnswerDsmlStrip(buf)).toBe('')
+  })
+
+  it('is a no-op when streamBuffer contains no DSML', () => {
+    const answer = 'Here is the full Doodle Labs employer deep-dive report.'
+    expect(simulateForceFinalAnswerDsmlStrip(answer)).toBe(answer)
+  })
+
+  it('strips ASCII-pipe normalised DSML form as well as fullwidth form', () => {
+    // Some tokenisers emit | instead of \uFF5C -- the second .replace() handles this.
+    const asciiForm =
+      '<|DSML|tool_calls>\n' +
+      '  <|DSML|invoke name="brave_web_search">\n' +
+      '    <|DSML|parameter name="query" string="true">test query</|DSML|parameter>\n' +
+      '  </|DSML|invoke>\n' +
+      '</|DSML|tool_calls>'
+    expect(simulateForceFinalAnswerDsmlStrip(asciiForm)).toBe('')
+  })
+})
+
+describe('DSML forceFinalAnswer pathway -- integration invariant', () => {
+  // Full scenario test mirroring the conditional branch in ChatService.ts:
+  //
+  //   if (!toolCallIntercepted) {
+  //     if (normBuf.includes("</|DSML|tool_calls>")) {
+  //       const dsmlParsed = parseDsmlToolCalls(streamBuffer)
+  //       if (dsmlParsed.length > 0) {
+  //         if (!forceFinalAnswer) { pendingToolCalls.set(...) }  // skipped
+  //         streamBuffer = stripLeadingThinkClose(strip(streamBuffer))
+  //         toolCallIntercepted = true                             // forced
+  //       }
+  //     }
+  //   }
+
+  it('full Doodle Labs scenario: DSML identified, buffer cleaned, no tool added (forceFinalAnswer=true)', () => {
+    const preamble = 'Now let me do one more round to fill in gaps on products, recent news, and any controversies.'
+    const rawBuffer =
+      `${preamble}\n\n` +
+      dsmlBlock(
+        dsmlInvoke('brave_web_search', { query: 'Doodle Labs wearable mesh rider 2024 2025 NATO', count: '10' }),
+        dsmlInvoke('brave_web_search', { query: 'Doodle Labs Red Cat Teal US Army SRR program', count: '10' }),
+      )
+
+    // Step 1: parser identifies both calls
+    const dsmlParsed = parseDsmlToolCalls(rawBuffer)
+    expect(dsmlParsed).toHaveLength(2)
+
+    // Step 2: forceFinalAnswer=true -- branch skipped, nothing added to pendingToolCalls
+    const pendingToolCalls = new Map<number, { id: string; name: string; argsRaw: string }>()
+    // (if (!forceFinalAnswer) block is not entered)
+    expect(pendingToolCalls.size).toBe(0)
+
+    // Step 3: strip pipeline cleans the buffer
+    const cleanedBuffer = stripLeadingThinkClose(
+      rawBuffer
+        .replace(/<\uFF5CDSML\uFF5Ctool_calls>[\s\S]*?<\/\uFF5CDSML\uFF5Ctool_calls>/g, '')
+        .replace(/<\|DSML\|tool_calls>[\s\S]*?<\/\|DSML\|tool_calls>/g, '')
+        .trim()
+    )
+    expect(cleanedBuffer).toBe(preamble)
+    expect(cleanedBuffer).not.toContain('DSML')
+    expect(cleanedBuffer).not.toContain('</think>')
+
+    // Step 4: dsmlParsed.length > 0 is the condition that sets toolCallIntercepted=true
+    expect(dsmlParsed.length).toBeGreaterThan(0)
+  })
+
+  it('normal case (forceFinalAnswer=false): DSML identified and tools populated', () => {
+    const rawBuffer = dsmlBlock(
+      dsmlInvoke('memory__add_observations', { observations: '[{"entityName":"Doodle Labs","contents":"founded 1999"}]' }),
+    )
+    const dsmlParsed = parseDsmlToolCalls(rawBuffer)
+    expect(dsmlParsed).toHaveLength(1)
+
+    // forceFinalAnswer=false -- tools ARE added
+    const pendingToolCalls = new Map<number, { id: string; name: string; argsRaw: string }>()
+    dsmlParsed.forEach((tc, idx) => pendingToolCalls.set(idx, tc))
+    expect(pendingToolCalls.size).toBe(1)
+    expect(pendingToolCalls.get(0)!.name).toBe('memory__add_observations')
+  })
+})

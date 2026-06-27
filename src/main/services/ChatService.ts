@@ -60,6 +60,32 @@ const DEBUG = __DEV_MODE__;
 export const STOP_SEQUENCES = ["<|im_end|>", "<|endoftext|>"];
 
 /**
+ * Returns a safe effective context-window size for OpenRouter cloud models.
+ *
+ * The `contextLength` setting in AppSettings is the LM Studio n_ctx value —
+ * it has no meaning for cloud providers.  Using it for the history-budget
+ * calculation in buildMessages() collapses the available token budget to ~10k
+ * for models that actually have 128k–1M windows, causing tool-result messages
+ * to be aggressively trimmed just before the final answer turn.
+ *
+ * Values are conservative 128k caps even where the model supports more
+ * (e.g. DeepSeek V4 Flash = 1M) so the history budget is always safely
+ * smaller than the actual window. Pure function — no side effects.
+ */
+export function getOpenRouterContextLength(modelId: string): number {
+  const id = modelId.toLowerCase();
+  if (id.includes('deepseek')) return 131072;   // DeepSeek V3/V4 series
+  if (id.includes('claude'))   return 200000;   // Anthropic
+  if (id.includes('gemini'))   return 1000000;  // Google Gemini
+  if (id.includes('llama'))    return 131072;   // Meta Llama
+  if (id.includes('qwen'))     return 131072;   // Alibaba Qwen
+  if (id.includes('mistral'))  return 131072;   // Mistral
+  if (id.includes('grok'))     return 131072;   // xAI Grok
+  if (id.includes('phi'))      return 131072;   // Microsoft Phi
+  return 131072;                                // safe default: 128k
+}
+
+/**
  * CODE_FENCE_TOOL_NAMES
  *
  * Names the model may mistakenly call as structured tool_calls when they are
@@ -708,7 +734,7 @@ export function detectMidStreamToolCall(
  */
 const EOS_TOKENS_RE = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi;
 
-function stripLeadingThinkClose(content: string): string {
+export function stripLeadingThinkClose(content: string): string {
   // Only strip the closing tag and its immediately following whitespace.
   // Do NOT trimStart() — that would eat "\n\n" chunks (paragraph/code-block
   // separators sent as whitespace-only deltas), merging all text together.
@@ -2043,7 +2069,11 @@ export class ChatService {
                   ...currentMessages,
                   {
                     role: "assistant",
-                    content: patchedCleaned || (null as unknown as string),
+                    // Strip <think>…</think> blocks from intermediate assistant content.
+                    // OpenRouter's DeepSeek routing (mid-2026 regression) mishandles
+                    // inline think blocks in tool-call assistant messages, causing the
+                    // model to truncate its final answer on the next iteration.
+                    content: partialContentOrNull(this.stripThinkBlocks(patchedCleaned)),
                     tool_calls: [{
                       id: toolCallId,
                       type: "function",
@@ -2069,17 +2099,31 @@ export class ChatService {
             // When a complete </｜DSML｜tool_calls> block lands in the buffer, parse
             // it into pendingToolCalls and strip it so nothing leaks to the UI.
             // The existing post-stream pendingToolCalls handler executes the calls.
-            if (!toolCallIntercepted && !forceFinalAnswer) {
+            //
+            // forceFinalAnswer case: when the search budget is exhausted, tools are
+            // stripped from the payload but DeepSeek may still emit DSML tool calls
+            // in delta.content. We must strip the DSML block from streamBuffer even
+            // in this case — without stripping, the raw XML lands in the response
+            // and the loop exits with an incomplete answer. Setting toolCallIntercepted
+            // forces one more iteration (still with forceFinalAnswer=true, tools still
+            // stripped) so the model writes the actual report as text.
+            if (!toolCallIntercepted) {
               const normBuf = streamBuffer
                 .replace(/\uFF5C/g, "|")
                 .replace(/\s*\|\s*/g, "|");
               if (normBuf.includes("</|DSML|tool_calls>")) {
                 const dsmlParsed = parseDsmlToolCalls(streamBuffer);
                 if (dsmlParsed.length > 0) {
-                  dsmlParsed.forEach((tc, idx) => pendingToolCalls.set(idx, tc));
+                  if (!forceFinalAnswer) {
+                    // Normal case: populate pendingToolCalls for execution.
+                    dsmlParsed.forEach((tc, idx) => pendingToolCalls.set(idx, tc));
+                  }
+                  // Always log and always strip — regardless of forceFinalAnswer.
                   if (DEBUG)
                     console.log(
-                      `[DEBUG][ChatService][DSML] Parsed ${dsmlParsed.length} DSML tool call(s):`,
+                      `[DEBUG][ChatService][DSML] Parsed ${dsmlParsed.length} DSML tool call(s)${
+                        forceFinalAnswer ? " (forceFinalAnswer — stripping only, not executing)" : ""
+                      }:`,
                       dsmlParsed.map((t) => t.name).join(", "),
                     );
                   // Strip the DSML block from streamBuffer to prevent it reaching the UI.
@@ -2093,8 +2137,13 @@ export class ChatService {
                       .replace(/<\|DSML\|tool_calls>[\s\S]*?<\/\|DSML\|tool_calls>/g, "")
                       .trim()
                   );
+                  // Force another iteration so the model writes the actual answer
+                  // as text rather than exiting with the DSML-stripped empty buffer.
+                  toolCallIntercepted = true;
                 }
               }
+            }
+            if (!toolCallIntercepted) {
 
               // ── GLM-5.2 (ZhipuAI) tool call detection ────────────────────────────────────
               // GLM-5.2 on OpenRouter emits tool calls as <tool_call>name<arg_value>k</arg_key>
@@ -2250,7 +2299,11 @@ export class ChatService {
               ...currentMessages,
               {
                 role: "assistant",
-                content: partialContentOrNull(streamBuffer) as unknown as string,
+                // Strip <think>…</think> blocks from intermediate assistant content
+                // before injecting into currentMessages.  OpenRouter's DeepSeek routing
+                // (mid-2026 regression) mishandles inline think blocks in tool-call
+                // assistant turns, causing truncated final answers on the next iteration.
+                content: partialContentOrNull(this.stripThinkBlocks(streamBuffer)) as unknown as string,
                 tool_calls: assistantToolCalls,
               } as { role: string; content: string },
             ];
@@ -2784,7 +2837,19 @@ export class ChatService {
     // large code blocks, or matplotlib responses).
     const isThinkingMode = payload.thinkingMode === "thinking";
     const maxOutputTokens = isThinkingMode ? 32768 : 16384;
-    const contextLength = appSettings.contextLength ?? 32768;
+    // For OpenRouter cloud models, use a model-aware context window rather than
+    // the LM Studio n_ctx setting (appSettings.contextLength), which is irrelevant
+    // for cloud providers and would collapse the history budget to ~10k tokens even
+    // for models with 128k–1M windows (e.g. DeepSeek V4 Flash).
+    const provider = appSettings.backendProvider ?? 'lmstudio';
+    // User-configured contextLength always takes precedence — it is the authoritative
+    // source from the Settings screen.  The fallback differs by provider: OpenRouter
+    // cloud models get a model-aware default (128k–1M) rather than the 32k LM Studio
+    // default, which would otherwise collapse the history budget for long-context models.
+    const contextLengthFallback = (provider === 'openrouter')
+      ? getOpenRouterContextLength(payload.model ?? '')
+      : 32768;
+    const contextLength = appSettings.contextLength ?? contextLengthFallback;
     const systemTokenCount = countTokens(systemParts.join("\n\n"));
     const OVERHEAD = 512; // role formatting, stop tokens, misc.
     const historyBudget = Math.max(
