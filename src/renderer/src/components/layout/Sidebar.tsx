@@ -254,6 +254,12 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename, onStar }: Chat
         onDoubleClick={handleRowDoubleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          if (editing || confirmDelete) return
+          setConfirmDelete(false)
+          setMenuOpen((v) => !v)
+        }}
         style={{
           display:    'flex',
           alignItems: 'stretch',
