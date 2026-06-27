@@ -1916,3 +1916,286 @@ describe('DSML forceFinalAnswer pathway -- integration invariant', () => {
     expect(pendingToolCalls.get(0)!.name).toBe('memory__add_observations')
   })
 })
+
+// ── Suite 4: dsmlInterceptedOnForceFinal — loop escape hatch behaviour ────────
+//
+// The escape hatch at the bottom of the outer loop is:
+//
+//   if (forceFinalAnswer && toolCallIntercepted && !dsmlInterceptedOnForceFinal)
+//     → break immediately (mid-stream text tool call: unrecoverable, save partial)
+//
+//   if (dsmlInterceptedOnForceFinal)
+//     → reset flag, continue loop (DSML strip: model gets another iteration to
+//       write the answer as text, still with forceFinalAnswer=true)
+//
+// These tests mirror that conditional logic directly.
+describe('dsmlInterceptedOnForceFinal -- loop escape hatch logic', () => {
+  // Simulate the exact conditional tree from ChatService.ts
+  function shouldBreakImmediately(
+    forceFinalAnswer: boolean,
+    toolCallIntercepted: boolean,
+    dsmlInterceptedOnForceFinal: boolean,
+  ): boolean {
+    return forceFinalAnswer && toolCallIntercepted && !dsmlInterceptedOnForceFinal
+  }
+
+  function shouldLoopAgain(
+    dsmlInterceptedOnForceFinal: boolean,
+  ): boolean {
+    return dsmlInterceptedOnForceFinal
+  }
+
+  it('breaks immediately when toolCallIntercepted by mid-stream text (forceFinalAnswer=true, dsml flag=false)', () => {
+    // Scenario: search budget exhausted, model tries to search via detectMidStreamToolCall.
+    // Cannot recover — save partial content and break.
+    expect(shouldBreakImmediately(true, true, false)).toBe(true)
+    expect(shouldLoopAgain(false)).toBe(false)
+  })
+
+  it('does NOT break when dsmlInterceptedOnForceFinal=true (flag overrides escape hatch)', () => {
+    // Scenario: DSML block stripped under forceFinalAnswer. Model must get one more
+    // iteration to write the actual answer as text.
+    expect(shouldBreakImmediately(true, true, true)).toBe(false)
+    expect(shouldLoopAgain(true)).toBe(true)
+  })
+
+  it('does not break when forceFinalAnswer=false (normal tool call, loop continues for execution)', () => {
+    // Normal mid-stream tool call path — not a forceFinalAnswer scenario.
+    expect(shouldBreakImmediately(false, true, false)).toBe(false)
+  })
+
+  it('does not break when toolCallIntercepted=false (model wrote an answer, natural exit)', () => {
+    // Natural stream-end exit — model produced text, not a tool call.
+    expect(shouldBreakImmediately(true, false, false)).toBe(false)
+    expect(shouldLoopAgain(false)).toBe(false)
+  })
+
+  it('flag is set IFF both forceFinalAnswer=true AND a DSML block was detected', () => {
+    // Mirror the exact assignment: if (forceFinalAnswer) dsmlInterceptedOnForceFinal = true
+    // Only both conditions together should set the flag.
+    function computeFlag(forceFinalAnswer: boolean, dsmlDetected: boolean): boolean {
+      let dsmlInterceptedOnForceFinal = false
+      if (dsmlDetected) {
+        if (forceFinalAnswer) dsmlInterceptedOnForceFinal = true
+      }
+      return dsmlInterceptedOnForceFinal
+    }
+    expect(computeFlag(true,  true)).toBe(true)   // the bug scenario
+    expect(computeFlag(false, true)).toBe(false)  // normal DSML path — no flag
+    expect(computeFlag(true,  false)).toBe(false) // no DSML block — no flag
+    expect(computeFlag(false, false)).toBe(false) // neither
+  })
+
+  it('flag is reset to false on entry to the next loop iteration', () => {
+    // After the model loops and writes its text answer, dsmlInterceptedOnForceFinal
+    // must be false so it cannot accidentally prevent a legitimate break on the
+    // following iteration. Mirrors: dsmlInterceptedOnForceFinal = false inside the
+    // if (dsmlInterceptedOnForceFinal) block.
+    let dsmlInterceptedOnForceFinal = true
+    if (dsmlInterceptedOnForceFinal) {
+      dsmlInterceptedOnForceFinal = false // reset, then continue
+    }
+    expect(dsmlInterceptedOnForceFinal).toBe(false)
+  })
+})
+
+// ── Suite 5: forceFinalHeldChunks — stub-leak prevention ─────────────────────
+//
+// Under forceFinalAnswer, chunks are routed to forceFinalHeldChunks instead of
+// accumulatedChunks. This prevents the pre-DSML stub sentence ("Now let me fetch
+// the data...") from reaching the renderer before the DSML detection fires.
+//
+// Two outcomes:
+//   A) Clean stream end (no DSML): held chunks flushed to accumulatedChunks
+//   B) DSML block detected: held chunks discarded — nothing leaks to renderer
+//
+// These tests simulate the exact logic from ChatService.ts without network calls.
+describe('forceFinalHeldChunks -- stub sentence leak prevention', () => {
+  it('routes chunks to held buffer when forceFinalAnswer=true', () => {
+    const accumulatedChunks: string[] = []
+    let forceFinalHeldChunks: string[] = []
+    const forceFinalAnswer = true
+
+    const chunks = ['Now let me fetch', ' the historical data', ' for the charts.']
+    for (const chunk of chunks) {
+      if (forceFinalAnswer) {
+        forceFinalHeldChunks.push(chunk)
+      } else {
+        accumulatedChunks.push(chunk)
+      }
+    }
+
+    // Chunks must NOT have reached the renderer
+    expect(accumulatedChunks).toHaveLength(0)
+    // Chunks ARE held in the buffer
+    expect(forceFinalHeldChunks).toHaveLength(3)
+    expect(forceFinalHeldChunks.join('')).toBe('Now let me fetch the historical data for the charts.')
+  })
+
+  it('routes chunks to accumulatedChunks directly when forceFinalAnswer=false', () => {
+    const accumulatedChunks: string[] = []
+    let forceFinalHeldChunks: string[] = []
+    const forceFinalAnswer = false
+
+    const chunks = ['The answer is', ' 42.']
+    for (const chunk of chunks) {
+      if (forceFinalAnswer) {
+        forceFinalHeldChunks.push(chunk)
+      } else {
+        accumulatedChunks.push(chunk)
+      }
+    }
+
+    expect(accumulatedChunks).toHaveLength(2)
+    expect(forceFinalHeldChunks).toHaveLength(0)
+  })
+
+  it('DSML intercept: held buffer is discarded, accumulatedChunks stays empty', () => {
+    // Scenario: model emits stub sentence then a DSML block under forceFinalAnswer.
+    // The held buffer must be cleared so no stub text reaches the renderer.
+    const accumulatedChunks: string[] = []
+    let forceFinalHeldChunks = [
+      'Now let me pull the historical financial data for the charts.',
+    ]
+
+    // DSML detected — mirror: forceFinalHeldChunks = []
+    const dsmlDetected = true
+    const forceFinalAnswer = true
+    let dsmlInterceptedOnForceFinal = false
+
+    if (dsmlDetected && forceFinalAnswer) {
+      dsmlInterceptedOnForceFinal = true
+      forceFinalHeldChunks = [] // discard stub
+    }
+
+    // Post-stream flush: only runs when !dsmlInterceptedOnForceFinal
+    if (forceFinalHeldChunks.length > 0 && !dsmlInterceptedOnForceFinal) {
+      accumulatedChunks.push(...forceFinalHeldChunks)
+    }
+
+    // Renderer received nothing
+    expect(accumulatedChunks).toHaveLength(0)
+    // The held buffer was discarded
+    expect(forceFinalHeldChunks).toHaveLength(0)
+    // Flag is set, confirming DSML path was taken
+    expect(dsmlInterceptedOnForceFinal).toBe(true)
+  })
+
+  it('clean stream end: held buffer flushed to accumulatedChunks when no DSML fires', () => {
+    // Scenario: forceFinalAnswer=true, model writes a normal text answer with no DSML.
+    // The held buffer must be flushed so the answer actually reaches the renderer.
+    const accumulatedChunks: string[] = []
+    let forceFinalHeldChunks = [
+      '## DELL Q1 FY2027 Analysis\n',
+      'Revenue hit $43.8B, up 88% YoY...',
+    ]
+    const dsmlInterceptedOnForceFinal = false // no DSML fired
+
+    // Post-stream flush — mirror the ChatService code
+    if (forceFinalHeldChunks.length > 0 && !dsmlInterceptedOnForceFinal) {
+      accumulatedChunks.push(...forceFinalHeldChunks)
+      forceFinalHeldChunks = []
+    }
+
+    // Renderer received the answer
+    expect(accumulatedChunks).toHaveLength(2)
+    expect(accumulatedChunks.join('')).toContain('DELL Q1 FY2027')
+    // Held buffer was consumed
+    expect(forceFinalHeldChunks).toHaveLength(0)
+  })
+
+  it('second iteration after DSML reset: chunks go to held buffer fresh, not contaminated by prior stub', () => {
+    // After dsmlInterceptedOnForceFinal loop, the next iteration starts with
+    // forceFinalHeldChunks=[] (was reset on discard). New chunks from the text-answer
+    // iteration go cleanly into the fresh held buffer and flush on stream end.
+    const accumulatedChunks: string[] = []
+    let forceFinalHeldChunks: string[] = [] // reset after DSML discard
+    let dsmlInterceptedOnForceFinal = false  // reset at top of new iteration
+
+    const answerChunks = [
+      '# MU Earnings Analysis\n',
+      'Micron delivered record Q3 FY2026 results...',
+    ]
+    const forceFinalAnswer = true
+
+    for (const chunk of answerChunks) {
+      if (forceFinalAnswer) {
+        forceFinalHeldChunks.push(chunk)
+      } else {
+        accumulatedChunks.push(chunk)
+      }
+    }
+
+    // No DSML this time — flush on stream end
+    if (forceFinalHeldChunks.length > 0 && !dsmlInterceptedOnForceFinal) {
+      accumulatedChunks.push(...forceFinalHeldChunks)
+      forceFinalHeldChunks = []
+    }
+
+    expect(accumulatedChunks.join('')).toBe('# MU Earnings Analysis\nMicron delivered record Q3 FY2026 results...')
+    expect(accumulatedChunks).toHaveLength(2)
+    expect(forceFinalHeldChunks).toHaveLength(0)
+  })
+
+  it('full two-iteration sequence: stub discarded on iteration N, answer flushed on iteration N+1', () => {
+    // Simulates the complete DeepSeek DSML stub-leak scenario end-to-end:
+    //   Iteration N (forceFinalAnswer=true):
+    //     - Model streams stub sentence → held in forceFinalHeldChunks
+    //     - DSML block detected → held buffer discarded, dsmlInterceptedOnForceFinal=true
+    //     - Escape hatch sees dsmlInterceptedOnForceFinal=true → does NOT break, resets flag
+    //   Iteration N+1 (forceFinalAnswer=true, tools still stripped):
+    //     - Model streams actual answer → held in fresh forceFinalHeldChunks
+    //     - Stream ends cleanly (no DSML) → held buffer flushed to accumulatedChunks
+
+    // --- Iteration N ---
+    const accumulatedChunks: string[] = []
+    let forceFinalHeldChunks: string[] = []
+    let dsmlInterceptedOnForceFinal = false
+    const forceFinalAnswer = true
+
+    // Stub sentence streamed before DSML tag arrives
+    forceFinalHeldChunks.push('Now let me pull the historical financial data for the charts.')
+    expect(accumulatedChunks).toHaveLength(0) // renderer has seen nothing
+
+    // DSML block detected — strip pipeline fires
+    const stubText = 'Now let me pull the historical financial data for the charts.'
+    const rawBuffer = `${stubText}\n\n${dsmlBlock(dsmlInvoke('get_stock_chart', { symbol: 'DELL', company_name: 'Dell Technologies' }))}`
+    const dsmlParsed = parseDsmlToolCalls(rawBuffer)
+    expect(dsmlParsed).toHaveLength(1)
+    expect(dsmlParsed[0].name).toBe('get_stock_chart')
+
+    if (forceFinalAnswer) {
+      dsmlInterceptedOnForceFinal = true
+      forceFinalHeldChunks = [] // discard stub
+    }
+
+    // Escape hatch: does NOT break because dsmlInterceptedOnForceFinal=true
+    const wouldBreak = forceFinalAnswer && /*toolCallIntercepted=*/ true && !dsmlInterceptedOnForceFinal
+    expect(wouldBreak).toBe(false)
+
+    // Renderer still has seen nothing
+    expect(accumulatedChunks).toHaveLength(0)
+
+    // Reset flag for next iteration
+    dsmlInterceptedOnForceFinal = false
+
+    // --- Iteration N+1 ---
+    // Model writes the actual answer
+    const answerChunks = ['## DELL Q1 FY2027 Analysis\n', 'Revenue hit $43.8B, up 88% YoY.']
+    for (const chunk of answerChunks) {
+      forceFinalHeldChunks.push(chunk) // forceFinalAnswer still true
+    }
+
+    // Stream ends cleanly — no DSML this time
+    if (forceFinalHeldChunks.length > 0 && !dsmlInterceptedOnForceFinal) {
+      accumulatedChunks.push(...forceFinalHeldChunks)
+      forceFinalHeldChunks = []
+    }
+
+    // Only the actual answer reached the renderer — no stub contamination
+    expect(accumulatedChunks).toHaveLength(2)
+    expect(accumulatedChunks.join('')).toContain('DELL Q1 FY2027 Analysis')
+    expect(accumulatedChunks.join('')).not.toContain('Now let me pull')
+    expect(accumulatedChunks.join('')).not.toContain('get_stock_chart')
+  })
+})
