@@ -27,16 +27,11 @@ function timeAgo(ts: number): string {
 function groupChats(chats: Chat[]): { label: string; items: Chat[] }[] {
   const now       = Date.now()
   const DAY       = 86_400_000
-  const starred: Chat[]   = []
   const today: Chat[]     = []
   const yesterday: Chat[] = []
   const earlier: Chat[]   = []
 
   for (const c of chats) {
-    if (c.starred) {
-      starred.push(c)
-      continue
-    }
     const age = now - c.updatedAt
     if (age < DAY)          today.push(c)
     else if (age < 2 * DAY) yesterday.push(c)
@@ -44,7 +39,6 @@ function groupChats(chats: Chat[]): { label: string; items: Chat[] }[] {
   }
 
   const groups: { label: string; items: Chat[] }[] = []
-  if (starred.length)   groups.push({ label: 'Starred',   items: starred })
   if (today.length)     groups.push({ label: 'Today',     items: today })
   if (yesterday.length) groups.push({ label: 'Yesterday', items: yesterday })
   if (earlier.length)   groups.push({ label: 'Earlier',   items: earlier })
@@ -645,16 +639,18 @@ function ChatGroup({
 // Sidebar component
 // ----------------------------------------------------------------
 interface SidebarProps {
-  panelOpen:      boolean
-  onTogglePanel:  () => void
-  chats:          Chat[]
-  activeChatId:   string | null
-  onSelectChat:   (chatId: string) => void
-  onNewChat:      () => void
-  onDeleteChat:   (chatId: string) => void
-  onRenameChat:   (chatId: string, title: string) => void
-  onStarChat:     (chatId: string, starred: boolean) => void
-  onOpenSettings: () => void
+  panelOpen:            boolean
+  onTogglePanel:        () => void
+  starredPanelOpen:     boolean
+  onToggleStarredPanel: () => void
+  chats:                Chat[]
+  activeChatId:         string | null
+  onSelectChat:         (chatId: string) => void
+  onNewChat:            () => void
+  onDeleteChat:         (chatId: string) => void
+  onRenameChat:         (chatId: string, title: string) => void
+  onStarChat:           (chatId: string, starred: boolean) => void
+  onOpenSettings:       () => void
 }
 
 const PANEL_WIDTH = 264
@@ -662,6 +658,8 @@ const PANEL_WIDTH = 264
 export function Sidebar({
   panelOpen,
   onTogglePanel,
+  starredPanelOpen,
+  onToggleStarredPanel,
   chats,
   activeChatId,
   onSelectChat,
@@ -671,13 +669,18 @@ export function Sidebar({
   onStarChat,
   onOpenSettings,
 }: SidebarProps) {
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchQuery,        setSearchQuery]        = useState('')
+  const [starredSearchQuery, setStarredSearchQuery] = useState('')
 
   const filteredChats = searchQuery.trim()
     ? chats.filter((c) => c.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : chats
 
   const groups = groupChats(filteredChats)
+
+  const starredItems = chats
+    .filter((c) => c.starred && (!starredSearchQuery.trim() || c.title.toLowerCase().includes(starredSearchQuery.toLowerCase())))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
 
   return (
     <div className="flex h-full flex-shrink-0">
@@ -696,11 +699,22 @@ export function Sidebar({
 
         {/* Chat panel toggle */}
         <RailButton
-          active={panelOpen}
+          active={panelOpen && !starredPanelOpen}
           onClick={onTogglePanel}
           title={panelOpen ? 'Close chats' : 'Open chats'}
         >
           <MessageSquare style={{ width: 15, height: 15 }} />
+        </RailButton>
+
+        <div style={{ height: 6 }} />
+
+        {/* Starred chats panel toggle */}
+        <RailButton
+          active={starredPanelOpen}
+          onClick={onToggleStarredPanel}
+          title="Starred chats"
+        >
+          <Star style={{ width: 15, height: 15 }} />
         </RailButton>
 
         {/* Multi-agent rail button — hidden until orchestration is implemented
@@ -844,6 +858,136 @@ export function Sidebar({
                 }}
                 onFocus={(e)  => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
                 onBlur={(e)   => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)' }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Expandable Starred Panel ── */}
+      <div
+        className="flex-shrink-0 h-full overflow-hidden"
+        style={{
+          width:       starredPanelOpen ? PANEL_WIDTH : 0,
+          transition:  'width 220ms cubic-bezier(0.4, 0, 0.2, 1)',
+          background:  '#141414',
+          borderRight: '0.5px solid rgba(255,255,255,0.05)',
+        }}
+      >
+        <div
+          className="flex flex-col h-full"
+          style={{
+            width:      PANEL_WIDTH,
+            opacity:    starredPanelOpen ? 1 : 0,
+            transition: 'opacity 180ms ease',
+          }}
+        >
+          {/* ── Starred panel header ── */}
+          <div
+            className="drag-region flex-shrink-0 flex items-center justify-between"
+            style={{
+              height:       52,
+              background:   '#0a0a0a',
+              borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+              paddingLeft:  80,
+              paddingRight: 12,
+            }}
+          >
+            <span
+              className="no-drag select-none"
+              style={{
+                fontSize:      13,
+                fontWeight:    600,
+                color:         'rgba(255,255,255,0.55)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              Starred
+            </span>
+
+            <button
+              onClick={onNewChat}
+              className="no-drag flex items-center"
+              style={{
+                gap:          5,
+                fontSize:     12,
+                background:   'rgba(229,57,53,0.12)',
+                border:       '0.5px solid rgba(229,57,53,0.25)',
+                color:        'rgba(229,57,53,0.7)',
+                borderRadius: 5,
+                padding:      '4px 10px',
+                cursor:       'pointer',
+                lineHeight:   1,
+                fontWeight:   500,
+              }}
+            >
+              <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+              <span>New</span>
+            </button>
+          </div>
+
+          {/* ── Starred list (scrollable, flat) ── */}
+          <div className="flex-1 overflow-y-auto no-drag" style={{ paddingTop: 4, paddingBottom: 4 }}>
+            {starredItems.length > 0
+              ? starredItems.map((chat) => (
+                  <ChatItem
+                    key={chat.id}
+                    chat={chat}
+                    isActive={chat.id === activeChatId}
+                    onSelect={onSelectChat}
+                    onDelete={onDeleteChat}
+                    onRename={onRenameChat}
+                    onStar={onStarChat}
+                  />
+                ))
+              : (
+                <p
+                  className="px-3 py-6 text-center text-content-muted"
+                  style={{ fontSize: 11 }}
+                >
+                  Star chats to find them here
+                </p>
+              )
+            }
+          </div>
+
+          {/* ── Starred panel footer: search ── */}
+          <div
+            className="flex-shrink-0 px-3"
+            style={{ borderTop: '0.5px solid rgba(255,255,255,0.04)', height: 52, display: 'flex', alignItems: 'center' }}
+          >
+            <div className="relative no-drag" style={{ width: '100%' }}>
+              <Search
+                style={{
+                  position:      'absolute',
+                  left:          8,
+                  top:           '50%',
+                  transform:     'translateY(-50%)',
+                  width:         14,
+                  height:        14,
+                  color:         'rgba(255,255,255,0.25)',
+                  pointerEvents: 'none',
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Search…"
+                value={starredSearchQuery}
+                onChange={(e) => setStarredSearchQuery(e.target.value)}
+                className="w-full selectable focus:outline-none"
+                style={{
+                  height:       28,
+                  fontSize:     11,
+                  background:   'rgba(255,255,255,0.04)',
+                  border:       '0.5px solid rgba(255,255,255,0.07)',
+                  borderRadius: 6,
+                  paddingLeft:  28,
+                  paddingRight: 8,
+                  color:        'rgba(255,255,255,0.7)',
+                  transition:   'border-color 100ms ease',
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+                onBlur={(e)  => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)' }}
               />
             </div>
           </div>

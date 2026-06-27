@@ -18,6 +18,7 @@ export function Layout() {
   const { setThinkingMode, isMultiAgentRunning } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
   const [chatPanelOpen,       setChatPanelOpen]       = useState(true)
+  const [starredPanelOpen,    setStarredPanelOpen]    = useState(false)
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
   const [mcpActivity,         setMcpActivity]         = useState<{ serverName: string; toolName: string } | null>(null)
@@ -25,7 +26,10 @@ export function Layout() {
 
   // Auto-collapse chats panel when multi-agent orchestrator becomes active
   useEffect(() => {
-    if (isMultiAgentRunning) setChatPanelOpen(false)
+    if (isMultiAgentRunning) {
+      setChatPanelOpen(false)
+      setStarredPanelOpen(false)
+    }
   }, [isMultiAgentRunning])
 
   // ── Chat history list (sidebar) ───────────────────────────────
@@ -371,7 +375,9 @@ export function Layout() {
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
               panelOpen={chatPanelOpen}
-              onTogglePanel={() => setChatPanelOpen((v) => !v)}
+              onTogglePanel={() => { setChatPanelOpen((v) => !v); setStarredPanelOpen(false) }}
+              starredPanelOpen={starredPanelOpen}
+              onToggleStarredPanel={() => { setStarredPanelOpen((v) => !v); setChatPanelOpen(false) }}
               chats={chats}
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
