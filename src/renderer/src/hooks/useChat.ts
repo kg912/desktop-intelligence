@@ -316,6 +316,23 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Chunk: buffer and route to the correct block type ─────────
     const unsubChunk = window.api.onChatStreamChunk((chunk: string) => {
+      // DSML strip sentinel: ChatService sends this when it strips a DSML tool call
+      // block that appeared mid-stream under forceFinalAnswer. The pre-DSML stub
+      // sentence ("Now let me pull the data...") already reached us before hasOpenToolCallTag
+      // could suppress it. Reset both buffers so that stub is erased before the
+      // real answer starts streaming on the next loop iteration.
+      if (chunk === '\x00RESET\x00') {
+        streamingContentRef.current = '';
+        chunkBufferRef.current = '';
+        currentBlocksRef.current = [];
+        activeBlockIdRef.current = null;
+        inThinkBlockRef.current = false;
+        hasSeenOpenThinkRef.current = false;
+        hasSeenCloseThinkRef.current = false;
+        streamingBlocks.value = [];
+        if (DEBUG) console.log('[Debug][useChat][StreamReset] received DSML strip reset sentinel — clearing streaming buffers');
+        return;
+      }
       streamingContentRef.current += chunk;
       chunkBufferRef.current += chunk;
 

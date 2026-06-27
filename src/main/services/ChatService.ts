@@ -1803,11 +1803,6 @@ export class ChatService {
         // the post-loop escape hatch to loop rather than break, so the model gets
         // one more iteration (still with forceFinalAnswer=true) to write the answer.
         let dsmlInterceptedOnForceFinal = false;
-        // Under forceFinalAnswer, hold chunks here instead of streaming them live.
-        // If the stream ends cleanly (no DSML intercept) we flush this to the real
-        // accumulatedChunks. If a DSML block fires, we discard it — preventing the
-        // pre-DSML stub sentence from leaking into the rendered UI.
-        let forceFinalHeldChunks: string[] = [];
         let reasoningOpen = false;
         let hasNonWhitespaceContent = false;
         // true while inside a Gemma 4 MLX native <|channel>thought…<channel|> block;
@@ -2151,9 +2146,9 @@ export class ChatService {
                   toolCallIntercepted = true;
                   if (forceFinalAnswer) {
                     dsmlInterceptedOnForceFinal = true;
-                    // Discard the pre-DSML stub sentences — they were held and
-                    // never sent to the renderer, so no retract needed.
-                    forceFinalHeldChunks = [];
+                    // Send a reset sentinel so the renderer clears the pre-DSML stub
+                    // sentence that already streamed before hasOpenToolCallTag fired.
+                    send(IPC_CHANNELS.CHAT_STREAM_CHUNK, '\x00RESET\x00');
                   }
                 }
               }
@@ -2207,16 +2202,10 @@ export class ChatService {
                   chunkToSend.includes("<channel|>");
                 if (chunkToSend.trim() || hasNonWhitespaceContent || isStructuralMarker) {
                   hasNonWhitespaceContent = true;
-                  if (forceFinalAnswer) {
-                    // Hold chunks — don't stream live. If a DSML block fires we'll
-                    // discard this buffer; if the stream ends cleanly we'll flush it.
-                    forceFinalHeldChunks.push(chunkToSend);
-                  } else {
-                    accumulatedChunks.push(chunkToSend);
-                    const now = Date.now();
-                    if (now - lastFlushTime >= FLUSH_INTERVAL) {
-                      flushChunkBuffer();
-                    }
+                  accumulatedChunks.push(chunkToSend);
+                  const now = Date.now();
+                  if (now - lastFlushTime >= FLUSH_INTERVAL) {
+                    flushChunkBuffer();
                   }
                 }
               }
@@ -2249,13 +2238,6 @@ export class ChatService {
           }
         }
         flushChunkBuffer();
-        // If forceFinalAnswer held chunks (to guard against DSML stub leaks) and
-        // the stream ended cleanly without a DSML intercept, flush them now.
-        if (forceFinalHeldChunks.length > 0 && !dsmlInterceptedOnForceFinal) {
-          accumulatedChunks.push(...forceFinalHeldChunks);
-          forceFinalHeldChunks = [];
-          flushChunkBuffer();
-        }
         if (DEBUG)
           console.log(
             `[Debug][ChatService][ReaderExit] loopAborted=${loopAborted} toolCallIntercepted=${toolCallIntercepted} pendingToolCalls.size=${pendingToolCalls.size} streamBuffer.length=${streamBuffer.length} totalTokens=${totalTokens}`,
