@@ -678,10 +678,11 @@ export function Sidebar({
 
   const groups = groupChats(filteredChats)
 
-  const starredItems = (searchQuery.trim()
+  const filteredStarred = searchQuery.trim()
     ? chats.filter((c) => c.starred && c.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : chats.filter((c) => c.starred)
-  ).sort((a, b) => b.updatedAt - a.updatedAt)
+
+  const starredGroups = groupChats(filteredStarred)
 
   return (
     <div className="flex h-full flex-shrink-0">
@@ -799,12 +800,13 @@ export function Sidebar({
           {/* ── List (scrollable) ── */}
           <div className="flex-1 overflow-y-auto no-drag" style={{ paddingTop: 4, paddingBottom: 4 }}>
             {sidebarMode === 'starred' ? (
-              starredItems.length > 0
-                ? starredItems.map((chat) => (
-                    <ChatItem
-                      key={chat.id}
-                      chat={chat}
-                      isActive={chat.id === activeChatId}
+              starredGroups.length > 0
+                ? starredGroups.map((g) => (
+                    <ChatGroup
+                      key={g.label}
+                      label={g.label}
+                      chats={g.items}
+                      activeChatId={activeChatId}
                       onSelect={onSelectChat}
                       onDelete={onDeleteChat}
                       onRename={onRenameChat}
