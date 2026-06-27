@@ -17,20 +17,21 @@ import type { Message } from '../chat/MessageBubble'
 export function Layout() {
   const { setThinkingMode, isMultiAgentRunning } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
-  const [chatPanelOpen,       setChatPanelOpen]       = useState(true)
-  const [starredPanelOpen,    setStarredPanelOpen]    = useState(false)
-  const [settingsOpen,        setSettingsOpen]        = useState(false)
+  const [sidebarMode,          setSidebarMode]          = useState<'chat' | 'starred' | null>('chat')
+  const [settingsOpen,         setSettingsOpen]         = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
-  const [mcpActivity,         setMcpActivity]         = useState<{ serverName: string; toolName: string } | null>(null)
-  const chatAreaRef        = useRef<ChatAreaHandle>(null)
-  const lastSidebarPanel   = useRef<'chat' | 'starred'>('chat')
+  const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
+  const chatAreaRef     = useRef<ChatAreaHandle>(null)
+  const lastSidebarMode = useRef<'chat' | 'starred'>('chat')
 
-  // Auto-collapse chats panel when multi-agent orchestrator becomes active
+  // Track last non-null mode so the TopBar toggle can reopen the right panel
   useEffect(() => {
-    if (isMultiAgentRunning) {
-      setChatPanelOpen(false)
-      setStarredPanelOpen(false)
-    }
+    if (sidebarMode !== null) lastSidebarMode.current = sidebarMode
+  }, [sidebarMode])
+
+  // Auto-collapse sidebar when multi-agent orchestrator becomes active
+  useEffect(() => {
+    if (isMultiAgentRunning) setSidebarMode(null)
   }, [isMultiAgentRunning])
 
   // ── Chat history list (sidebar) ───────────────────────────────
@@ -375,16 +376,9 @@ export function Layout() {
           {/* ── Sidebar ── */}
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
-              panelOpen={chatPanelOpen}
-              onTogglePanel={() => {
-                setChatPanelOpen((v) => { if (!v) lastSidebarPanel.current = 'chat'; return !v })
-                setStarredPanelOpen(false)
-              }}
-              starredPanelOpen={starredPanelOpen}
-              onToggleStarredPanel={() => {
-                setStarredPanelOpen((v) => { if (!v) lastSidebarPanel.current = 'starred'; return !v })
-                setChatPanelOpen(false)
-              }}
+              sidebarMode={sidebarMode}
+              onToggleChat={() => setSidebarMode((m) => m === 'chat' ? null : 'chat')}
+              onToggleStarred={() => setSidebarMode((m) => m === 'starred' ? null : 'starred')}
               chats={chats}
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
@@ -444,17 +438,8 @@ export function Layout() {
             <TopBar
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
-              sidebarCollapsed={!chatPanelOpen && !starredPanelOpen}
-              onSidebarToggle={() => {
-                if (chatPanelOpen || starredPanelOpen) {
-                  setChatPanelOpen(false)
-                  setStarredPanelOpen(false)
-                } else if (lastSidebarPanel.current === 'starred') {
-                  setStarredPanelOpen(true)
-                } else {
-                  setChatPanelOpen(true)
-                }
-              }}
+              sidebarCollapsed={sidebarMode === null}
+              onSidebarToggle={() => setSidebarMode((m) => m !== null ? null : lastSidebarMode.current)}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
