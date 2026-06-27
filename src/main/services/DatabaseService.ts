@@ -145,6 +145,9 @@ export function getDB(): Database.Database {
     _db.exec(`ALTER TABLE chats ADD COLUMN system_instructions TEXT`)
   } catch { /* column already exists */ }
 
+  // Starred chats — pinned to the top of the sidebar
+  try { _db.exec(`ALTER TABLE chats ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`) } catch { /* already exists */ }
+
   // ── RAG v2 Phase 1 — load sqlite-vec extension (before migration) ────────────
   // Must run on every launch so that if the extension was unavailable on a prior
   // launch (e.g. cold boot before asarUnpack resolved), we pick it up now.
@@ -290,14 +293,15 @@ export function getDB(): Database.Database {
 
 export function getAllChats(): Chat[] {
   const rows = getDB()
-    .prepare('SELECT id, title, created_at, updated_at, system_instructions FROM chats ORDER BY updated_at DESC')
-    .all() as Array<{ id: string; title: string; created_at: number; updated_at: number; system_instructions: string | null }>
+    .prepare('SELECT id, title, created_at, updated_at, system_instructions, starred FROM chats ORDER BY updated_at DESC')
+    .all() as Array<{ id: string; title: string; created_at: number; updated_at: number; system_instructions: string | null; starred: number }>
   return rows.map((r) => ({
     id:                 r.id,
     title:              r.title,
     createdAt:          r.created_at,
     updatedAt:          r.updated_at,
     systemInstructions: r.system_instructions ?? null,
+    starred:            r.starred === 1,
   }))
 }
 
@@ -306,7 +310,11 @@ export function createChat(id: string, title: string): Chat {
   getDB()
     .prepare('INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
     .run(id, title, now, now)
-  return { id, title, createdAt: now, updatedAt: now, systemInstructions: null }
+  return { id, title, createdAt: now, updatedAt: now, systemInstructions: null, starred: false }
+}
+
+export function starChatById(chatId: string, starred: boolean): void {
+  getDB().prepare('UPDATE chats SET starred = ? WHERE id = ?').run(starred ? 1 : 0, chatId)
 }
 
 export function getChatMessages(chatId: string): StoredMessage[] {

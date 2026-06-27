@@ -254,11 +254,13 @@ export const mockApi: ElectronAPI = {
 
   newChat: async (id: string, title: string): Promise<Chat> => {
     const now  = Date.now()
-    const chat: Chat = { id, title, createdAt: now, updatedAt: now }
+    const chat: Chat = { id, title, createdAt: now, updatedAt: now, systemInstructions: null, starred: false }
     mockChats = [chat, ...mockChats]
     mockMessages[id] = []
     return chat
   },
+
+  starChat: async (_chatId: string, _starred: boolean): Promise<void> => {},
 
   deleteChat: async (chatId: string): Promise<void> => {
     mockChats = mockChats.filter((c) => c.id !== chatId)

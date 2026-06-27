@@ -54,6 +54,7 @@ export interface Chat {
   createdAt:          number
   updatedAt:          number
   systemInstructions: string | null
+  starred:            boolean
 }
 
 /**
@@ -362,6 +363,7 @@ export const IPC_CHANNELS = {
   DB_DELETE_CHAT:      'db:deleteChat',
   DB_RENAME_CHAT:      'db:renameChat',
   DB_SAVE_MESSAGE:     'db:saveMessage',
+  DB_STAR_CHAT:        'db:starChat',
 
   PYTHON_RENDER:       'python:render',
 

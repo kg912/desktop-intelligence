@@ -7,6 +7,8 @@ import {
   MoreVertical,
   Pencil,
   Trash2,
+  Star,
+  StarOff,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { Chat } from '../../../../shared/types'
@@ -25,18 +27,24 @@ function timeAgo(ts: number): string {
 function groupChats(chats: Chat[]): { label: string; items: Chat[] }[] {
   const now       = Date.now()
   const DAY       = 86_400_000
+  const starred: Chat[]   = []
   const today: Chat[]     = []
   const yesterday: Chat[] = []
   const earlier: Chat[]   = []
 
   for (const c of chats) {
+    if (c.starred) {
+      starred.push(c)
+      continue
+    }
     const age = now - c.updatedAt
-    if (age < DAY)         today.push(c)
+    if (age < DAY)          today.push(c)
     else if (age < 2 * DAY) yesterday.push(c)
     else                    earlier.push(c)
   }
 
   const groups: { label: string; items: Chat[] }[] = []
+  if (starred.length)   groups.push({ label: 'Starred',   items: starred })
   if (today.length)     groups.push({ label: 'Today',     items: today })
   if (yesterday.length) groups.push({ label: 'Yesterday', items: yesterday })
   if (earlier.length)   groups.push({ label: 'Earlier',   items: earlier })
@@ -111,9 +119,10 @@ interface ChatItemProps {
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
+  onStar:   (id: string, starred: boolean) => void
 }
 
-function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProps) {
+function ChatItem({ chat, isActive, onSelect, onDelete, onRename, onStar }: ChatItemProps) {
   const [hovered,      setHovered]      = useState(false)
   const [menuOpen,     setMenuOpen]     = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -203,6 +212,12 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
     setConfirmDelete(false)
     setMenuOpen((v) => !v)
   }, [])
+
+  const handleMenuStar = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setMenuOpen(false)
+    onStar(chat.id, !chat.starred)
+  }, [chat.id, chat.starred, onStar])
 
   const handleMenuRename = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -319,19 +334,32 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
               >
                 {chat.title}
               </p>
-              <p
-                style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize:   9,
-                  color:      isActive
-                    ? 'rgba(229,57,53,0.4)'
-                    : 'rgba(255,255,255,0.15)',
-                  marginTop:  2,
-                  transition: 'color 120ms ease',
-                }}
-              >
-                {timeAgo(chat.updatedAt)}
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                <p
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize:   9,
+                    color:      isActive
+                      ? 'rgba(229,57,53,0.4)'
+                      : 'rgba(255,255,255,0.15)',
+                    margin:     0,
+                    transition: 'color 120ms ease',
+                  }}
+                >
+                  {timeAgo(chat.updatedAt)}
+                </p>
+                {chat.starred && (
+                  <Star
+                    style={{
+                      width:   9,
+                      height:  9,
+                      color:   'rgba(229,57,53,0.4)',
+                      fill:    'rgba(229,57,53,0.15)',
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
+              </div>
             </>
           )}
         </div>
@@ -386,6 +414,32 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
               marginTop:    2,
             }}
           >
+            <button
+              onClick={handleMenuStar}
+              style={{
+                display:      'flex',
+                alignItems:   'center',
+                gap:          8,
+                width:        '100%',
+                padding:      '6px 9px',
+                borderRadius: 5,
+                background:   'transparent',
+                border:       'none',
+                cursor:       'pointer',
+                fontSize:     11,
+                color:        'rgba(255,255,255,0.65)',
+                textAlign:    'left',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+            >
+              {chat.starred
+                ? <StarOff style={{ width: 14, height: 14, flexShrink: 0 }} />
+                : <Star    style={{ width: 14, height: 14, flexShrink: 0 }} />
+              }
+              {chat.starred ? 'Unstar' : 'Star'}
+            </button>
+            <div style={{ borderTop: '0.5px solid rgba(255,255,255,0.07)', margin: '3px 0' }} />
             <button
               onClick={handleMenuRename}
               style={{
@@ -540,7 +594,7 @@ function ChatItem({ chat, isActive, onSelect, onDelete, onRename }: ChatItemProp
 // ChatGroup
 // ----------------------------------------------------------------
 function ChatGroup({
-  label, chats, activeChatId, onSelect, onDelete, onRename,
+  label, chats, activeChatId, onSelect, onDelete, onRename, onStar,
 }: {
   label:        string
   chats:        Chat[]
@@ -548,6 +602,7 @@ function ChatGroup({
   onSelect:     (id: string) => void
   onDelete:     (id: string) => void
   onRename:     (id: string, title: string) => void
+  onStar:       (id: string, starred: boolean) => void
 }) {
   return (
     <div style={{ marginBottom: 4 }}>
@@ -572,6 +627,7 @@ function ChatGroup({
             onSelect={onSelect}
             onDelete={onDelete}
             onRename={onRename}
+            onStar={onStar}
           />
         ))}
       </div>
@@ -591,6 +647,7 @@ interface SidebarProps {
   onNewChat:      () => void
   onDeleteChat:   (chatId: string) => void
   onRenameChat:   (chatId: string, title: string) => void
+  onStarChat:     (chatId: string, starred: boolean) => void
   onOpenSettings: () => void
 }
 
@@ -605,6 +662,7 @@ export function Sidebar({
   onNewChat,
   onDeleteChat,
   onRenameChat,
+  onStarChat,
   onOpenSettings,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -729,6 +787,7 @@ export function Sidebar({
                     onSelect={onSelectChat}
                     onDelete={onDeleteChat}
                     onRename={onRenameChat}
+                    onStar={onStarChat}
                   />
                 ))
               : (

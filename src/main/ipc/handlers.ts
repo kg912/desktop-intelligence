@@ -20,6 +20,7 @@ import {
   setCompactedSummary,
   getChatSystemInstructions,
   setChatSystemInstructions,
+  starChatById,
 } from '../services/DatabaseService'
 import { retrieve as ragRetrieve, buildContextEnvelope } from '../services/rag/RagRetrievalService'
 import type {
@@ -654,6 +655,10 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     IPC_CHANNELS.DB_SAVE_MESSAGE,
     (_, chatId: string, id: string, role: string, content: string, attachmentsJson?: string, toolCallJson?: string, blocksJson?: string): void =>
       saveMessage(chatId, id, role, content, attachmentsJson ?? null, toolCallJson ?? null, blocksJson ?? null)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.DB_STAR_CHAT, (_, chatId: string, starred: boolean): void =>
+    starChatById(chatId, starred)
   )
 
   // ── Settings: model config via lms CLI ─────────────────────────

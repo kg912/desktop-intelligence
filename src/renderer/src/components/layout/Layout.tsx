@@ -150,6 +150,17 @@ export function Layout() {
     await refreshChats()
   }, [activeChatId, handleNewChat, refreshChats])
 
+  // ── Sidebar: star / unstar a chat ────────────────────────────
+  const handleStarChat = useCallback(async (chatId: string, starred: boolean) => {
+    setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, starred } : c))
+    try {
+      await window.api.starChat(chatId, starred)
+    } catch (err) {
+      console.warn('[DB] starChat failed:', err)
+      await refreshChats()
+    }
+  }, [refreshChats])
+
   // Refresh sidebar after each stream completes so the chat's
   // updated_at timestamp sorts it back to the top of the list.
   useEffect(() => {
@@ -367,6 +378,7 @@ export function Layout() {
               onNewChat={handleNewChat}
               onDeleteChat={handleDeleteChat}
               onRenameChat={handleRenameChat}
+              onStarChat={handleStarChat}
               onOpenSettings={() => { if (!isStreaming) setSettingsOpen(true) }}
             />
             {/* Streaming lock — blocks all sidebar interactions while a response is in flight */}

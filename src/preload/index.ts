@@ -334,6 +334,9 @@ const api = {
   renameChat: (chatId: string, title: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.DB_RENAME_CHAT, chatId, title),
 
+  starChat: (chatId: string, starred: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_STAR_CHAT, chatId, starred),
+
   saveMessage: (
     chatId:           string,
     id:               string,
