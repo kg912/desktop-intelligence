@@ -22,7 +22,8 @@ export function Layout() {
   const [settingsOpen,        setSettingsOpen]        = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
   const [mcpActivity,         setMcpActivity]         = useState<{ serverName: string; toolName: string } | null>(null)
-  const chatAreaRef = useRef<ChatAreaHandle>(null)
+  const chatAreaRef        = useRef<ChatAreaHandle>(null)
+  const lastSidebarPanel   = useRef<'chat' | 'starred'>('chat')
 
   // Auto-collapse chats panel when multi-agent orchestrator becomes active
   useEffect(() => {
@@ -375,9 +376,15 @@ export function Layout() {
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
               panelOpen={chatPanelOpen}
-              onTogglePanel={() => { setChatPanelOpen((v) => !v); setStarredPanelOpen(false) }}
+              onTogglePanel={() => {
+                setChatPanelOpen((v) => { if (!v) lastSidebarPanel.current = 'chat'; return !v })
+                setStarredPanelOpen(false)
+              }}
               starredPanelOpen={starredPanelOpen}
-              onToggleStarredPanel={() => { setStarredPanelOpen((v) => !v); setChatPanelOpen(false) }}
+              onToggleStarredPanel={() => {
+                setStarredPanelOpen((v) => { if (!v) lastSidebarPanel.current = 'starred'; return !v })
+                setChatPanelOpen(false)
+              }}
               chats={chats}
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
@@ -437,8 +444,17 @@ export function Layout() {
             <TopBar
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
-              sidebarCollapsed={!chatPanelOpen}
-              onSidebarToggle={() => { setChatPanelOpen((v) => !v); setStarredPanelOpen(false) }}
+              sidebarCollapsed={!chatPanelOpen && !starredPanelOpen}
+              onSidebarToggle={() => {
+                if (chatPanelOpen || starredPanelOpen) {
+                  setChatPanelOpen(false)
+                  setStarredPanelOpen(false)
+                } else if (lastSidebarPanel.current === 'starred') {
+                  setStarredPanelOpen(true)
+                } else {
+                  setChatPanelOpen(true)
+                }
+              }}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
