@@ -296,6 +296,9 @@ Never pretend to have searched when you have not.
  *     <tool_call>brave_web_search query="the query here"</tool_call>
  *   Format D — JSON object after tool name:
  *     <tool_call>brave_web_search {"query": "the query"}</tool_call>
+ *   Format G — GLM-5.2 mismatched-tag format:
+ *     <tool_call>memory__add_observations<arg_value>entity_name</arg_key><arg_value>Stock Ticker...</arg_value>...</tool_call>
+ *     Keys are wrapped in <arg_value>...</arg_key> (wrong closing tag); values in <arg_value>...</arg_value>.
  *
  * Returns null if no recognisable tool call is found.
  */
@@ -381,6 +384,17 @@ export function parseRawToolCall(
     args[m[1]] = m[2].trim();
   }
   if (Object.keys(args).length > 0) return { name, args };
+
+  // Format G: GLM-5.2 mismatched-tag format.
+  // Keys appear as <arg_value>key_name</arg_key> (opened with arg_value, closed with arg_key)
+  // Values appear as <arg_value>actual_value</arg_value>.
+  const glmPattern = /<arg_value>([^<]+?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g;
+  let glmHit = false;
+  while ((m = glmPattern.exec(rest)) !== null) {
+    args[m[1].trim()] = m[2].trim();
+    glmHit = true;
+  }
+  if (glmHit && Object.keys(args).length > 0) return { name, args };
 
   // Format C: quoted key="value" pairs (before unquoted to avoid partial match)
   const quotedPattern = /(\w+)="([^"]*)"/g;
@@ -598,17 +612,22 @@ export function parseGlmToolCalls(
 /**
  * Mid-stream tool call detection logic.
  * Handles extracting tool queries from incomplete or incorrectly formatted tags during SSE stream decoding.
- * Returns the detected query and the cleaned buffer to retract.
+ * Returns the detected tool name, args, and cleaned buffer to retract.
+ *
+ * For Brave Search: args.query is the search string.
+ * For MCP/other tools: args contains the raw arguments (entity_name, observations, etc.).
  */
 export function detectMidStreamToolCall(
   buffer: string,
-): { query: string; cleanedBuffer: string } | null {
+): { name: string; args: Record<string, string>; query: string; cleanedBuffer: string } | null {
   // Case 1: Closed <tool_call> tag (e.g. standard fallback)
   if (buffer.includes("</tool_call>")) {
     const raw = parseRawToolCall(buffer);
-    const q = raw?.args?.["query"];
-    if (q) {
+    if (raw) {
+      const q = raw.args["query"] ?? "";
       return {
+        name: raw.name,
+        args: raw.args,
         query: q,
         cleanedBuffer: buffer
           .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
@@ -637,15 +656,21 @@ export function detectMidStreamToolCall(
     if (likelyClosed) {
       const fakeClosed = buffer + "</tool_call>";
       const raw = parseRawToolCall(fakeClosed);
-      const q = raw?.args?.["query"];
-      // Guard: only intercept when query is non-empty.  An empty value means
-      // the <parameter=query> tag opened but its text hasn't arrived yet —
-      // wait for more chunks rather than firing a blank search.
-      if (q) {
-        return {
-          query: q,
-          cleanedBuffer: buffer.replace(/<tool_call>[\s\S]*$/i, "").trim(),
-        };
+      // Guard: only intercept when we got a name back.  For search tools, ensure
+      // the query is non-empty (still accumulating if blank).  For other MCP tools
+      // (memory writes, etc.) we intercept even without a query field.
+      if (raw && raw.name) {
+        const q = raw.args["query"] ?? "";
+        const isBrave = raw.name === "brave_web_search";
+        // For Brave Search specifically: skip if query is empty — still accumulating.
+        if (isBrave && !q) { /* fall through */ } else {
+          return {
+            name: raw.name,
+            args: raw.args,
+            query: q,
+            cleanedBuffer: buffer.replace(/<tool_call>[\s\S]*$/i, "").trim(),
+          };
+        }
       }
     }
   }
@@ -653,9 +678,11 @@ export function detectMidStreamToolCall(
   // Case 5: Closed pipe-delimited tag <|tool_call>...<tool_call|>
   if (buffer.includes("<tool_call|>")) {
     const raw = parseRawToolCall(buffer);
-    const q = raw?.args?.["query"];
-    if (q) {
+    if (raw && raw.name) {
+      const q = raw.args["query"] ?? "";
       return {
+        name: raw.name,
+        args: raw.args,
         query: q,
         cleanedBuffer: buffer
           .replace(/<\|tool_call>[\s\S]*?<tool_call\|>/gi, "")
@@ -672,9 +699,11 @@ export function detectMidStreamToolCall(
     if (inner.endsWith("]") || inner.endsWith("}")) {
       const fakeClosed = buffer + "<tool_call|>";
       const raw = parseRawToolCall(fakeClosed);
-      const q = raw?.args?.["query"];
-      if (q) {
+      if (raw && raw.name) {
+        const q = raw.args["query"] ?? "";
         return {
+          name: raw.name,
+          args: raw.args,
           query: q,
           cleanedBuffer: buffer.replace(/<\|tool_call>[\s\S]*$/i, "").trim(),
         };
@@ -686,6 +715,8 @@ export function detectMidStreamToolCall(
   const fenceQuery = extractQueryFromCodeFenceToolCall(buffer);
   if (fenceQuery) {
     return {
+      name: "brave_web_search",
+      args: { query: fenceQuery },
       query: fenceQuery,
       cleanedBuffer: buffer
         .replace(
@@ -707,6 +738,8 @@ export function detectMidStreamToolCall(
       const fq = extractQueryFromCodeFenceToolCall(fakeClosed);
       if (fq) {
         return {
+          name: "brave_web_search",
+          args: { query: fq },
           query: fq,
           cleanedBuffer: buffer
             .replace(
@@ -1601,12 +1634,10 @@ export class ChatService {
               top_p:       topP        ?? 0.95,
               num_predict: maxOutputTokens ?? 16384,
             },
-            // When forcing a final answer, send tool_choice:'none' explicitly.
-            // Ollama models (esp. Qwen3) ignore the absence of tools and still
-            // emit tool_calls unless the API-level enforcement is present.
-            ...(forceFinalAnswer
-              ? { tool_choice: "none" }
-              : toolsPayload),
+            // toolsPayload already returns {} when forceFinalAnswer, so spreading
+            // it here emits no tools and no tool_choice — the cleanest signal to
+            // the backend that this is a pure text completion turn.
+            ...toolsPayload,
           });
         } else if (isOpenRouter) {
           const thinkingEnabled = payload.thinkingMode === "thinking";
@@ -2030,39 +2061,78 @@ export class ChatService {
                   loopAborted = true;
                   break;
                 }
-                const { query: midQuery, cleanedBuffer: cleanedSoFar } = detected;
+                const { name: detectedName, args: detectedArgs, query: midQuery, cleanedBuffer: cleanedSoFar } = detected;
                 let patchedCleaned = cleanedSoFar;
                 const openCount  = (patchedCleaned.match(/<think>/gi)  || []).length;
                 const closeCount = (patchedCleaned.match(/<\/think>/gi) || []).length;
                 if (openCount > closeCount) patchedCleaned += "\n</think>\n";
 
                 toolCallIntercepted = true;
-                console.log(`[MCP] 🔍 Brave Search (interception depth ${searchLoopCount + 1}): "${midQuery}"`);
+
+                const isMidBrave = detectedName === "brave_web_search";
+                const midMcpParts = !isMidBrave ? detectedName.split("__") : null;
+                const isMidMcp = !isMidBrave && midMcpParts && midMcpParts.length === 2;
+
+                console.log(`[MCP] 🔍 Mid-stream tool call (text-fallback): "${detectedName}" query="${midQuery}" depth=${searchLoopCount + 1}`);
                 // 5g — tool_call capture (mid-stream fallback path)
-                this._obsCapture({ type: 'tool_call', payload: { toolName: 'brave_web_search', args: { query: midQuery } }, ts: Date.now() })
+                this._obsCapture({ type: 'tool_call', payload: { toolName: detectedName, args: detectedArgs }, ts: Date.now() })
 
                 this.abort();
                 loopAborted = true;
                 flushChunkBuffer();
 
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: midQuery });
+                const uiLabel = isMidBrave ? midQuery || detectedName : detectedName;
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: uiLabel, toolName: detectedName });
 
                 let midStreamResult: string;
                 try {
-                  const results = await braveSearch(midQuery, resolvedKey!, 5);
-                  midStreamResult = await augmentAndFormatResults(results);
-                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
-                    query:            midQuery,
-                    results:          results.slice(0, 5).map((r) => ({ title: r.title, url: r.url })),
-                    formattedContent: midStreamResult,
-                  });
+                  if (isMidBrave) {
+                    const results = await braveSearch(midQuery, resolvedKey!, 5);
+                    midStreamResult = await augmentAndFormatResults(results);
+                    send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                      query:            midQuery,
+                      toolName:         detectedName,
+                      results:          results.slice(0, 5).map((r) => ({ title: r.title, url: r.url })),
+                      formattedContent: midStreamResult,
+                    });
+                  } else if (isMidMcp && midMcpParts) {
+                    const [midServerName, midToolName] = midMcpParts;
+                    let mcpArgs: Record<string, unknown> = {};
+                    // Convert string args to properly typed values (arrays, objects, etc.)
+                    for (const [k, v] of Object.entries(detectedArgs)) {
+                      try { mcpArgs[k] = JSON.parse(v); } catch { mcpArgs[k] = v; }
+                    }
+                    console.log(`[MCP] Mid-stream calling "${detectedName}" with args: ${JSON.stringify(mcpArgs)}`);
+                    const mcpResult = await mcpServerManager.callTool(
+                      midServerName,
+                      midToolName,
+                      mcpArgs,
+                      payload.chatId ?? '',
+                    );
+                    midStreamResult = buildApprovedToolResult(mcpResult.text, mcpResult.userNote);
+                    send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                      query:            uiLabel,
+                      toolName:         detectedName,
+                      results:          [],
+                      formattedContent: mcpResult.text,
+                      toolArgs:         mcpArgs,
+                      toolImages:       mcpResult.images,
+                    });
+                  } else {
+                    midStreamResult = `Unknown tool: ${detectedName}`;
+                    send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                      query: uiLabel, toolName: detectedName, results: [], formattedContent: midStreamResult,
+                    });
+                  }
                 } catch (err) {
                   const errMsg = err instanceof Error ? err.message : String(err);
-                  midStreamResult = `Web search failed: ${errMsg}. Answer from training knowledge.`;
-                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: midQuery, error: errMsg });
+                  midStreamResult = isMidBrave
+                    ? `Web search failed: ${errMsg}. Answer from training knowledge.`
+                    : `Tool "${detectedName}" failed: ${errMsg}.`;
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: uiLabel, toolName: detectedName, error: errMsg });
                 }
                 // 5h — tool_result capture (mid-stream fallback path)
-                this._obsCapture({ type: 'tool_result', payload: { toolName: 'brave_web_search', result: midStreamResult }, ts: Date.now() })
+                this._obsCapture({ type: 'tool_result', payload: { toolName: detectedName, result: midStreamResult }, ts: Date.now() })
 
                 const toolCallId = `call_${Date.now()}`;
                 const limit = getToolResultLimit()
@@ -2081,7 +2151,7 @@ export class ChatService {
                     tool_calls: [{
                       id: toolCallId,
                       type: "function",
-                      function: { name: "brave_web_search", arguments: JSON.stringify({ query: midQuery }) },
+                      function: { name: detectedName, arguments: JSON.stringify(detectedArgs) },
                     }],
                   } as { role: string; content: string },
                   {
@@ -2092,7 +2162,8 @@ export class ChatService {
                 ];
 
                 this.controller = new AbortController();
-                searchLoopCount++;
+                // Only Brave Search counts toward MAX_SEARCH_LOOPS — MCP tool calls are unlimited.
+                if (isMidBrave) searchLoopCount++;
                 break;
               }
             }
