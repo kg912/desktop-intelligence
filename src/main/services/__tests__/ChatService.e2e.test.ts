@@ -1090,4 +1090,111 @@ describe('ChatService Agent Loop E2E integration', () => {
     const endStats = sendCalls.find(([ch]) => ch === IPC_CHANNELS.CHAT_STREAM_END)![1]
     expect(endStats.aborted).toBe(false)
   })
+
+  it('Scenario 16: unlimitedOutputTokens — max_tokens / num_predict absent for all four providers', async () => {
+    const sseChunks = [
+      'data: {"choices": [{"delta": {"content": "answer"}}]}\n',
+      'data: [DONE]\n',
+    ]
+
+    // ── 16.1 LM Studio — max_tokens must be absent ────────────────────────────
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'lmstudio',
+      maxOutputTokens: 8192,
+      unlimitedOutputTokens: true,
+    })
+    queueLlmResponse(sseChunks)
+    await chatService.send(
+      { chatId: 'c16-lms', messages: [{ role: 'user', content: 'hi' }], model: 'qwen3', thinkingMode: 'fast' },
+      'qwen3',
+      mockWebContents,
+    )
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const lmsBody = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(lmsBody.max_tokens, 'LM Studio: max_tokens must be absent when unlimitedOutputTokens=true').toBeUndefined()
+    // The stored slider value (8192) must not appear under any key
+    expect(JSON.stringify(lmsBody)).not.toContain('"max_tokens"')
+
+    // ── 16.2 OpenRouter — max_tokens must be absent ───────────────────────────
+    mockFetch.mockClear()
+    mockWebContents.send.mockClear()
+    llmResponseQueue = []
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'openrouter',
+      openrouterApiKey: 'or-key',
+      maxOutputTokens: 8192,
+      unlimitedOutputTokens: true,
+    })
+    queueLlmResponse(sseChunks)
+    await chatService.send(
+      { chatId: 'c16-or', messages: [{ role: 'user', content: 'hi' }], model: 'or-model', thinkingMode: 'fast' },
+      'or-model',
+      mockWebContents,
+    )
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const orBody = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(orBody.max_tokens, 'OpenRouter: max_tokens must be absent when unlimitedOutputTokens=true').toBeUndefined()
+
+    // ── 16.3 NVIDIA — max_tokens must be absent ───────────────────────────────
+    mockFetch.mockClear()
+    mockWebContents.send.mockClear()
+    llmResponseQueue = []
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'nvidia',
+      nvidiaApiKey: 'nvapi-key',
+      maxOutputTokens: 8192,
+      unlimitedOutputTokens: true,
+    })
+    queueLlmResponse(sseChunks)
+    await chatService.send(
+      { chatId: 'c16-nv', messages: [{ role: 'user', content: 'hi' }], model: 'nv-model', thinkingMode: 'fast' },
+      'nv-model',
+      mockWebContents,
+    )
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const nvBody = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(nvBody.max_tokens, 'NVIDIA: max_tokens must be absent when unlimitedOutputTokens=true').toBeUndefined()
+
+    // ── 16.4 Ollama — num_predict must be absent ──────────────────────────────
+    mockFetch.mockClear()
+    mockWebContents.send.mockClear()
+    llmResponseQueue = []
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'ollama',
+      ollamaBaseUrl: 'http://localhost:11434',
+      maxOutputTokens: 8192,
+      unlimitedOutputTokens: true,
+    })
+    queueLlmResponse([
+      '{"message": {"content": "answer"}, "done": true, "eval_count": 5}\n',
+    ])
+    await chatService.send(
+      { chatId: 'c16-ol', messages: [{ role: 'user', content: 'hi' }], model: 'ollama-model', thinkingMode: 'fast' },
+      'ollama-model',
+      mockWebContents,
+    )
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const olBody = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(olBody.options?.num_predict, 'Ollama: num_predict must be absent when unlimitedOutputTokens=true').toBeUndefined()
+
+    // ── 16.5 Sanity: unlimitedOutputTokens=false restores max_tokens ─────────
+    mockFetch.mockClear()
+    mockWebContents.send.mockClear()
+    llmResponseQueue = []
+    mockReadSettings.mockReturnValue({
+      backendProvider: 'openrouter',
+      openrouterApiKey: 'or-key',
+      maxOutputTokens: 8192,
+      unlimitedOutputTokens: false,
+    })
+    queueLlmResponse(sseChunks)
+    await chatService.send(
+      { chatId: 'c16-or-capped', messages: [{ role: 'user', content: 'hi' }], model: 'or-model', thinkingMode: 'fast' },
+      'or-model',
+      mockWebContents,
+    )
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const orBodyCapped = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(orBodyCapped.max_tokens, 'OpenRouter: max_tokens must be present when unlimitedOutputTokens=false').toBe(8192)
+  })
 })

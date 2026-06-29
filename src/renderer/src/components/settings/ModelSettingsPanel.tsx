@@ -122,13 +122,15 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
   const [draftRepeatPenalty,  setDraftRepeatPenalty]  = useState(1.1)
   const [draftSysPrompt,      setDraftSysPrompt]      = useState('')
   const [draftGpuOffload,     setDraftGpuOffload]     = useState(false)
+  const [draftUnlimitedOutput,setDraftUnlimitedOutput]= useState(false)
 
-  const [fetchedTemp,         setFetchedTemp]         = useState(0.7)
-  const [fetchedTopP,         setFetchedTopP]         = useState(0.95)
-  const [fetchedMaxTokens,    setFetchedMaxTokens]    = useState(16384)
-  const [fetchedRepeatPenalty,setFetchedRepeatPenalty]= useState(1.1)
-  const [fetchedSysPrompt,    setFetchedSysPrompt]    = useState('')
-  const [fetchedGpuOffload,   setFetchedGpuOffload]   = useState(false)
+  const [fetchedTemp,              setFetchedTemp]              = useState(0.7)
+  const [fetchedTopP,              setFetchedTopP]              = useState(0.95)
+  const [fetchedMaxTokens,         setFetchedMaxTokens]         = useState(16384)
+  const [fetchedRepeatPenalty,     setFetchedRepeatPenalty]     = useState(1.1)
+  const [fetchedSysPrompt,         setFetchedSysPrompt]         = useState('')
+  const [fetchedGpuOffload,        setFetchedGpuOffload]        = useState(false)
+  const [fetchedUnlimitedOutput,   setFetchedUnlimitedOutput]   = useState(false)
 
   const [isNvidia,     setIsNvidia]     = useState(false)
   const [isOllama,     setIsOllama]     = useState(false)
@@ -142,14 +144,15 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
   }, [onReloadingChange])
 
   const changed = fetchedCtx !== null && (
-    draftCtx           !== fetchedCtx           ||
-    draftModel         !== fetchedModel         ||
-    draftTemp          !== fetchedTemp          ||
-    draftTopP          !== fetchedTopP          ||
-    draftMaxTokens     !== fetchedMaxTokens     ||
-    draftRepeatPenalty !== fetchedRepeatPenalty ||
-    draftSysPrompt     !== fetchedSysPrompt     ||
-    draftGpuOffload    !== fetchedGpuOffload
+    draftCtx              !== fetchedCtx              ||
+    draftModel            !== fetchedModel            ||
+    draftTemp             !== fetchedTemp             ||
+    draftTopP             !== fetchedTopP             ||
+    draftMaxTokens        !== fetchedMaxTokens        ||
+    draftRepeatPenalty    !== fetchedRepeatPenalty    ||
+    draftSysPrompt        !== fetchedSysPrompt        ||
+    draftGpuOffload       !== fetchedGpuOffload       ||
+    draftUnlimitedOutput  !== fetchedUnlimitedOutput
   )
 
   useEffect(() => {
@@ -161,12 +164,13 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
     ])
       .then(([cfg, models, backend]) => {
         const ctx  = Math.min(Math.max(cfg.contextLength, MIN_CTX), MAX_CTX)
-        const temp = cfg.temperature     ?? 0.7
-        const tp   = cfg.topP            ?? 0.95
-        const mt   = cfg.maxOutputTokens ?? 16384
-        const rp   = cfg.repeatPenalty   ?? 1.1
-        const sp   = cfg.systemPrompt    ?? ''
-        const gpu  = cfg.gpuOffload      ?? false
+        const temp = cfg.temperature          ?? 0.7
+        const tp   = cfg.topP                 ?? 0.95
+        const mt   = cfg.maxOutputTokens      ?? 16384
+        const rp   = cfg.repeatPenalty        ?? 1.1
+        const sp   = cfg.systemPrompt         ?? ''
+        const gpu  = cfg.gpuOffload           ?? false
+        const unlimited = cfg.unlimitedOutputTokens ?? false
 
         const nvidia     = backend.provider === 'nvidia'
         const ollama     = backend.provider === 'ollama'
@@ -193,6 +197,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         setFetchedRepeatPenalty(rp); setDraftRepeatPenalty(rp)
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
         setFetchedGpuOffload(gpu); setDraftGpuOffload(gpu)
+        setFetchedUnlimitedOutput(unlimited); setDraftUnlimitedOutput(unlimited)
         setAvailableModels(nvidia || ollama || openrouter ? [] : models)
       })
       .catch(() => {
@@ -217,6 +222,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         repeatPenalty:    draftRepeatPenalty,
         systemPrompt:     draftSysPrompt,
         gpuOffload:       draftGpuOffload,
+        unlimitedOutputTokens: draftUnlimitedOutput,
       })
       if (res.success) {
         const actual = res.confirmedCtx ?? draftCtx
@@ -228,6 +234,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         setFetchedRepeatPenalty(draftRepeatPenalty)
         setFetchedSysPrompt(draftSysPrompt)
         setFetchedGpuOffload(draftGpuOffload)
+        setFetchedUnlimitedOutput(draftUnlimitedOutput)
         const msg = res.confirmedCtx && res.confirmedCtx !== draftCtx
           ? `Model reloaded. LM Studio reports ${fmtCtx(actual)} context (requested ${fmtCtx(draftCtx)}).`
           : `Model reloaded with ${fmtCtx(actual)} context.`
@@ -240,7 +247,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
     } finally {
       setReloadingWithCb(false)
     }
-  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, setSelectedModel, setReloadingWithCb])
+  }, [changed, reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftGpuOffload, draftUnlimitedOutput, setSelectedModel, setReloadingWithCb])
 
   const handleSaveOllama = useCallback(async () => {
     if (reloading) return
@@ -257,6 +264,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         repeatPenalty:   draftRepeatPenalty,
         systemPrompt:    draftSysPrompt,
         gpuOffload:      false,
+        unlimitedOutputTokens: draftUnlimitedOutput,
       })
       setFetchedModel(draftModel)
       setFetchedTemp(draftTemp)
@@ -264,13 +272,14 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
       setFetchedMaxTokens(draftMaxTokens)
       setFetchedRepeatPenalty(draftRepeatPenalty)
       setFetchedSysPrompt(draftSysPrompt)
+      setFetchedUnlimitedOutput(draftUnlimitedOutput)
       setResult({ ok: true, msg: 'Settings saved.' })
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
       setReloadingWithCb(false)
     }
-  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setReloadingWithCb])
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftUnlimitedOutput, setReloadingWithCb])
 
   const handleSaveNvidia = useCallback(async () => {
     if (reloading) return
@@ -289,6 +298,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         repeatPenalty:   draftRepeatPenalty,
         systemPrompt:    draftSysPrompt,
         gpuOffload:      false,
+        unlimitedOutputTokens: draftUnlimitedOutput,
       })
       setFetchedModel(draftModel)
       setFetchedTemp(draftTemp)
@@ -296,13 +306,14 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
       setFetchedMaxTokens(draftMaxTokens)
       setFetchedRepeatPenalty(draftRepeatPenalty)
       setFetchedSysPrompt(draftSysPrompt)
+      setFetchedUnlimitedOutput(draftUnlimitedOutput)
       setResult({ ok: true, msg: 'Settings saved.' })
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
       setReloadingWithCb(false)
     }
-  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setReloadingWithCb])
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftUnlimitedOutput, setReloadingWithCb])
 
   const handleSaveOpenRouter = useCallback(async () => {
     if (reloading) return
@@ -319,6 +330,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         repeatPenalty:   draftRepeatPenalty,
         systemPrompt:    draftSysPrompt,
         gpuOffload:      false,
+        unlimitedOutputTokens: draftUnlimitedOutput,
       })
       setFetchedModel(draftModel)
       setFetchedTemp(draftTemp)
@@ -326,13 +338,14 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
       setFetchedMaxTokens(draftMaxTokens)
       setFetchedRepeatPenalty(draftRepeatPenalty)
       setFetchedSysPrompt(draftSysPrompt)
+      setFetchedUnlimitedOutput(draftUnlimitedOutput)
       setResult({ ok: true, msg: 'Settings saved.' })
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message })
     } finally {
       setReloadingWithCb(false)
     }
-  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, setReloadingWithCb])
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftUnlimitedOutput, setReloadingWithCb])
 
   return (
     <div className="space-y-6">
@@ -513,11 +526,30 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs text-content-secondary">Max Output Tokens</span>
+              <label className="flex items-center gap-2 cursor-pointer select-none" title="When on, no output token limit is sent to the provider — the model runs until it naturally stops">
+                <span className="text-[10px] text-content-muted">Unlimited</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={draftUnlimitedOutput}
+                  onClick={() => setDraftUnlimitedOutput((v) => !v)}
+                  disabled={loading || reloading}
+                  className={`relative inline-flex w-7 h-4 rounded-full transition-colors duration-150 focus:outline-none disabled:opacity-40 flex-shrink-0 ${
+                    draftUnlimitedOutput ? 'bg-accent-700' : 'bg-surface-border'
+                  }`}
+                >
+                  <span
+                    className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform duration-150 ${
+                      draftUnlimitedOutput ? 'translate-x-3.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </label>
             </div>
             <input
               type="number" min={512} max={draftCtx} step={512}
               value={draftMaxTokens}
-              disabled={loading || reloading}
+              disabled={loading || reloading || draftUnlimitedOutput}
               onChange={(e) => {
                 const v = Math.max(512, Math.min(draftCtx, Number(e.target.value) || 512))
                 setDraftMaxTokens(v)
@@ -527,7 +559,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
             />
             <div className="flex justify-between mt-0.5">
               <span className="text-[10px] text-content-muted">512</span>
-              <span className="text-[10px] text-content-muted">{fmtCtx(draftCtx)}</span>
+              <span className="text-[10px] text-content-muted">{draftUnlimitedOutput ? '∞' : fmtCtx(draftCtx)}</span>
             </div>
           </div>
 

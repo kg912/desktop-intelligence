@@ -36,6 +36,8 @@ export interface AppSettings {
   topP?: number
   /** Max output tokens for Step 2 stream body. Default: 16384 */
   maxOutputTokens?: number
+  /** When true, max_tokens / num_predict is omitted from the API payload entirely. Default: false */
+  unlimitedOutputTokens?: boolean
   /** Repetition penalty (1.0–1.5). Default: 1.1 */
   repeatPenalty?: number
   /** Global system prompt prepended to every request. Default: '' */

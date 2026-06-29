@@ -728,13 +728,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
           console.log(`[Settings] From SettingsStore: modelId="${modelId}" contextLength=${s.contextLength}`)
           return {
             modelId,
-            contextLength:    s.contextLength,
-            temperature:      s.temperature      ?? 0.7,
-            topP:             s.topP             ?? 0.95,
-            maxOutputTokens:  s.maxOutputTokens  ?? 16384,
-            repeatPenalty:    s.repeatPenalty    ?? 1.1,
-            systemPrompt:     s.systemPrompt     ?? '',
-            gpuOffload:       s.gpuOffload       ?? false,
+            contextLength:          s.contextLength,
+            temperature:            s.temperature      ?? 0.7,
+            topP:                   s.topP             ?? 0.95,
+            maxOutputTokens:        s.maxOutputTokens  ?? 16384,
+            repeatPenalty:          s.repeatPenalty    ?? 1.1,
+            systemPrompt:           s.systemPrompt     ?? '',
+            gpuOffload:             s.gpuOffload       ?? false,
+            unlimitedOutputTokens:  s.unlimitedOutputTokens ?? false,
           }
         }
       } catch (err) {
@@ -801,12 +802,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const currentSettings = _rs()
       if (isCloud(currentSettings.backendProvider ?? 'lmstudio')) {
         const patch: Record<string, unknown> = {}
-        if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
-        if (payload.topP            !== undefined) patch.topP            = payload.topP
-        if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
-        if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
-        if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
-        if (payload.contextLength   !== undefined) patch.contextLength   = payload.contextLength
+        if (payload.temperature          !== undefined) patch.temperature          = payload.temperature
+        if (payload.topP                  !== undefined) patch.topP                  = payload.topP
+        if (payload.maxOutputTokens       !== undefined) patch.maxOutputTokens       = payload.maxOutputTokens
+        if (payload.repeatPenalty         !== undefined) patch.repeatPenalty         = payload.repeatPenalty
+        if (payload.systemPrompt          !== undefined) patch.systemPrompt          = payload.systemPrompt
+        if (payload.contextLength         !== undefined) patch.contextLength         = payload.contextLength
+        if (payload.unlimitedOutputTokens !== undefined) patch.unlimitedOutputTokens = payload.unlimitedOutputTokens
         writeSettings(patch as Parameters<typeof writeSettings>[0])
         console.log(`[Settings] Cloud provider (${currentSettings.backendProvider}) — skipped lms CLI, params saved to SettingsStore`)
         return { success: true, confirmedCtx: payload.contextLength }
@@ -879,12 +881,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
             contextLength: confirmedCtx ?? contextLength,
             modelId,
           }
-          if (payload.temperature     !== undefined) patch.temperature     = payload.temperature
-          if (payload.topP            !== undefined) patch.topP            = payload.topP
-          if (payload.maxOutputTokens !== undefined) patch.maxOutputTokens = payload.maxOutputTokens
-          if (payload.repeatPenalty   !== undefined) patch.repeatPenalty   = payload.repeatPenalty
-          if (payload.systemPrompt    !== undefined) patch.systemPrompt    = payload.systemPrompt
-          if (payload.gpuOffload      !== undefined) patch.gpuOffload      = payload.gpuOffload
+          if (payload.temperature          !== undefined) patch.temperature          = payload.temperature
+          if (payload.topP                  !== undefined) patch.topP                  = payload.topP
+          if (payload.maxOutputTokens       !== undefined) patch.maxOutputTokens       = payload.maxOutputTokens
+          if (payload.repeatPenalty         !== undefined) patch.repeatPenalty         = payload.repeatPenalty
+          if (payload.systemPrompt          !== undefined) patch.systemPrompt          = payload.systemPrompt
+          if (payload.gpuOffload            !== undefined) patch.gpuOffload            = payload.gpuOffload
+          if (payload.unlimitedOutputTokens !== undefined) patch.unlimitedOutputTokens = payload.unlimitedOutputTokens
           writeSettings(patch as Parameters<typeof writeSettings>[0])
         } catch { /* non-fatal */ }
 

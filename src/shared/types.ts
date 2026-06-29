@@ -450,27 +450,31 @@ export interface LMStudioModelsResponse {
 
 // --- Settings: model config ---
 export interface ModelConfig {
-  modelId:          string   // e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"
-  contextLength:    number   // current n_ctx
-  temperature?:     number
-  topP?:            number
-  maxOutputTokens?: number
-  repeatPenalty?:   number
-  systemPrompt?:    string
+  modelId:                string   // e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"
+  contextLength:          number   // current n_ctx
+  temperature?:           number
+  topP?:                  number
+  maxOutputTokens?:       number
+  repeatPenalty?:         number
+  systemPrompt?:          string
   /** When true, --gpu max is passed to every lms load call */
-  gpuOffload?:      boolean
+  gpuOffload?:            boolean
+  /** When true, max_tokens / num_predict is omitted from the API payload entirely. */
+  unlimitedOutputTokens?: boolean
 }
 
 export interface ReloadModelPayload {
-  modelId:          string
-  contextLength:    number
-  temperature?:     number
-  topP?:            number
-  maxOutputTokens?: number
-  repeatPenalty?:   number
-  systemPrompt?:    string
+  modelId:                string
+  contextLength:          number
+  temperature?:           number
+  topP?:                  number
+  maxOutputTokens?:       number
+  repeatPenalty?:         number
+  systemPrompt?:          string
   /** When true, --gpu max is passed to lms load */
-  gpuOffload?:      boolean
+  gpuOffload?:            boolean
+  /** When true, max_tokens / num_predict is omitted from the API payload entirely. */
+  unlimitedOutputTokens?: boolean
 }
 
 export interface ReloadResult {

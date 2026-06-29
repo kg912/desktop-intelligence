@@ -1526,7 +1526,7 @@ export class ChatService {
               },
             ]
           : currentMessages;
-        const { temperature, topP, maxOutputTokens, repeatPenalty } =
+        const { temperature, topP, maxOutputTokens, repeatPenalty, unlimitedOutputTokens } =
           readSettings();
 
         // Reset repetition detector for each new streaming request —
@@ -1549,7 +1549,7 @@ export class ChatService {
           messages: messagesForRequest,
           temperature: temperature ?? (isNvidia ? 1 : 0.7),
           top_p: topP ?? 0.95,
-          max_tokens: maxOutputTokens ?? 16384,
+          ...(unlimitedOutputTokens ? {} : { max_tokens: maxOutputTokens ?? 16384 }),
           stream: true,
         };
 
@@ -1610,7 +1610,7 @@ export class ChatService {
           streamBody = JSON.stringify({
             ...commonFields,
             temperature: nvidiaTemp,
-            max_tokens: nvidiaMaxTokens,
+            ...(unlimitedOutputTokens ? {} : { max_tokens: nvidiaMaxTokens }),
             ...chatTemplateKwargs,
             ...mistralReasoning,
             stream_options: { include_usage: true },
@@ -1632,7 +1632,7 @@ export class ChatService {
             options: {
               temperature: temperature ?? 0.7,
               top_p:       topP        ?? 0.95,
-              num_predict: maxOutputTokens ?? 16384,
+              ...(unlimitedOutputTokens ? {} : { num_predict: maxOutputTokens ?? 16384 }),
             },
             // toolsPayload already returns {} when forceFinalAnswer, so spreading
             // it here emits no tools and no tool_choice — the cleanest signal to
@@ -1655,7 +1655,7 @@ export class ChatService {
           streamBody = JSON.stringify({
             ...commonFields,
             temperature:    openRouterTemp,
-            max_tokens:     openRouterMaxTokens,
+            ...(unlimitedOutputTokens ? {} : { max_tokens: openRouterMaxTokens }),
             ...reasoningParam,
             stream_options: { include_usage: true },
             ...toolsPayload,
