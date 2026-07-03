@@ -322,10 +322,40 @@ export function InferenceProviderSettingsPanel() {
 
           {/* Base URL */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-content-primary">Base URL</label>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-content-primary">Base URL</label>
+              <div className="flex rounded-md overflow-hidden border border-surface-border/50">
+                <button
+                  type="button"
+                  onClick={() => update('ollamaBaseUrl', 'http://localhost:11434')}
+                  className={cn(
+                    'px-2.5 py-1 text-xs font-medium transition-colors',
+                    settings.ollamaBaseUrl === 'http://localhost:11434'
+                      ? 'bg-red-500/15 text-red-400'
+                      : 'bg-transparent text-content-muted hover:text-content-primary',
+                  )}
+                >
+                  Local
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update('ollamaBaseUrl', 'https://ollama.com')}
+                  className={cn(
+                    'px-2.5 py-1 text-xs font-medium transition-colors border-l border-surface-border/50',
+                    settings.ollamaBaseUrl === 'https://ollama.com'
+                      ? 'bg-red-500/15 text-red-400'
+                      : 'bg-transparent text-content-muted hover:text-content-primary',
+                  )}
+                >
+                  Cloud
+                </button>
+              </div>
+            </div>
             <p className="text-xs text-content-muted">
               Use <span className="font-mono">https://ollama.com</span> for Ollama Cloud,
               or <span className="font-mono">http://localhost:11434</span> for a local instance.
+              The toggle autofills either value below — still editable if you're running on a
+              different host or port.
             </p>
             <input
               type="text"
