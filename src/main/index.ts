@@ -15,8 +15,15 @@ import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
 import './services/ObservabilityService'
+import { SrtBackend } from './services/sandbox/SrtBackend'
+import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { IPC_CHANNELS } from '../shared/types'
 import type { McpServerRuntimeInfo, McpToolPermissionRequest } from '../shared/types'
+
+// Sandbox backend — initialized at startup, shut down on graceful exit.
+// MicrosandboxBackend and SandboxService are not instantiated here yet;
+// they will be wired when PythonWorkerService/McpServerManager are retrofitted.
+const srtBackend = new SrtBackend()
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
@@ -61,6 +68,12 @@ async function gracefulShutdown(): Promise<void> {
   modelConnectionManager.stop()
   pythonWorker.stop()
   await mcpServerManager.stopAll()
+
+  // Shut down the sandbox backend (resets SandboxManager).
+  // Non-fatal: if it throws, we still proceed with the rest of shutdown.
+  await srtBackend.shutdown().catch((err: Error) => {
+    console.warn('[Sandbox] SrtBackend shutdown error:', err.message)
+  })
 
   await lmsDaemonManager.shutdown()
   console.log('[App] Shutdown complete.')
@@ -227,6 +240,35 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, req)
     }
   })
+
+  // ── Sandbox dependency check ──────────────────────────────────────
+  // Verifies that @anthropic-ai/sandbox-runtime can enforce sandboxing on
+  // this platform.  Non-fatal: if dependencies are missing, a warning is
+  // logged and the SrtBackend is not initialized — the app continues to
+  // run without sandboxing (same as before this feature was added).
+  // The warning should be surfaced in Settings in a future prompt.
+  try {
+    if (SandboxManager.isSupportedPlatform()) {
+      const depCheck = SandboxManager.checkDependencies()
+      if (depCheck.errors.length > 0) {
+        console.warn('[Sandbox] Dependency check errors:', depCheck.errors)
+      }
+      if (depCheck.warnings.length > 0) {
+        console.warn('[Sandbox] Dependency check warnings:', depCheck.warnings)
+      }
+      if (depCheck.errors.length === 0) {
+        srtBackend.initialize().catch((err: Error) => {
+          console.warn('[Sandbox] SrtBackend initialize failed:', err.message)
+        })
+      } else {
+        console.warn('[Sandbox] SrtBackend not initialized — dependency errors above')
+      }
+    } else {
+      console.warn('[Sandbox] Platform not supported by @anthropic-ai/sandbox-runtime')
+    }
+  } catch (err) {
+    console.warn('[Sandbox] Dependency check failed:', err)
+  }
 
   app.on('activate', () => {
     // On macOS: re-create the window when the Dock icon is clicked and no

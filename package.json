@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.0.0-beta-50",
+  "version": "3.0.0-beta-51",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -22,6 +22,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.65",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@preact/signals-react": "^3.10.0",
     "@tanstack/react-virtual": "^3.11.0",
