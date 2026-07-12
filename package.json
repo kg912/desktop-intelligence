@@ -22,6 +22,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.65",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@preact/signals-react": "^3.10.0",
     "@tanstack/react-virtual": "^3.11.0",
