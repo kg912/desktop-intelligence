@@ -18,8 +18,9 @@
 import { EventEmitter } from 'events'
 import { app } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { quote } from 'shell-quote'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -29,6 +30,13 @@ import type {
   McpServerRuntimeInfo,
 } from '../../shared/types'
 import { isHttpMcpConfig } from '../../shared/types'
+import { sandboxService } from './sandbox/sandboxServiceInstance'
+import { memoryWatch } from './sandbox/ResourceGovernor'
+
+// RSS cap for sandboxed MCP stdio servers — lower than PythonWorkerService's
+// 1 GB since these are typically lightweight tool servers, not
+// matplotlib/numpy/yfinance workloads.
+const MCP_SERVER_MAX_RSS_MB = 512
 
 // ── MCP tool call result ─────────────────────────────────────────
 
@@ -105,6 +113,12 @@ interface ServerEntry {
    * e.g. AlphaVantage uses { toolNameKey: 'tool_name', argumentsKey: 'arguments' }
    */
   metaCallKeys?: { toolNameKey: string; argumentsKey: string }
+  /**
+   * ResourceGovernor stop handle for the stdio child's RSS watch (Phase 1
+   * sandbox retrofit). Only set for stdio transports, where
+   * StdioClientTransport.pid is available. Cleared on _stopServer().
+   */
+  stopMemoryWatch?: () => void
 }
 
 // ── Permission promise map ────────────────────────────────────────
@@ -367,20 +381,63 @@ export class McpServerManager extends EventEmitter {
       }
 
       // ── Build transport ───────────────────────────────────────────
-      const transport = isHttpMcpConfig(config)
-        ? new StreamableHTTPClientTransport(
-            new URL(config.url),
-            {
-              requestInit: {
-                headers: config.headers ?? {},
-              },
-            }
+      // Only the stdio branch spawns a local process — HTTP servers have no
+      // local process to sandbox and are already covered by the HTTPS +
+      // credential validation above.
+      let transport: StreamableHTTPClientTransport | StdioClientTransport
+      if (isHttpMcpConfig(config)) {
+        transport = new StreamableHTTPClientTransport(
+          new URL(config.url),
+          {
+            requestInit: {
+              headers: config.headers ?? {},
+            },
+          }
+        )
+      } else {
+        const sandboxProfile = config.sandboxProfile
+        if (!sandboxProfile || sandboxProfile.bypassSandbox === true) {
+          // Visible every start — not a one-time warning — so an operator
+          // scanning logs after the fact can't miss that this server has
+          // unrestricted filesystem/network access on the host.
+          console.warn(
+            sandboxProfile?.bypassSandbox
+              ? `[McpServerManager] ⚠️ "${name}" running WITHOUT sandbox — bypassSandbox: true`
+              : `[McpServerManager] ⚠️ "${name}" running WITHOUT sandbox — no sandboxProfile declared`
           )
-        : new StdioClientTransport({
+          transport = new StdioClientTransport({
             command: config.command,
             args:    config.args ?? [],
             env:     { ...process.env, ...(config.env ?? {}) } as Record<string, string>,
           })
+        } else {
+          // Never hand-roll shell escaping (spec section 08) — shell-quote
+          // is the vetted library for joining command + args into one string.
+          const joinedCommand = quote([config.command, ...(config.args ?? [])])
+          const scratchDir = join(app.getPath('userData'), 'sandboxes', 'mcp', name)
+          mkdirSync(scratchDir, { recursive: true })
+
+          const wrapped = await sandboxService.wrapStdioCommand({
+            workspaceDir:     scratchDir,
+            command:          joinedCommand,
+            executionProfile: 'lightweight',
+            allowedDomains:   sandboxProfile.allowedDomains,
+            allowWrite:       sandboxProfile.allowWrite,
+            denyRead:         [],
+            timeoutMs:        0, // persistent process, no wall-clock timeout
+            maxRssMb:         MCP_SERVER_MAX_RSS_MB,
+          })
+
+          // wrapped.env carries the sandbox's own env; config.env entries
+          // (server-specific vars the user configured, e.g. API keys) must
+          // still reach the process, so they're merged on top.
+          transport = new StdioClientTransport({
+            command: wrapped.command,
+            args:    wrapped.args,
+            env:     { ...wrapped.env, ...(config.env ?? {}) } as Record<string, string>,
+          })
+        }
+      }
 
       const client = new Client(
         { name: 'desktop-intelligence', version: '1.0.0' },
@@ -394,6 +451,27 @@ export class McpServerManager extends EventEmitter {
       )
 
       entry.client = client
+
+      // ── ResourceGovernor: RSS watchdog for the stdio child ────────────
+      // StdioClientTransport does not expose the underlying ChildProcess
+      // (it's a private field), but it does expose a public `.pid` getter
+      // once started — which is all memoryWatch() needs. Only stdio
+      // transports have a pid; HTTP servers have no local process.
+      if (!isHttpMcpConfig(config)) {
+        const stdioTransport = transport as StdioClientTransport
+        const pid = stdioTransport.pid
+        if (pid) {
+          entry.stopMemoryWatch = memoryWatch(pid, MCP_SERVER_MAX_RSS_MB, () => {
+            console.warn(
+              `[McpServerManager] ⚠️ "${name}" RSS exceeded ${MCP_SERVER_MAX_RSS_MB} MB — stopping server`
+            )
+            entry.error = `Process exceeded ${MCP_SERVER_MAX_RSS_MB} MB RSS and was stopped automatically`
+            this._stopServer(name).catch((err) => {
+              console.error(`[McpServerManager] Failed to stop "${name}" after RSS exceeded:`, err)
+            })
+          })
+        }
+      }
 
       const { tools } = await this._withTimeout(
         client.listTools(),
@@ -493,6 +571,10 @@ export class McpServerManager extends EventEmitter {
   private async _stopServer(name: string): Promise<void> {
     const entry = this.servers.get(name)
     if (!entry) return
+    if (entry.stopMemoryWatch) {
+      entry.stopMemoryWatch()
+      entry.stopMemoryWatch = undefined
+    }
     try {
       await entry.client?.close()
     } catch { /* ignore */ }

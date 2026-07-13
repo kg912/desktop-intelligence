@@ -52,5 +52,14 @@ export interface SandboxExecutionBackend {
    * PythonWorkerService already does today for its direct spawn() call.
    */
   spawnPersistent(spec: SandboxRunSpec): Promise<ChildProcessWithoutNullStreams>
+  /**
+   * Wrap a command for callers that do NOT spawn the process themselves —
+   * e.g. the MCP SDK's StdioClientTransport owns the spawn call internally.
+   * Returns argv-ready values (command + args array + env), not a shell
+   * string, so the caller can hand them to its own spawn-owning API.
+   */
+  wrapStdioCommand(
+    spec: SandboxRunSpec
+  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>
   shutdown(): Promise<void>
 }

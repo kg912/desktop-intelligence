@@ -28,7 +28,10 @@ function makeMockChildProcess(): ChildProcessWithoutNullStreams {
 function makeMockBackend(
   name: 'srt' | 'microsandbox',
   runImpl?: (spec: SandboxRunSpec) => Promise<SandboxRunResult>,
-  spawnPersistentImpl?: (spec: SandboxRunSpec) => Promise<ChildProcessWithoutNullStreams>
+  spawnPersistentImpl?: (spec: SandboxRunSpec) => Promise<ChildProcessWithoutNullStreams>,
+  wrapStdioCommandImpl?: (
+    spec: SandboxRunSpec
+  ) => Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>
 ): SandboxExecutionBackend {
   return {
     name,
@@ -46,6 +49,13 @@ function makeMockBackend(
       vi.fn(async (_spec: SandboxRunSpec): Promise<ChildProcessWithoutNullStreams> =>
         makeMockChildProcess()
       ),
+    wrapStdioCommand:
+      wrapStdioCommandImpl ??
+      vi.fn(async (_spec: SandboxRunSpec) => ({
+        command: `mock-${name}-command`,
+        args: ['--mock'],
+        env: {} as NodeJS.ProcessEnv,
+      })),
     shutdown: vi.fn(async () => {})
   }
 }
@@ -212,5 +222,53 @@ describe('SandboxService spawnPersistent routing', () => {
 
     expect(srt.spawnPersistent).toHaveBeenCalledTimes(2)
     expect(microsandbox.spawnPersistent).not.toHaveBeenCalled()
+  })
+})
+
+// ── wrapStdioCommand() tests ──────────────────────────────────────────────────
+
+describe('SandboxService wrapStdioCommand routing', () => {
+  it('routes lightweight wrapStdioCommand to the srt backend', async () => {
+    const srt = makeMockBackend('srt')
+    const microsandbox = makeMockBackend('microsandbox')
+    const service = new SandboxService(srt, microsandbox)
+
+    const result = await service.wrapStdioCommand(baseSpec)
+
+    expect(srt.wrapStdioCommand).toHaveBeenCalledTimes(1)
+    expect(srt.wrapStdioCommand).toHaveBeenCalledWith(baseSpec)
+    expect(microsandbox.wrapStdioCommand).not.toHaveBeenCalled()
+    expect(result.command).toBe('mock-srt-command')
+  })
+
+  it('routes untrusted-heavy wrapStdioCommand to the microsandbox backend', async () => {
+    const srt = makeMockBackend('srt')
+    const microsandbox = makeMockBackend('microsandbox')
+    const service = new SandboxService(srt, microsandbox)
+
+    const heavySpec: SandboxRunSpec = { ...baseSpec, executionProfile: 'untrusted-heavy' }
+
+    const result = await service.wrapStdioCommand(heavySpec)
+
+    expect(microsandbox.wrapStdioCommand).toHaveBeenCalledTimes(1)
+    expect(microsandbox.wrapStdioCommand).toHaveBeenCalledWith(heavySpec)
+    expect(srt.wrapStdioCommand).not.toHaveBeenCalled()
+    expect(result.command).toBe('mock-microsandbox-command')
+  })
+
+  it('does NOT silently fall back to srt when microsandbox.wrapStdioCommand throws', async () => {
+    const srt = makeMockBackend('srt')
+    const throwingMicrosandbox = makeMockBackend('microsandbox', undefined, undefined, async () => {
+      throw new Error('MicrosandboxBackend is not yet implemented')
+    })
+    const service = new SandboxService(srt, throwingMicrosandbox)
+
+    const heavySpec: SandboxRunSpec = { ...baseSpec, executionProfile: 'untrusted-heavy' }
+
+    await expect(service.wrapStdioCommand(heavySpec)).rejects.toThrow(
+      'MicrosandboxBackend is not yet implemented'
+    )
+
+    expect(srt.wrapStdioCommand).not.toHaveBeenCalled()
   })
 })

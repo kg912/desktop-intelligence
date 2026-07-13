@@ -37,4 +37,14 @@ export class SandboxService {
     }
     return this.srt.spawnPersistent(spec)
   }
+
+  async wrapStdioCommand(
+    spec: SandboxRunSpec
+  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> {
+    if (spec.executionProfile === 'untrusted-heavy') {
+      // Throws per MicrosandboxBackend stub — no silent fallback to srt.
+      return this.microsandbox.wrapStdioCommand(spec)
+    }
+    return this.srt.wrapStdioCommand(spec)
+  }
 }

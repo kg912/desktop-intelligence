@@ -556,6 +556,19 @@ export interface StdioMcpServerConfig {
   env?: Record<string, string>
   disabledTools?: string[]
   requiresApproval?: boolean
+  /**
+   * Sandbox policy for this server's local process (Phase 1 retrofit,
+   * SANDBOX_ARCHITECTURE_SPEC.html section 16). Optional and
+   * backward-compatible — servers without this field (every server
+   * currently in mcp.json) run exactly as they do today: unsandboxed,
+   * with a startup warning logged every launch.
+   */
+  sandboxProfile?: {
+    allowedDomains: string[]
+    allowWrite: string[]
+    /** When true, explicitly opts out of sandboxing even if declared. */
+    bypassSandbox?: boolean
+  }
 }
 
 /**

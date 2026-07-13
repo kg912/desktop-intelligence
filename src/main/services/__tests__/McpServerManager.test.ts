@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { McpServerManager } from '../McpServerManager'
 import type { McpServerSettings } from '../../../shared/types'
 
-const { fsMock, sdkMocks } = vi.hoisted(() => {
+const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch } = vi.hoisted(() => {
   const fsMock = {
     existsSync:    vi.fn<(path: string) => boolean>().mockReturnValue(false),
     readFileSync:  vi.fn<(path: string, options?: any) => string>().mockReturnValue('{}'),
     writeFileSync: vi.fn(),
+    mkdirSync:     vi.fn(),
   }
   const sdkMocks = {
     connect:   vi.fn().mockResolvedValue(undefined),
@@ -14,7 +15,20 @@ const { fsMock, sdkMocks } = vi.hoisted(() => {
     callTool:  vi.fn().mockResolvedValue({ isError: false, content: [{ type: 'text', text: 'ok' }] }),
     close:     vi.fn().mockResolvedValue(undefined),
   }
-  return { fsMock, sdkMocks }
+  // Plain object (no .pid) — matches how the real mocked-out transport
+  // behaves; the `if (pid)` guard in McpServerManager skips attaching
+  // ResourceGovernor when pid is falsy, so these tests don't need a fake pid.
+  const mockStdioTransport = vi.fn(function MockTransport(
+    _params: { command: string; args: string[]; env: Record<string, string> }
+  ) { return {} })
+  const mockWrapStdioCommand = vi.fn(async (_spec: unknown) => ({
+    command: '/sandboxed/bin',
+    args:    ['--sandboxed-arg'],
+    env:     { SANDBOX_ENV: '1' },
+  }))
+  const mockStopMemoryWatch = vi.fn()
+  const mockMemoryWatch = vi.fn(() => mockStopMemoryWatch)
+  return { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch }
 })
 
 vi.mock('electron', () => ({
@@ -35,7 +49,13 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   }),
 }))
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: vi.fn(function MockTransport() { return {} }),
+  StdioClientTransport: mockStdioTransport,
+}))
+vi.mock('../sandbox/sandboxServiceInstance', () => ({
+  sandboxService: { wrapStdioCommand: mockWrapStdioCommand },
+}))
+vi.mock('../sandbox/ResourceGovernor', () => ({
+  memoryWatch: mockMemoryWatch,
 }))
 
 const newMgr = () => new McpServerManager()
@@ -52,6 +72,12 @@ beforeEach(() => {
   sdkMocks.listTools.mockResolvedValue({ tools: [] })
   sdkMocks.callTool.mockResolvedValue({ isError: false, content: [{ type: 'text', text: 'ok' }] })
   sdkMocks.close.mockResolvedValue(undefined)
+  mockWrapStdioCommand.mockResolvedValue({
+    command: '/sandboxed/bin',
+    args:    ['--sandboxed-arg'],
+    env:     { SANDBOX_ENV: '1' },
+  })
+  mockMemoryWatch.mockReturnValue(mockStopMemoryWatch)
 })
 
 describe('setToolEnabled()', () => {
@@ -543,5 +569,116 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     expect(sdkMocks.close).toHaveBeenCalled()
     const status = mgr.getServerStatus()
     expect(status[0].status).toBe('stopped')
+  })
+})
+
+describe('McpServerManager sandbox retrofit (Phase 1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fsMock.existsSync.mockReturnValue(false)
+    fsMock.readFileSync.mockReturnValue('{}')
+    sdkMocks.connect.mockResolvedValue(undefined)
+    sdkMocks.listTools.mockResolvedValue({ tools: [] })
+    sdkMocks.callTool.mockResolvedValue({ isError: false, content: [{ type: 'text', text: 'ok' }] })
+    sdkMocks.close.mockResolvedValue(undefined)
+    mockWrapStdioCommand.mockResolvedValue({
+      command: '/sandboxed/bin',
+      args:    ['--sandboxed-arg'],
+      env:     { SANDBOX_ENV: '1' },
+    })
+    mockMemoryWatch.mockReturnValue(mockStopMemoryWatch)
+  })
+
+  it('starts unsandboxed and logs a warning when no sandboxProfile is declared', async () => {
+    setConfig({
+      'plain-server': { command: 'node', args: ['server.js'], enabled: true },
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mgr = newMgr()
+    await mgr.startAll()
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"plain-server" running WITHOUT sandbox — no sandboxProfile declared')
+    )
+    expect(mockWrapStdioCommand).not.toHaveBeenCalled()
+    expect(mockStdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'node', args: ['server.js'] })
+    )
+    const status = mgr.getServerStatus()
+    expect(status[0].status).toBe('running')
+
+    warnSpy.mockRestore()
+  })
+
+  it('starts unsandboxed and logs a warning when bypassSandbox is explicitly true', async () => {
+    setConfig({
+      'bypass-server': {
+        command: 'node',
+        args: ['server.js'],
+        enabled: true,
+        sandboxProfile: { allowedDomains: ['example.com'], allowWrite: [], bypassSandbox: true },
+      },
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mgr = newMgr()
+    await mgr.startAll()
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"bypass-server" running WITHOUT sandbox — bypassSandbox: true')
+    )
+    expect(mockWrapStdioCommand).not.toHaveBeenCalled()
+    expect(mockStdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'node', args: ['server.js'] })
+    )
+
+    warnSpy.mockRestore()
+  })
+
+  it('calls sandboxService.wrapStdioCommand() with the declared policy before constructing the transport, and merges env correctly', async () => {
+    setConfig({
+      'sandboxed-server': {
+        command: 'node',
+        args: ['server.js', '--flag'],
+        env: { API_KEY: 'user-provided-key' },
+        enabled: true,
+        sandboxProfile: {
+          allowedDomains: ['api.example.com'],
+          allowWrite: ['/tmp/scratch'],
+        },
+      },
+    })
+    const mgr = newMgr()
+    await mgr.startAll()
+
+    expect(mockWrapStdioCommand).toHaveBeenCalledTimes(1)
+    const spec = mockWrapStdioCommand.mock.calls[0][0] as {
+      command: string
+      executionProfile: string
+      allowedDomains: string[]
+      allowWrite: string[]
+    }
+    expect(spec.executionProfile).toBe('lightweight')
+    expect(spec.allowedDomains).toEqual(['api.example.com'])
+    expect(spec.allowWrite).toEqual(['/tmp/scratch'])
+    // command + args must be joined into one shell-safe string via shell-quote.
+    expect(spec.command).toContain('node')
+    expect(spec.command).toContain('server.js')
+    expect(spec.command).toContain('--flag')
+
+    // wrapStdioCommand() must run before the transport is constructed.
+    const wrapOrder = mockWrapStdioCommand.mock.invocationCallOrder[0]
+    const transportOrder = mockStdioTransport.mock.invocationCallOrder[0]
+    expect(wrapOrder).toBeLessThan(transportOrder)
+
+    // Transport is constructed from the WRAPPED command/args, not the raw config.
+    expect(mockStdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ command: '/sandboxed/bin', args: ['--sandboxed-arg'] })
+    )
+    // The wrapped env AND the user's configured env must both reach the process.
+    const transportArgs = mockStdioTransport.mock.calls[0][0] as { env: Record<string, string> }
+    expect(transportArgs.env).toMatchObject({ SANDBOX_ENV: '1', API_KEY: 'user-provided-key' })
+
+    const status = mgr.getServerStatus()
+    expect(status[0].status).toBe('running')
   })
 })
