@@ -1,0 +1,1834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Desktop Intelligence — Multi-Agent Orchestration Spec</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap');
+ 
+  :root {
+    --bg: #0a0a0a;
+    --bg1: #0e0e0e;
+    --bg2: #141414;
+    --bg3: #1a1a1a;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: rgba(255,255,255,0.85);
+    --text2: rgba(255,255,255,0.5);
+    --text3: rgba(255,255,255,0.25);
+    --red: #e53935;
+    --red-dim: rgba(229,57,53,0.15);
+    --red-border: rgba(229,57,53,0.3);
+    --green: #2ecc71;
+    --green-dim: rgba(46,204,113,0.12);
+    --yellow: #f1c40f;
+    --yellow-dim: rgba(241,196,15,0.12);
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+ 
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 0;
+  }
+ 
+  /* ── NAV ── */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,10,10,0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 0.5px solid var(--border);
+    padding: 0 40px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    height: 48px;
+    overflow-x: auto;
+  }
+ 
+  nav a {
+    color: var(--text3);
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0 16px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+ 
+  nav a:hover { color: var(--text2); }
+  nav a.active { color: var(--text); border-bottom-color: var(--red); }
+ 
+  .nav-brand {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    padding-right: 24px;
+    border-right: 0.5px solid var(--border);
+    margin-right: 8px;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+  }
+ 
+  .nav-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 6px var(--red);
+  }
+ 
+  /* ── HERO ── */
+  .hero {
+    padding: 80px 40px 60px;
+    border-bottom: 0.5px solid var(--border);
+    max-width: 900px;
+  }
+ 
+  .hero-tag {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+ 
+  .hero-tag::before {
+    content: '';
+    display: block;
+    width: 24px; height: 1px;
+    background: var(--red);
+  }
+ 
+  h1 {
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1.15;
+    color: #fff;
+    margin-bottom: 20px;
+    letter-spacing: -0.02em;
+  }
+ 
+  .hero-sub {
+    font-size: 15px;
+    color: var(--text2);
+    max-width: 600px;
+    line-height: 1.8;
+    margin-bottom: 32px;
+  }
+ 
+  .meta-row {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+ 
+  .meta-item {
+    font-size: 11px;
+    color: var(--text3);
+    font-family: var(--mono);
+  }
+ 
+  .meta-item span { color: var(--text2); }
+ 
+  /* ── LAYOUT ── */
+  .page { display: flex; min-height: 100vh; }
+ 
+  .sidebar-nav {
+    width: 220px;
+    min-width: 220px;
+    padding: 32px 0;
+    border-right: 0.5px solid var(--border);
+    position: sticky;
+    top: 48px;
+    height: calc(100vh - 48px);
+    overflow-y: auto;
+  }
+ 
+  .snav-section {
+    padding: 0 20px 20px;
+  }
+ 
+  .snav-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 8px;
+    padding: 0 8px;
+  }
+ 
+  .snav-link {
+    display: block;
+    padding: 5px 8px;
+    font-size: 12px;
+    color: var(--text3);
+    text-decoration: none;
+    border-radius: 5px;
+    transition: background 0.1s, color 0.1s;
+  }
+ 
+  .snav-link:hover { background: rgba(255,255,255,0.04); color: var(--text2); }
+  .snav-link.active { background: var(--red-dim); color: rgba(229,57,53,0.8); }
+ 
+  .content {
+    flex: 1;
+    padding: 48px 56px;
+    max-width: 860px;
+    overflow-x: hidden;
+  }
+ 
+  /* ── TYPOGRAPHY ── */
+  h2 {
+    font-size: 22px;
+    font-weight: 600;
+    color: #fff;
+    margin: 56px 0 20px;
+    padding-top: 8px;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+ 
+  h2:first-child { margin-top: 0; }
+ 
+  h2 .section-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--red);
+    background: var(--red-dim);
+    border: 0.5px solid var(--red-border);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 400;
+  }
+ 
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    margin: 28px 0 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+  }
+ 
+  p { color: var(--text2); margin-bottom: 14px; line-height: 1.75; }
+ 
+  a { color: rgba(229,57,53,0.7); text-decoration: none; }
+  a:hover { color: var(--red); }
+ 
+  code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: rgba(255,255,255,0.55);
+  }
+ 
+  pre {
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+ 
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: rgba(255,255,255,0.5);
+  }
+ 
+  hr { border: none; border-top: 0.5px solid var(--border); margin: 40px 0; }
+ 
+  /* ── CALLOUTS ── */
+  .callout {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    line-height: 1.7;
+    border: 0.5px solid;
+  }
+ 
+  .callout-red { background: var(--red-dim); border-color: var(--red-border); color: rgba(229,57,53,0.8); }
+  .callout-yellow { background: var(--yellow-dim); border-color: rgba(241,196,15,0.25); color: rgba(241,196,15,0.7); }
+  .callout-green { background: var(--green-dim); border-color: rgba(46,204,113,0.25); color: rgba(46,204,113,0.7); }
+  .callout-neutral { background: var(--bg2); border-color: var(--border2); color: var(--text2); }
+ 
+  .callout strong { color: inherit; }
+ 
+  /* ── CHECKLIST ── */
+  .checklist { list-style: none; margin: 8px 0 16px; }
+ 
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: 13px;
+    color: var(--text2);
+    border-bottom: 0.5px solid rgba(255,255,255,0.03);
+  }
+ 
+  .checklist li:last-child { border-bottom: none; }
+ 
+  .check-box {
+    width: 16px; height: 16px;
+    border: 0.5px solid var(--border2);
+    border-radius: 4px;
+    flex-shrink: 0;
+    margin-top: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px;
+  }
+ 
+  .check-box.done { background: var(--green-dim); border-color: rgba(46,204,113,0.4); color: var(--green); }
+ 
+  .checklist li.sub {
+    padding-left: 26px;
+    font-size: 12px;
+    color: var(--text3);
+  }
+ 
+  /* ── TABLE ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin: 16px 0;
+  }
+ 
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text3);
+    border-bottom: 0.5px solid var(--border2);
+  }
+ 
+  td {
+    padding: 8px 12px;
+    color: var(--text2);
+    border-bottom: 0.5px solid var(--border);
+    vertical-align: top;
+  }
+ 
+  tr:last-child td { border-bottom: none; }
+ 
+  td code { font-size: 11px; }
+ 
+  /* ── DECISION CARDS ── */
+  .decision-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+ 
+  .decision-card {
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+ 
+  .decision-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 6px;
+  }
+ 
+  .decision-value {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+ 
+  .decision-reason { font-size: 11px; color: var(--text3); line-height: 1.6; }
+ 
+  /* ── PHASE TIMELINE ── */
+  .phases { display: flex; flex-direction: column; gap: 0; margin: 20px 0; }
+ 
+  .phase {
+    display: flex;
+    gap: 20px;
+    padding-bottom: 24px;
+    position: relative;
+  }
+ 
+  .phase::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 32px;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+ 
+  .phase:last-child::before { display: none; }
+ 
+  .phase-num {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--bg2);
+    border: 0.5px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text3);
+    flex-shrink: 0;
+  }
+ 
+  .phase-num.active {
+    background: var(--red-dim);
+    border-color: var(--red-border);
+    color: var(--red);
+    box-shadow: 0 0 8px rgba(229,57,53,0.2);
+  }
+ 
+  .phase-body { flex: 1; }
+  .phase-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; padding-top: 5px; }
+  .phase-desc { font-size: 12px; color: var(--text3); line-height: 1.6; }
+ 
+  /* ── APP MOCKUP FRAME ── */
+  .mockup-section { margin: 32px 0; }
+ 
+  .mockup-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+ 
+  .mockup-label::after {
+    content: '';
+    flex: 1;
+    height: 0.5px;
+    background: var(--border);
+  }
+ 
+  .app-frame {
+    background: #0e0e0e;
+    border-radius: 10px;
+    border: 0.5px solid rgba(255,255,255,0.08);
+    overflow: hidden;
+    font-family: var(--sans);
+  }
+ 
+  .topbar {
+    height: 36px;
+    background: #111;
+    border-bottom: 0.5px solid rgba(255,255,255,0.05);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 6px;
+  }
+ 
+  .td { width: 9px; height: 9px; border-radius: 50%; }
+  .td-r { background: #e74c3c; }
+  .td-y { background: #f1c40f; }
+  .td-g { background: #2ecc71; }
+ 
+  .model-pill {
+    margin-left: auto;
+    background: rgba(255,255,255,0.04);
+    border: 0.5px solid rgba(255,255,255,0.08);
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+    font-family: var(--mono);
+    display: flex; align-items: center; gap: 5px;
+  }
+ 
+  .mpd { width: 4px; height: 4px; border-radius: 50%; background: var(--red); box-shadow: 0 0 3px var(--red); }
+ 
+  .body-row { display: flex; }
+ 
+  .app-sidebar {
+    width: 180px; min-width: 180px;
+    background: #0a0a0a;
+    border-right: 0.5px solid rgba(255,255,255,0.05);
+  }
+ 
+  .app-sidebar.collapsed { width: 36px; min-width: 36px; }
+ 
+  .sb-header {
+    padding: 8px 10px 4px;
+    font-size: 9px; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: rgba(255,255,255,0.15);
+  }
+ 
+  .sb-new {
+    margin: 0 6px 6px;
+    padding: 5px 8px;
+    background: var(--red);
+    border-radius: 5px;
+    font-size: 10px; font-weight: 500; color: #fff;
+  }
+ 
+  .sb-item {
+    padding: 5px 10px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.25);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    border-radius: 4px; margin: 1px 5px;
+  }
+ 
+  .sb-item.active { background: rgba(229,57,53,0.1); color: rgba(255,255,255,0.55); }
+ 
+  .rail {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 8px 0; gap: 8px;
+  }
+ 
+  .rail-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.1); }
+  .rail-dot.a { background: var(--red); box-shadow: 0 0 3px var(--red); }
+ 
+  .plan-pane {
+    width: 0; min-width: 0; overflow: hidden;
+    background: #0d0d0d;
+    border-right: 0.5px solid rgba(255,255,255,0.05);
+    transition: width 0.3s ease;
+    display: flex; flex-direction: column;
+  }
+ 
+  .plan-pane.open { width: 200px; min-width: 200px; }
+ 
+  .pp-header {
+    padding: 8px 10px 5px;
+    font-size: 9px; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: rgba(255,255,255,0.2);
+    border-bottom: 0.5px solid rgba(255,255,255,0.04);
+  }
+ 
+  .pp-body { padding: 8px 10px; }
+ 
+  .pp-task-lbl {
+    font-size: 9px; color: rgba(255,255,255,0.2);
+    margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+ 
+  .pp-step {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 0;
+    font-size: 9px; color: rgba(255,255,255,0.3);
+  }
+ 
+  .si {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.12);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-size: 7px;
+  }
+ 
+  .si.q { border-color: rgba(255,255,255,0.08); }
+  .si.r { border-color: var(--red); box-shadow: 0 0 3px rgba(229,57,53,0.4); }
+  .si.d { background: rgba(46,204,113,0.15); border-color: #2ecc71; color: #2ecc71; }
+  .si.f { background: rgba(229,57,53,0.15); border-color: var(--red); color: var(--red); }
+  .si.p { background: rgba(241,196,15,0.15); border-color: var(--yellow); color: var(--yellow); }
+ 
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+ 
+  .chat-area {
+    flex: 1; padding: 12px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+ 
+  .ububble {
+    align-self: flex-end;
+    background: #1e1e1e;
+    border: 0.5px solid rgba(255,255,255,0.07);
+    border-radius: 9px 9px 2px 9px;
+    padding: 7px 10px;
+    font-size: 11px; color: rgba(255,255,255,0.65);
+    max-width: 65%;
+  }
+ 
+  .orch-strip {
+    background: #111;
+    border: 0.5px solid rgba(255,255,255,0.05);
+    border-left: 2px solid rgba(229,57,53,0.35);
+    border-radius: 0 6px 6px 0;
+    padding: 6px 10px;
+  }
+ 
+  .orch-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(229,57,53,0.5); margin-bottom: 4px; }
+ 
+  .orch-steps { display: flex; gap: 5px; flex-wrap: wrap; }
+ 
+  .os {
+    font-size: 9px; padding: 2px 6px; border-radius: 3px;
+    background: rgba(255,255,255,0.04);
+    border: 0.5px solid rgba(255,255,255,0.07);
+    color: rgba(255,255,255,0.25);
+  }
+ 
+  .os.active { background: rgba(229,57,53,0.1); border-color: rgba(229,57,53,0.2); color: rgba(229,57,53,0.6); }
+ 
+  .lanes { display: flex; gap: 7px; }
+ 
+  .lane {
+    flex: 1; background: #141414;
+    border: 0.5px solid rgba(255,255,255,0.06);
+    border-radius: 7px; padding: 8px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+ 
+  .lane.paused { border-color: rgba(241,196,15,0.25); background: #141209; }
+ 
+  .lh { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+  .lr { font-size: 9px; font-weight: 500; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.07em; }
+  .lm { font-family: var(--mono); font-size: 8px; color: rgba(255,255,255,0.2); }
+  .lc { font-family: var(--mono); font-size: 8px; color: rgba(255,255,255,0.15); }
+ 
+  .badge {
+    font-size: 8px; padding: 2px 5px; border-radius: 3px;
+    font-weight: 500; white-space: nowrap; border: 0.5px solid;
+  }
+ 
+  .bl { background: rgba(229,57,53,0.15); color: #e57373; border-color: rgba(229,57,53,0.25); }
+  .bd { background: rgba(46,204,113,0.1); color: #81c784; border-color: rgba(46,204,113,0.2); }
+  .bp { background: rgba(241,196,15,0.1); color: #fff176; border-color: rgba(241,196,15,0.25); }
+  .bq { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.07); }
+  .bf { background: rgba(229,57,53,0.1); color: #ef9a9a; border-color: rgba(229,57,53,0.2); }
+ 
+  .lo {
+    font-family: var(--mono); font-size: 8px;
+    color: rgba(255,255,255,0.25); line-height: 1.6; flex: 1;
+  }
+ 
+  .cur {
+    display: inline-block; width: 4px; height: 9px;
+    background: var(--red); animation: blink 1s step-end infinite;
+    vertical-align: middle; margin-left: 2px;
+  }
+ 
+  @keyframes blink { 50% { opacity: 0; } }
+ 
+  .rgate {
+    border-radius: 5px; padding: 5px 8px; font-size: 9px;
+    display: flex; align-items: flex-start; gap: 5px; margin: 3px 0;
+  }
+ 
+  .rgate.pass { background: rgba(46,204,113,0.06); border: 0.5px solid rgba(46,204,113,0.15); color: rgba(255,255,255,0.3); }
+  .rgate.fail { background: rgba(229,57,53,0.07); border: 0.5px solid rgba(229,57,53,0.25); color: rgba(229,57,53,0.6); }
+ 
+  .synth {
+    background: #111;
+    border: 0.5px solid rgba(255,255,255,0.09);
+    border-radius: 7px; padding: 10px;
+  }
+ 
+  .synth-hdr {
+    font-size: 9px; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: rgba(255,255,255,0.25); margin-bottom: 6px;
+    display: flex; align-items: center; gap: 5px;
+  }
+ 
+  .synth-text { font-size: 10px; color: rgba(255,255,255,0.55); line-height: 1.7; }
+ 
+  .ptag {
+    display: inline-block;
+    background: rgba(229,57,53,0.12);
+    border: 0.5px solid rgba(229,57,53,0.25);
+    color: #ef9a9a;
+    font-family: var(--mono); font-size: 8px;
+    padding: 1px 4px; border-radius: 3px; margin: 0 1px;
+  }
+ 
+  .inputbar {
+    padding: 8px 12px;
+    background: #111;
+    border-top: 0.5px solid rgba(255,255,255,0.05);
+  }
+ 
+  .ibox {
+    background: #1a1a1a;
+    border: 0.5px solid rgba(255,255,255,0.07);
+    border-radius: 8px; padding: 6px 10px;
+    position: relative;
+  }
+ 
+  .ibox.ma-active {
+    border-color: rgba(229,57,53,0.4);
+    box-shadow: 0 0 0 1px rgba(229,57,53,0.1), 0 0 14px rgba(229,57,53,0.07);
+    animation: boxGlow 2s ease-in-out infinite alternate;
+  }
+ 
+  @keyframes boxGlow {
+    from { box-shadow: 0 0 0 1px rgba(229,57,53,0.1), 0 0 14px rgba(229,57,53,0.07); }
+    to   { box-shadow: 0 0 0 1px rgba(229,57,53,0.25), 0 0 24px rgba(229,57,53,0.15); }
+  }
+ 
+  .iph { font-size: 10px; color: rgba(255,255,255,0.18); padding: 2px 0 6px; }
+ 
+  .iactions { display: flex; align-items: center; gap: 5px; }
+ 
+  .ibtn {
+    display: flex; align-items: center; gap: 4px;
+    padding: 3px 7px; border-radius: 5px; font-size: 9px;
+    font-weight: 500; border: 0.5px solid; white-space: nowrap;
+    font-family: var(--sans);
+  }
+ 
+  .ibtn-think { background: rgba(229,57,53,0.15); border-color: rgba(229,57,53,0.3); color: #ef9a9a; }
+  .ibtn-perm  { background: transparent; border-color: rgba(255,255,255,0.08); color: rgba(255,255,255,0.25); }
+  .ibtn-ma    { background: rgba(229,57,53,0.1); border-color: rgba(229,57,53,0.25); color: rgba(229,57,53,0.7); position: relative; }
+ 
+  .ibtn-ma.active {
+    background: rgba(229,57,53,0.2); border-color: var(--red); color: #fff;
+    box-shadow: 0 0 8px rgba(229,57,53,0.3), 0 0 20px rgba(229,57,53,0.12);
+    animation: btnPulse 2s ease-in-out infinite alternate;
+  }
+ 
+  @keyframes btnPulse {
+    from { box-shadow: 0 0 5px rgba(229,57,53,0.25), 0 0 14px rgba(229,57,53,0.1); }
+    to   { box-shadow: 0 0 12px rgba(229,57,53,0.5), 0 0 28px rgba(229,57,53,0.22); }
+  }
+ 
+  .gring {
+    position: absolute; inset: -3px; border-radius: 8px;
+    border: 1px solid rgba(229,57,53,0.35);
+    animation: ringPulse 1.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+ 
+  @keyframes ringPulse {
+    0%   { opacity: 0.7; transform: scale(1); }
+    50%  { opacity: 0.2; transform: scale(1.07); }
+    100% { opacity: 0.7; transform: scale(1); }
+  }
+ 
+  .ibtn-locked {
+    background: rgba(255,255,255,0.02);
+    border-color: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.15);
+  }
+ 
+  .ibar-right { margin-left: auto; font-size: 9px; color: rgba(255,255,255,0.15); white-space: nowrap; }
+ 
+  .collapsed-card {
+    background: #141414;
+    border: 0.5px solid rgba(255,255,255,0.05);
+    border-radius: 6px; padding: 6px 9px;
+    display: flex; align-items: center; gap: 7px;
+    font-size: 9px; color: rgba(255,255,255,0.3);
+  }
+ 
+  .hitl-pop {
+    background: #151209;
+    border: 0.5px solid rgba(241,196,15,0.3);
+    border-radius: 7px; padding: 8px 10px; margin: 5px 0;
+  }
+ 
+  .hitl-hdr { font-size: 9px; font-weight: 500; color: #fff176; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 5px; }
+  .hitl-tool {
+    font-family: var(--mono); font-size: 9px;
+    color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.03);
+    border-radius: 4px; padding: 3px 6px; margin-bottom: 6px;
+  }
+ 
+  .hitl-btns { display: flex; gap: 5px; }
+  .hbtn {
+    flex: 1; padding: 4px; border-radius: 4px;
+    font-size: 9px; font-weight: 500; text-align: center;
+    border: 0.5px solid;
+  }
+  .hbtn-a { background: rgba(46,204,113,0.12); border-color: rgba(46,204,113,0.3); color: #81c784; }
+  .hbtn-d { background: rgba(229,57,53,0.08); border-color: rgba(229,57,53,0.2); color: #ef9a9a; }
+  .hbtn-al { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); color: rgba(255,255,255,0.25); font-size: 8px; }
+ 
+  .pp-footer {
+    margin-top: auto; padding: 8px 10px;
+    border-top: 0.5px solid rgba(255,255,255,0.04);
+    font-family: var(--mono); font-size: 8px; color: rgba(255,255,255,0.15);
+  }
+ 
+  /* ── DOCKER SECTION ── */
+  .sandbox-flow {
+    display: flex; flex-direction: column; gap: 0; margin: 20px 0;
+  }
+ 
+  .sf-step {
+    display: flex; gap: 16px; padding-bottom: 20px; position: relative;
+  }
+ 
+  .sf-step::before {
+    content: ''; position: absolute;
+    left: 15px; top: 32px; bottom: 0;
+    width: 1px; background: var(--border);
+  }
+ 
+  .sf-step:last-child::before { display: none; }
+ 
+  .sf-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--bg2); border: 0.5px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 10px; color: var(--text3);
+    flex-shrink: 0;
+  }
+ 
+  .sf-body { flex: 1; }
+  .sf-title { font-size: 12px; font-weight: 600; color: var(--text); padding-top: 6px; margin-bottom: 4px; }
+  .sf-desc { font-size: 12px; color: var(--text3); line-height: 1.6; }
+ 
+  /* ── DOD ── */
+  .dod-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px; margin: 16px 0;
+  }
+ 
+  .dod-item {
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: 7px; padding: 12px 14px;
+    font-size: 12px; color: var(--text2);
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+ 
+  .dod-num {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--red); flex-shrink: 0;
+    background: var(--red-dim); padding: 2px 6px; border-radius: 4px;
+  }
+ 
+  /* ── AGENT EVENT TYPES ── */
+  .event-grid {
+    display: flex; flex-direction: column; gap: 4px; margin: 12px 0;
+  }
+ 
+  .event-row {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 6px 10px;
+    background: var(--bg2); border-radius: 5px;
+    font-size: 12px;
+  }
+ 
+  .event-type {
+    font-family: var(--mono); font-size: 11px;
+    color: rgba(229,57,53,0.7); white-space: nowrap; min-width: 180px;
+  }
+ 
+  .event-payload { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+</style>
+</head>
+<body>
+ 
+<nav>
+  <div class="nav-brand"><div class="nav-dot"></div>Desktop Intelligence</div>
+  <a href="#overview" class="active">Overview</a>
+  <a href="#decisions">Key Decisions</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#scope">Implementation Scope</a>
+  <a href="#mockups">UI Mockups</a>
+  <a href="#sandbox">Sandboxing</a>
+  <a href="#dod">Definition of Done</a>
+</nav>
+ 
+<div style="max-width:900px; margin:0 auto; padding: 60px 40px 40px;">
+  <div class="hero-tag">Specification Document</div>
+  <h1>Multi-Agent<br>Orchestration Mode</h1>
+  <p class="hero-sub">A complete design and implementation reference for the multi-agent orchestration feature in Desktop Intelligence. This document is intended to be fully self-contained — a new engineer or AI assistant should be able to read this and understand the full context, decisions, and build plan without needing to read the conversation that produced it.</p>
+  <div class="meta-row">
+    <div class="meta-item">Project <span>Desktop Intelligence</span></div>
+    <div class="meta-item">Version <span>pre-implementation</span></div>
+    <div class="meta-item">Last updated <span>2026-05-29</span></div>
+    <div class="meta-item">Backend <span>OpenRouter only</span></div>
+    <div class="meta-item">Orchestration <span>LangGraph (Python sidecar)</span></div>
+  </div>
+</div>
+ 
+<div class="page" style="max-width:1100px; margin:0 auto;">
+ 
+  <nav class="sidebar-nav" style="position:relative; top:0; height:auto;">
+    <div class="snav-section">
+      <div class="snav-label">Sections</div>
+      <a href="#overview" class="snav-link">Overview & Motivation</a>
+      <a href="#decisions" class="snav-link">Key Decisions</a>
+      <a href="#architecture" class="snav-link">Architecture</a>
+      <a href="#agent-types" class="snav-link">Agent Types</a>
+      <a href="#events" class="snav-link">AgentEvent Contract</a>
+      <a href="#cost" class="snav-link">Cost & Model Selection</a>
+      <a href="#hitl" class="snav-link">HITL Expansion</a>
+      <a href="#scope" class="snav-link">Implementation Scope</a>
+      <a href="#mockups" class="snav-link">UI Mockups</a>
+      <a href="#sandbox" class="snav-link">Docker Sandboxing</a>
+      <a href="#phases" class="snav-link">Build Phases</a>
+      <a href="#dod" class="snav-link">Definition of Done</a>
+      <a href="#deferred" class="snav-link">Out of Scope</a>
+    </div>
+  </nav>
+ 
+  <div class="content">
+ 
+    <!-- OVERVIEW -->
+    <section id="overview">
+      <h2><span class="section-num">01</span> Overview & Motivation</h2>
+ 
+      <p>Desktop Intelligence currently operates in single-model mode: one inference call per user message, one context window, sequential tool calls. This works well for conversational tasks but hits structural limits on complex, multi-step work.</p>
+ 
+      <p>Multi-agent orchestration mode allows a network of specialized agents to work in parallel, with reflection gates between steps and a synthesis phase at the end. The result is a system that can handle tasks that frontier web products (Claude.ai, ChatGPT, Gemini) literally cannot — not because of capability gaps, but because of architectural ones.</p>
+ 
+      <h3>What single-model cannot do well</h3>
+ 
+      <table>
+        <tr><th>Task</th><th>Why single-model fails</th><th>How multi-agent solves it</th></tr>
+        <tr><td>Analyze an entire large codebase</td><td>Context window fills before all files are read</td><td>Parallel agents each read a module; synthesizer assembles</td></tr>
+        <tr><td>Cross-verified research</td><td>One model can't adversarially review its own output</td><td>Critic agent independently reviews with fresh context</td></tr>
+        <tr><td>Code + independent tests</td><td>Tests written by the same model that wrote the code confirm implementation, not correctness</td><td>Test agent never sees implementation agent's code</td></tr>
+        <tr><td>Long-horizon tasks</td><td>50-step tasks hit context limits or degrade in quality</td><td>Orchestrator decomposes; each agent has a fresh window</td></tr>
+        <tr><td>Multi-perspective analysis</td><td>One model doing impressions of multiple viewpoints</td><td>Each agent given a different system prompt / role</td></tr>
+      </table>
+ 
+      <div class="callout callout-red">
+        <strong>The differentiating demo:</strong> "Clone this GitHub repo, run the tests, identify the three highest-risk areas, and write a prioritized remediation plan." Claude.ai cannot do this. ChatGPT cannot do this. Desktop Intelligence, with its local filesystem access and multi-agent execution, can.
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- KEY DECISIONS -->
+    <section id="decisions">
+      <h2><span class="section-num">02</span> Key Decisions</h2>
+ 
+      <p>These decisions were made during design and should not be revisited without good reason. Context for each is included.</p>
+ 
+      <div class="decision-grid">
+        <div class="decision-card">
+          <div class="decision-label">Backend</div>
+          <div class="decision-value">OpenRouter only</div>
+          <div class="decision-reason">Only provider with a unified API across 200+ models, enabling per-agent model routing within a single session. LM Studio, Ollama, NVIDIA are single-model by nature.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Orchestration runtime</div>
+          <div class="decision-value">Python sidecar (LangGraph)</div>
+          <div class="decision-reason">LangGraph provides state machine primitives (reflection loops, retry, conditional branching, HITL pause) that would take weeks to rebuild correctly in TypeScript.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Sidecar communication</div>
+          <div class="decision-value">localhost HTTP + SSE</div>
+          <div class="decision-reason">FastAPI on localhost:7823. SSE for event streaming back to Electron. Mirrors existing matplotlib worker pattern already proven in the codebase.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Agent count</div>
+          <div class="decision-value">Dynamic, orchestrator-decided</div>
+          <div class="decision-reason">Orchestrator model decomposes the task and decides how many agents to spawn. User sets a hard cap (default: 4) and per-run budget cap (default: $0.50) as guardrails.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Model selection</div>
+          <div class="decision-value">Full OpenRouter catalogue, filtered</div>
+          <div class="decision-reason">No curated shortlist — too much maintenance burden. Fetch /api/v1/models at runtime, filter by tool-call support + context length. Show price/1M tokens. Default: Llama 3.3 70B for orchestrator + reflection; user picks worker model.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Sandboxing (code execution)</div>
+          <div class="decision-value">Docker (opt-in, Phase 2)</div>
+          <div class="decision-reason">E2B considered but adds cloud dependency and ongoing cost. Docker runs locally, no data leaves machine, user brings their own Docker Desktop. Not required for MVP — agents can read via Filesystem MCP without execution.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Per-chat system prompt</div>
+          <div class="decision-value">Deferred — decision pending</div>
+          <div class="decision-reason">Useful for multi-agent but not blocking MVP. Each agent gets a role-specific system prompt from the orchestrator. Global system prompt applies as base.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Sidebar layout</div>
+          <div class="decision-value">Mutually exclusive panels</div>
+          <div class="decision-reason">Chat sidebar and orchestrator plan pane cannot both be open simultaneously. Sending a task auto-collapses the chat sidebar. Opening the sidebar collapses the plan pane. Both collapse to a 40px dot rail, never to zero.</div>
+        </div>
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- ARCHITECTURE -->
+    <section id="architecture">
+      <h2><span class="section-num">03</span> Architecture</h2>
+ 
+      <pre><code>Renderer (React/TypeScript)         Main Process (Electron/Node)
+──────────────────────────          ────────────────────────────────
+MultiAgentPanel                     IPC handlers
+  OrchestratorPlanPane                multi-agent:start
+  AgentLanes                          multi-agent:event-stream
+  SynthesisBlock                      multi-agent:hitl-respond
+  HITLPopup (expanded)                multi-agent:abort
+InputBar (ma-mode toggle)             multi-agent:sidecar-status
+                                    ↓
+                                    Python Sidecar (localhost:7823)
+                                    FastAPI + LangGraph
+                                      POST /run
+                                      GET  /run/{id}/stream  (SSE)
+                                      POST /run/{id}/hitl
+                                      DELETE /run/{id}
+                                      GET  /health
+                                      ↓
+                                    LangGraph State Machine
+                                      Orchestrator node
+                                      Worker agent nodes (parallel)
+                                      Reflection nodes
+                                      Retry edges
+                                      Synthesis node
+                                      ↓
+                                    OpenRouter API
+                                    (one API key, multiple models)</code></pre>
+ 
+      <h3>Sidecar process lifecycle</h3>
+      <p>The Python sidecar follows the same pattern as the existing matplotlib worker. It is spawned from <code>index.ts</code> when the app starts (if OpenRouter is the active backend, or on first multi-agent run — decision pending). It runs a health check ping every 10 seconds and is restarted automatically on crash. On app quit, it is cleanly terminated — no orphaned processes. Port default is <code>7823</code>, configurable in settings.</p>
+ 
+      <h3>Sidecar binary strategy</h3>
+      <p>Two options remain open: <code>pyinstaller</code> frozen binary (bundled in DMG, no Python requirement) vs. system Python + venv (simpler to develop, requires Python 3.11+ installed). Decision must be made before shipping. Frozen binary is preferred for the distributed app.</p>
+    </section>
+ 
+    <hr>
+ 
+    <!-- AGENT TYPES -->
+    <section id="agent-types">
+      <h2><span class="section-num">04</span> Agent Roles</h2>
+ 
+      <table>
+        <tr><th>Role</th><th>Runs</th><th>Default Model</th><th>Purpose</th></tr>
+        <tr>
+          <td>Orchestrator</td>
+          <td>Once, at start</td>
+          <td><code>meta-llama/llama-3.3-70b</code></td>
+          <td>Receives task, decomposes into AgentStep[], emits orchestrator_plan event. Enforces max-agent cap. Model must be good at structured JSON output.</td>
+        </tr>
+        <tr>
+          <td>Worker agents</td>
+          <td>1–N in parallel</td>
+          <td>User-configured (filtered OpenRouter catalogue)</td>
+          <td>Execute individual subtasks. Each gets its own context window, role-specific system prompt, and can call MCP tools. Most expensive — model choice here drives cost.</td>
+        </tr>
+        <tr>
+          <td>Reflection agent</td>
+          <td>After each worker</td>
+          <td><code>meta-llama/llama-3.3-70b</code></td>
+          <td>Receives goal spec + worker output. Returns score (1–5), passed (bool), reason (string). Cheap — pass/fail scoring is simple. Same model as orchestrator is fine.</td>
+        </tr>
+        <tr>
+          <td>Synthesizer</td>
+          <td>Once, at end</td>
+          <td>User-configured (default: Qwen3 235B or similar)</td>
+          <td>Receives all agent outputs + reflection results. Produces final answer with inline provenance markers. Runs on a large combined context — needs good long-context performance.</td>
+        </tr>
+      </table>
+ 
+      <div class="callout callout-yellow">
+        <strong>On Llama 3.3 70B:</strong> Validated by Databricks engineering teams for agentic workloads. Strong at structured JSON plans, tool calls, and instruction following. Fast and cheap enough that the orchestration overhead doesn't feel punishing. Good default — not a controversial pick.
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- AGENT EVENTS -->
+    <section id="events">
+      <h2><span class="section-num">05</span> AgentEvent Contract</h2>
+ 
+      <p>This is the SSE event schema emitted by the Python sidecar and consumed by the Electron renderer. Define this in <code>shared/types.ts</code> before writing either side. Both the sidecar and the UI scaffold are built against this contract independently.</p>
+ 
+      <div class="event-grid">
+        <div class="event-row"><span class="event-type">orchestrator_plan</span><span class="event-payload">{ steps: AgentStep[] }</span></div>
+        <div class="event-row"><span class="event-type">agent_start</span><span class="event-payload">{ agentId, role, model }</span></div>
+        <div class="event-row"><span class="event-type">agent_token</span><span class="event-payload">{ agentId, token }</span></div>
+        <div class="event-row"><span class="event-type">agent_complete</span><span class="event-payload">{ agentId, output, tokenCount, costUsd }</span></div>
+        <div class="event-row"><span class="event-type">reflection_start</span><span class="event-payload">{ agentId }</span></div>
+        <div class="event-row"><span class="event-type">reflection_result</span><span class="event-payload">{ agentId, score: 1-5, passed: bool, reason }</span></div>
+        <div class="event-row"><span class="event-type">retry</span><span class="event-payload">{ agentId, attempt, reason }</span></div>
+        <div class="event-row"><span class="event-type">hitl_pause</span><span class="event-payload">{ agentId, role, toolName, serverName, args }</span></div>
+        <div class="event-row"><span class="event-type">hitl_resume</span><span class="event-payload">{ agentId, approved }</span></div>
+        <div class="event-row"><span class="event-type">sandbox_start</span><span class="event-payload">{ agentId, containerId } — Phase 2</span></div>
+        <div class="event-row"><span class="event-type">sandbox_output</span><span class="event-payload">{ agentId, stdout, stderr } — Phase 2</span></div>
+        <div class="event-row"><span class="event-type">sandbox_end</span><span class="event-payload">{ agentId, exitCode } — Phase 2</span></div>
+        <div class="event-row"><span class="event-type">synthesis_start</span><span class="event-payload">{ }</span></div>
+        <div class="event-row"><span class="event-type">synthesis_token</span><span class="event-payload">{ token }</span></div>
+        <div class="event-row"><span class="event-type">task_complete</span><span class="event-payload">{ finalOutput, totalCostUsd, totalTokens }</span></div>
+        <div class="event-row"><span class="event-type">task_failed</span><span class="event-payload">{ reason, partialOutputs? }</span></div>
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- COST & MODEL SELECTION -->
+    <section id="cost">
+      <h2><span class="section-num">06</span> Cost Control & Model Selection</h2>
+ 
+      <h3>The problem</h3>
+      <p>A runaway orchestrator could spawn 6+ agents and burn significant budget before the user notices. OpenRouter's free tier for some models silently times out rather than returning an error (observed with NVIDIA). Multiple safeguards are required.</p>
+ 
+      <h3>Three-layer protection</h3>
+ 
+      <table>
+        <tr><th>Layer</th><th>Mechanism</th><th>Default</th></tr>
+        <tr>
+          <td>Hard agent cap</td>
+          <td>Setting in Multi-Agent config. Baked into orchestrator system prompt: "You may spawn a maximum of {maxAgents} agents." Sidecar also enforces — if orchestrator_plan arrives with more agents than cap, sidecar rejects and re-plans.</td>
+          <td>4 agents</td>
+        </tr>
+        <tr>
+          <td>Per-run budget cap</td>
+          <td>Dollar limit set before sending. Sidecar tracks cumulative spend using OpenRouter usage fields in streaming responses. When cap is hit: no new agents spawned, running agents finish current response, synthesis runs on partial output, UI shows "Budget cap reached" badge.</td>
+          <td>$0.50</td>
+        </tr>
+        <tr>
+          <td>Pre-flight approval</td>
+          <td>Orchestrator plan event received → UI shows plan tree + cost estimate range → user approves before any worker agents fire. Same HITL component pattern. Cost estimate is a range (e.g. "$0.04 – $0.18") with worst-case prominently shown. Estimates are rough — token counts for tool calls are unknown pre-execution.</td>
+          <td>Always shown</td>
+        </tr>
+      </table>
+ 
+      <h3>Model selection UI</h3>
+      <p>No curated shortlist — too much ongoing maintenance as models are added/deprecated on OpenRouter. Instead, fetch <code>/api/v1/models</code> at runtime and present a filtered dropdown with three user-configurable filters: sort by price ascending, minimum context length, requires tool-call support. This cuts 200+ models to ~20 relevant ones. Price per million tokens is shown next to each model name. Claude Sonnet, Gemini Pro etc. are available but not defaulted — if a user wants to spend that, it's their call.</p>
+ 
+      <div class="callout callout-neutral">
+        <strong>Role tiers:</strong> Rather than per-agent manual selection (impractical since agent roles are dynamic), expose four model slots: Orchestrator, Worker agents (global for all workers), Reflection, Synthesizer. User picks one model per slot. All worker agents in a run use the same worker model.
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- HITL -->
+    <section id="hitl">
+      <h2><span class="section-num">07</span> HITL Expansion for Multi-Agent</h2>
+ 
+      <p>The existing HITL system (4 permission layers: per-server persistent, per-chat require-all, per-chat bypass-all, inline popup) is the right foundation. Multi-agent mode requires three additions.</p>
+ 
+      <table>
+        <tr><th>Addition</th><th>What changes</th></tr>
+        <tr>
+          <td>Agent identity on popup</td>
+          <td>The existing popup shows tool name + server + args. Multi-agent adds: which agent triggered it (role + model). "Analyzer Agent (claude-3.5-sonnet) is requesting access to read_file." Without this the user has no context for why the tool is being called mid-run.</td>
+        </tr>
+        <tr>
+          <td>Per-agent permission scoping</td>
+          <td>Trust/block at the agent level within a run, not just at server level. A user may want to trust the Researcher agent fully but keep the Analyzer agent gated, within the same run. New layer: agent-level trust, sits between per-chat and per-server.</td>
+        </tr>
+        <tr>
+          <td>Non-blocking parallel pauses</td>
+          <td>Current HITL is fully blocking — one popup, everything waits. In multi-agent, Agent 1 hitting a permission gate must NOT freeze Agent 2 if they are independent. Sidecar handles per-agent pause/resume. UI shows multiple simultaneous pending approvals — each paused step highlighted in the plan pane, each with its own resolve action. Input bar names the specific agent waiting.</td>
+        </tr>
+      </table>
+ 
+      <h3>HITL timeout</h3>
+      <p>If a HITL pause goes unanswered, the sidecar auto-denies the tool call after a configurable timeout (default 5 minutes) and emits a failure event for that agent. The run continues with the other agents and synthesizes on partial output.</p>
+    </section>
+ 
+    <hr>
+ 
+    <!-- SCOPE CHECKLIST -->
+    <section id="scope">
+      <h2><span class="section-num">08</span> Implementation Scope</h2>
+ 
+      <div class="callout callout-neutral">Check off items as implemented. Do not modify objectives retroactively. This is the source of truth for what "done" means.</div>
+ 
+      <h3>Foundation — Database</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div><code>conversations</code> table: add <code>mode</code> column ('single' | 'multi-agent')</li>
+        <li><div class="check-box"></div><code>conversations</code> table: add <code>agent_graph</code> column (JSON)</li>
+        <li><div class="check-box"></div><code>conversations</code> table: add <code>execution_trace</code> column (JSON — ordered AgentEvents)</li>
+        <li><div class="check-box"></div><code>conversations</code> table: add <code>run_status</code> column ('idle' | 'running' | 'paused_hitl' | 'completed' | 'failed')</li>
+        <li><div class="check-box"></div>SQLite migration script written and tested</li>
+        <li><div class="check-box"></div>Migration runs automatically on app start (version-gated)</li>
+      </ul>
+ 
+      <h3>Foundation — Shared Types</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div><code>AgentEvent</code> discriminated union defined in <code>shared/types.ts</code> (all event types per section 05)</li>
+        <li><div class="check-box"></div><code>AgentStep</code> type defined</li>
+        <li><div class="check-box"></div><code>MultiAgentConfig</code> type defined (model slots, reflection threshold, max retries, max agents, budget cap)</li>
+        <li><div class="check-box"></div><code>SandboxConfig</code> type defined (for Phase 2 Docker — repo URL, network policy, write-back flag)</li>
+      </ul>
+ 
+      <h3>Foundation — IPC Channels</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div><code>multi-agent:start</code> — accepts task + config, starts sidecar run, returns run ID</li>
+        <li><div class="check-box"></div><code>multi-agent:event-stream</code> — SSE from sidecar forwarded to renderer</li>
+        <li><div class="check-box"></div><code>multi-agent:hitl-respond</code> — accepts { runId, agentId, approved }, unblocks paused agent</li>
+        <li><div class="check-box"></div><code>multi-agent:abort</code> — cleanly cancels in-progress run</li>
+        <li><div class="check-box"></div><code>multi-agent:sidecar-status</code> — returns 'running' | 'stopped' | 'error'</li>
+        <li><div class="check-box"></div>Synthetic ready-state response for all channels when sidecar is not running</li>
+      </ul>
+ 
+      <h3>Foundation — Sidecar Lifecycle</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Python sidecar spawned from <code>index.ts</code> (reference: existing matplotlib worker)</li>
+        <li><div class="check-box"></div>Health check ping loop (every 10s) with auto-restart on crash</li>
+        <li><div class="check-box"></div>Clean shutdown on app quit — no orphaned Python processes</li>
+        <li><div class="check-box"></div>Port conflict detection (localhost:7823 default)</li>
+        <li><div class="check-box"></div>Sidecar binary strategy decided: pyinstaller vs system Python</li>
+        <li><div class="check-box"></div>Sidecar logs routed through observability system with [Sidecar] prefix</li>
+      </ul>
+ 
+      <h3>Python Sidecar — Infrastructure</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>FastAPI server on localhost:7823</li>
+        <li><div class="check-box"></div>POST /run — task + config → run ID</li>
+        <li><div class="check-box"></div>GET /run/{id}/stream — SSE AgentEvent stream</li>
+        <li><div class="check-box"></div>POST /run/{id}/hitl — resume paused agent</li>
+        <li><div class="check-box"></div>DELETE /run/{id} — abort</li>
+        <li><div class="check-box"></div>GET /health — ping</li>
+        <li><div class="check-box"></div>OpenRouter API key passed from Electron settings</li>
+      </ul>
+ 
+      <h3>Python Sidecar — Orchestrator</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Decomposes task into AgentStep[] using fast model</li>
+        <li><div class="check-box"></div>Emits orchestrator_plan before any agents start</li>
+        <li><div class="check-box"></div>Enforces max-agent cap — rejects and re-plans if exceeded</li>
+        <li><div class="check-box"></div>Supports sequential and parallel step execution</li>
+        <li><div class="check-box"></div>Handles partial failure — one agent failing does not abort run</li>
+      </ul>
+ 
+      <h3>Python Sidecar — Worker Agents</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Each agent gets own context window (no shared state bleed)</li>
+        <li><div class="check-box"></div>Model per role configurable in MultiAgentConfig</li>
+        <li><div class="check-box"></div>Agents can call MCP tools (passed through from Electron's McpServerManager)</li>
+        <li><div class="check-box"></div>Agent output is structured: role, output, tool calls, token count, cost</li>
+        <li><div class="check-box"></div>Emits agent_start, agent_token (streaming), agent_complete</li>
+      </ul>
+ 
+      <h3>Python Sidecar — Reflection</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Reflection agent receives goal spec + worker output</li>
+        <li><div class="check-box"></div>Returns { score: 1-5, passed: bool, reason: string }</li>
+        <li><div class="check-box"></div>Configurable pass threshold (default ≥ 3)</li>
+        <li><div class="check-box"></div>Failed reflection triggers automatic retry with failure context injected</li>
+        <li><div class="check-box"></div>Max retry limit per agent (default: 2) → task_failed if exceeded</li>
+        <li><div class="check-box"></div>Emits reflection_start, reflection_result, retry</li>
+      </ul>
+ 
+      <h3>Python Sidecar — Synthesis</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Synthesizer receives all agent outputs + reflection results</li>
+        <li><div class="check-box"></div>Produces final answer with inline provenance markers ([1.1], [1.2])</li>
+        <li><div class="check-box"></div>Streams token by token via synthesis_token</li>
+        <li><div class="check-box"></div>Emits task_complete with total cost + token summary</li>
+      </ul>
+ 
+      <h3>Python Sidecar — HITL</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Pauses agent execution when tool requires approval</li>
+        <li><div class="check-box"></div>Emits hitl_pause with agentId, role, full tool args</li>
+        <li><div class="check-box"></div>Other independent agents continue running during pause</li>
+        <li><div class="check-box"></div>Timeout: auto-deny after 5 min (configurable)</li>
+      </ul>
+ 
+      <h3>Frontend — Multi-Agent Mode Button</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Glowing button next to "Require Permissions" in InputBar</li>
+        <li><div class="check-box"></div>Only visible when OpenRouter is active backend</li>
+        <li><div class="check-box"></div>Click toggles mode on/off for current session</li>
+        <li><div class="check-box"></div>Inactive: subtle red-tinted outline</li>
+        <li><div class="check-box"></div>Active: pulsing glow ring (Apple Intelligence-style), input box picks up breathing border glow</li>
+      </ul>
+ 
+      <h3>Frontend — Layout State Machine</h3>
+      <table>
+        <tr><th>State</th><th>Chat Sidebar</th><th>Plan Pane</th><th>Input Bar</th></tr>
+        <tr><td>Composing</td><td>Open</td><td>Hidden</td><td>Active</td></tr>
+        <tr><td>Pre-flight approval</td><td>Collapsed</td><td>Open (plan preview)</td><td>Locked (approve/cancel)</td></tr>
+        <tr><td>Running</td><td>Collapsed</td><td>Open</td><td>Locked ("Agents running...")</td></tr>
+        <tr><td>HITL Pause</td><td>Collapsed</td><td>Open, paused step pulsing</td><td>Locked (agent-specific prompt)</td></tr>
+        <tr><td>Complete</td><td>Collapsed</td><td>Open, all resolved</td><td>Unlocked</td></tr>
+        <tr><td>Post-review</td><td>Open (user opened)</td><td>Auto-collapses</td><td>Active</td></tr>
+      </table>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Chat sidebar auto-collapses on task send (animated)</li>
+        <li><div class="check-box"></div>Plan pane slides in from left simultaneously</li>
+        <li><div class="check-box"></div>Mutual exclusion enforced: chat sidebar open → plan pane collapses, and vice versa</li>
+        <li><div class="check-box"></div>Both panels collapse to 40px dot rail — never to zero width</li>
+      </ul>
+ 
+      <h3>Frontend — Orchestrator Plan Pane</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>~280px fixed left panel (collapsible to 40px rail)</li>
+        <li><div class="check-box"></div>Task decomposition tree with expandable nodes</li>
+        <li><div class="check-box"></div>Each step: status icon, label, agent+model, elapsed time</li>
+        <li><div class="check-box"></div>Status: queued / running (pulsing) / passed / failed / retrying / paused (HITL)</li>
+        <li><div class="check-box"></div>Cost summary footer (total tokens, total $) — updates live</li>
+      </ul>
+ 
+      <h3>Frontend — Agent Execution Area</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Agent cards in a grid (2-column max for parallel agents)</li>
+        <li><div class="check-box"></div>Each card: role, model, status badge, live token/cost counter</li>
+        <li><div class="check-box"></div>Streaming output in cards — same pattern as MessageBubble</li>
+        <li><div class="check-box"></div>Completed agents collapse to summary card</li>
+        <li><div class="check-box"></div>Reflection gate rendered between agent output and next step</li>
+        <li><div class="check-box"></div>Synthesis block is visually distinct: full width, different background</li>
+        <li><div class="check-box"></div">Provenance tags [1.1] [1.2] rendered as clickable chips in synthesis text</li>
+      </ul>
+ 
+      <h3>Frontend — HITL Expansion</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Popup shows agentId + role in header</li>
+        <li><div class="check-box"></div>Multiple simultaneous popups supported</li>
+        <li><div class="check-box"></div>Per-agent trust level: trust this agent / block this agent (within run)</li>
+        <li><div class="check-box"></div>Input bar shows agent-specific waiting message</li>
+      </ul>
+ 
+      <h3>Settings — Multi-Agent Config</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Max agents slider (1–8, default 4)</li>
+        <li><div class="check-box"></div>Per-run budget cap input (default $0.50)</li>
+        <li><div class="check-box"></div>Orchestrator model dropdown (filtered OpenRouter catalogue)</li>
+        <li><div class="check-box"></div>Worker model dropdown (same)</li>
+        <li><div class="check-box"></div>Reflection model dropdown (same)</li>
+        <li><div class="check-box"></div>Synthesizer model dropdown (same)</li>
+        <li><div class="check-box"></div>Reflection pass threshold slider (1–5, default 3)</li>
+        <li><div class="check-box"></div>Max retries per agent (1–5, default 2)</li>
+        <li><div class="check-box"></div>HITL default for multi-agent runs</li>
+      </ul>
+ 
+      <h3>Observability</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>All AgentEvents appended to existing session trace</li>
+        <li><div class="check-box"></div>agentId and stepType fields added to trace schema</li>
+        <li><div class="check-box"></div>Cost summary per run in trace</li>
+        <li><div class="check-box"></div>Trace readable from existing observability logs panel</li>
+      </ul>
+    </section>
+ 
+    <hr>
+ 
+    <!-- MOCKUPS -->
+    <section id="mockups">
+      <h2><span class="section-num">09</span> UI Mockups</h2>
+      <p>These mockups follow the existing app's design language: dark background (#0e0e0e), red (#e53935) accent, JetBrains Mono for code/data, Syne for UI text. The VSCode-split-pane aesthetic is intentional for power-user density.</p>
+ 
+      <!-- SCREEN 1 -->
+      <div class="mockup-section">
+        <div class="mockup-label">Screen 1 — Idle: multi-agent button, inactive state</div>
+        <div class="app-frame">
+          <div class="topbar">
+            <div class="td td-r"></div><div class="td td-y"></div><div class="td td-g"></div>
+            <div class="model-pill"><div class="mpd"></div>mistralai/mistral-medium-3-5</div>
+          </div>
+          <div class="body-row" style="height:220px;">
+            <div class="app-sidebar">
+              <div class="sb-header">Chats</div>
+              <div class="sb-new">+ New Chat</div>
+              <div class="sb-item active">Analyze MU's recent stock...</div>
+              <div class="sb-item">what did I even do here</div>
+              <div class="sb-item">explain all capabilities...</div>
+              <div class="sb-item">5 highest value AI/LLM...</div>
+            </div>
+            <div class="main">
+              <div class="chat-area" style="justify-content:center; align-items:center;">
+                <div style="font-size:11px; color:rgba(255,255,255,0.1); text-align:center;">Start a conversation...</div>
+              </div>
+              <div class="inputbar">
+                <div class="ibox">
+                  <div class="iph">Message... (Shift+Enter for newline)</div>
+                  <div class="iactions">
+                    <div class="ibtn ibtn-think">🧠 Thinking</div>
+                    <div class="ibtn ibtn-perm">◯ Require Permissions</div>
+                    <div class="ibtn ibtn-ma">◈ Multi-Agent Mode</div>
+                    <div class="ibar-right">↵ send · ⇧↵ newline</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+ 
+      <!-- SCREEN 2 -->
+      <div class="mockup-section">
+        <div class="mockup-label">Screen 2 — Multi-agent mode activated, pre-send (glow active)</div>
+        <div class="app-frame">
+          <div class="topbar">
+            <div class="td td-r"></div><div class="td td-y"></div><div class="td td-g"></div>
+            <div class="model-pill"><div class="mpd"></div>openrouter · multi-agent</div>
+          </div>
+          <div class="body-row" style="height:220px;">
+            <div class="app-sidebar">
+              <div class="sb-header">Chats</div>
+              <div class="sb-new">+ New Chat</div>
+              <div class="sb-item active">Analyze MU's recent stock...</div>
+              <div class="sb-item">what did I even do here</div>
+              <div class="sb-item">explain all capabilities...</div>
+            </div>
+            <div class="main">
+              <div class="chat-area" style="justify-content:center; align-items:center; text-align:center;">
+                <div style="font-size:10px; color:rgba(229,57,53,0.45); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:5px;">Multi-Agent Mode Active</div>
+                <div style="font-size:10px; color:rgba(255,255,255,0.15);">Powered by OpenRouter · specialist agents will run in parallel</div>
+              </div>
+              <div class="inputbar">
+                <div class="ibox ma-active">
+                  <div class="iph" style="color:rgba(255,255,255,0.28);">Describe a complex task for the agent network...</div>
+                  <div class="iactions">
+                    <div class="ibtn ibtn-think">🧠 Thinking</div>
+                    <div class="ibtn ibtn-perm">◯ Require Permissions</div>
+                    <div class="ibtn ibtn-ma active" style="position:relative;">
+                      <div class="gring"></div>
+                      ◈ Multi-Agent Mode
+                    </div>
+                    <div class="ibar-right">↵ send</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+ 
+      <!-- SCREEN 3 -->
+      <div class="mockup-section">
+        <div class="mockup-label">Screen 3 — Run in progress: sidebar collapsed, plan pane open, agents live</div>
+        <div class="app-frame">
+          <div class="topbar">
+            <div class="td td-r"></div><div class="td td-y"></div><div class="td td-g"></div>
+            <div class="model-pill"><div class="mpd"></div>openrouter · multi-agent · running</div>
+          </div>
+          <div class="body-row" style="height:360px;">
+            <div class="app-sidebar collapsed">
+              <div class="rail">
+                <div class="rail-dot a"></div>
+                <div class="rail-dot"></div>
+                <div class="rail-dot"></div>
+              </div>
+            </div>
+            <div class="plan-pane open">
+              <div class="pp-header">Orchestrator Plan</div>
+              <div class="pp-body">
+                <div class="pp-task-lbl">Analyze MU stock + codebase impact</div>
+                <div class="pp-step"><div class="si d">✓</div><span>1. Planning</span></div>
+                <div class="pp-step"><div class="si r"></div><span style="color:rgba(229,57,53,0.6);">1.1 Market research</span></div>
+                <div class="pp-step"><div class="si r"></div><span style="color:rgba(229,57,53,0.6);">1.2 Code analysis</span></div>
+                <div class="pp-step"><div class="si q"></div><span>1.3 Reflection gates</span></div>
+                <div class="pp-step"><div class="si q"></div><span>1.4 Synthesis</span></div>
+              </div>
+            </div>
+            <div class="main">
+              <div class="chat-area">
+                <div class="ububble">Analyze MU's recent stock performance and cross-reference with our quantization_core.py implementation</div>
+                <div class="orch-strip">
+                  <div class="orch-lbl">Orchestrator · llama-3.3-70b</div>
+                  <div class="orch-steps">
+                    <div class="os active">1.1 Market Research</div>
+                    <div class="os active">1.2 Code Analysis</div>
+                    <div class="os">1.3 Reflect</div>
+                    <div class="os">1.4 Synthesize</div>
+                  </div>
+                </div>
+                <div class="lanes">
+                  <div class="lane">
+                    <div class="lh">
+                      <div><div class="lr">Researcher</div><div class="lm">gpt-4o</div></div>
+                      <div style="display:flex;gap:4px;align-items:center;"><div class="lc">~$0.002</div><div class="badge bl">Live</div></div>
+                    </div>
+                    <div class="lo">Searching: "MU stock Q2 2026"<br>→ VentureBeat: MU +14% on AI...<br>→ Bloomberg: memory demand up...<br>Searching: "micron earnings 2026"<br><span class="cur"></span></div>
+                  </div>
+                  <div class="lane">
+                    <div class="lh">
+                      <div><div class="lr">Analyzer</div><div class="lm">claude-3.5-sonnet</div></div>
+                      <div style="display:flex;gap:4px;align-items:center;"><div class="lc">~$0.004</div><div class="badge bl">Live</div></div>
+                    </div>
+                    <div class="lo">Reading: quantization_core.py<br>class Mentization:<br>&nbsp;&nbsp;def quantize(self, t):<br>Notes: QJL hooks present...<br><span class="cur"></span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="inputbar">
+                <div class="ibox">
+                  <div class="iactions" style="justify-content:space-between;">
+                    <div class="ibtn ibtn-locked">⟳ Agents running...</div>
+                    <div class="ibar-right" style="font-size:9px;">abort run</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+ 
+      <!-- SCREEN 4 -->
+      <div class="mockup-section">
+        <div class="mockup-label">Screen 4 — HITL pause: agent 1.2 blocked, agent 1.3b continues independently</div>
+        <div class="app-frame">
+          <div class="topbar">
+            <div class="td td-r"></div><div class="td td-y"></div><div class="td td-g"></div>
+            <div class="model-pill"><div class="mpd" style="background:#f1c40f;box-shadow:0 0 3px #f1c40f;"></div>openrouter · agent 1.2 paused</div>
+          </div>
+          <div class="body-row" style="height:360px;">
+            <div class="app-sidebar collapsed">
+              <div class="rail"><div class="rail-dot a"></div><div class="rail-dot"></div><div class="rail-dot"></div></div>
+            </div>
+            <div class="plan-pane open">
+              <div class="pp-header">Orchestrator Plan</div>
+              <div class="pp-body">
+                <div class="pp-task-lbl">Analyze MU stock + codebase</div>
+                <div class="pp-step"><div class="si d">✓</div><span>1. Planning</span></div>
+                <div class="pp-step"><div class="si d">✓</div><span>1.1 Market research</span></div>
+                <div class="pp-step"><div class="si p">!</div><span style="color:#fff176;">1.2 Code analysis</span></div>
+                <div class="pp-step"><div class="si r"></div><span style="color:rgba(229,57,53,0.6);">1.3b Validator</span></div>
+                <div class="pp-step"><div class="si q"></div><span>1.4 Synthesis</span></div>
+              </div>
+            </div>
+            <div class="main">
+              <div class="chat-area">
+                <div class="collapsed-card"><div class="si d">✓</div><span>Agent 1.1 Researcher (gpt-4o) — complete</span><span class="badge bd" style="margin-left:auto;">Pass</span></div>
+                <div class="lanes" style="margin-top:6px;">
+                  <div class="lane paused" style="flex:1.4;">
+                    <div class="lh">
+                      <div><div class="lr" style="color:#fff176;">Analyzer · paused</div><div class="lm">claude-3.5-sonnet</div></div>
+                      <div class="badge bp">Waiting</div>
+                    </div>
+                    <div class="hitl-pop">
+                      <div class="hitl-hdr">⚠ Analyzer Agent needs approval</div>
+                      <div class="hitl-tool">filesystem: read_file<br><span style="opacity:0.5;">/Users/karangrover/desktop-intelligence/spec/</span></div>
+                      <div class="hitl-btns">
+                        <div class="hbtn hbtn-a">Approve</div>
+                        <div class="hbtn hbtn-d">Deny</div>
+                        <div class="hbtn hbtn-al">Allow all from this agent</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="lane" style="flex:0.6; opacity:0.65;">
+                    <div class="lh">
+                      <div><div class="lr">Validator</div><div class="lm">llama-3.3-70b</div></div>
+                      <div class="badge bl">Live</div>
+                    </div>
+                    <div class="lo">Cross-checking prices...<br>MU close: $120.5<br><span class="cur"></span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="inputbar">
+                <div class="ibox" style="border-color:rgba(241,196,15,0.28);">
+                  <div class="iactions" style="justify-content:space-between;">
+                    <div class="ibtn" style="background:rgba(241,196,15,0.1);border-color:rgba(241,196,15,0.25);color:#fff176;font-size:9px;">⚠ Analyzer Agent needs your approval</div>
+                    <div class="ibar-right">abort run</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+ 
+      <!-- SCREEN 5 -->
+      <div class="mockup-section">
+        <div class="mockup-label">Screen 5 — Final synthesis with provenance tags, total cost in plan footer</div>
+        <div class="app-frame">
+          <div class="topbar">
+            <div class="td td-r"></div><div class="td td-y"></div><div class="td td-g"></div>
+            <div class="model-pill"><div class="mpd" style="background:#2ecc71;box-shadow:0 0 3px #2ecc71;"></div>openrouter · run complete</div>
+          </div>
+          <div class="body-row" style="height:400px;">
+            <div class="app-sidebar collapsed">
+              <div class="rail"><div class="rail-dot a"></div><div class="rail-dot"></div><div class="rail-dot"></div></div>
+            </div>
+            <div class="plan-pane open" style="justify-content:space-between;">
+              <div>
+                <div class="pp-header">Orchestrator Plan</div>
+                <div class="pp-body">
+                  <div class="pp-task-lbl">Analyze MU stock + codebase</div>
+                  <div class="pp-step"><div class="si d">✓</div><span>1. Planning</span></div>
+                  <div class="pp-step"><div class="si d">✓</div><span>1.1 Market research</span></div>
+                  <div class="pp-step"><div class="si d">✓</div><span>1.2 Code analysis</span></div>
+                  <div class="pp-step"><div class="si f">✕</div><span style="color:rgba(229,57,53,0.4);">1.3 Reflection (retry)</span></div>
+                  <div class="pp-step"><div class="si d">✓</div><span>1.3b Re-validation</span></div>
+                  <div class="pp-step"><div class="si d">✓</div><span>1.4 Synthesis</span></div>
+                </div>
+              </div>
+              <div class="pp-footer">Total: ~$0.018 · 12.4k tok</div>
+            </div>
+            <div class="main">
+              <div class="chat-area">
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                  <div class="collapsed-card"><div class="si d">✓</div><span>Agent 1.1 Researcher (gpt-4o)</span><span class="badge bd" style="margin-left:auto;">Pass</span></div>
+                  <div class="collapsed-card"><div class="si d">✓</div><span>Agent 1.2 Analyzer (claude-3.5-sonnet)</span><span class="badge bd" style="margin-left:auto;">Pass</span></div>
+                  <div class="collapsed-card"><div class="si f">✕</div><span style="color:rgba(229,57,53,0.4);">Reflection Gate — discrepancy, retried</span><span class="badge bf" style="margin-left:auto;">Retried</span></div>
+                  <div class="collapsed-card"><div class="si d">✓</div><span>Agent 1.3b Validator (llama-3.3-70b)</span><span class="badge bd" style="margin-left:auto;">Pass</span></div>
+                </div>
+                <div class="synth">
+                  <div class="synth-hdr"><span style="color:rgba(229,57,53,0.4);">◈</span> Final synthesis · qwen3.5-35b-a3b</div>
+                  <div class="synth-text">
+                    MU's price action shows +14% momentum driven by HBM demand<span class="ptag">1.1</span>. Analysis of <code style="font-size:9px;">quantization_core.py</code> confirms QJL hooks are compatible with MU's HBM interface<span class="ptag">1.2</span>. Price discrepancy ($120.5 vs $124.8) was resolved by validator<span class="ptag">1.3b</span> — primary source confirmed. Integration is feasible with minor spec adjustments<span class="ptag">1.2</span>.
+                  </div>
+                  <div style="margin-top:8px;padding-top:6px;border-top:0.5px solid rgba(255,255,255,0.04);font-family:var(--mono);font-size:8px;color:rgba(255,255,255,0.15);">
+                    Synthesis by qwen3.5-35b-a3b (Orchestrator Mode) · verified · $0.018 total
+                  </div>
+                </div>
+              </div>
+              <div class="inputbar">
+                <div class="ibox">
+                  <div class="iph">Start a new task...</div>
+                  <div class="iactions">
+                    <div class="ibtn ibtn-think">🧠 Thinking</div>
+                    <div class="ibtn ibtn-perm">◯ Require Permissions</div>
+                    <div class="ibtn ibtn-ma active" style="position:relative;">
+                      <div class="gring"></div>◈ Multi-Agent Mode
+                    </div>
+                    <div class="ibar-right">↵ send</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- DOCKER SANDBOXING -->
+    <section id="sandbox">
+      <h2><span class="section-num">10</span> Docker Sandboxing (Phase 2)</h2>
+ 
+      <p>Without sandboxing, agents doing real work — cloning repos, running code, writing files — operate directly on the host machine. One hallucinated path causes real damage. Sandboxing provides an isolated, ephemeral environment where agents can execute freely and fail safely.</p>
+ 
+      <div class="callout callout-yellow">
+        <strong>Phase 2 only.</strong> MVP ships without Docker sandboxing. Agents read local files via the existing Filesystem MCP (already restricted to allowed directories), do web research, and call APIs. That's already more capable than any frontier product. Docker execution is added as an opt-in capability flag in Phase 2.
+      </div>
+ 
+      <h3>Why Docker over alternatives</h3>
+ 
+      <table>
+        <tr><th>Option</th><th>Verdict</th><th>Reason</th></tr>
+        <tr>
+          <td>Docker container per run</td>
+          <td style="color:#81c784;">✓ Chosen</td>
+          <td>Proper isolation, runs locally, no data leaves machine, user controls it. Mirrors existing subprocess patterns (matplotlib worker, LangGraph sidecar).</td>
+        </tr>
+        <tr>
+          <td>E2B (e2b.dev)</td>
+          <td style="color:rgba(255,255,255,0.3);">Deferred</td>
+          <td>78ms sandbox spin-up, Firecracker-based, used by Perplexity and Manus. $100 free credit. But adds cloud dependency (breaks local privacy story) and ongoing per-sandbox cost that user can't control. Available as alternative if user provides their own E2B API key — same pattern as OpenRouter/Brave.</td>
+        </tr>
+        <tr>
+          <td>macOS sandbox-exec</td>
+          <td style="color:rgba(229,57,53,0.5);">Rejected</td>
+          <td>Deprecated Apple API, not a real security boundary for code execution, cannot safely run arbitrary agent-generated code.</td>
+        </tr>
+        <tr>
+          <td>Firecracker / microVM</td>
+          <td style="color:rgba(255,255,255,0.3);">Overkill</td>
+          <td>Strongest isolation but complex setup, requires Linux, overkill for a desktop app.</td>
+        </tr>
+      </table>
+ 
+      <h3>Docker sandbox lifecycle</h3>
+ 
+      <div class="sandbox-flow">
+        <div class="sf-step">
+          <div class="sf-num">1</div>
+          <div class="sf-body">
+            <div class="sf-title">Pre-flight config</div>
+            <div class="sf-desc">User sees sandbox config in pre-flight approval screen (same screen as cost estimate). Options: repo URL to clone, network policy (GitHub only / full / none), write-back to repo (off by default), credential injection (explicit enable required, never automatic).</div>
+          </div>
+        </div>
+        <div class="sf-step">
+          <div class="sf-num">2</div>
+          <div class="sf-body">
+            <div class="sf-title">Container spin-up</div>
+            <div class="sf-desc">Sidecar calls <code>docker run</code> with a base image (Python + git + common tools). Nothing from the host filesystem is mounted. Container gets a unique name tied to the run ID. Emits <code>sandbox_start</code> AgentEvent with containerId.</div>
+          </div>
+        </div>
+        <div class="sf-step">
+          <div class="sf-num">3</div>
+          <div class="sf-body">
+            <div class="sf-title">Agent execution inside container</div>
+            <div class="sf-desc">Agents execute shell commands via <code>docker exec</code>. stdout/stderr streamed back as <code>sandbox_output</code> events — visible in the agent lane as a terminal-style block. Agents can clone repos, run tests, write files — all inside the container boundary.</div>
+          </div>
+        </div>
+        <div class="sf-step">
+          <div class="sf-num">4</div>
+          <div class="sf-body">
+            <div class="sf-title">HITL for destructive actions</div>
+            <div class="sf-desc">Write operations (git commit, file write outside /tmp) trigger a HITL pause even if the agent has general approval. User sees the specific command about to run. Same approval popup pattern with agent identity shown.</div>
+          </div>
+        </div>
+        <div class="sf-step">
+          <div class="sf-num">5</div>
+          <div class="sf-body">
+            <div class="sf-title">Output extraction</div>
+            <div class="sf-desc">On run complete, sidecar copies specified output paths from container to a local staging directory before teardown. If write-back is enabled, user reviews diff and explicitly approves before any git push.</div>
+          </div>
+        </div>
+        <div class="sf-step">
+          <div class="sf-num">6</div>
+          <div class="sf-body">
+            <div class="sf-title">Container teardown</div>
+            <div class="sf-desc">Container is destroyed on run completion, abort, or crash. Emits <code>sandbox_end</code> with exit code. No persistent state. If the app crashes mid-run, a cleanup routine on next launch kills any orphaned containers tied to Desktop Intelligence run IDs.</div>
+          </div>
+        </div>
+      </div>
+ 
+      <h3>Docker AgentEvent additions (Phase 2)</h3>
+      <div class="event-grid">
+        <div class="event-row"><span class="event-type">sandbox_start</span><span class="event-payload">{ agentId, containerId, image }</span></div>
+        <div class="event-row"><span class="event-type">sandbox_output</span><span class="event-payload">{ agentId, stdout, stderr, command }</span></div>
+        <div class="event-row"><span class="event-type">sandbox_hitl</span><span class="event-payload">{ agentId, command, reason } — destructive action requires approval</span></div>
+        <div class="event-row"><span class="event-type">sandbox_end</span><span class="event-payload">{ agentId, containerId, exitCode }</span></div>
+      </div>
+ 
+      <h3>Settings additions (Phase 2)</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Docker availability check on settings open (show warning if Docker Desktop not running)</li>
+        <li><div class="check-box"></div>Base image selector (default: python:3.11-slim + git)</li>
+        <li><div class="check-box"></div>Max container lifetime (default: 10 min — hard killed after)</li>
+        <li><div class="check-box"></div>E2B API key field (alternative to local Docker — user brings own key)</li>
+        <li><div class="check-box"></div>Cleanup orphaned containers button</li>
+      </ul>
+    </section>
+ 
+    <hr>
+ 
+    <!-- BUILD PHASES -->
+    <section id="phases">
+      <h2><span class="section-num">11</span> Build Phases</h2>
+ 
+      <div class="phases">
+        <div class="phase">
+          <div class="phase-num active">1</div>
+          <div class="phase-body">
+            <div class="phase-title">Foundation</div>
+            <div class="phase-desc">SQLite migration, shared types (AgentEvent contract), IPC channels with synthetic ready-states, sidecar process lifecycle in index.ts. No LangGraph code yet. UI scaffold for execution lanes with mock AgentEvent data. Multi-agent mode button (inactive, OpenRouter-gated).</div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">2</div>
+          <div class="phase-body">
+            <div class="phase-title">Basic orchestration</div>
+            <div class="phase-desc">FastAPI sidecar, LangGraph graph: orchestrator → worker agents → synthesizer. No reflection yet. Parallel execution working. Events streaming to renderer. Layout state machine transitions. Real multi-agent run end-to-end.</div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">3</div>
+          <div class="phase-body">
+            <div class="phase-title">Reflection + HITL expansion</div>
+            <div class="phase-desc">Reflection nodes added to LangGraph graph. Pass/fail gates with retry. HITL popup extended with agent identity. Per-agent parallel pause/resume. Pre-flight approval screen with cost estimate. Budget cap enforcement.</div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">4</div>
+          <div class="phase-body">
+            <div class="phase-title">UI polish + observability</div>
+            <div class="phase-desc">Provenance tags in synthesis. Collapsed card transitions. Live cost/token counters. Observability trace extension. Settings panel for model selection and all config knobs. End-to-end test of full state machine.</div>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">5</div>
+          <div class="phase-body">
+            <div class="phase-title">Docker sandboxing (Phase 2)</div>
+            <div class="phase-desc">Container lifecycle in sidecar. sandbox_* AgentEvents. Pre-flight sandbox config UI. HITL for destructive commands. Output extraction and diff review. E2B as alternative (user-supplied API key).</div>
+          </div>
+        </div>
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- DEFINITION OF DONE -->
+    <section id="dod">
+      <h2><span class="section-num">12</span> Definition of Done</h2>
+ 
+      <p>A multi-agent run is considered complete and shippable (Phase 1–4) when all of the following are true:</p>
+ 
+      <div class="dod-grid">
+        <div class="dod-item"><span class="dod-num">D1</span>A task with ≥2 parallel agents completes end-to-end on OpenRouter</div>
+        <div class="dod-item"><span class="dod-num">D2</span>At least one reflection failure + automatic retry cycle works without user intervention</div>
+        <div class="dod-item"><span class="dod-num">D3</span>Final synthesis contains ≥1 provenance tag clickable to source agent</div>
+        <div class="dod-item"><span class="dod-num">D4</span>HITL pause on one agent does not block a parallel independent agent</div>
+        <div class="dod-item"><span class="dod-num">D5</span>Full execution trace appears in observability logs post-run</div>
+        <div class="dod-item"><span class="dod-num">D6</span>Layout state machine transitions are animated and correct (all 6 states)</div>
+        <div class="dod-item"><span class="dod-num">D7</span>Cost counter per agent shows accurate token usage from OpenRouter response</div>
+        <div class="dod-item"><span class="dod-num">D8</span>Run can be aborted cleanly at any point — no orphaned sidecar processes</div>
+        <div class="dod-item"><span class="dod-num">D9</span>Budget cap triggers correctly — partial synthesis delivered, no overspend</div>
+        <div class="dod-item"><span class="dod-num">D10</span>Multi-agent mode button hidden when non-OpenRouter backend is active</div>
+      </div>
+    </section>
+ 
+    <hr>
+ 
+    <!-- DEFERRED -->
+    <section id="deferred">
+      <h2><span class="section-num">13</span> Out of Scope (Explicitly Deferred)</h2>
+ 
+      <table>
+        <tr><th>Item</th><th>Status</th><th>Notes</th></tr>
+        <tr><td>Per-chat custom system prompt</td><td>Decision pending</td><td>Useful but not blocking MVP. Global system prompt applies as base for all agents.</td></tr>
+        <tr><td>Background / daemon agents</td><td>Phase 3</td><td>Monitoring, polling, scheduled runs. Requires persistent sidecar and notification system.</td></tr>
+        <tr><td>Non-OpenRouter backends for multi-agent</td><td>By design</td><td>LM Studio / Ollama / NVIDIA are single-model by nature. Multi-agent is OpenRouter-only.</td></tr>
+        <tr><td>Agent-to-agent direct messaging</td><td>Deferred</td><td>All coordination via orchestrator. Direct agent comms adds complexity with unclear benefit for MVP.</td></tr>
+        <tr><td>User-editable orchestration graph</td><td>Phase 3</td><td>Visual node editor. High engineering cost, niche use case for v1.</td></tr>
+        <tr><td>Cloud sync of execution traces</td><td>Never</td><td>Local only. Consistent with existing privacy stance on observability logs.</td></tr>
+        <tr><td>Docker sandboxing / code execution</td><td>Phase 2</td><td>MVP agents read via Filesystem MCP. Docker adds code execution capability.</td></tr>
+        <tr><td>E2B sandboxing</td><td>Phase 2, opt-in</td><td>User supplies own API key. Alternative to Docker for users without Docker Desktop.</td></tr>
+      </table>
+    </section>
+ 
+    <div style="padding: 60px 0 20px; font-family: var(--mono); font-size: 11px; color: var(--text3);">
+      Desktop Intelligence — Multi-Agent Orchestration Spec · Generated 2026-05-29 · Do not modify objectives retroactively
+    </div>
+ 
+  </div>
+</div>
+ 
+<script>
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.snav-link');
+ 
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`.snav-link[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+ 
+  sections.forEach(s => observer.observe(s));
+</script>
+ 
+</body>
+</html>
