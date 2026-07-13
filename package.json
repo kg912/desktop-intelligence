@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.0.0-beta-52",
+  "version": "3.0.0-beta-53",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -16,6 +16,7 @@
     "test:coverage": "npm rebuild better-sqlite3 && vitest run --coverage",
     "spike:vec": "tsx scripts/spike-sqlite-vec.ts",
     "spike:rerank": "tsx scripts/spike-reranker.ts",
+    "spike:sandbox-yf-hosts": "tsx scripts/spike-sandbox-yf-hosts.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "postinstall": "electron-builder install-app-deps",
     "prepackage": "electron-builder install-app-deps",

@@ -16,9 +16,11 @@
  * The worker is now spawned inside the srt sandbox (Phase 0/1). The regex
  * blocklist validatePythonCode() has been deleted — the sandbox is the
  * enforcement mechanism.  yfinance network access is allowlisted to the
- * empirically discovered minimum hostnames (query1.finance.yahoo.com,
- * query2.finance.yahoo.com, fc.yahoo.com — determined 2026-07-13 via
- * scripts/spike-sandbox-yf-hosts.ts).
+ * empirically verified minimum hostnames (query1.finance.yahoo.com,
+ * query2.finance.yahoo.com, fc.yahoo.com) — confirmed 2026-07-13 by actually
+ * running `npx tsx scripts/spike-sandbox-yf-hosts.ts` (not just reading the
+ * script): deny-all/query1-only/query1+query2/query1+fc all FAIL,
+ * query1+query2+fc PASSes. See progress.md row 303 for the verbatim output.
  */
 
 import { execSync, ChildProcessWithoutNullStreams } from 'child_process'
@@ -28,12 +30,13 @@ import { mkdirSync } from 'fs'
 import { sandboxService } from './sandbox/sandboxServiceInstance'
 import { memoryWatch } from './sandbox/ResourceGovernor'
 
-// ── yfinance hostnames — empirically determined 2026-07-13 ──────────────────
-// spike-sandbox-yf-hosts.ts tested deny-all → query1-only → query1+query2 →
-// query1+fc → query1+query2+fc.  ALL THREE are required for yfinance to
-// function.  These are NOT copied from documentation — they were verified by
-// running yf.Ticker("AAPL").history(period="1d") inside the srt sandbox with
-// progressively narrower allowlists until the minimum set was found.
+// ── yfinance hostnames — empirically verified 2026-07-13 ────────────────────
+// `npx tsx scripts/spike-sandbox-yf-hosts.ts` tested deny-all → query1-only →
+// query1+query2 → query1+fc → query1+query2+fc against a real
+// yf.Ticker("AAPL").history(period="1d") call inside the srt sandbox.  Only
+// query1+query2+fc passed; every narrower allowlist failed. These are NOT
+// copied from documentation — this is the actual command output, recorded in
+// progress.md row 303.
 const YFINANCE_HOSTS = [
   'query1.finance.yahoo.com',
   'query2.finance.yahoo.com',
