@@ -129,6 +129,7 @@ export class PythonWorkerService {
         allowedDomains:   YFINANCE_HOSTS,
         allowWrite:       [this._scratchDir],
         denyRead:         [],
+        callerLabel:      'python-worker',
         env: {
           MPLBACKEND: 'Agg',
           // Point matplotlib's font cache at the scratch dir so it doesn't
@@ -403,6 +404,7 @@ _real_close('all')
         allowedDomains:   YFINANCE_HOSTS,
         allowWrite:       [fallbackDir],
         denyRead:         [],
+        callerLabel:      'python-worker',
         env:              { MPLBACKEND: 'Agg' },
         timeoutMs:        WORKER_TIMEOUT_MS,
         maxRssMb:         512,

@@ -438,6 +438,10 @@ export const IPC_CHANNELS = {
   // ── RAG v2 diagnostics (Phase 6 — eval file picker) ──────────────────────────
   RAG_PICK_EVAL_FILE:   'rag:pick-eval-file',
 
+  // ── Sandbox violations (Phase 2) ──────────────────────────────────────────────
+  /** main→renderer push, credential-path denials only (see SrtBackend.subscribeToViolations) */
+  SANDBOX_VIOLATION_ALERT: 'sandbox:violationAlert',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -625,4 +629,24 @@ export interface McpToolPermissionResponse {
   approved:    boolean
   alwaysAllow: 'session' | 'forever' | false
   userNote:    string
+}
+
+// ── Sandbox violations (Phase 2, SANDBOX_ARCHITECTURE_SPEC.html section 11/16) ─
+
+/**
+ * One denied filesystem/network operation observed via the sandbox's
+ * violation log monitor. Matches the RagTrace* naming/shape convention
+ * (flat, one-event-per-observation) rather than the per-chat-session
+ * TraceEvent union in ObservabilityService — violations aren't tied to any
+ * particular chat turn, so they're logged as standalone events (same
+ * pattern as rag_ingest/rag_query/rag_eval), not appended to a session's
+ * trace array.
+ */
+export interface SandboxViolationTraceEvent {
+  /** Which SrtBackend caller triggered this — e.g. 'python-worker' or 'mcp:<serverName>'. 'unknown' if unattributed. */
+  source:    string
+  kind:      'read' | 'write' | 'network'
+  /** The denied path, domain, or resource name. */
+  target:    string
+  timestamp: number
 }

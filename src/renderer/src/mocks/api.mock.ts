@@ -243,6 +243,9 @@ export const mockApi: ElectronAPI = {
   onMcpServerStatusChanged:   () => () => {},
   onMcpToolPermissionRequest: () => () => {},
 
+  // ── Sandbox violations stub (Phase 2) ──────────────────────────
+  onSandboxViolationAlert: () => () => {},
+
   // ── Shell utilities ───────────────────────────────────────────
   openExternal: async (url: string) => { console.log('[mock] openExternal:', url) },
 

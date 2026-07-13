@@ -2,19 +2,57 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'events'
 import type { SandboxRunSpec } from '../types'
 
+interface FakeViolation {
+  line: string
+  command?: string
+  timestamp: Date
+}
+
 // ── Mock @anthropic-ai/sandbox-runtime — SrtBackend delegates config/command
 // building to SandboxManager; we only care that SrtBackend passes the right
 // spawn() options through, not that the real sandbox-exec wrapping happens.
-const { mockInitialize, mockUpdateConfig, mockWrapWithSandbox, mockWrapWithSandboxArgv, mockReset } = vi.hoisted(() => ({
-  mockInitialize: vi.fn(async () => {}),
-  mockUpdateConfig: vi.fn((_config: { network: { allowedDomains: string[] } }) => {}),
-  mockWrapWithSandbox: vi.fn(async (command: string) => `sandbox-exec -f wrapped -- ${command}`),
-  mockWrapWithSandboxArgv: vi.fn(async (command: string) => ({
-    argv: ['sandbox-exec', '-f', 'wrapped', '--', ...command.split(' ')],
-    env: { ...process.env, SANDBOX_MARKER: '1' },
-  })),
-  mockReset: vi.fn(async () => {}),
-}))
+const { mockInitialize, mockUpdateConfig, mockWrapWithSandbox, mockWrapWithSandboxArgv, mockReset, mockGetSandboxViolationStore, fakeStoreState } = vi.hoisted(() => {
+  const fakeStoreState = {
+    violations: [] as FakeViolation[],
+    totalCount: 0,
+    listeners: [] as Array<(v: FakeViolation[]) => void>,
+  }
+  const mockGetSandboxViolationStore = vi.fn(() => ({
+    getTotalCount: () => fakeStoreState.totalCount,
+    getViolations: () => [...fakeStoreState.violations],
+    subscribe: (listener: (v: FakeViolation[]) => void) => {
+      fakeStoreState.listeners.push(listener)
+      listener([...fakeStoreState.violations])
+      return () => {
+        const i = fakeStoreState.listeners.indexOf(listener)
+        if (i !== -1) fakeStoreState.listeners.splice(i, 1)
+      }
+    },
+  }))
+  return {
+    mockInitialize: vi.fn(async () => {}),
+    mockUpdateConfig: vi.fn((_config: { network: { allowedDomains: string[] } }) => {}),
+    mockWrapWithSandbox: vi.fn(async (command: string) => `sandbox-exec -f wrapped -- ${command}`),
+    mockWrapWithSandboxArgv: vi.fn(async (command: string) => ({
+      argv: ['sandbox-exec', '-f', 'wrapped', '--', ...command.split(' ')],
+      env: { ...process.env, SANDBOX_MARKER: '1' },
+    })),
+    mockReset: vi.fn(async () => {}),
+    mockGetSandboxViolationStore,
+    fakeStoreState,
+  }
+})
+
+// Simulates SandboxViolationStore.addViolation() — pushes + notifies all
+// current subscribers with the FULL array (matches the real store's
+// "always notify with all violations" behavior, see SrtBackend.ts header).
+function fakeAddViolation(v: FakeViolation): void {
+  fakeStoreState.violations.push(v)
+  fakeStoreState.totalCount++
+  for (const listener of [...fakeStoreState.listeners]) {
+    listener([...fakeStoreState.violations])
+  }
+}
 
 vi.mock('@anthropic-ai/sandbox-runtime', () => ({
   SandboxManager: {
@@ -23,6 +61,7 @@ vi.mock('@anthropic-ai/sandbox-runtime', () => ({
     wrapWithSandbox: mockWrapWithSandbox,
     wrapWithSandboxArgv: mockWrapWithSandboxArgv,
     reset: mockReset,
+    getSandboxViolationStore: mockGetSandboxViolationStore,
   },
 }))
 
@@ -175,5 +214,102 @@ describe('SrtBackend.wrapStdioCommand', () => {
     const backend = new SrtBackend()
     await backend.wrapStdioCommand(baseSpec)
     expect(mockInitialize).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('SrtBackend.subscribeToViolations', () => {
+  beforeEach(() => {
+    fakeStoreState.violations = []
+    fakeStoreState.totalCount = 0
+    fakeStoreState.listeners = []
+    mockGetSandboxViolationStore.mockClear()
+  })
+
+  it('delivers a new violation labeled with the caller that triggered it, classified from the line', async () => {
+    const backend = new SrtBackend()
+    const spec: SandboxRunSpec = {
+      ...baseSpec,
+      command: 'python3 /path/to/worker.py',
+      callerLabel: 'python-worker',
+    }
+    await backend.wrapStdioCommand(spec) // populates commandLabels via buildPerSpecConfig
+
+    const received: unknown[] = []
+    backend.subscribeToViolations((event) => received.push(event))
+
+    fakeAddViolation({
+      line: 'python3(123) deny(1) file-read-data /Users/x/.ssh/id_ed25519',
+      command: 'python3 /path/to/worker.py',
+      timestamp: new Date('2026-07-13T12:00:00.000Z'),
+    })
+
+    expect(received).toEqual([
+      {
+        source: 'python-worker',
+        kind: 'read',
+        target: '/Users/x/.ssh/id_ed25519',
+        timestamp: new Date('2026-07-13T12:00:00.000Z').getTime(),
+      },
+    ])
+  })
+
+  it('classifies write and network operations correctly', async () => {
+    const backend = new SrtBackend()
+    const received: Array<{ kind: string }> = []
+    backend.subscribeToViolations((event) => received.push(event))
+
+    fakeAddViolation({ line: 'proc(1) deny(1) file-write-create /tmp/x', timestamp: new Date() })
+    fakeAddViolation({ line: 'proc(1) deny(1) network-outbound 93.184.216.34:443', timestamp: new Date() })
+
+    expect(received.map((e) => e.kind)).toEqual(['write', 'network'])
+  })
+
+  it('skips violations whose operation does not map to read/write/network', async () => {
+    const backend = new SrtBackend()
+    const received: unknown[] = []
+    backend.subscribeToViolations((event) => received.push(event))
+
+    fakeAddViolation({ line: 'bash(1) deny(1) sysctl-read kern.iossupportversion', timestamp: new Date() })
+    // sysctl-read DOES contain "read" per the generalized classifier — use
+    // a genuinely unclassifiable operation to test the skip path instead.
+    fakeAddViolation({ line: 'proc(1) deny(1) mach-lookup com.apple.foo', timestamp: new Date() })
+
+    // sysctl-read → 'read' (1 delivered), mach-lookup → skipped (0 delivered)
+    expect(received).toHaveLength(1)
+  })
+
+  it('falls back to "unknown" when the violation is not attributable to a tracked command', async () => {
+    const backend = new SrtBackend()
+    const received: Array<{ source: string }> = []
+    backend.subscribeToViolations((event) => received.push(event))
+
+    fakeAddViolation({
+      line: 'proc(1) deny(1) file-read-data /some/path',
+      command: 'node /never-called-through-srtbackend.js',
+      timestamp: new Date(),
+    })
+
+    expect(received).toEqual([{ source: 'unknown', kind: 'read', target: '/some/path', timestamp: expect.any(Number) }])
+  })
+
+  it('does not replay violations that existed before subscribing', async () => {
+    fakeAddViolation({ line: 'proc(1) deny(1) file-read-data /pre-existing', timestamp: new Date() })
+
+    const backend = new SrtBackend()
+    const received: unknown[] = []
+    backend.subscribeToViolations((event) => received.push(event))
+
+    expect(received).toHaveLength(0)
+  })
+
+  it('the returned unsubscribe function stops delivery', async () => {
+    const backend = new SrtBackend()
+    const received: unknown[] = []
+    const unsubscribe = backend.subscribeToViolations((event) => received.push(event))
+
+    unsubscribe()
+    fakeAddViolation({ line: 'proc(1) deny(1) file-read-data /after-unsubscribe', timestamp: new Date() })
+
+    expect(received).toHaveLength(0)
   })
 })

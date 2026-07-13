@@ -24,6 +24,7 @@ import type {
   McpServerRuntimeInfo,
   McpToolPermissionRequest,
   BackendSettings,
+  SandboxViolationTraceEvent,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
 
@@ -211,6 +212,13 @@ const api = {
     const h = (_: Electron.IpcRendererEvent, req: McpToolPermissionRequest): void => cb(req)
     ipcRenderer.on(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
+  },
+
+  // ── Sandbox violations (Phase 2) ──────────────────────────────
+  onSandboxViolationAlert: (cb: (violation: SandboxViolationTraceEvent) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, violation: SandboxViolationTraceEvent): void => cb(violation)
+    ipcRenderer.on(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, h)
   },
 
   // ── Observability ────────────────────────────────────────────
