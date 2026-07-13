@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Desktop Intelligence — Universal Tool-Call Sandbox Spec</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap');
+  :root {
+    --bg: #0a0a0a; --bg1: #0e0e0e; --bg2: #141414; --bg3: #1a1a1a;
+    --border: rgba(255,255,255,0.07); --border2: rgba(255,255,255,0.12);
+    --text: rgba(255,255,255,0.85); --text2: rgba(255,255,255,0.5); --text3: rgba(255,255,255,0.25);
+    --red: #e53935; --red-dim: rgba(229,57,53,0.15); --red-border: rgba(229,57,53,0.3);
+    --green: #2ecc71; --green-dim: rgba(46,204,113,0.12);
+    --yellow: #f1c40f; --yellow-dim: rgba(241,196,15,0.12);
+    --blue: #4fa3e3; --blue-dim: rgba(79,163,227,0.12); --blue-border: rgba(79,163,227,0.3);
+    --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.7; padding: 0; }
+  nav { position: sticky; top: 0; z-index: 100; background: rgba(10,10,10,0.95); backdrop-filter: blur(12px);
+    border-bottom: 0.5px solid var(--border); padding: 0 40px; display: flex; align-items: center; gap: 0; height: 48px; overflow-x: auto; }
+  nav a { color: var(--text3); text-decoration: none; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 0 16px; height: 48px; display: flex; align-items: center; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
+  nav a:hover { color: var(--text2); }
+  nav a.active { color: var(--text); border-bottom-color: var(--red); }
+  .nav-brand { font-size: 12px; font-weight: 600; color: var(--text); padding-right: 24px; border-right: 0.5px solid var(--border); margin-right: 8px;
+    white-space: nowrap; display: flex; align-items: center; gap: 8px; height: 48px; }
+  .nav-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .hero { padding: 80px 40px 60px; border-bottom: 0.5px solid var(--border); max-width: 900px; }
+  .hero-tag { font-size: 10px; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; color: var(--red); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .hero-tag::before { content: ''; display: block; width: 24px; height: 1px; background: var(--red); }
+  h1 { font-size: 42px; font-weight: 700; line-height: 1.15; color: #fff; margin-bottom: 20px; letter-spacing: -0.02em; }
+  .hero-sub { font-size: 15px; color: var(--text2); max-width: 660px; line-height: 1.8; margin-bottom: 32px; }
+  .meta-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .meta-item { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+  .meta-item span { color: var(--text2); }
+  .page { display: flex; min-height: 100vh; }
+  .sidebar-nav { width: 240px; min-width: 240px; padding: 32px 0; border-right: 0.5px solid var(--border);
+    position: sticky; top: 48px; height: calc(100vh - 48px); overflow-y: auto; }
+  .snav-section { padding: 0 20px 20px; }
+  .snav-label { font-size: 10px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; padding: 0 8px; }
+  .snav-link { display: block; padding: 5px 8px; font-size: 12px; color: var(--text3); text-decoration: none; border-radius: 5px; transition: background 0.1s, color 0.1s; }
+  .snav-link:hover { background: rgba(255,255,255,0.04); color: var(--text2); }
+  .snav-link.active { background: var(--red-dim); color: rgba(229,57,53,0.8); }
+  .content { flex: 1; padding: 48px 56px; max-width: 900px; overflow-x: hidden; }
+  h2 { font-size: 22px; font-weight: 600; color: #fff; margin: 56px 0 20px; padding-top: 8px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 12px; }
+  h2:first-child { margin-top: 0; }
+  h2 .section-num { font-family: var(--mono); font-size: 11px; color: var(--red); background: var(--red-dim); border: 0.5px solid var(--red-border); padding: 2px 8px; border-radius: 4px; font-weight: 400; }
+  h3 { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.7); margin: 28px 0 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+  h4 { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.55); margin: 18px 0 8px; }
+  p { color: var(--text2); margin-bottom: 14px; line-height: 1.75; }
+  a { color: rgba(229,57,53,0.7); text-decoration: none; }
+  a:hover { color: var(--red); }
+  code { font-family: var(--mono); font-size: 11px; background: var(--bg2); border: 0.5px solid var(--border); padding: 1px 6px; border-radius: 4px; color: rgba(255,255,255,0.55); }
+  pre { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 8px; padding: 16px 20px; overflow-x: auto; margin: 16px 0; }
+  pre code { background: none; border: none; padding: 0; font-size: 12px; line-height: 1.7; color: rgba(255,255,255,0.55); }
+  hr { border: none; border-top: 0.5px solid var(--border); margin: 40px 0; }
+  .callout { border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 13px; line-height: 1.7; border: 0.5px solid; }
+  .callout-red { background: var(--red-dim); border-color: var(--red-border); color: rgba(229,57,53,0.85); }
+  .callout-yellow { background: var(--yellow-dim); border-color: rgba(241,196,15,0.25); color: rgba(241,196,15,0.75); }
+  .callout-green { background: var(--green-dim); border-color: rgba(46,204,113,0.25); color: rgba(46,204,113,0.75); }
+  .callout-blue { background: var(--blue-dim); border-color: var(--blue-border); color: rgba(79,163,227,0.9); }
+  .callout-neutral { background: var(--bg2); border-color: var(--border2); color: var(--text2); }
+  .callout strong { color: inherit; }
+  .checklist { list-style: none; margin: 8px 0 16px; }
+  .checklist li { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; font-size: 13px; color: var(--text2); border-bottom: 0.5px solid rgba(255,255,255,0.03); }
+  .checklist li:last-child { border-bottom: none; }
+  .check-box { width: 16px; height: 16px; border: 0.5px solid var(--border2); border-radius: 4px; flex-shrink: 0; margin-top: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 16px 0; }
+  th { text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text3); border-bottom: 0.5px solid var(--border2); }
+  td { padding: 8px 12px; color: var(--text2); border-bottom: 0.5px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 11px; }
+  .decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin: 16px 0; }
+  .decision-card { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .decision-label { font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text3); margin-bottom: 6px; }
+  .decision-value { font-size: 13px; color: var(--text); font-weight: 500; margin-bottom: 6px; }
+  .decision-reason { font-size: 11px; color: var(--text3); line-height: 1.6; }
+  .phases { display: flex; flex-direction: column; gap: 0; margin: 20px 0; }
+  .phase { display: flex; gap: 20px; padding-bottom: 24px; position: relative; }
+  .phase::before { content: ''; position: absolute; left: 15px; top: 32px; bottom: 0; width: 1px; background: var(--border); }
+  .phase:last-child::before { display: none; }
+  .phase-num { width: 32px; height: 32px; border-radius: 50%; background: var(--bg2); border: 0.5px solid var(--border2); display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px; color: var(--text3); flex-shrink: 0; }
+  .phase-num.active { background: var(--red-dim); border-color: var(--red-border); color: var(--red); box-shadow: 0 0 8px rgba(229,57,53,0.2); }
+  .phase-num.pending { background: var(--blue-dim); border-color: var(--blue-border); color: var(--blue); }
+  .phase-body { flex: 1; }
+  .phase-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; padding-top: 5px; }
+  .phase-desc { font-size: 12px; color: var(--text3); line-height: 1.6; }
+  .dod-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 16px 0; }
+  .dod-item { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 7px; padding: 12px 14px; font-size: 12px; color: var(--text2); display: flex; gap: 10px; align-items: flex-start; }
+  .dod-num { font-family: var(--mono); font-size: 10px; color: var(--red); flex-shrink: 0; background: var(--red-dim); padding: 2px 6px; border-radius: 4px; }
+  .arch-diagram { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 8px; padding: 20px 24px; margin: 16px 0; font-family: var(--mono); font-size: 11px; color: rgba(255,255,255,0.5); line-height: 1.8; overflow-x: auto; white-space: pre; }
+  .layer-stack { display: flex; flex-direction: column; gap: 8px; margin: 20px 0; }
+  .layer { border-radius: 8px; padding: 14px 18px; border: 0.5px solid var(--border2); background: var(--bg2); display: flex; gap: 16px; align-items: flex-start; }
+  .layer-num { font-family: var(--mono); font-size: 11px; color: var(--red); background: var(--red-dim); border: 0.5px solid var(--red-border); border-radius: 5px; padding: 3px 8px; flex-shrink: 0; margin-top: 2px; }
+  .layer-body { flex: 1; }
+  .layer-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .layer-desc { font-size: 12px; color: var(--text3); line-height: 1.65; }
+  .verified-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(46,204,113,0.75); background: var(--green-dim); border: 0.5px solid rgba(46,204,113,0.25); padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+  .disputed-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(229,57,53,0.85); background: var(--red-dim); border: 0.5px solid var(--red-border); padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+  .pending-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(79,163,227,0.9); background: var(--blue-dim); border: 0.5px solid var(--blue-border); padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+  .rej-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 16px 0; }
+  .rej-card { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .rej-title { font-size: 12px; font-weight: 600; color: rgba(229,57,53,0.75); margin-bottom: 6px; }
+  .rej-body { font-size: 11px; color: var(--text3); line-height: 1.6; }
+  .bench-table td.metric { font-family: var(--mono); font-size: 11px; color: rgba(255,255,255,0.7); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand"><div class="nav-dot"></div>Desktop Intelligence</div>
+  <a href="#overview" class="active">Overview</a>
+  <a href="#decisions">Decisions</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#backend-abstraction">Backend Abstraction</a>
+  <a href="#microsandbox">Microsandbox</a>
+  <a href="#benchmark">Benchmark Protocol</a>
+  <a href="#limitations">Limitations</a>
+  <a href="#scope">Scope</a>
+</nav>
+
+<div style="max-width:900px; margin:0 auto; padding: 60px 40px 40px;">
+  <div class="hero-tag">Specification Document · v2</div>
+  <h1>Universal Tool-Call<br>Sandbox Architecture</h1>
+  <p class="hero-sub">Complete design and implementation reference for sandboxing every tool call in Desktop Intelligence, built toward a two-backend end state: <code>@anthropic-ai/sandbox-runtime</code> shipping now as the default for every tool call, and <a href="https://microsandbox.dev">microsandbox</a> as a second backend for genuinely untrusted heavy execution (arbitrary repo clone + build + test), adopted only after a benchmark gate on the actual target hardware. This revision adds the backend abstraction and benchmark protocol needed so Phase 0 code never has to be rewritten to accommodate Phase 4.</p>
+  <div class="meta-row">
+    <div class="meta-item">Project <span>Desktop Intelligence</span></div>
+    <div class="meta-item">Version <span>pre-implementation, rev 2</span></div>
+    <div class="meta-item">Last updated <span>2026-07-04</span></div>
+    <div class="meta-item">Platform <span>macOS, Apple Silicon (M5 Pro primary, M1 Pro secondary)</span></div>
+    <div class="meta-item">Backends <span>srt (active) · microsandbox (gated)</span></div>
+  </div>
+</div>
+
+<div class="page" style="max-width:1100px; margin:0 auto;">
+
+  <nav class="sidebar-nav" style="position:relative; top:0; height:auto;">
+    <div class="snav-section">
+      <div class="snav-label">Sections</div>
+      <a href="#overview" class="snav-link">01 · Overview & Motivation</a>
+      <a href="#threat-model" class="snav-link">02 · Threat Model</a>
+      <a href="#decisions" class="snav-link">03 · Key Decisions</a>
+      <a href="#architecture" class="snav-link">04 · Architecture</a>
+      <a href="#backend-abstraction" class="snav-link">05 · Backend Abstraction</a>
+      <a href="#layers" class="snav-link">06 · The Five Layers</a>
+      <a href="#read-write" class="snav-link">07 · srt Read/Write Asymmetry</a>
+      <a href="#shell-injection" class="snav-link">08 · Shell-String Injection</a>
+      <a href="#resource-limits" class="snav-link">09 · Resource Governor</a>
+      <a href="#network" class="snav-link">10 · Network & MCP Manifest</a>
+      <a href="#audit" class="snav-link">11 · Audit & Observability</a>
+      <a href="#rejected" class="snav-link">12 · Rejected Alternatives</a>
+      <a href="#microsandbox" class="snav-link">13 · Microsandbox: Verified Fit</a>
+      <a href="#benchmark" class="snav-link">14 · Benchmark Protocol & Gate</a>
+      <a href="#limitations" class="snav-link">15 · Known Limitations</a>
+      <a href="#scope" class="snav-link">16 · Implementation Scope</a>
+      <a href="#phases" class="snav-link">17 · Build Phases</a>
+      <a href="#dod" class="snav-link">18 · Definition of Done</a>
+      <a href="#appendix" class="snav-link">19 · Verified API Reference</a>
+    </div>
+  </nav>
+
+  <div class="content">
+
+    <section id="overview">
+      <h2><span class="section-num">01</span> Overview & Motivation</h2>
+      <p>Desktop Intelligence currently executes every tool call — LLM-generated Python code, custom MCP servers, and (per the Multi-Agent spec) future shell/code-execution steps — directly on the host, at the full privilege level of the logged-in user. Two concrete gaps were found in the actual codebase, not hypothetical ones:</p>
+      <table>
+        <tr><th>File</th><th>Current behavior</th><th>Why it's insufficient</th></tr>
+        <tr>
+          <td><code>PythonWorkerService.ts</code></td>
+          <td><code>validatePythonCode()</code> regex-blocklists <code>import os</code>, <code>eval(</code>, <code>open(</code>, etc. before running code in a persistent <code>python3</code> worker.</td>
+          <td>Regex blocklisting on source text is trivially bypassed. Application-level heuristic filtering, not kernel enforcement.</td>
+        </tr>
+        <tr>
+          <td><code>McpServerManager.ts</code></td>
+          <td>Spawns every enabled MCP server as a raw stdio child process.</td>
+          <td>No filesystem or network restriction. A malicious or prompt-injected MCP server runs with full host rights.</td>
+        </tr>
+      </table>
+      <div class="callout callout-red">
+        <strong>Governing principle:</strong> every process executing anything derived from an LLM's output must be treated as untrusted and structurally confined by the OS kernel — uniformly, whether the call originates from single-model mode or a Multi-Agent Orchestration worker.
+      </div>
+      <p>This revision commits to a <strong>two-backend end state</strong>: <code>srt</code> for the always-on default (every Python execution, every MCP server), and <code>microsandbox</code> for the narrower, heavier case of running genuinely untrusted arbitrary code — a cloned repo in an unknown language with installable dependencies — which srt was never designed to solve. Section 05 defines the abstraction that lets both exist behind one interface from day one, so shipping srt now doesn't create rework later.</p>
+    </section>
+
+    <hr>
+
+    <section id="threat-model">
+      <h2><span class="section-num">02</span> Threat Model</h2>
+      <h3>In scope</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>A hallucinated or buggy LLM tool call reading/writing/deleting outside its intended working area</li>
+        <li><div class="check-box"></div>A prompt-injected agent attempting to read credentials and exfiltrate them over the network</li>
+        <li><div class="check-box"></div>A malicious or compromised third-party MCP server attempting the same</li>
+        <li><div class="check-box"></div>LLM-generated Python attempting to shell out, open sockets, or escape its matplotlib/numpy/scipy sandbox</li>
+        <li><div class="check-box"></div>A runaway process (fork bomb, infinite loop, memory leak)</li>
+        <li><div class="check-box"></div>Arbitrary, multi-language, dependency-installing code from an untrusted source (e.g. a cloned repo) — the specific case microsandbox exists for</li>
+      </ul>
+      <h3>Explicitly out of scope</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>A kernel-level zero-day exploit against the host (both srt and, to a lesser extent, microsandbox's shared-hardware-but-separate-kernel model reduce but don't eliminate this)</li>
+        <li><div class="check-box"></div>Supply-chain compromise of Desktop Intelligence's own build pipeline</li>
+        <li><div class="check-box"></div>Physical access to the machine</li>
+        <li><div class="check-box"></div>A user deliberately disabling the sandbox for a specific server (a supported, logged, explicit action)</li>
+      </ul>
+      <p>This is a defense-in-depth design for a <strong>local, single-user desktop app</strong>, not a multi-tenant cloud platform. That framing is why Docker stays rejected as a default (Section 12) even though it addresses part of this model.</p>
+    </section>
+
+    <hr>
+
+    <section id="decisions">
+      <h2><span class="section-num">03</span> Key Decisions</h2>
+      <div class="decision-grid">
+        <div class="decision-card">
+          <div class="decision-label">Default sandbox engine</div>
+          <div class="decision-value">@anthropic-ai/sandbox-runtime (srt)</div>
+          <div class="decision-reason">OS-level (Seatbelt on macOS), no container/VM overhead, programmatic Node API, purpose-built for exactly this problem. Ships in Phase 0.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Heavy/untrusted execution backend</div>
+          <div class="decision-value">microsandbox — committed, gated on benchmark results</div>
+          <div class="decision-reason">Confirmed real (YC F26, Apache 2.0, embeddable TS/Python/Rust SDK, no daemon/no root, secrets-substitution, spawn-sandboxes-from-sandboxes primitive). Groundwork ships in Phase 0 via the backend abstraction (Section 05) so adopting it later is additive. Actual adoption timing depends on Apple Silicon/HVF benchmarks (Section 14), not the vendor's Linux/KVM marketing figures.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Integration point</div>
+          <div class="decision-value">Single <code>SandboxService</code>, pluggable backends</div>
+          <div class="decision-reason">One choke point every caller uses. Backend selection (srt vs. microsandbox) is an internal routing decision behind a stable interface — call sites never reference a backend directly.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Filesystem default (srt)</div>
+          <div class="decision-value">Deny-write-by-default, explicit-deny-read baseline</div>
+          <div class="decision-reason">srt's write policy is deny-by-default but read is allow-by-default — must opt out per path. A maintained baseline denylist covers all known credential locations. See Section 07.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Network default (srt)</div>
+          <div class="decision-value">Deny-all, explicit per-server allowlist</div>
+          <div class="decision-reason">Each MCP server declares needed domains in a manifest, reviewed by the user before first run.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Resource limits (CPU/RAM)</div>
+          <div class="decision-value">Not provided by srt — separate ResourceGovernor</div>
+          <div class="decision-reason">srt has no cgroups-equivalent. A lightweight wall-clock + RSS-polling governor is required. (microsandbox, notably, provides real quotas per-VM — a secondary benefit if Phase 4 ships.)</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Untrusted content into shell commands</div>
+          <div class="decision-value">Never interpolate — write to file, reference path</div>
+          <div class="decision-reason">srt's API wraps a shell string, not argv. Concatenating LLM output into it is an injection surface independent of the sandbox boundary.</div>
+        </div>
+        <div class="decision-card">
+          <div class="decision-label">Explicit sandbox bypass</div>
+          <div class="decision-value">Per-server, explicit, logged — never global</div>
+          <div class="decision-reason">A deliberate per-server toggle with a persistent warning indicator, never an app-wide switch.</div>
+        </div>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="architecture">
+      <h2><span class="section-num">04</span> Architecture</h2>
+      <div class="arch-diagram">Renderer (React/TypeScript)              Main Process (Electron/Node)
+──────────────────────────               ────────────────────────────────
+Settings → MCP server panel              McpServerManager.ts
+  sandboxProfile editor per server           spawns server → SandboxService.run(spec)
+Settings → Sandbox panel                 PythonWorkerService.ts
+  baseline denylist viewer                   spawns worker  → SandboxService.run(spec)
+  violation log viewer                    (future) Multi-Agent sidecar tool calls
+  per-server bypass toggle                    proxied over IPC → SandboxService.run(spec)
+                                                    │
+                                                    ▼
+                                          SandboxService  (single choke point)
+                                          ─────────────────────────────────────
+                                          • ResourceGovernor (wall-clock + RSS poll)
+                                          • WorkspaceManager (per-server/chat scratch dirs)
+                                          • ViolationLogger → ObservabilityService
+                                          • routes spec.executionProfile → backend
+                                                    │
+                                          ┌─────────┴──────────┐
+                                          ▼                    ▼
+                                  SrtBackend            MicrosandboxBackend
+                                  (ACTIVE — Phase 0)    (STUB — Phase 4, gated by
+                                                          benchmark results, Section 14)
+                                  Seatbelt + proxy       libkrun microVM per sandbox
+                                  fs/network only         real CPU/mem/disk quotas,
+                                                           own kernel per instance
+                                          │                    │
+                                          ▼                    ▼
+                                  python3 worker /       repo-clone-and-execute
+                                  MCP stdio server        tasks, Multi-Agent workers
+                                                           flagged 'untrusted-heavy'</div>
+      <p>The critical rule from rev 1 still holds: the Multi-Agent Orchestration's Python/LangGraph sidecar does not reimplement sandboxing. Worker-agent tool calls proxy back to this same <code>SandboxService</code> over IPC — one enforcement point, one audit log, one place either backend is invoked from.</p>
+    </section>
+
+    <hr>
+
+    <section id="backend-abstraction">
+      <h2><span class="section-num">05</span> Backend Abstraction & Routing Policy <span class="pending-tag">groundwork — ships Phase 0</span></h2>
+      <p>This is the piece that makes "srt now, microsandbox later" true in practice rather than aspiration. Every caller depends on one interface; which backend actually runs is an internal decision, not something <code>PythonWorkerService</code> or <code>McpServerManager</code> ever needs to know about.</p>
+      <pre><code>// src/main/services/sandbox/types.ts
+
+interface SandboxRunSpec {
+  workspaceDir:      string
+  command:           string            // fixed, app-controlled — see Section 08
+  image?:            string            // used only by MicrosandboxBackend
+  executionProfile:  'lightweight' | 'untrusted-heavy'
+  allowedDomains:    string[]
+  allowWrite:        string[]
+  denyRead:          string[]          // merged with BASELINE_DENY_READ, Section 07
+  timeoutMs:         number
+  maxRssMb:          number
+}
+
+interface SandboxRunResult {
+  stdout: string
+  stderr: string
+  exitCode: number
+  backend: 'srt' | 'microsandbox'
+}
+
+interface SandboxExecutionBackend {
+  readonly name: 'srt' | 'microsandbox'
+  initialize(): Promise&lt;void&gt;
+  run(spec: SandboxRunSpec): Promise&lt;SandboxRunResult&gt;
+  shutdown(): Promise&lt;void&gt;
+}
+
+// src/main/services/SandboxService.ts
+class SandboxService {
+  private srt: SandboxExecutionBackend            // SrtBackend — always active
+  private microsandbox: SandboxExecutionBackend | null  // null until Phase 4 gate passes
+
+  async run(spec: SandboxRunSpec): Promise&lt;SandboxRunResult&gt; {
+    if (spec.executionProfile === 'untrusted-heavy') {
+      if (!this.microsandbox) {
+        throw new Error('untrusted-heavy execution requested but microsandbox backend is not enabled')
+      }
+      return this.microsandbox.run(spec)
+    }
+    return this.srt.run(spec)   // default path — everything today uses this
+  }
+}</code></pre>
+      <h4>Routing policy</h4>
+      <ul class="checklist">
+        <li><div class="check-box"></div><code>'lightweight'</code> (default, used everywhere today) → always <code>SrtBackend</code>: Python worker, every MCP server, standard tool calls</li>
+        <li><div class="check-box"></div><code>'untrusted-heavy'</code> (explicit opt-in, only meaningful once Phase 4 ships) → <code>MicrosandboxBackend</code>: repo-clone-and-execute tasks, Multi-Agent workers explicitly flagged as needing package-install freedom in an unknown language</li>
+        <li><div class="check-box"></div>Requesting <code>'untrusted-heavy'</code> before Phase 4 ships throws rather than silently falling back to an unsandboxed or under-sandboxed path — a missing capability must fail loudly, not degrade quietly</li>
+      </ul>
+      <div class="callout callout-blue">
+        Phase 0 ships <code>SrtBackend</code> and a <code>MicrosandboxBackend</code> stub that satisfies the interface but throws on <code>run()</code>. This is deliberate: it means the <em>call sites</em> (PythonWorkerService, McpServerManager, the future Multi-Agent proxy) are written once, against the interface, and Phase 4 is purely "implement the stub's internals" — not a design change touching code that's already shipped and stable.
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="layers">
+      <h2><span class="section-num">06</span> The Five Layers (SrtBackend)</h2>
+      <p>Defense in depth for the active, default backend. No single layer is load-bearing alone.</p>
+      <div class="layer-stack">
+        <div class="layer"><div class="layer-num">L1</div><div class="layer-body"><div class="layer-title">OS-level enforcement — srt (Seatbelt)</div><div class="layer-desc">Kernel-enforced filesystem and network restriction on the whole process tree, applied at spawn time. Detailed in Section 07.</div></div></div>
+        <div class="layer"><div class="layer-num">L2</div><div class="layer-body"><div class="layer-title">Resource governance</div><div class="layer-desc">Wall-clock timeout + RSS polling, since srt provides neither. Detailed in Section 09.</div></div></div>
+        <div class="layer"><div class="layer-num">L3</div><div class="layer-body"><div class="layer-title">Workspace confinement</div><div class="layer-desc">Dedicated scratch directory per server/chat, backed by L1's <code>allowWrite</code> — belt and suspenders, not the actual boundary.</div></div></div>
+        <div class="layer"><div class="layer-num">L4</div><div class="layer-body"><div class="layer-title">Network allowlisting per tool</div><div class="layer-desc">Declared manifest, reviewed by the user before first run. Detailed in Section 10.</div></div></div>
+        <div class="layer"><div class="layer-num">L5</div><div class="layer-body"><div class="layer-title">Audit & anomaly surfacing</div><div class="layer-desc">Every denial logged; credential-denylist hits also surfaced in-app. Detailed in Section 11.</div></div></div>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="read-write">
+      <h2><span class="section-num">07</span> Layer 1 Deep Dive: srt — The Read/Write Asymmetry <span class="verified-tag">verified</span></h2>
+      <p>The single most important detail in this document. From srt's own documentation:</p>
+      <div class="callout callout-yellow">
+        <strong>Write access is deny-by-default</strong> — only paths in <code>allowWrite</code> are writable.<br><br>
+        <strong>Read access is allow-by-default</strong> — everything is readable unless listed in <code>denyRead</code>.
+      </div>
+      <p>A naive integration that only sets <code>allowWrite</code> leaves every file on disk still readable, including <code>~/.ssh/id_rsa</code>, browser cookie databases, and cloud credential files.</p>
+      <h3>Required baseline denyRead list</h3>
+      <pre><code>const BASELINE_DENY_READ = [
+  '~/.ssh', '~/.aws', '~/.config/gcloud', '~/.docker/config.json',
+  '~/.kube/config', '~/.netrc', '~/.npmrc', '~/.pypirc', '~/.gnupg',
+  '~/Library/Keychains',
+  '~/Library/Application Support/Google/Chrome/*/Cookies',
+  '~/Library/Application Support/Google/Chrome/*/Login Data',
+  '~/Library/Cookies', '~/.gitconfig', '~/.docker',
+  '~/Library/Application Support/desktop-intelligence/settings.json'
+]</code></pre>
+      <div class="callout callout-red">
+        <strong>Self-referential risk:</strong> Desktop Intelligence's own <code>SettingsStore</code> holds OpenRouter/NVIDIA/API keys on disk. That file must itself be in the baseline denylist.
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="shell-injection">
+      <h2><span class="section-num">08</span> Shell-String Construction & Injection Risk <span class="verified-tag">verified</span></h2>
+      <p>Confirmed API: <code>SandboxManager.wrapWithSandbox(command: string)</code> takes a single shell string, executed with <code>spawn(sandboxedCommand, { shell: true })</code> — not an argv array.</p>
+      <div class="callout callout-red">
+        <strong>Never interpolate LLM-generated content directly into the command string.</strong> The sandbox restricts what the resulting process can touch; it does not sanitize the command line that produces that process.
+      </div>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Write LLM-generated code to a fixed-name file inside the workspace (<code>{workspace}/_exec.py</code>) via <code>fs.writeFileSync</code></li>
+        <li><div class="check-box"></div>Build the command from fixed, app-controlled paths only: <code>python3 ${workspacePath}/_exec.py</code></li>
+        <li><div class="check-box"></div>For any dynamic MCP arg, use a vetted shell-quoting library (e.g. <code>shell-quote</code>), and treat it as a code-review flag</li>
+      </ul>
+    </section>
+
+    <hr>
+
+    <section id="resource-limits">
+      <h2><span class="section-num">09</span> Layer 2: Resource Governor <span class="disputed-tag">not provided by srt</span></h2>
+      <p>Confirmed via the source tree: no CPU/memory/disk quota module exists in <code>sandbox-runtime</code>. Seatbelt is access control, not cgroups.</p>
+      <pre><code>class ResourceGovernor {
+  private wallClockKill(pid: number, timeoutMs: number): void
+  private memoryWatch(pid: number, maxRssMb: number): void  // pidusage, 1s poll
+}</code></pre>
+      <div class="callout callout-neutral">
+        Not a hard boundary — a fast memory spike could beat a 1s poll. If true hard quotas become a hard requirement, that's an argument for routing that specific workload through <code>MicrosandboxBackend</code> (Section 13), which does provide per-VM resource limits, rather than trying to bolt cgroups onto macOS.
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="network">
+      <h2><span class="section-num">10</span> Layer 4: Network Policy & the MCP Sandbox Manifest <span class="verified-tag">verified</span></h2>
+      <p>srt's network isolation is allow-only — empty <code>allowedDomains</code> means zero network access, enforced via an HTTP + SOCKS5 proxy on localhost.</p>
+      <pre><code>{
+  "name": "brave-search",
+  "command": "npx", "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+  "sandboxProfile": {
+    "allowedDomains": ["api.search.brave.com"],
+    "allowWrite": [],
+    "bypassSandbox": false
+  }
+}</code></pre>
+      <p>User reviews requested domains/paths before a server is first allowed to run.</p>
+      <h4>What network allowlisting does not do</h4>
+      <p>No TLS inspection on the encrypted payload — a compromised process can still exfiltrate to any domain on its allowlist if that domain accepts arbitrary input. Keep <code>allowedDomains</code> narrow and purpose-specific.</p>
+    </section>
+
+    <hr>
+
+    <section id="audit">
+      <h2><span class="section-num">11</span> Layer 5: Audit & Observability</h2>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Every srt violation appended to the existing trace as <code>sandbox_violation</code>: <code>{ serverId|worker, path|domain, kind, backend, timestamp }</code></li>
+        <li><div class="check-box"></div>Baseline-denylist hits surfaced as an in-app notification, not just logged</li>
+        <li><div class="check-box"></div>Routine violations logged only, visible in the existing observability panel</li>
+      </ul>
+    </section>
+
+    <hr>
+
+    <section id="rejected">
+      <h2><span class="section-num">12</span> Rejected Alternatives — and Why</h2>
+      <div class="rej-grid">
+        <div class="rej-card"><div class="rej-title">nono</div><div class="rej-body">Real, well-built, same OS-primitive category as srt. But network control is documented as all-or-nothing block — no domain-level allowlisting. Most MCP servers need <em>some</em> network, not none.</div></div>
+        <div class="rej-card"><div class="rej-title">Docker (as default layer)</div><div class="rej-body">Shares the host kernel — doesn't stop a kernel exploit despite isolation optics. Requires Docker Desktop running as a hard dependency. Heavier boot overhead for the common case (every tool call). Remains a documented fallback for Phase 4 only if microsandbox fails its benchmark gate — see Section 14.</div></div>
+        <div class="rej-card"><div class="rej-title">Per-chat ephemeral sandbox + template system</div><div class="rej-body">Directionally reasonable, but scope creep relative to the gaps in Section 01. Deferred to a later iteration once Phase 0–2 ship.</div></div>
+        <div class="rej-card"><div class="rej-title">Regex/blocklist code validation (current state)</div><div class="rej-body">Actively replaced, not extended — <code>validatePythonCode()</code> is deleted once SrtBackend wraps the worker.</div></div>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="microsandbox">
+      <h2><span class="section-num">13</span> Microsandbox: Verified Capabilities & Multi-Agent Fit <span class="verified-tag">verified against microsandbox.dev</span></h2>
+      <p>Confirmed directly from the vendor site, not secondhand research:</p>
+      <ul class="checklist">
+        <li><div class="check-box"></div>YC-backed (Combinator F26), Apache 2.0, no telemetry, free forever for local/self-hosted use — cloud sync is a separate paid layer, irrelevant to this local-first design</li>
+        <li><div class="check-box"></div>Embeds as a library — <strong>no daemon, no root requirement</strong>, unlike Docker's always-on root <code>dockerd</code>. This is a concrete architectural advantage, not just a speed claim</li>
+        <li><div class="check-box"></div>Secrets substitution: real key values never enter the guest VM; a placeholder is swapped in and the real value injected only on a verified TLS handshake to an allowlisted host</li>
+        <li><div class="check-box"></div>TypeScript/Python/Rust SDKs; OCI-compatible images (existing Docker images work unchanged)</li>
+        <li><div class="check-box"></div><strong>Spawn-sandboxes-from-sandboxes</strong>: code running inside one microsandbox can spawn peer sandboxes, each with its own network policy and secrets</li>
+      </ul>
+      <h3>Why this matters specifically for Multi-Agent Orchestration</h3>
+      <p>The spawn-from-sandbox primitive maps almost directly onto <code>MULTI_AGENT_SPEC.html</code>'s dynamic worker model (Section 04/06 of that spec): each orchestrator-spawned worker agent could be its own microsandbox instance, with snapshot/fork used to warm one base image once and fork N parallel workers quickly rather than cold-booting each independently — directly relevant given the default max-agent cap of 4. This is a good reason to prioritize the benchmark in Section 14 sooner rather than later if the Multi-Agent Phase 2 timeline and this timeline start to overlap, but it does not change Phase 0's priority.</p>
+      <div class="callout callout-blue">
+        The published benchmark ("~320ms boot, faster than Docker's 463ms") is measured bare-metal Linux/KVM. Apple Silicon uses Hypervisor.framework (HVF) via libkrun — a different backend, with no published number for your actual target hardware. Section 14 exists specifically to replace that vendor figure with a real one from your machines before any adoption decision is made.
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="benchmark">
+      <h2><span class="section-num">14</span> Benchmark Protocol & Go/No-Go Gate</h2>
+      <p>The purpose of this section is to make Phase 4 adoption a data-driven decision made on your actual hardware, not a vendor-marketing-driven one. Run on <strong>both</strong> machines — the M1 Pro number matters more, since it's already the machine where the project's known performance issues surface (see project history: persistent stutter, unresolved rAF loop investigation).</p>
+
+      <h3>Benchmark tasks</h3>
+      <table class="bench-table">
+        <tr><th>ID</th><th>Task</th><th>Method</th></tr>
+        <tr><td class="metric">B1</td><td>Cold boot latency</td><td><code>Sandbox.create()</code> to first successful <code>exec('echo hello')</code> response. N=20 runs. Record cold (no image cache) and warm (cached image) separately.</td></tr>
+        <tr><td class="metric">B2</td><td>Concurrent spin-up</td><td>Boot 4 sandboxes simultaneously (matches the Multi-Agent default max-agent cap). Record wall-clock time to all 4 ready.</td></tr>
+        <tr><td class="metric">B3</td><td>Snapshot/fork/restore</td><td>Warm one sandbox with a representative Python devkit image (numpy/pandas installed), snapshot it, fork 4 times, record fork-to-ready latency per fork.</td></tr>
+        <tr><td class="metric">B4</td><td>Representative workload</td><td>Clone a small real public repo, install its deps, run its test suite inside the sandbox. Record total wall time, and separately the same steps run unsandboxed, to get the actual overhead delta rather than a synthetic number.</td></tr>
+        <tr><td class="metric">B5</td><td>Idle memory footprint</td><td>RSS of the hypervisor/guest process per idle sandbox, at rest and with 4 concurrent.</td></tr>
+        <tr><td class="metric">B6</td><td>M1 Pro concurrency ceiling</td><td>Increase concurrent sandbox count until CPU/memory contention or UI stutter becomes visible. Record the ceiling.</td></tr>
+      </table>
+
+      <h3>Recording format</h3>
+      <pre><code>machine,     task, run,  cold_or_warm, latency_ms, rss_mb, notes
+m5-pro,      B1,   1,    cold,         ...,        ...,    ...
+m5-pro,      B1,   2,    warm,         ...,        ...,    ...
+m1-pro,      B1,   1,    cold,         ...,        ...,    ...
+...</code></pre>
+
+      <h3>Go / No-Go thresholds (draft — adjust after seeing real numbers)</h3>
+      <table>
+        <tr><th>Metric</th><th>Target</th><th>If missed</th></tr>
+        <tr><td>B1 cold boot</td><td>&le; 1.5s</td><td>Acceptable UX given the existing pre-flight approval screen already introduces a pause; re-evaluate only if &gt; 3s</td></tr>
+        <tr><td>B2 4-concurrent ready</td><td>&le; 4s combined</td><td>If missed on M1 Pro only, gate the feature behind a hardware capability check rather than blocking it app-wide</td></tr>
+        <tr><td>B5 idle memory</td><td>&le; 200MB / sandbox</td><td>Tighten default max-agent cap for microsandbox-backed runs specifically</td></tr>
+        <tr><td>B6 M1 Pro ceiling</td><td>&ge; 2 concurrent without visible stutter</td><td>If not met, microsandbox ships as an M5-Pro-only capability, detected at runtime — a legitimate outcome, not a failure of the design</td></tr>
+      </table>
+
+      <div class="callout callout-green">
+        <strong>Decision rule:</strong> if thresholds are met on both machines → implement <code>MicrosandboxBackend</code> fully. If met on M5 Pro only → ship gated behind a runtime hardware check (available RAM/core count floor). If not met on either → keep the heavy-execution case on Docker as originally scoped in <code>MULTI_AGENT_SPEC.html</code>'s Phase 2, rather than forcing microsandbox in. Record the decision and the raw numbers in <code>progress.md</code> before writing any <code>MicrosandboxBackend</code> code beyond the interface-conformant stub.
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="limitations">
+      <h2><span class="section-num">15</span> Known Limitations (Read Before Shipping)</h2>
+      <table>
+        <tr><th>Limitation</th><th>Detail</th><th>Backend</th></tr>
+        <tr><td>Shared kernel</td><td>Seatbelt restricts syscalls; doesn't give the process its own kernel. Out of scope per Section 02.</td><td>srt</td></tr>
+        <tr><td>No TLS inspection</td><td>Proxy filters by domain, not payload content.</td><td>srt</td></tr>
+        <tr><td>Documented real-world bypass</td><td>A SOCKS5 null-byte issue, chainable with prompt injection, was patched in a public commit and shipped in Claude Code 2.1.88–2.1.90. Pin an exact version; update promptly on security releases.</td><td>srt</td></tr>
+        <tr><td><code>sandbox-exec</code> is deprecated Apple API</td><td>Deprecated by Apple in 2017, no first-party replacement offered since. Still the pragmatic industry choice; no clean fallback exists on macOS if Apple removes it.</td><td>srt</td></tr>
+        <tr><td>Early-stage package</td><td>Active breaking changes across 0.0.x releases. Pin exact version, no caret range.</td><td>srt</td></tr>
+        <tr><td>Read is allow-by-default</td><td>Forgetting to maintain <code>BASELINE_DENY_READ</code> means every file is readable.</td><td>srt</td></tr>
+        <tr><td>Pre-1.0 / experimental</td><td>Vendor explicitly labels it experimental; expect breaking changes and rough edges.</td><td>microsandbox</td></tr>
+        <tr><td>Unverified on target hardware</td><td>Published boot-time figures are Linux/KVM; Apple Silicon HVF numbers unknown until Section 14 runs.</td><td>microsandbox</td></tr>
+        <tr><td>Windows unsupported (srt)</td><td>Not relevant to DI's current macOS-only footprint.</td><td>srt</td></tr>
+      </table>
+    </section>
+
+    <hr>
+
+    <section id="scope">
+      <h2><span class="section-num">16</span> Implementation Scope</h2>
+      <h3>Foundation (Phase 0)</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Pin <code>@anthropic-ai/sandbox-runtime</code> at an exact version</li>
+        <li><div class="check-box"></div><code>SandboxRunSpec</code> / <code>SandboxRunResult</code> / <code>SandboxExecutionBackend</code> types (Section 05)</li>
+        <li><div class="check-box"></div><code>SrtBackend implements SandboxExecutionBackend</code> — the only backend that does real work in Phase 0</li>
+        <li><div class="check-box"></div><code>MicrosandboxBackend</code> stub — interface-conformant, throws on <code>run()</code> until Phase 4 gate passes</li>
+        <li><div class="check-box"></div><code>SandboxService</code> routing logic (<code>executionProfile</code> → backend)</li>
+        <li><div class="check-box"></div><code>BASELINE_DENY_READ</code> constant, unit-tested</li>
+        <li><div class="check-box"></div>Dependency check on startup, surfaced in Settings if missing</li>
+      </ul>
+      <h3>Resource Governor</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div><code>ResourceGovernor</code>: wall-clock kill + <code>pidusage</code>-based RSS polling</li>
+      </ul>
+      <h3>PythonWorkerService retrofit</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Delete <code>validatePythonCode()</code> entirely</li>
+        <li><div class="check-box"></div>Write code to <code>{scratchDir}/_exec.py</code>, never shell-interpolated</li>
+        <li><div class="check-box"></div>Spawn via <code>SandboxService.run({ executionProfile: 'lightweight', ... })</code></li>
+      </ul>
+      <h3>McpServerManager retrofit</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Extend <code>mcp.json</code> with <code>sandboxProfile</code></li>
+        <li><div class="check-box"></div>Every stdio spawn routes through <code>SandboxService</code> unless <code>bypassSandbox: true</code></li>
+        <li><div class="check-box"></div>Manifest review UI; persistent bypass indicator</li>
+      </ul>
+      <h3>Benchmark (pre-Phase-4 gate)</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>Benchmark harness script(s) for B1–B6, runnable on both machines</li>
+        <li><div class="check-box"></div>Results recorded, go/no-go decision documented in <code>progress.md</code> before <code>MicrosandboxBackend</code> internals are written</li>
+      </ul>
+      <h3>Multi-Agent integration</h3>
+      <ul class="checklist">
+        <li><div class="check-box"></div>LangGraph sidecar's worker tool calls proxy back to Electron over IPC into this same <code>SandboxService</code></li>
+        <li><div class="check-box"></div>Revise <code>MULTI_AGENT_SPEC.html</code>'s sandboxing decision card to point here</li>
+      </ul>
+    </section>
+
+    <hr>
+
+    <section id="phases">
+      <h2><span class="section-num">17</span> Build Phases</h2>
+      <div class="phases">
+        <div class="phase"><div class="phase-num active">0</div><div class="phase-body"><div class="phase-title">Foundation + backend abstraction + Python worker</div><div class="phase-desc"><code>SandboxService</code>, both backend interfaces (SrtBackend real, MicrosandboxBackend stub), baseline denylist, ResourceGovernor. Retrofit <code>PythonWorkerService</code>, delete the regex blocklist.</div></div></div>
+        <div class="phase"><div class="phase-num">1</div><div class="phase-body"><div class="phase-title">MCP server sandboxing</div><div class="phase-desc">Manifest schema, retrofit <code>McpServerManager</code>, review UI, bypass toggle.</div></div></div>
+        <div class="phase"><div class="phase-num">2</div><div class="phase-body"><div class="phase-title">Audit & observability</div><div class="phase-desc"><code>sandbox_violation</code> trace events, in-app notification path.</div></div></div>
+        <div class="phase"><div class="phase-num">3</div><div class="phase-body"><div class="phase-title">Multi-agent proxy integration</div><div class="phase-desc">Wire LangGraph sidecar tool calls through the existing sandbox via IPC.</div></div></div>
+        <div class="phase"><div class="phase-num pending">4</div><div class="phase-body"><div class="phase-title">Benchmark → Go/No-Go → microsandbox implementation</div><div class="phase-desc">Run B1–B6 on both machines (Section 14). If thresholds met, implement <code>MicrosandboxBackend</code> fully. If met on M5 Pro only, gate behind a hardware check. If not met on either, fall back to Docker for the heavy-execution case as originally scoped in <code>MULTI_AGENT_SPEC.html</code>.</div></div></div>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="dod">
+      <h2><span class="section-num">18</span> Definition of Done</h2>
+      <div class="dod-grid">
+        <div class="dod-item"><span class="dod-num">D1</span>Python worker cannot read <code>~/.ssh/id_rsa</code>, <code>~/.aws/credentials</code>, or DI's own settings file</div>
+        <div class="dod-item"><span class="dod-num">D2</span>Python worker cannot open a network socket to any host</div>
+        <div class="dod-item"><span class="dod-num">D3</span><code>validatePythonCode()</code> no longer exists</div>
+        <div class="dod-item"><span class="dod-num">D4</span>A test MCP server with no declared domains cannot reach any host</div>
+        <div class="dod-item"><span class="dod-num">D5</span>A test MCP server with one allowed domain can reach only that domain</div>
+        <div class="dod-item"><span class="dod-num">D6</span>A process exceeding the wall-clock timeout is killed within a bounded margin</div>
+        <div class="dod-item"><span class="dod-num">D7</span>A process exceeding the RSS cap is killed within one polling interval</div>
+        <div class="dod-item"><span class="dod-num">D8</span>Every denied read/write/network attempt appears in the observability trace</div>
+        <div class="dod-item"><span class="dod-num">D9</span>A baseline-denylist violation produces a visible in-app notification</div>
+        <div class="dod-item"><span class="dod-num">D10</span><code>bypassSandbox: true</code> shows a persistent visible indicator</div>
+        <div class="dod-item"><span class="dod-num">D11</span>Exact <code>sandbox-runtime</code> version pinned, no caret range</div>
+        <div class="dod-item"><span class="dod-num">D12</span><code>SandboxService</code>'s public interface contains no microsandbox-specific types outside <code>MicrosandboxBackend.ts</code></div>
+        <div class="dod-item"><span class="dod-num">D13</span>B1–B6 benchmark results and the go/no-go decision are recorded in <code>progress.md</code> before any <code>MicrosandboxBackend</code> internals are written</div>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="appendix">
+      <h2><span class="section-num">19</span> Appendix: Verified API Reference</h2>
+      <h3>srt (active, Phase 0)</h3>
+      <pre><code>import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
+import { spawn } from 'child_process'
+
+await SandboxManager.initialize()   // once, at app startup
+
+const sandboxedCommand = await SandboxManager.wrapWithSandbox(
+  `python3 ${fixedScratchPath}/_exec.py`   // never build this from untrusted content
+)
+const child = spawn(sandboxedCommand, { shell: true, stdio: 'inherit' })
+child.on('exit', (code) => { /* ... */ })
+
+await SandboxManager.reset()   // optional, happens automatically on process exit</code></pre>
+      <pre><code>// Confirmed flat config schema — NOT nested under a "sandbox" key
+{
+  "network": { "allowedDomains": ["api.example.com"], "deniedDomains": [] },
+  "filesystem": { "denyRead": ["~/.ssh", "~/.aws"], "allowWrite": ["./sandbox-workspace"], "denyWrite": [] },
+  "enableWeakerNestedSandbox": false,
+  "enableWeakerNetworkIsolation": false
+}</code></pre>
+      <h3>microsandbox (Phase 4, pending benchmark gate)</h3>
+      <pre><code>import { Sandbox } from 'microsandbox'
+
+const sb = await Sandbox.create('worker-1', {
+  image: 'python:3.12-slim',
+  network: { allow: ['pypi.org', 'files.pythonhosted.org'] },
+  secrets: { OPENAI_API_KEY: process.env.OPENAI_API_KEY },
+  volumes: [{ host: workspaceDir, guest: '/workspace' }],
+})
+
+const result = await sb.exec('python3', ['/workspace/_exec.py'])
+
+// Snapshot/fork — relevant to Multi-Agent parallel worker spin-up, Section 13
+const snap = await sb.snapshot()
+const forked = await snap.restore('worker-2')
+
+await sb.destroy()</code></pre>
+      <div class="callout callout-neutral">
+        <strong>Corrections applied to prior research:</strong> srt's method is <code>wrapWithSandbox(command: string)</code>, not <code>wrapCommand([cmd, args])</code>. Config keys are flat, not nested under <code>"sandbox"</code>. No <code>permissions.allow/deny</code> array syntax exists in this package (that belongs to Claude Code's separate settings.json). No <code>httpProxyPort</code>/<code>socksProxyPort</code> fields. No CPU/memory/disk quota mechanism in srt at all. The microsandbox snippet above reflects the vendor's own published SDK shape as of this writing — re-verify exact method names against whatever SDK version is actually installed, since it remains pre-1.0 software subject to change.
+      </div>
+    </section>
+
+    <div style="padding: 60px 0 20px; font-family: var(--mono); font-size: 11px; color: var(--text3);">
+      Desktop Intelligence — Universal Tool-Call Sandbox Spec, rev 2 · Generated 2026-07-04 · srt (active) + microsandbox (gated) · Do not modify objectives retroactively
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.snav-link');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`.snav-link[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+  sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
