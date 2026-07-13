@@ -10,9 +10,12 @@ import {
   CheckCircle,
   Loader,
   Circle,
+  Shield,
+  ShieldOff,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import type { McpServerRuntimeInfo, McpServerSettings } from '../../../../shared/types'
+import type { McpServerRuntimeInfo, McpServerSettings, McpServerConfig, StdioMcpServerConfig } from '../../../../shared/types'
+import { isHttpMcpConfig } from '../../../../shared/types'
 
 // ── Toggle — matches MCPSettingsPanel exactly ────────────────────
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -63,20 +66,206 @@ function StatusBadge({ status }: { status: McpServerRuntimeInfo['status'] }) {
   )
 }
 
+// ── Sandbox status badge — always visible, never hidden behind a click ────
+// Only meaningful for stdio servers (HTTP servers have no local process to
+// sandbox and never carry a sandboxProfile).
+
+function SandboxStatusBadge({ profile }: { profile: StdioMcpServerConfig['sandboxProfile'] }) {
+  if (!profile) {
+    return (
+      <span
+        className="flex items-center gap-1 text-xs text-amber-400"
+        title="No sandboxProfile declared — this server runs with full host filesystem and network access."
+      >
+        <ShieldOff className="w-3 h-3" /> unsandboxed
+      </span>
+    )
+  }
+  if (profile.bypassSandbox) {
+    return (
+      <span
+        className="flex items-center gap-1 text-xs text-amber-400"
+        title="bypassSandbox: true — this server runs with full host filesystem and network access."
+      >
+        <ShieldOff className="w-3 h-3" /> bypassed
+      </span>
+    )
+  }
+  return (
+    <span
+      className="flex items-center gap-1 text-xs text-emerald-400"
+      title="Sandboxed — filesystem writes and network access are limited to the declared allowlist."
+    >
+      <Shield className="w-3 h-3" /> sandboxed
+    </span>
+  )
+}
+
+// ── Sandbox profile editor — collapsed inside the server's own expand ─────
+
+function parseLines(raw: string): string[] {
+  return raw.split('\n').map((l) => l.trim()).filter(Boolean)
+}
+
+interface SandboxProfileEditorProps {
+  serverName: string
+  profile:    StdioMcpServerConfig['sandboxProfile']
+  isRunning:  boolean
+  onSaved:    () => void
+}
+
+function SandboxProfileEditor({ serverName, profile, isRunning, onSaved }: SandboxProfileEditorProps) {
+  const savedDomainsRaw = (profile?.allowedDomains ?? []).join('\n')
+  const savedWriteRaw   = (profile?.allowWrite ?? []).join('\n')
+  const savedBypass     = profile?.bypassSandbox === true
+
+  const [allowedDomainsRaw, setAllowedDomainsRaw] = useState(savedDomainsRaw)
+  const [allowWriteRaw,     setAllowWriteRaw]     = useState(savedWriteRaw)
+  const [bypassSandbox,     setBypassSandbox]     = useState(savedBypass)
+  const [saving,  setSaving]  = useState(false)
+  const [saveMsg, setSaveMsg] = useState<'saved' | 'error' | null>(null)
+
+  // Keep the draft in sync if the underlying config changes elsewhere
+  // (e.g. after a refresh triggered by a change on another panel).
+  useEffect(() => {
+    setAllowedDomainsRaw(savedDomainsRaw)
+    setAllowWriteRaw(savedWriteRaw)
+    setBypassSandbox(savedBypass)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedDomainsRaw, savedWriteRaw, savedBypass])
+
+  const isDirty =
+    allowedDomainsRaw !== savedDomainsRaw ||
+    allowWriteRaw !== savedWriteRaw ||
+    bypassSandbox !== savedBypass
+
+  const handleSave = useCallback(async () => {
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      const allowedDomains = parseLines(allowedDomainsRaw)
+      const allowWrite     = parseLines(allowWriteRaw)
+
+      const existing = await window.api.mcpListCustomServers()
+      const current  = existing[serverName]
+      if (!current) throw new Error(`Server "${serverName}" not found in config`)
+
+      existing[serverName] = {
+        ...current,
+        sandboxProfile: {
+          allowedDomains,
+          allowWrite,
+          ...(bypassSandbox ? { bypassSandbox: true } : {}),
+        },
+      } as McpServerSettings[string]
+
+      await window.api.mcpSaveCustomServers(existing)
+      setSaveMsg('saved')
+      onSaved()
+      setTimeout(() => setSaveMsg(null), 2500)
+
+      // sandboxProfile only takes effect on next start (McpServerManager
+      // reads it in _startServer) — restarting a running server is the only
+      // way this change actually applies right away.
+      if (isRunning && confirm(
+        `Restart "${serverName}" now to apply the new sandbox profile? ` +
+        `Sandbox changes only take effect on next start.`
+      )) {
+        await window.api.mcpRestartServer(serverName)
+      }
+    } catch (err) {
+      console.error('[McpToolsPanel] Failed to save sandbox profile:', err)
+      setSaveMsg('error')
+    } finally {
+      setSaving(false)
+    }
+  }, [serverName, allowedDomainsRaw, allowWriteRaw, bypassSandbox, isRunning, onSaved])
+
+  return (
+    <div
+      className="mt-3 pt-3 border-t border-surface-border/40 space-y-2.5"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <p className="text-xs font-medium text-content-secondary">Sandbox profile</p>
+      <p className="text-xs text-content-muted leading-relaxed">
+        These are allowlists, not blocklists — anything not listed below is denied.
+        Leave both empty (with bypass off) to block all outbound network access
+        and filesystem writes for this server.
+      </p>
+
+      <div>
+        <label className="text-xs text-content-muted block mb-1">Allowed domains (one per line)</label>
+        <textarea
+          rows={3}
+          value={allowedDomainsRaw}
+          onChange={(e) => setAllowedDomainsRaw(e.target.value)}
+          placeholder={'api.example.com\ncdn.example.com'}
+          className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono resize-none"
+        />
+      </div>
+
+      <div>
+        <label className="text-xs text-content-muted block mb-1">Writable paths (one per line)</label>
+        <textarea
+          rows={3}
+          value={allowWriteRaw}
+          onChange={(e) => setAllowWriteRaw(e.target.value)}
+          placeholder={'/Users/you/Documents/project'}
+          className="w-full bg-black/30 border border-surface-border rounded px-3 py-1.5 text-sm text-content-primary placeholder-content-muted focus:outline-none focus:border-accent-800 font-mono resize-none"
+        />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="pr-3">
+          <p className="text-xs font-medium text-content-secondary">Bypass sandbox</p>
+          <p className="text-xs text-content-muted">Run unsandboxed with full host access — not recommended.</p>
+        </div>
+        <Toggle checked={bypassSandbox} onChange={setBypassSandbox} />
+      </div>
+
+      <div className="flex items-center justify-between pt-1">
+        {saveMsg === 'saved' && <span className="text-xs text-emerald-500">✓ Saved</span>}
+        {saveMsg === 'error' && <span className="text-xs text-red-500">Failed to save</span>}
+        {saveMsg === null && <span />}
+        <button
+          onClick={handleSave}
+          disabled={!isDirty || saving}
+          className={cn(
+            'px-3 py-1.5 text-xs rounded font-medium transition-colors',
+            isDirty && !saving
+              ? 'bg-red-800 hover:bg-red-700 text-white'
+              : 'bg-surface-border text-content-muted cursor-not-allowed'
+          )}
+        >
+          {saving ? 'Saving…' : 'Save sandbox profile'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Single server card ───────────────────────────────────────────
 
 interface ServerCardProps {
   info:              McpServerRuntimeInfo
+  config:            (McpServerConfig & { enabled: boolean }) | undefined
   onRestart:         (name: string) => void
   onRemove:          (name: string) => void
   onToggleTool:      (serverName: string, toolName: string, enabled: boolean) => void
   onToggleApproval:  (serverName: string, requiresApproval: boolean) => void
+  onConfigChanged:   () => void
 }
 
-function ServerCard({ info, onRestart, onRemove, onToggleTool, onToggleApproval }: ServerCardProps) {
+function ServerCard({ info, config, onRestart, onRemove, onToggleTool, onToggleApproval, onConfigChanged }: ServerCardProps) {
   const [expanded,   setExpanded]   = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [removing,   setRemoving]   = useState(false)
+
+  // sandboxProfile only applies to stdio (local process) servers — HTTP
+  // servers have no local process and are already covered by the HTTPS +
+  // credential validation McpServerManager runs for them.
+  const isStdio = config !== undefined && !isHttpMcpConfig(config)
+  const sandboxProfile = isStdio ? (config as StdioMcpServerConfig).sandboxProfile : undefined
 
   const handleRestart = useCallback(async () => {
     setRestarting(true)
@@ -103,6 +292,7 @@ function ServerCard({ info, onRestart, onRemove, onToggleTool, onToggleApproval 
           : <ChevronRight className="w-3.5 h-3.5 text-content-muted flex-shrink-0" />}
         <Plug className="w-3.5 h-3.5 text-accent-500 flex-shrink-0" />
         <span className="flex-1 text-sm font-medium text-content-primary truncate">{info.name}</span>
+        {isStdio && <SandboxStatusBadge profile={sandboxProfile} />}
         <StatusBadge status={info.status} />
         {/* Permission mode toggle */}
         <div
@@ -201,6 +391,15 @@ function ServerCard({ info, onRestart, onRemove, onToggleTool, onToggleApproval 
             </div>
           ) : (
             <p className="mt-2 text-xs text-content-muted italic">No tools discovered</p>
+          )}
+
+          {isStdio && (
+            <SandboxProfileEditor
+              serverName={info.name}
+              profile={sandboxProfile}
+              isRunning={info.status === 'running'}
+              onSaved={onConfigChanged}
+            />
           )}
         </div>
       )}
@@ -547,13 +746,21 @@ function AddServerForm({ onAdded, onCancel }: AddServerFormProps) {
 
 export function McpToolsPanel() {
   const [servers,    setServers]    = useState<McpServerRuntimeInfo[]>([])
+  const [configs,    setConfigs]    = useState<McpServerSettings>({})
   const [showAdd,    setShowAdd]    = useState(false)
   const [loading,    setLoading]    = useState(true)
 
+  // Runtime status alone (McpServerRuntimeInfo) has no transport/config
+  // fields — sandboxProfile lives on the raw McpServerConfig, so both must
+  // be fetched and joined by server name for the sandbox UI to work.
   const refreshStatus = useCallback(async () => {
     try {
-      const status = await window.api.mcpGetServerStatus()
+      const [status, cfg] = await Promise.all([
+        window.api.mcpGetServerStatus(),
+        window.api.mcpListCustomServers(),
+      ])
       setServers(status)
+      setConfigs(cfg)
     } catch (err) {
       console.warn('[McpToolsPanel] getServerStatus failed:', err)
     }
@@ -638,10 +845,12 @@ export function McpToolsPanel() {
           <ServerCard
             key={s.name}
             info={s}
+            config={configs[s.name]}
             onRestart={() => window.api.mcpRestartServer(s.name)}
             onRemove={() => window.api.mcpRemoveServer(s.name)}
             onToggleTool={handleToggleTool}
             onToggleApproval={handleToggleApproval}
+            onConfigChanged={refreshStatus}
           />
         ))}
       </div>
