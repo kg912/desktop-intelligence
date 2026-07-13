@@ -11,6 +11,7 @@
 // falling back to an under-sandboxed path — a missing capability must fail
 // loudly, not degrade quietly.
 
+import type { ChildProcessWithoutNullStreams } from 'child_process'
 import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from './sandbox/types'
 
 export class SandboxService {
@@ -28,5 +29,12 @@ export class SandboxService {
       return this.microsandbox.run(spec)
     }
     return this.srt.run(spec)
+  }
+
+  async spawnPersistent(spec: SandboxRunSpec): Promise<ChildProcessWithoutNullStreams> {
+    if (spec.executionProfile === 'untrusted-heavy') {
+      return this.microsandbox.spawnPersistent(spec)
+    }
+    return this.srt.spawnPersistent(spec)
   }
 }

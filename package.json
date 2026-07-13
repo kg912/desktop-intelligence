@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.0.0-beta-51",
+  "version": "3.0.0-beta-52",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -41,6 +41,7 @@
     "lucide-react": "^0.395.0",
     "mermaid": "^11.13.0",
     "pdf-parse": "^2.4.5",
+    "pidusage": "4.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",

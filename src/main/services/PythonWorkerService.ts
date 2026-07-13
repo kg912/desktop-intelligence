@@ -12,46 +12,33 @@
  * Multiple concurrent render() calls are queued (FIFO) rather than falling
  * back to slow one-shot spawns. The Python worker is single-threaded so
  * requests are processed one at a time, but they don't pay cold-start cost.
+ *
+ * The worker is now spawned inside the srt sandbox (Phase 0/1). The regex
+ * blocklist validatePythonCode() has been deleted — the sandbox is the
+ * enforcement mechanism.  yfinance network access is allowlisted to the
+ * empirically discovered minimum hostnames (query1.finance.yahoo.com,
+ * query2.finance.yahoo.com, fc.yahoo.com — determined 2026-07-13 via
+ * scripts/spike-sandbox-yf-hosts.ts).
  */
 
-import { spawn, execSync, ChildProcessWithoutNullStreams } from 'child_process'
+import { execSync, ChildProcessWithoutNullStreams } from 'child_process'
 import * as path from 'path'
 import { app } from 'electron'
+import { mkdirSync } from 'fs'
+import { sandboxService } from './sandbox/sandboxServiceInstance'
+import { memoryWatch } from './sandbox/ResourceGovernor'
 
-/**
- * Validates LLM-generated Python code before execution in the worker.
- * Blocks patterns that could allow arbitrary file system access, network calls,
- * or shell command execution outside the intended matplotlib/numpy/scipy sandbox.
- * Throws an Error if any banned pattern is detected.
- */
-function validatePythonCode(code: string): void {
-  const BANNED: Array<[RegExp, string]> = [
-    [/\bimport\s+os\b/,              'os module'],
-    [/\bimport\s+subprocess\b/,      'subprocess module'],
-    [/\bimport\s+socket\b/,          'socket module'],
-    [/\bimport\s+shutil\b/,          'shutil module'],
-    [/\bimport\s+pathlib\b/,         'pathlib module'],
-    [/\bfrom\s+os\b/,                'os module (from-import)'],
-    [/\bfrom\s+subprocess\b/,        'subprocess module (from-import)'],
-    [/\b__import__\s*\(/,            '__import__ builtin'],
-    [/\beval\s*\(/,                  'eval()'],
-    [/\bexec\s*\(/,                  'exec()'],
-    [/\bopen\s*\(/,                  'open() file access'],
-    [/\bos\s*\.\s*(system|popen|execv|execve|execl|execle|execlp|spawnl|fork|kill|remove|unlink|rmdir)\b/,
-                                     'os shell/fs call'],
-    [/\b__builtins__\b/,             '__builtins__ access'],
-    [/\bcompile\s*\(/,               'compile()'],
-  ]
-
-  for (const [pattern, label] of BANNED) {
-    if (pattern.test(code)) {
-      throw new Error(
-        `[PythonWorker] Code execution blocked — disallowed pattern: ${label}. ` +
-        `Only numpy, matplotlib, scipy.stats, and yfinance are permitted.`
-      )
-    }
-  }
-}
+// ── yfinance hostnames — empirically determined 2026-07-13 ──────────────────
+// spike-sandbox-yf-hosts.ts tested deny-all → query1-only → query1+query2 →
+// query1+fc → query1+query2+fc.  ALL THREE are required for yfinance to
+// function.  These are NOT copied from documentation — they were verified by
+// running yf.Ticker("AAPL").history(period="1d") inside the srt sandbox with
+// progressively narrower allowlists until the minimum set was found.
+const YFINANCE_HOSTS = [
+  'query1.finance.yahoo.com',
+  'query2.finance.yahoo.com',
+  'fc.yahoo.com',
+]
 
 const WORKER_TIMEOUT_MS = 30_000
 const READY_TIMEOUT_MS  = 15_000
@@ -79,6 +66,13 @@ export class PythonWorkerService {
   private readyResolve: (() => void)          | null = null
   private readyReject:  ((err: Error) => void) | null = null
 
+  // ResourceGovernor stop handle — cleared when the worker exits
+  private _stopMemoryWatch: (() => void) | null = null
+
+  // Scratch directory for the worker's sandbox workspace — created once
+  // at startup and reused for the worker lifetime.
+  private _scratchDir: string = ''
+
   /** Path to worker_harness.py — works in both dev and packaged app. */
   private getWorkerPath(): string {
     if (app.isPackaged) {
@@ -91,7 +85,10 @@ export class PythonWorkerService {
   async start(): Promise<void> {
     if (this.proc) return  // already running
 
-    // Ensure yfinance is available before starting the worker
+    // ── yfinance pre-install: UNSANDBOXED ───────────────────────────────
+    // The package name "yfinance" is a hardcoded app constant, not
+    // LLM-controlled input.  It is outside the threat model (spec
+    // section 02) — this is a deliberate scope boundary, not an oversight.
     try {
       execSync('python3 -c "import yfinance"', { timeout: 5_000, stdio: 'ignore' })
       console.log('[PythonWorker] yfinance already installed')
@@ -109,13 +106,52 @@ export class PythonWorkerService {
       }
     }
 
-    const workerPath = this.getWorkerPath()
-    console.log('[PythonWorker] Starting worker:', workerPath)
+    // ── Scratch directory for sandbox workspace ──────────────────────────
+    this._scratchDir = path.join(app.getPath('userData'), 'sandboxes', 'python-worker')
+    mkdirSync(this._scratchDir, { recursive: true })
 
-    this.proc = spawn('python3', [workerPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, MPLBACKEND: 'Agg' },
-    })
+    const workerPath = this.getWorkerPath()
+    // workerPath is a fixed app-resource path (getWorkerPath()) — it never
+    // contains anything derived from user/LLM input, so building the
+    // command string this way is safe (spec section 08).
+    const command = `python3 ${workerPath}`
+
+    console.log('[PythonWorker] Starting sandboxed worker:', workerPath)
+
+    try {
+      this.proc = await sandboxService.spawnPersistent({
+        workspaceDir:     this._scratchDir,
+        command,
+        executionProfile: 'lightweight',
+        allowedDomains:   YFINANCE_HOSTS,
+        allowWrite:       [this._scratchDir],
+        denyRead:         [],
+        env: {
+          MPLBACKEND: 'Agg',
+          // Point matplotlib's font cache at the scratch dir so it doesn't
+          // try to write to ~/.matplotlib (which is deny-write-by-default
+          // under srt).
+          MPLCONFIGDIR: this._scratchDir,
+        },
+        timeoutMs: 0,       // no wall-clock timeout — persistent process
+        maxRssMb:  1024,    // 1 GB RSS cap
+      })
+    } catch (err) {
+      console.error('[PythonWorker] Sandbox spawn failed:', err)
+      throw err
+    }
+
+    // ── ResourceGovernor: memory watchdog for the persistent worker ──────
+    if (this.proc.pid) {
+      this._stopMemoryWatch = memoryWatch(
+        this.proc.pid,
+        1024, // 1 GB RSS cap
+        () => {
+          console.warn('[PythonWorker] RSS exceeded 1 GB — killing worker')
+          this.proc?.kill()
+        }
+      )
+    }
 
     this.proc.stderr.on('data', (d: Buffer) => {
       console.log('[PythonWorker stderr]', d.toString().trimEnd())
@@ -163,6 +199,13 @@ export class PythonWorkerService {
 
     this.proc.on('close', (code) => {
       console.warn('[PythonWorker] Worker exited with code', code)
+
+      // Stop the memory watchdog
+      if (this._stopMemoryWatch) {
+        this._stopMemoryWatch()
+        this._stopMemoryWatch = null
+      }
+
       this.proc  = null
       this.ready = false
 
@@ -197,6 +240,10 @@ export class PythonWorkerService {
 
     this.proc.on('error', (err) => {
       console.error('[PythonWorker] Spawn error:', err.message)
+      if (this._stopMemoryWatch) {
+        this._stopMemoryWatch()
+        this._stopMemoryWatch = null
+      }
       this.proc  = null
       this.ready = false
       if (this.readyReject) {
@@ -223,6 +270,10 @@ export class PythonWorkerService {
   stop(): void {
     if (!this.proc) return
     this.stopping = true
+    if (this._stopMemoryWatch) {
+      this._stopMemoryWatch()
+      this._stopMemoryWatch = null
+    }
     try {
       this.proc.stdin.write(JSON.stringify({ cmd: 'exit' }) + '\n')
     } catch { /* ignore if stdin already closed */ }
@@ -246,14 +297,6 @@ export class PythonWorkerService {
    * Falls back to one-shot spawn only if the worker is not yet ready.
    */
   async render(userCode: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> {
-    try {
-      validatePythonCode(userCode)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(msg)
-      return { success: false, error: msg }
-    }
-
     if (!this.ready || !this.proc) {
       console.warn('[PythonWorker] Worker not ready — falling back to one-shot spawn')
       return this.fallbackRender(userCode)
@@ -306,17 +349,14 @@ export class PythonWorkerService {
     }
   }
 
-  /** One-shot fallback — minimal preamble, same stdout-based base64 output. */
+  /**
+   * One-shot fallback — writes code to a file, never shell-interpolated,
+   * and runs it inside the srt sandbox via sandboxService.run().
+   * The scratch file is deleted after the run completes (success or failure).
+   */
   private async fallbackRender(userCode: string): Promise<{ success: boolean; imageBase64?: string; error?: string }> {
-    try {
-      validatePythonCode(userCode)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(msg)
-      return { success: false, error: msg }
-    }
+    const { writeFileSync, unlinkSync } = await import('fs')
 
-    const { spawn: spawnFn } = await import('child_process')
     const PREAMBLE = `import sys, io, base64, matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -344,29 +384,50 @@ _buf.seek(0)
 sys.stdout.buffer.write(base64.b64encode(_buf.read()))
 _real_close('all')
 `
-    return new Promise((resolve) => {
-      const proc = spawnFn('python3', ['-c', PREAMBLE + userCode + EPILOGUE], {
-        timeout: WORKER_TIMEOUT_MS,
-        env: { ...process.env, MPLBACKEND: 'Agg' },
+
+    // Write code to a fixed-name file — NEVER interpolate LLM output into the
+    // shell command string (spec section 08).
+    const fallbackDir = this._scratchDir || path.join(app.getPath('userData'), 'sandboxes', 'python-worker')
+    const scratchFile = path.join(fallbackDir, `_fallback_${Date.now()}.py`)
+    writeFileSync(scratchFile, PREAMBLE + userCode + EPILOGUE, 'utf8')
+
+    let result: { success: boolean; imageBase64?: string; error?: string }
+    try {
+      const runResult = await sandboxService.run({
+        workspaceDir:     fallbackDir,
+        command:          `python3 ${scratchFile}`,
+        executionProfile: 'lightweight',
+        allowedDomains:   YFINANCE_HOSTS,
+        allowWrite:       [fallbackDir],
+        denyRead:         [],
+        env:              { MPLBACKEND: 'Agg' },
+        timeoutMs:        WORKER_TIMEOUT_MS,
+        maxRssMb:         512,
       })
-      const chunks: Buffer[] = []
-      const errChunks: string[] = []
-      proc.stdout.on('data', (d: Buffer) => chunks.push(d))
-      proc.stderr.on('data', (d: Buffer) => errChunks.push(d.toString()))
-      proc.on('close', (code) => {
-        if (code === 0 && chunks.length > 0) {
-          resolve({ success: true, imageBase64: Buffer.concat(chunks).toString('ascii') })
-        } else {
-          const lines = errChunks.join('').trim().split('\n')
-          resolve({ success: false, error: lines.filter(l => l.trim()).at(-1) ?? `exited ${code}` })
+
+      if (runResult.exitCode === 0 && runResult.stdout.length > 0) {
+        result = { success: true, imageBase64: runResult.stdout.trim() }
+      } else {
+        const lines = runResult.stderr.trim().split('\n')
+        result = {
+          success: false,
+          error: lines.filter(l => l.trim()).at(-1) ?? `exited ${runResult.exitCode}`
         }
-      })
-      proc.on('error', (err: Error) => {
-        resolve({ success: false, error: err.message.includes('ENOENT')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      result = {
+        success: false,
+        error: msg.includes('python3')
           ? 'python3 not found. Install Python 3 + matplotlib to render charts.'
-          : err.message })
-      })
-    })
+          : msg
+      }
+    }
+
+    // Clean up — don't leave generated code sitting on disk.
+    try { unlinkSync(scratchFile) } catch {}
+
+    return result
   }
 }
 

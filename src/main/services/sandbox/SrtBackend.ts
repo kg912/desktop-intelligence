@@ -13,7 +13,7 @@
 //   { network: { allowedDomains, deniedDomains }, filesystem: { denyRead, allowWrite, denyWrite }, ... }
 // NOT nested under a "sandbox" key.
 
-import { spawn } from 'child_process'
+import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from './types'
@@ -36,17 +36,11 @@ export class SrtBackend implements SandboxExecutionBackend {
     this.initialized = true
   }
 
-  async run(spec: SandboxRunSpec): Promise<SandboxRunResult> {
-    if (!this.initialized) {
-      await this.initialize()
-    }
+  // ── Shared config builder ─────────────────────────────────────────────────
 
-    // Merge caller-supplied denyRead with the baseline — de-duplicated.
+  private buildPerSpecConfig(spec: SandboxRunSpec): Partial<SandboxRuntimeConfig> {
     const mergedDenyRead = [...new Set([...BASELINE_DENY_READ, ...spec.denyRead])]
-
-    // Per-spec config passed as customConfig to wrapWithSandbox — merges with
-    // the base config from initialize().  Flat schema per spec section 19.
-    const perSpecConfig: Partial<SandboxRuntimeConfig> = {
+    return {
       network: { allowedDomains: spec.allowedDomains, deniedDomains: [] },
       filesystem: {
         denyRead: mergedDenyRead,
@@ -56,6 +50,16 @@ export class SrtBackend implements SandboxExecutionBackend {
       enableWeakerNestedSandbox: false,
       enableWeakerNetworkIsolation: false
     }
+  }
+
+  // ── One-shot run (spawn, wait for exit, capture stdout/stderr) ────────────
+
+  async run(spec: SandboxRunSpec): Promise<SandboxRunResult> {
+    if (!this.initialized) {
+      await this.initialize()
+    }
+
+    const perSpecConfig = this.buildPerSpecConfig(spec)
 
     const sandboxedCommand = await SandboxManager.wrapWithSandbox(
       spec.command,
@@ -91,6 +95,27 @@ export class SrtBackend implements SandboxExecutionBackend {
         })
       })
     })
+  }
+
+  // ── Persistent spawn (return live process, caller owns lifecycle) ─────────
+
+  async spawnPersistent(spec: SandboxRunSpec): Promise<ChildProcessWithoutNullStreams> {
+    if (!this.initialized) {
+      await this.initialize()
+    }
+
+    const perSpecConfig = this.buildPerSpecConfig(spec)
+
+    const sandboxedCommand = await SandboxManager.wrapWithSandbox(
+      spec.command,
+      undefined,
+      perSpecConfig
+    )
+
+    // Merge spec.env with process.env — additive, never replaces wholesale.
+    const env = { ...process.env, ...(spec.env ?? {}) }
+
+    return spawn(sandboxedCommand, { shell: true, env })
   }
 
   async shutdown(): Promise<void> {
