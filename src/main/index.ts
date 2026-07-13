@@ -15,15 +15,10 @@ import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
 import './services/ObservabilityService'
-import { SrtBackend } from './services/sandbox/SrtBackend'
+import { srtBackend } from './services/sandbox/sandboxServiceInstance'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { IPC_CHANNELS } from '../shared/types'
 import type { McpServerRuntimeInfo, McpToolPermissionRequest } from '../shared/types'
-
-// Sandbox backend — initialized at startup, shut down on graceful exit.
-// MicrosandboxBackend and SandboxService are not instantiated here yet;
-// they will be wired when PythonWorkerService/McpServerManager are retrofitted.
-const srtBackend = new SrtBackend()
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.

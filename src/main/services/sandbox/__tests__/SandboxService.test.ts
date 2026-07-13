@@ -1,12 +1,34 @@
 import { describe, it, expect, vi } from 'vitest'
+import { EventEmitter } from 'events'
+import type { ChildProcessWithoutNullStreams } from 'child_process'
 import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from '../types'
 import { SandboxService } from '../../SandboxService'
 
-// ── Mock backends ─────────────────────────────────────────────────────────────
+// ── Mock helpers ──────────────────────────────────────────────────────────────
+
+function makeMockChildProcess(): ChildProcessWithoutNullStreams {
+  const emitter = new EventEmitter()
+  return {
+    pid: 12345,
+    stdin: { write: vi.fn(), ...emitter } as any,
+    stdout: emitter as any,
+    stderr: emitter as any,
+    killed: false,
+    kill: vi.fn(),
+    on: vi.fn(() => {
+      return emitter as any
+    }),
+    once: vi.fn(),
+    removeAllListeners: vi.fn(),
+    ref: vi.fn(),
+    unref: vi.fn(),
+  } as unknown as ChildProcessWithoutNullStreams
+}
 
 function makeMockBackend(
   name: 'srt' | 'microsandbox',
-  runImpl?: (spec: SandboxRunSpec) => Promise<SandboxRunResult>
+  runImpl?: (spec: SandboxRunSpec) => Promise<SandboxRunResult>,
+  spawnPersistentImpl?: (spec: SandboxRunSpec) => Promise<ChildProcessWithoutNullStreams>
 ): SandboxExecutionBackend {
   return {
     name,
@@ -19,6 +41,11 @@ function makeMockBackend(
         exitCode: 0,
         backend: name
       })),
+    spawnPersistent:
+      spawnPersistentImpl ??
+      vi.fn(async (_spec: SandboxRunSpec): Promise<ChildProcessWithoutNullStreams> =>
+        makeMockChildProcess()
+      ),
     shutdown: vi.fn(async () => {})
   }
 }
@@ -34,7 +61,7 @@ const baseSpec: SandboxRunSpec = {
   maxRssMb: 512
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── run() tests ───────────────────────────────────────────────────────────────
 
 describe('SandboxService routing', () => {
   it('routes lightweight profile to the srt backend', async () => {
@@ -52,8 +79,6 @@ describe('SandboxService routing', () => {
 
   it('routes untrusted-heavy profile to the microsandbox backend', async () => {
     const srt = makeMockBackend('srt')
-    // Use a non-throwing mock here — the throwing behaviour is tested
-    // separately in "does NOT silently fall back to srt when microsandbox throws".
     const microsandbox = makeMockBackend('microsandbox')
     const service = new SandboxService(srt, microsandbox)
 
@@ -80,7 +105,6 @@ describe('SandboxService routing', () => {
       'MicrosandboxBackend is not yet implemented'
     )
 
-    // Critical: srt.run must NOT have been called as a fallback.
     expect(srt.run).not.toHaveBeenCalled()
   })
 
@@ -128,5 +152,65 @@ describe('SandboxService routing', () => {
 
     expect(srt.run).toHaveBeenCalledTimes(3)
     expect(microsandbox.run).not.toHaveBeenCalled()
+  })
+})
+
+// ── spawnPersistent() tests ───────────────────────────────────────────────────
+
+describe('SandboxService spawnPersistent routing', () => {
+  it('routes lightweight spawnPersistent to the srt backend', async () => {
+    const srt = makeMockBackend('srt')
+    const microsandbox = makeMockBackend('microsandbox')
+    const service = new SandboxService(srt, microsandbox)
+
+    const proc = await service.spawnPersistent(baseSpec)
+
+    expect(srt.spawnPersistent).toHaveBeenCalledTimes(1)
+    expect(srt.spawnPersistent).toHaveBeenCalledWith(baseSpec)
+    expect(microsandbox.spawnPersistent).not.toHaveBeenCalled()
+    expect(proc.pid).toBe(12345)
+  })
+
+  it('routes untrusted-heavy spawnPersistent to the microsandbox backend', async () => {
+    const srt = makeMockBackend('srt')
+    const microsandbox = makeMockBackend('microsandbox')
+    const service = new SandboxService(srt, microsandbox)
+
+    const heavySpec: SandboxRunSpec = { ...baseSpec, executionProfile: 'untrusted-heavy' }
+
+    const proc = await service.spawnPersistent(heavySpec)
+
+    expect(microsandbox.spawnPersistent).toHaveBeenCalledTimes(1)
+    expect(microsandbox.spawnPersistent).toHaveBeenCalledWith(heavySpec)
+    expect(srt.spawnPersistent).not.toHaveBeenCalled()
+    expect(proc.pid).toBe(12345)
+  })
+
+  it('does NOT silently fall back to srt spawnPersistent when microsandbox throws', async () => {
+    const srt = makeMockBackend('srt')
+    const throwingMicrosandbox = makeMockBackend('microsandbox', undefined, async () => {
+      throw new Error('MicrosandboxBackend is not yet implemented')
+    })
+    const service = new SandboxService(srt, throwingMicrosandbox)
+
+    const heavySpec: SandboxRunSpec = { ...baseSpec, executionProfile: 'untrusted-heavy' }
+
+    await expect(service.spawnPersistent(heavySpec)).rejects.toThrow(
+      'MicrosandboxBackend is not yet implemented'
+    )
+
+    expect(srt.spawnPersistent).not.toHaveBeenCalled()
+  })
+
+  it('calls srt.spawnPersistent exactly once per lightweight invocation', async () => {
+    const srt = makeMockBackend('srt')
+    const microsandbox = makeMockBackend('microsandbox')
+    const service = new SandboxService(srt, microsandbox)
+
+    await service.spawnPersistent(baseSpec)
+    await service.spawnPersistent(baseSpec)
+
+    expect(srt.spawnPersistent).toHaveBeenCalledTimes(2)
+    expect(microsandbox.spawnPersistent).not.toHaveBeenCalled()
   })
 })
