@@ -215,6 +215,40 @@ app.whenReady().then(async () => {
     console.log(`[App] Cloud backend active (${savedSettings.backendProvider}) — skipping LM Studio daemon and connection polling`)
   }
 
+  // ── Sandbox dependency check ──────────────────────────────────────
+  // Verifies that @anthropic-ai/sandbox-runtime can enforce sandboxing on
+  // this platform, and — critically — runs BEFORE pythonWorker.start() /
+  // mcpServerManager.startAll() so it actually gates the first sandboxed
+  // spawn instead of racing it. srtBackend.initialize() is awaited here so
+  // the lazy self-initialize guard inside SrtBackend.run()/spawnPersistent()
+  // (`if (this.initialized) return`) is a no-op in the normal case.
+  // Non-fatal: if dependencies are missing, a warning is logged and the
+  // SrtBackend is not initialized — the app continues to run without
+  // sandboxing (same as before this feature was added).
+  // The warning should be surfaced in Settings in a future prompt.
+  try {
+    if (SandboxManager.isSupportedPlatform()) {
+      const depCheck = SandboxManager.checkDependencies()
+      if (depCheck.errors.length > 0) {
+        console.warn('[Sandbox] Dependency check errors:', depCheck.errors)
+      }
+      if (depCheck.warnings.length > 0) {
+        console.warn('[Sandbox] Dependency check warnings:', depCheck.warnings)
+      }
+      if (depCheck.errors.length === 0) {
+        await srtBackend.initialize().catch((err: Error) => {
+          console.warn('[Sandbox] SrtBackend initialize failed:', err.message)
+        })
+      } else {
+        console.warn('[Sandbox] SrtBackend not initialized — dependency errors above')
+      }
+    } else {
+      console.warn('[Sandbox] Platform not supported by @anthropic-ai/sandbox-runtime')
+    }
+  } catch (err) {
+    console.warn('[Sandbox] Dependency check failed:', err)
+  }
+
   // Pre-warm the persistent Python worker so the first chart renders fast.
   // Non-fatal: if python3 is missing, render() will fall back to one-shot spawn.
   pythonWorker.start().catch((err: Error) => {
@@ -235,35 +269,6 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, req)
     }
   })
-
-  // ── Sandbox dependency check ──────────────────────────────────────
-  // Verifies that @anthropic-ai/sandbox-runtime can enforce sandboxing on
-  // this platform.  Non-fatal: if dependencies are missing, a warning is
-  // logged and the SrtBackend is not initialized — the app continues to
-  // run without sandboxing (same as before this feature was added).
-  // The warning should be surfaced in Settings in a future prompt.
-  try {
-    if (SandboxManager.isSupportedPlatform()) {
-      const depCheck = SandboxManager.checkDependencies()
-      if (depCheck.errors.length > 0) {
-        console.warn('[Sandbox] Dependency check errors:', depCheck.errors)
-      }
-      if (depCheck.warnings.length > 0) {
-        console.warn('[Sandbox] Dependency check warnings:', depCheck.warnings)
-      }
-      if (depCheck.errors.length === 0) {
-        srtBackend.initialize().catch((err: Error) => {
-          console.warn('[Sandbox] SrtBackend initialize failed:', err.message)
-        })
-      } else {
-        console.warn('[Sandbox] SrtBackend not initialized — dependency errors above')
-      }
-    } else {
-      console.warn('[Sandbox] Platform not supported by @anthropic-ai/sandbox-runtime')
-    }
-  } catch (err) {
-    console.warn('[Sandbox] Dependency check failed:', err)
-  }
 
   app.on('activate', () => {
     // On macOS: re-create the window when the Dock icon is clicked and no

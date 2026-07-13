@@ -12,6 +12,17 @@
 // The config schema is FLAT (spec section 19):
 //   { network: { allowedDomains, deniedDomains }, filesystem: { denyRead, allowWrite, denyWrite }, ... }
 // NOT nested under a "sandbox" key.
+//
+// CRITICAL (found 2026-07-13, see progress.md row 303): wrapWithSandbox()'s
+// `customConfig` argument does NOT push a new network allowlist to the live
+// enforcement proxy — that proxy is configured once, at initialize()-time,
+// from `baseConfig` (deny-all). Without an explicit SandboxManager.updateConfig()
+// call before each wrapWithSandbox(), every spawned process silently gets
+// initialize()'s network policy instead of its own spec.allowedDomains —
+// confirmed via a real yfinance render that failed with
+// "curl: (56) CONNECT tunnel failed, response 403" until updateConfig() was
+// added below. This is why every run()/spawnPersistent() call updates the
+// live config immediately before wrapping.
 
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
@@ -61,14 +72,22 @@ export class SrtBackend implements SandboxExecutionBackend {
 
     const perSpecConfig = this.buildPerSpecConfig(spec)
 
+    // Push the per-spec network/filesystem policy to the live enforcement
+    // proxy — wrapWithSandbox()'s customConfig alone does not do this (see
+    // header comment). Must happen before wrapWithSandbox() below.
+    SandboxManager.updateConfig(perSpecConfig as SandboxRuntimeConfig)
+
     const sandboxedCommand = await SandboxManager.wrapWithSandbox(
       spec.command,
       undefined,
       perSpecConfig
     )
 
+    // Merge spec.env with process.env — additive, never replaces wholesale.
+    const env = { ...process.env, ...(spec.env ?? {}) }
+
     return new Promise<SandboxRunResult>((resolve) => {
-      const child = spawn(sandboxedCommand, { shell: true })
+      const child = spawn(sandboxedCommand, { shell: true, env })
       let stdout = ''
       let stderr = ''
 
@@ -105,6 +124,11 @@ export class SrtBackend implements SandboxExecutionBackend {
     }
 
     const perSpecConfig = this.buildPerSpecConfig(spec)
+
+    // Push the per-spec network/filesystem policy to the live enforcement
+    // proxy — wrapWithSandbox()'s customConfig alone does not do this (see
+    // header comment). Must happen before wrapWithSandbox() below.
+    SandboxManager.updateConfig(perSpecConfig as SandboxRuntimeConfig)
 
     const sandboxedCommand = await SandboxManager.wrapWithSandbox(
       spec.command,
