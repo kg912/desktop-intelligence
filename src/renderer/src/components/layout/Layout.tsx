@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
 import { SettingsPage } from '../settings/SettingsPage'
@@ -11,7 +12,8 @@ import { useChat } from '../../hooks/useChat'
 import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
-import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest } from '../../../../shared/types'
+import { SandboxViolationToast } from '../chat/SandboxViolationToast'
+import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
@@ -194,6 +196,18 @@ export function Layout() {
     return () => { unsubPerm(); unsubStart(); unsubDone(); unsubError() }
   }, [])
 
+  // ── Sandbox credential-path violation toast (Phase 3) ──────────
+  // Top-level listener (mirrors the app-wide onDaemonStateChange in App.tsx)
+  // so the alert is visible regardless of which view (chat or settings) is
+  // showing — rendered outside the settingsOpen conditional below.
+  const [sandboxViolationToast, setSandboxViolationToast] = useState<SandboxViolationTraceEvent | null>(null)
+  useEffect(() => {
+    return window.api.onSandboxViolationAlert((violation) => {
+      setSandboxViolationToast(violation)
+      setTimeout(() => setSandboxViolationToast(null), 5000)
+    })
+  }, [])
+
   // ── Attachment list shared between window drop zone + InputBar ──
   const [attachments, setAttachments] = useState<Attachment[]>([])
 
@@ -367,6 +381,10 @@ export function Layout() {
 
   return (
     <div className="flex h-full w-full bg-background overflow-hidden">
+      <AnimatePresence>
+        {sandboxViolationToast && <SandboxViolationToast violation={sandboxViolationToast} />}
+      </AnimatePresence>
+
       {settingsOpen ? (
         <SettingsPage onClose={() => setSettingsOpen(false)} />
       ) : (

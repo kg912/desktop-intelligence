@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
-import { FolderOpen, Trash2 } from 'lucide-react'
+import { FolderOpen, Trash2, ShieldAlert } from 'lucide-react'
 import type { SessionEntry } from '../../../../main/services/ObservabilityService'
+import type { SandboxViolationLogEntry } from '../../../../shared/types'
 
 function Toggle({
   checked,
@@ -68,6 +69,12 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function kindBadgeClass(kind: SandboxViolationLogEntry['kind']): string {
+  if (kind === 'read')    return 'text-amber-400 border-amber-900/50'
+  if (kind === 'write')   return 'text-orange-400 border-orange-900/50'
+  return 'text-sky-400 border-sky-900/50' // network
+}
+
 function truncateModel(modelId: string): string {
   return modelId.length > 28 ? modelId.slice(0, 28) + '…' : modelId
 }
@@ -80,6 +87,9 @@ export function DebugSettings() {
   const [totalBytes,           setTotalBytes]           = useState(0)
   const [confirmClear,         setConfirmClear]         = useState(false)
 
+  const [violations,        setViolations]        = useState<SandboxViolationLogEntry[]>([])
+  const [confirmClearViolations, setConfirmClearViolations] = useState(false)
+
   const refreshStats = useCallback(async () => {
     const [list, bytes] = await Promise.all([
       window.api.obsListSessions(),
@@ -90,6 +100,10 @@ export function DebugSettings() {
     setTotalBytes(bytes)
   }, [])
 
+  const refreshViolations = useCallback(async () => {
+    setViolations(await window.api.obsListSandboxViolations())
+  }, [])
+
   useEffect(() => {
     window.api.obsGetPrefs()
       .then((prefs) => {
@@ -98,7 +112,8 @@ export function DebugSettings() {
       })
       .catch(console.error)
     refreshStats().catch(console.error)
-  }, [refreshStats])
+    refreshViolations().catch(console.error)
+  }, [refreshStats, refreshViolations])
 
   const handleObsToggle = (v: boolean) => {
     setObservabilityEnabled(v)
@@ -148,6 +163,28 @@ export function DebugSettings() {
       await refreshStats()
     } catch (err) {
       console.error('[DebugSettings] clearAll failed:', err)
+    }
+  }
+
+  const handleOpenViolationsFile = async () => {
+    try {
+      await window.api.obsOpenSandboxViolationsFile()
+    } catch (err) {
+      console.error('[DebugSettings] openSandboxViolationsFile failed:', err)
+    }
+  }
+
+  const handleClearViolations = async () => {
+    if (!confirmClearViolations) {
+      setConfirmClearViolations(true)
+      return
+    }
+    setConfirmClearViolations(false)
+    try {
+      await window.api.obsClearSandboxViolations()
+      await refreshViolations()
+    } catch (err) {
+      console.error('[DebugSettings] clearSandboxViolations failed:', err)
     }
   }
 
@@ -290,6 +327,129 @@ export function DebugSettings() {
             >
               <Trash2 className="w-3 h-3" />
               Clear All Logs
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Sandbox Violations section (Phase 3) ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted">
+            Sandbox Violations
+          </p>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-content-muted">
+              {violations.length} {violations.length === 1 ? 'entry' : 'entries'}
+            </span>
+            <button
+              onClick={handleOpenViolationsFile}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs
+                         border border-surface-border text-content-secondary
+                         hover:text-content-primary hover:border-surface-borderStrong
+                         transition-colors duration-100"
+            >
+              <FolderOpen className="w-3 h-3" />
+              Open
+            </button>
+          </div>
+        </div>
+
+        <p className="text-xs text-content-muted leading-relaxed mb-3">
+          Filesystem and network operations denied by the sandbox for a running MCP server or
+          the Python worker. Credential-path reads (marked below) also trigger an in-app alert
+          when they happen; everything else is logged here only.
+        </p>
+
+        <div
+          className="rounded-xl border border-surface-border/40 overflow-hidden"
+          style={{ background: '#111' }}
+        >
+          {violations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+              <p className="text-sm text-content-muted mb-1">No violations recorded.</p>
+              <p className="text-xs text-content-muted/60 leading-relaxed">
+                Enable Observability above to start recording sandbox denials.
+              </p>
+            </div>
+          ) : (
+            violations.map((entry, idx) => (
+              <div
+                key={`${entry.timestamp}-${idx}`}
+                className={`flex items-center gap-3 px-4 py-3 ${
+                  idx < violations.length - 1 ? 'border-b border-surface-border/20' : ''
+                }`}
+              >
+                {/* Date / time */}
+                <span className="text-xs text-content-secondary whitespace-nowrap flex-shrink-0">
+                  {new Date(entry.timestamp).toLocaleString()}
+                </span>
+
+                {/* Source */}
+                <span
+                  className="text-xs font-mono text-content-primary flex-shrink-0 w-32 truncate"
+                  title={entry.source}
+                >
+                  {entry.source}
+                </span>
+
+                {/* Kind badge */}
+                <span className={`text-xs border rounded px-1.5 py-0.5 flex-shrink-0 ${kindBadgeClass(entry.kind)}`}>
+                  {entry.kind}
+                </span>
+
+                {/* Target */}
+                <span
+                  className="text-xs font-mono text-content-muted flex-1 min-w-0 truncate"
+                  title={entry.target}
+                >
+                  {entry.target}
+                </span>
+
+                {/* Credential badge — only shown when it would have alerted */}
+                {entry.isCredential && (
+                  <span className="flex items-center gap-1 text-xs text-red-400 border border-red-900/50 rounded px-1.5 py-0.5 flex-shrink-0">
+                    <ShieldAlert className="w-3 h-3" />
+                    credential
+                  </span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Clear all */}
+        <div className="flex justify-end mt-3">
+          {confirmClearViolations ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-content-muted">Are you sure?</span>
+              <button
+                onClick={handleClearViolations}
+                className="px-3 py-1.5 rounded-md text-xs font-medium
+                           bg-red-900/30 border border-red-800/50 text-red-400
+                           hover:bg-red-900/50 transition-colors duration-100"
+              >
+                Yes, clear all
+              </button>
+              <button
+                onClick={() => setConfirmClearViolations(false)}
+                className="px-3 py-1.5 rounded-md text-xs
+                           border border-surface-border text-content-muted
+                           hover:text-content-secondary transition-colors duration-100"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleClearViolations}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs
+                         border border-surface-border text-content-muted
+                         hover:text-content-secondary hover:border-surface-borderStrong
+                         transition-colors duration-100"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear All Violations
             </button>
           )}
         </div>

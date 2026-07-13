@@ -1352,6 +1352,19 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     }
   )
 
+  // ── Sandbox violations — observability panel (Phase 3) ──────────
+  ipcMain.handle(IPC_CHANNELS.OBS_LIST_SANDBOX_VIOLATIONS, async () =>
+    observabilityService.listSandboxViolations()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_CLEAR_SANDBOX_VIOLATIONS, async (): Promise<void> =>
+    observabilityService.clearSandboxViolations()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_OPEN_SANDBOX_VIOLATIONS_FILE, async (): Promise<void> =>
+    observabilityService.openSandboxViolationsFile()
+  )
+
   // ── Per-chat system instructions ────────────────────────────────
   ipcMain.handle('chat:get-system-instructions', (_event, chatId: string) => {
     return getChatSystemInstructions(chatId)

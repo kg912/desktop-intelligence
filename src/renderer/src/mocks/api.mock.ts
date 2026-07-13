@@ -246,6 +246,11 @@ export const mockApi: ElectronAPI = {
   // ── Sandbox violations stub (Phase 2) ──────────────────────────
   onSandboxViolationAlert: () => () => {},
 
+  // ── Sandbox violations — observability panel stubs (Phase 3) ──
+  obsListSandboxViolations:     async () => [],
+  obsClearSandboxViolations:    async () => {},
+  obsOpenSandboxViolationsFile: async () => {},
+
   // ── Shell utilities ───────────────────────────────────────────
   openExternal: async (url: string) => { console.log('[mock] openExternal:', url) },
 

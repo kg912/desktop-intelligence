@@ -442,6 +442,11 @@ export const IPC_CHANNELS = {
   /** main→renderer push, credential-path denials only (see SrtBackend.subscribeToViolations) */
   SANDBOX_VIOLATION_ALERT: 'sandbox:violationAlert',
 
+  // ── Sandbox violations — observability panel (Phase 3) ────────────────────────
+  OBS_LIST_SANDBOX_VIOLATIONS:  'obs:listSandboxViolations',
+  OBS_CLEAR_SANDBOX_VIOLATIONS: 'obs:clearSandboxViolations',
+  OBS_OPEN_SANDBOX_VIOLATIONS_FILE: 'obs:openSandboxViolationsFile',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -649,4 +654,15 @@ export interface SandboxViolationTraceEvent {
   /** The denied path, domain, or resource name. */
   target:    string
   timestamp: number
+}
+
+/**
+ * One historical entry as returned by ObservabilityService.listSandboxViolations()
+ * (Phase 3, spec section 11/16) — the persisted event plus whether it would
+ * have triggered the in-app alert (same shouldAlertForViolation() check used
+ * live), so the observability panel can badge credential-path denials
+ * without duplicating that decision logic in the renderer.
+ */
+export interface SandboxViolationLogEntry extends SandboxViolationTraceEvent {
+  isCredential: boolean
 }

@@ -1,8 +1,9 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
 import { readSettings, writeSettings } from './SettingsStore'
-import type { SandboxViolationTraceEvent } from '../../shared/types'
+import type { SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
+import { shouldAlertForViolation } from './sandbox/isCredentialPath'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -288,11 +289,51 @@ export class ObservabilityService {
   emitSandboxViolation(violation: SandboxViolationTraceEvent): void {
     if (!this.isEnabled()) return
     const line = JSON.stringify({ type: 'sandbox_violation', ...violation }) + '\n'
-    const logPath = path.join(this.logsDir, 'sandbox-violations.jsonl')
     // fire-and-forget: non-fatal if write fails
     fs.mkdir(this.logsDir, { recursive: true })
-      .then(() => fs.appendFile(logPath, line, 'utf8'))
+      .then(() => fs.appendFile(this.sandboxViolationsLogPath(), line, 'utf8'))
       .catch((err) => console.warn('[ObservabilityService] sandbox violation write failed:', err))
+  }
+
+  private sandboxViolationsLogPath(): string {
+    return path.join(this.logsDir, 'sandbox-violations.jsonl')
+  }
+
+  /**
+   * Browse historical sandbox_violation entries (Phase 3, spec section 11) —
+   * the observability panel's equivalent of listSessions() below, but for
+   * the standalone JSONL file emitSandboxViolation() writes to rather than
+   * per-chat session logs. Most-recent-first, capped at `limit`. Each entry
+   * is tagged with isCredential via the exact same shouldAlertForViolation()
+   * check used for the live toast, so the panel's badge always agrees with
+   * what actually triggered (or didn't trigger) a notification.
+   */
+  async listSandboxViolations(limit = 200): Promise<SandboxViolationLogEntry[]> {
+    try {
+      const raw = await fs.readFile(this.sandboxViolationsLogPath(), 'utf8')
+      const entries: SandboxViolationLogEntry[] = []
+      for (const line of raw.trim().split('\n')) {
+        if (!line) continue
+        try {
+          const parsed = JSON.parse(line) as SandboxViolationTraceEvent
+          entries.push({ ...parsed, isCredential: shouldAlertForViolation(parsed) })
+        } catch {
+          // corrupt line — skip
+        }
+      }
+      return entries.slice(-limit).reverse()
+    } catch {
+      return []
+    }
+  }
+
+  async clearSandboxViolations(): Promise<void> {
+    try { await fs.unlink(this.sandboxViolationsLogPath()) } catch { /* already gone */ }
+  }
+
+  /** Opens the raw sandbox-violations.jsonl file in the OS default handler. */
+  async openSandboxViolationsFile(): Promise<void> {
+    await shell.openPath(this.sandboxViolationsLogPath())
   }
 
   captureArtifact(event: ObsEvent): void {
