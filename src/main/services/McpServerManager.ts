@@ -424,6 +424,7 @@ export class McpServerManager extends EventEmitter {
             allowedDomains:   sandboxProfile.allowedDomains,
             allowWrite:       sandboxProfile.allowWrite,
             denyRead:         [],
+            callerLabel:      `mcp:${name}`,
             timeoutMs:        0, // persistent process, no wall-clock timeout
             maxRssMb:         MCP_SERVER_MAX_RSS_MB,
           })

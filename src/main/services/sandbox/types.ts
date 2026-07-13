@@ -32,6 +32,17 @@ export interface SandboxRunSpec {
    * Used by PythonWorkerService for MPLBACKEND='Agg', MPLCONFIGDIR, etc.
    */
   env?: Record<string, string>
+  /**
+   * Caller-supplied label used to attribute sandbox_violation trace events
+   * back to whichever caller triggered them (Phase 2, spec section 11/16)
+   * — e.g. 'python-worker' or 'mcp:<serverName>'. SrtBackend tracks this
+   * against spec.command (the pre-wrap command), which is what
+   * SandboxViolationEvent.command decodes back to, so violations can be
+   * attributed without inferring it after the fact from the raw log line.
+   * Optional so existing/future callers that don't care about attribution
+   * don't need to change — falls back to 'unknown'.
+   */
+  callerLabel?: string
 }
 
 export interface SandboxRunResult {

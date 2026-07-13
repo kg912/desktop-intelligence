@@ -2,6 +2,7 @@ import { app } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
 import { readSettings, writeSettings } from './SettingsStore'
+import type { SandboxViolationTraceEvent } from '../../shared/types'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ export type ObsEventType =
   | 'rag_ingest'
   | 'rag_query'
   | 'rag_eval'
+  | 'sandbox_violation'
 
 export interface ObsEvent {
   type: ObsEventType
@@ -273,6 +275,24 @@ export class ObservabilityService {
     fs.mkdir(this.logsDir, { recursive: true })
       .then(() => fs.appendFile(logPath, line, 'utf8'))
       .catch((err) => console.warn('[ObservabilityService] rag event write failed:', err))
+  }
+
+  /**
+   * Emit a standalone sandbox_violation event (Phase 2, spec section 11/16).
+   * Same standalone-JSONL pattern as emitRagEvent() — violations aren't tied
+   * to any particular chat turn (a persistent worker or MCP server can
+   * trigger one at any time, long after whatever call led to it), so they
+   * don't belong in the per-chat-session trace array the capture() API
+   * above writes to.
+   */
+  emitSandboxViolation(violation: SandboxViolationTraceEvent): void {
+    if (!this.isEnabled()) return
+    const line = JSON.stringify({ type: 'sandbox_violation', ...violation }) + '\n'
+    const logPath = path.join(this.logsDir, 'sandbox-violations.jsonl')
+    // fire-and-forget: non-fatal if write fails
+    fs.mkdir(this.logsDir, { recursive: true })
+      .then(() => fs.appendFile(logPath, line, 'utf8'))
+      .catch((err) => console.warn('[ObservabilityService] sandbox violation write failed:', err))
   }
 
   captureArtifact(event: ObsEvent): void {
