@@ -5,10 +5,14 @@ import type { SandboxRunSpec } from '../types'
 // ── Mock @anthropic-ai/sandbox-runtime — SrtBackend delegates config/command
 // building to SandboxManager; we only care that SrtBackend passes the right
 // spawn() options through, not that the real sandbox-exec wrapping happens.
-const { mockInitialize, mockUpdateConfig, mockWrapWithSandbox, mockReset } = vi.hoisted(() => ({
+const { mockInitialize, mockUpdateConfig, mockWrapWithSandbox, mockWrapWithSandboxArgv, mockReset } = vi.hoisted(() => ({
   mockInitialize: vi.fn(async () => {}),
   mockUpdateConfig: vi.fn((_config: { network: { allowedDomains: string[] } }) => {}),
   mockWrapWithSandbox: vi.fn(async (command: string) => `sandbox-exec -f wrapped -- ${command}`),
+  mockWrapWithSandboxArgv: vi.fn(async (command: string) => ({
+    argv: ['sandbox-exec', '-f', 'wrapped', '--', ...command.split(' ')],
+    env: { ...process.env, SANDBOX_MARKER: '1' },
+  })),
   mockReset: vi.fn(async () => {}),
 }))
 
@@ -17,6 +21,7 @@ vi.mock('@anthropic-ai/sandbox-runtime', () => ({
     initialize: mockInitialize,
     updateConfig: mockUpdateConfig,
     wrapWithSandbox: mockWrapWithSandbox,
+    wrapWithSandboxArgv: mockWrapWithSandboxArgv,
     reset: mockReset,
   },
 }))
@@ -125,5 +130,50 @@ describe('SrtBackend.run', () => {
     const updateOrder = mockUpdateConfig.mock.invocationCallOrder[0]
     const wrapOrder = mockWrapWithSandbox.mock.invocationCallOrder[0]
     expect(updateOrder).toBeLessThan(wrapOrder)
+  })
+})
+
+describe('SrtBackend.wrapStdioCommand', () => {
+  beforeEach(() => {
+    mockInitialize.mockClear()
+    mockUpdateConfig.mockClear()
+    mockWrapWithSandboxArgv.mockClear()
+  })
+
+  it('calls updateConfig() with the per-spec allowlist before wrapWithSandboxArgv()', async () => {
+    const backend = new SrtBackend()
+    const spec: SandboxRunSpec = {
+      ...baseSpec,
+      command: 'node /path/to/server.js --flag',
+      allowedDomains: ['api.example.com'],
+    }
+
+    await backend.wrapStdioCommand(spec)
+
+    expect(mockUpdateConfig).toHaveBeenCalledTimes(1)
+    const [config] = mockUpdateConfig.mock.calls[0]
+    expect(config.network.allowedDomains).toEqual(['api.example.com'])
+
+    expect(mockWrapWithSandboxArgv).toHaveBeenCalledTimes(1)
+    const updateOrder = mockUpdateConfig.mock.invocationCallOrder[0]
+    const wrapOrder = mockWrapWithSandboxArgv.mock.invocationCallOrder[0]
+    expect(updateOrder).toBeLessThan(wrapOrder)
+  })
+
+  it('reshapes { argv, env } into { command, args, env }', async () => {
+    const backend = new SrtBackend()
+    const spec: SandboxRunSpec = { ...baseSpec, command: 'node /path/to/server.js --flag' }
+
+    const result = await backend.wrapStdioCommand(spec)
+
+    expect(result.command).toBe('sandbox-exec')
+    expect(result.args).toEqual(['-f', 'wrapped', '--', 'node', '/path/to/server.js', '--flag'])
+    expect(result.env).toMatchObject({ SANDBOX_MARKER: '1' })
+  })
+
+  it('lazily initializes if not already initialized', async () => {
+    const backend = new SrtBackend()
+    await backend.wrapStdioCommand(baseSpec)
+    expect(mockInitialize).toHaveBeenCalledTimes(1)
   })
 })

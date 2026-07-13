@@ -32,6 +32,12 @@ export class MicrosandboxBackend implements SandboxExecutionBackend {
     throw new Error(NOT_IMPLEMENTED)
   }
 
+  async wrapStdioCommand(
+    _spec: SandboxRunSpec
+  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> {
+    throw new Error(NOT_IMPLEMENTED)
+  }
+
   async shutdown(): Promise<void> {
     // No-op until Phase 4 gate passes.
   }

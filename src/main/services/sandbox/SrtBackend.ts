@@ -142,6 +142,31 @@ export class SrtBackend implements SandboxExecutionBackend {
     return spawn(sandboxedCommand, { shell: true, env })
   }
 
+  // ── Argv-ready wrap (caller owns the spawn — e.g. MCP SDK's transport) ────
+
+  async wrapStdioCommand(
+    spec: SandboxRunSpec
+  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> {
+    if (!this.initialized) {
+      await this.initialize()
+    }
+
+    const perSpecConfig = this.buildPerSpecConfig(spec)
+
+    // Push the per-spec network/filesystem policy to the live enforcement
+    // proxy — wrapWithSandbox()'s customConfig alone does not do this (see
+    // header comment). Must happen before wrapWithSandboxArgv() below.
+    SandboxManager.updateConfig(perSpecConfig as SandboxRuntimeConfig)
+
+    const { argv, env } = await SandboxManager.wrapWithSandboxArgv(
+      spec.command,
+      undefined,
+      perSpecConfig
+    )
+
+    return { command: argv[0], args: argv.slice(1), env }
+  }
+
   async shutdown(): Promise<void> {
     await SandboxManager.reset()
     this.initialized = false
