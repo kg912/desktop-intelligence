@@ -17,7 +17,6 @@ import { mcpServerManager } from './services/McpServerManager'
 import { observabilityService } from './services/ObservabilityService'
 import { srtBackend } from './services/sandbox/sandboxServiceInstance'
 import { shouldAlertForViolation } from './services/sandbox/isCredentialPath'
-import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { IPC_CHANNELS } from '../shared/types'
 import type { McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
 
@@ -227,7 +226,15 @@ app.whenReady().then(async () => {
   // SrtBackend is not initialized — the app continues to run without
   // sandboxing (same as before this feature was added).
   // The warning should be surfaced in Settings in a future prompt.
+  //
+  // Dynamic import — @anthropic-ai/sandbox-runtime is ESM-only with no CJS
+  // `exports` fallback; a static import here compiled to a top-level
+  // require() in the CJS main-process bundle and crashed the packaged app
+  // on launch (ERR_REQUIRE_ESM, found via a real .dmg run — see SrtBackend.ts's
+  // header comment for the full writeup). This is already inside a try/catch,
+  // so an import failure degrades the same way a dependency-check failure does.
   try {
+    const { SandboxManager } = await import('@anthropic-ai/sandbox-runtime')
     if (SandboxManager.isSupportedPlatform()) {
       const depCheck = SandboxManager.checkDependencies()
       if (depCheck.errors.length > 0) {
