@@ -87,13 +87,31 @@
 //    not fixable from this codebase (looks like a macOS unified-logging
 //    buffering/ordering behavior in @anthropic-ai/sandbox-runtime@0.0.65's
 //    log-stream consumer, not something under our control).
+//
+// ── ESM-only dependency (found 2026-07-14, real .dmg launch crash) ───────────
+// @anthropic-ai/sandbox-runtime's package.json has "type":"module" and no
+// CJS `exports` fallback (confirmed by reading node_modules/@anthropic-ai/
+// sandbox-runtime/package.json directly — no `exports` field at all, just
+// `main`). electron-vite's externalizeDepsPlugin() leaves it external, and
+// the main-process bundle is CommonJS, so a static `import` compiles to a
+// top-level `require("@anthropic-ai/sandbox-runtime")` that runs at module
+// load — before app.whenReady() — and Node refuses to require() an ESM
+// package (ERR_REQUIRE_ESM), crashing the packaged app before the window
+// ever shows. None of npm test / typecheck / dev mode catch this — only a
+// real packaged .dmg launch does (per CLAUDE.md section 12.6). The fix is
+// the one Node's own error message recommends: a dynamic import(), valid
+// from CommonJS, loaded lazily and cached. This is NOT a new pattern —
+// EmbeddingService.ts and RerankerService.ts already do exactly this for
+// @xenova/transformers (also ESM-only, also no CJS `exports` fallback).
 
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
-import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from './types'
 import { BASELINE_DENY_READ } from './BASELINE_DENY_READ'
 import type { SandboxViolationTraceEvent } from '../../../shared/types'
+
+// Type-only — `typeof import(...)` never emits a runtime import/require.
+type SandboxManagerAPI = typeof import('@anthropic-ai/sandbox-runtime')['SandboxManager']
 
 const baseConfig: SandboxRuntimeConfig = {
   network: { allowedDomains: [], deniedDomains: [] },
@@ -112,8 +130,24 @@ export class SrtBackend implements SandboxExecutionBackend {
   // attributed back to whichever caller triggered them.
   private commandLabels = new Map<string, string>()
 
+  // Cached result of the dynamic import — see the ESM-only header comment.
+  // Populated by initialize() (always called first by every other method
+  // below) and read synchronously by subscribeToViolations(), which cannot
+  // itself be async (its callers, e.g. index.ts, treat it as a synchronous
+  // subscribe-and-get-unsubscribe-function call).
+  private sandboxManagerCache: SandboxManagerAPI | null = null
+
+  private async loadSandboxManager(): Promise<SandboxManagerAPI> {
+    if (!this.sandboxManagerCache) {
+      const mod = await import('@anthropic-ai/sandbox-runtime')
+      this.sandboxManagerCache = mod.SandboxManager
+    }
+    return this.sandboxManagerCache
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return
+    const SandboxManager = await this.loadSandboxManager()
     // enableLogMonitor:true — required for getSandboxViolationStore() to
     // ever populate. See header comment investigation point 1. Does not
     // change the config passed for run()/spawnPersistent()/wrapStdioCommand().
@@ -146,6 +180,7 @@ export class SrtBackend implements SandboxExecutionBackend {
     if (!this.initialized) {
       await this.initialize()
     }
+    const SandboxManager = await this.loadSandboxManager()
 
     const perSpecConfig = this.buildPerSpecConfig(spec)
 
@@ -199,6 +234,7 @@ export class SrtBackend implements SandboxExecutionBackend {
     if (!this.initialized) {
       await this.initialize()
     }
+    const SandboxManager = await this.loadSandboxManager()
 
     const perSpecConfig = this.buildPerSpecConfig(spec)
 
@@ -227,6 +263,7 @@ export class SrtBackend implements SandboxExecutionBackend {
     if (!this.initialized) {
       await this.initialize()
     }
+    const SandboxManager = await this.loadSandboxManager()
 
     const perSpecConfig = this.buildPerSpecConfig(spec)
 
@@ -257,9 +294,18 @@ export class SrtBackend implements SandboxExecutionBackend {
    * parseViolationLine() — the type only has three kinds.
    *
    * Returns an unsubscribe function.
+   *
+   * Must be called after initialize() (production callers, e.g. index.ts,
+   * always await initialize() first) — this is synchronous, so unlike the
+   * other methods it cannot itself lazily await the dynamic import; it
+   * reads the cache initialize() already populated.
    */
   subscribeToViolations(onViolation: (event: SandboxViolationTraceEvent) => void): () => void {
-    const store = SandboxManager.getSandboxViolationStore()
+    if (!this.sandboxManagerCache) {
+      console.warn('[SrtBackend] subscribeToViolations() called before initialize() — no-op')
+      return () => {}
+    }
+    const store = this.sandboxManagerCache.getSandboxViolationStore()
     let lastTotal = store.getTotalCount()
 
     return store.subscribe((violations) => {
@@ -283,6 +329,7 @@ export class SrtBackend implements SandboxExecutionBackend {
   }
 
   async shutdown(): Promise<void> {
+    const SandboxManager = await this.loadSandboxManager()
     await SandboxManager.reset()
     this.initialized = false
     this.commandLabels.clear()

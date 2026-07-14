@@ -255,6 +255,7 @@ describe('SrtBackend.subscribeToViolations', () => {
 
   it('classifies write and network operations correctly', async () => {
     const backend = new SrtBackend()
+    await backend.initialize()
     const received: Array<{ kind: string }> = []
     backend.subscribeToViolations((event) => received.push(event))
 
@@ -266,6 +267,7 @@ describe('SrtBackend.subscribeToViolations', () => {
 
   it('skips violations whose operation does not map to read/write/network', async () => {
     const backend = new SrtBackend()
+    await backend.initialize()
     const received: unknown[] = []
     backend.subscribeToViolations((event) => received.push(event))
 
@@ -280,6 +282,7 @@ describe('SrtBackend.subscribeToViolations', () => {
 
   it('falls back to "unknown" when the violation is not attributable to a tracked command', async () => {
     const backend = new SrtBackend()
+    await backend.initialize()
     const received: Array<{ source: string }> = []
     backend.subscribeToViolations((event) => received.push(event))
 
@@ -296,6 +299,7 @@ describe('SrtBackend.subscribeToViolations', () => {
     fakeAddViolation({ line: 'proc(1) deny(1) file-read-data /pre-existing', timestamp: new Date() })
 
     const backend = new SrtBackend()
+    await backend.initialize()
     const received: unknown[] = []
     backend.subscribeToViolations((event) => received.push(event))
 
@@ -304,6 +308,7 @@ describe('SrtBackend.subscribeToViolations', () => {
 
   it('the returned unsubscribe function stops delivery', async () => {
     const backend = new SrtBackend()
+    await backend.initialize()
     const received: unknown[] = []
     const unsubscribe = backend.subscribeToViolations((event) => received.push(event))
 
@@ -311,5 +316,24 @@ describe('SrtBackend.subscribeToViolations', () => {
     fakeAddViolation({ line: 'proc(1) deny(1) file-read-data /after-unsubscribe', timestamp: new Date() })
 
     expect(received).toHaveLength(0)
+  })
+
+  // Regression test for the ESM-only dynamic-import fix (2026-07-14, see
+  // SrtBackend.ts's header comment) — subscribeToViolations() is
+  // synchronous and cannot itself await the lazy import, so it must no-op
+  // safely (not throw) when called before initialize() has populated the
+  // cache, rather than crashing on `this.sandboxManagerCache.getSandboxViolationStore`.
+  it('does not throw and returns a no-op unsubscribe when called before initialize()', () => {
+    const backend = new SrtBackend()
+    const received: unknown[] = []
+
+    let unsubscribe: (() => void) | undefined
+    expect(() => {
+      unsubscribe = backend.subscribeToViolations((event) => received.push(event))
+    }).not.toThrow()
+
+    expect(typeof unsubscribe).toBe('function')
+    expect(() => unsubscribe!()).not.toThrow()
+    expect(mockGetSandboxViolationStore).not.toHaveBeenCalled()
   })
 })
