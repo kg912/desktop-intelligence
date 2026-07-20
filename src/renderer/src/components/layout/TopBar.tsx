@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSignals } from '@preact/signals-react/runtime'
-import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText } from 'lucide-react'
+import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText, Download } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
 
 const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
@@ -47,6 +47,8 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
   const [isOllama,    setIsOllama]    = useState(false)
   const [isOpenRouter, setIsOpenRouter] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const [isExporting,        setIsExporting]        = useState(false)
 
   const [showSysPromptPopup, setShowSysPromptPopup] = useState(false)
   const [sysPromptDraft,     setSysPromptDraft]     = useState('')
@@ -146,6 +148,21 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
       console.error('[Reload] failed:', err)
     } finally {
       setIsReloading(false)
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!activeChatId || isExporting) return
+    setIsExporting(true)
+    try {
+      const result = await window.api.exportChatPdf(activeChatId)
+      if (!result.success && result.error) {
+        console.error('[Export] PDF export failed:', result.error)
+      }
+    } catch (err) {
+      console.error('[Export] PDF export failed:', err)
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -254,6 +271,22 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
           ].join(' ')}
         >
           <ScrollText className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Download chat as PDF */}
+        <button
+          onClick={handleExportPdf}
+          disabled={!activeChatId || isExporting}
+          title={!activeChatId ? 'Select a chat to export' : isExporting ? 'Exporting…' : 'Download chat as PDF'}
+          className={
+            !activeChatId
+              ? 'ml-1 p-1 rounded text-content-muted opacity-40 cursor-not-allowed'
+              : 'ml-1 p-1 rounded text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer transition-colors'
+          }
+        >
+          {isExporting
+            ? <RotateCw className="w-3.5 h-3.5 animate-spin text-accent-400" />
+            : <Download className="w-3.5 h-3.5" />}
         </button>
       </div>
 

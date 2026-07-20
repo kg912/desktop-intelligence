@@ -2,11 +2,23 @@ import { useEffect, useState, useCallback } from 'react'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { Layout } from './components/layout/Layout'
 import { FirstLaunchModal } from './components/settings/FirstLaunchModal'
+import { PrintChatView } from './components/chat/PrintChatView'
 import { useModelConnection } from './hooks/useModelConnection'
 import { useModelStore } from './store/ModelStore'
 import type { DaemonState } from '../../shared/types'
 
 export default function App() {
+  // The hidden export window loads this same bundle with ?print=<chatId>.
+  // Render PrintChatView instead and skip first-launch / daemon bootstrapping
+  // entirely — that window never talks to LM Studio.
+  const printChatId = new URLSearchParams(window.location.search).get('print')
+  if (printChatId) {
+    return <PrintChatView chatId={printChatId} />
+  }
+  return <MainApp />
+}
+
+function MainApp() {
   const { status, error, retry } = useModelConnection()
   const { setSelectedModel } = useModelStore()
 

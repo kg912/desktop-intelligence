@@ -438,6 +438,10 @@ export const IPC_CHANNELS = {
   // ── RAG v2 diagnostics (Phase 6 — eval file picker) ──────────────────────────
   RAG_PICK_EVAL_FILE:   'rag:pick-eval-file',
 
+  // ── Chat PDF export ────────────────────────────────────────────
+  CHAT_EXPORT_PDF:       'chat:exportPdf',
+  CHAT_EXPORT_PDF_READY: 'chat:exportPdfReady',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -482,6 +486,13 @@ export interface ReloadResult {
   error?:         string
   /** Context length confirmed by re-reading /api/v0/models after reload */
   confirmedCtx?:  number
+}
+
+// --- Chat PDF export ---
+export interface ExportChatPdfResult {
+  success: boolean
+  path?:   string
+  error?:  string
 }
 
 /** Controls extended thinking / reasoning on OpenRouter.

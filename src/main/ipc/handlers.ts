@@ -1,4 +1,7 @@
-import { ipcMain, shell, WebContents } from 'electron'
+import { ipcMain, shell, WebContents, app, dialog, BrowserWindow } from 'electron'
+import { join } from 'path'
+import fs from 'fs'
+import { is } from '@electron-toolkit/utils'
 import { IPC_CHANNELS } from '../../shared/types'
 import { modelConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
@@ -39,6 +42,7 @@ import type {
   StorePlotPayload,
   CompactPayload,
   CompactResult,
+  ExportChatPdfResult,
 } from '../../shared/types'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
@@ -659,6 +663,98 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.DB_STAR_CHAT, (_, chatId: string, starred: boolean): void =>
     starChatById(chatId, starred)
+  )
+
+  /**
+   * chat:exportPdf
+   *
+   * Renders a chat to PDF via a hidden BrowserWindow loading the same app
+   * bundle with `?print=<chatId>` — App.tsx swaps in PrintChatView, which
+   * mounts every message unvirtualized (real Mermaid/ECharts renders, not a
+   * DOM screenshot of whatever happened to be scrolled into view).
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_EXPORT_PDF,
+    async (event, chatId: string): Promise<ExportChatPdfResult> => {
+      const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0]
+
+      const chat = getAllChats().find((c) => c.id === chatId)
+      const titleSlug = (chat?.title ?? 'chat')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'chat'
+      const dateStr = new Date().toISOString().slice(0, 10)
+
+      const saveResult = await dialog.showSaveDialog(parentWindow, {
+        title: 'Export Chat as PDF',
+        defaultPath: join(app.getPath('downloads'), `${titleSlug}-${dateStr}.pdf`),
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      })
+      if (saveResult.canceled || !saveResult.filePath) {
+        return { success: false }
+      }
+
+      let printWindow: BrowserWindow | null = null
+      try {
+        printWindow = new BrowserWindow({
+          show: false,
+          backgroundColor: '#0f0f0f',
+          webPreferences: {
+            preload: join(__dirname, '../preload/index.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            webSecurity: true,
+          },
+        })
+        const printWebContents = printWindow.webContents
+
+        // Wait for PrintChatView's explicit readiness signal (all messages
+        // mounted + Mermaid/ECharts settled), with a hard fallback so a
+        // malformed chat can never hang the export indefinitely.
+        const readyPromise = new Promise<void>((resolve) => {
+          let settled = false
+          const finish = (): void => {
+            if (settled) return
+            settled = true
+            ipcMain.removeListener(IPC_CHANNELS.CHAT_EXPORT_PDF_READY, onReady)
+            resolve()
+          }
+          const onReady = (readyEvent: Electron.IpcMainEvent): void => {
+            if (readyEvent.sender !== printWebContents) return
+            finish()
+          }
+          ipcMain.on(IPC_CHANNELS.CHAT_EXPORT_PDF_READY, onReady)
+          setTimeout(finish, 4000)
+        })
+
+        if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+          const url = new URL(process.env['ELECTRON_RENDERER_URL'])
+          url.searchParams.set('print', chatId)
+          await printWindow.loadURL(url.toString())
+        } else {
+          await printWindow.loadFile(join(__dirname, '../renderer/index.html'), {
+            query: { print: chatId },
+          })
+        }
+
+        await readyPromise
+
+        const pdfBuffer = await printWebContents.printToPDF({
+          printBackground: true,
+          pageSize: 'A4',
+          margins: { marginType: 'default' },
+        })
+
+        await fs.promises.writeFile(saveResult.filePath, pdfBuffer)
+        return { success: true, path: saveResult.filePath }
+      } catch (err) {
+        console.error('[Export] PDF export failed:', err)
+        return { success: false, error: err instanceof Error ? err.message : String(err) }
+      } finally {
+        if (printWindow && !printWindow.isDestroyed()) printWindow.destroy()
+      }
+    }
   )
 
   // ── Settings: model config via lms CLI ─────────────────────────

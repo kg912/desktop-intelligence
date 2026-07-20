@@ -24,6 +24,7 @@ import type {
   McpServerRuntimeInfo,
   McpToolPermissionRequest,
   BackendSettings,
+  ExportChatPdfResult,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
 
@@ -347,6 +348,15 @@ const api = {
     blocksJson?:      string | null
   ): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_MESSAGE, chatId, id, role, content, attachmentsJson, toolCallJson, blocksJson),
+
+  // ── Chat PDF export ───────────────────────────────────────────
+  exportChatPdf: (chatId: string): Promise<ExportChatPdfResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXPORT_PDF, chatId),
+
+  // One-way — used only inside the hidden print window to signal that
+  // all messages (including async Mermaid/ECharts renders) have settled.
+  notifyPrintReady: (): void =>
+    ipcRenderer.send(IPC_CHANNELS.CHAT_EXPORT_PDF_READY),
 }
 
 contextBridge.exposeInMainWorld('api', api)
