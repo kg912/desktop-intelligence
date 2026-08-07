@@ -1,14 +1,15 @@
 import { useState, useCallback } from "react";
-import { Settings, Globe, Info, Plug, Server, Bug, Database } from "lucide-react";
+import { Settings, Globe, Info, Plug, Server, Bug, Database, Workflow } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import { McpToolsPanel } from "./McpToolsPanel";
 import { InferenceProviderSettingsPanel } from "./InferenceProviderSettingsPanel";
 import { DebugSettings } from "./DebugSettings";
 import { RagSettings } from "./RagSettings";
+import { MultiAgentSettingsPanel } from "./MultiAgentSettingsPanel";
 import { version, author } from "../../../../../package.json";
 
-type SettingsTab = "model" | "websearch" | "tools" | "backend" | "rag" | "debug" | "about";
+type SettingsTab = "model" | "websearch" | "tools" | "backend" | "rag" | "agents" | "debug" | "about";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -247,6 +248,12 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
               onClick={() => setTab("rag")}
             />
             <TabItem
+              icon={<Workflow size={15} />}
+              label="Multi-Agent"
+              active={tab === "agents"}
+              onClick={() => setTab("agents")}
+            />
+            <TabItem
               icon={<Bug size={15} />}
               label="Debug"
               active={tab === "debug"}
@@ -273,6 +280,7 @@ export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) 
           {tab === "tools"     && <McpToolsPanel />}
           {tab === "backend"   && <InferenceProviderSettingsPanel />}
           {tab === "rag"       && <RagSettings />}
+          {tab === "agents"    && <MultiAgentSettingsPanel />}
           {tab === "debug"     && <DebugSettings />}
           {tab === "about"     && <AboutPanel />}
         </div>

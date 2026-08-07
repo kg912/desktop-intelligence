@@ -44,11 +44,12 @@ import type {
   CompactResult,
   ExportChatPdfResult,
   MultiAgentStartPayload,
+  MultiAgentConfig,
   HitlResponse,
 } from '../../shared/types'
 import { multiAgentSidecar } from '../services/MultiAgentSidecarManager'
 import { mcpServerManager } from '../services/McpServerManager'
-import { DEFAULT_MODEL_ID } from '../../shared/types'
+import { DEFAULT_MODEL_ID, DEFAULT_MULTI_AGENT_CONFIG } from '../../shared/types'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
 
@@ -1465,6 +1466,18 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     observabilityService.openSandboxViolationsFile()
   )
 
+  ipcMain.handle(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_EVENTS, async () =>
+    observabilityService.listMultiAgentEvents()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_CLEAR_MULTI_AGENT_EVENTS, async (): Promise<void> =>
+    observabilityService.clearMultiAgentEvents()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_EVENTS_FILE, async (): Promise<void> =>
+    observabilityService.openMultiAgentEventsFile()
+  )
+
   // ── Per-chat system instructions ────────────────────────────────
   ipcMain.handle('chat:get-system-instructions', (_event, chatId: string) => {
     return getChatSystemInstructions(chatId)
@@ -1507,5 +1520,17 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>
     multiAgentSidecar.getStatus()
   )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG, async (): Promise<MultiAgentConfig> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const saved = readSettings().multiAgentConfig
+    return { ...DEFAULT_MULTI_AGENT_CONFIG, ...saved,
+      models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, ...saved?.models } }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, async (_, config: MultiAgentConfig): Promise<void> => {
+    const { writeSettings } = await import('../services/SettingsStore')
+    writeSettings({ multiAgentConfig: config })
+  })
 
 }

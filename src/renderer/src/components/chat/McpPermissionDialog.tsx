@@ -5,9 +5,10 @@ import type { McpToolPermissionRequest, McpToolPermissionResponse } from '../../
 interface McpPermissionDialogProps {
   request:   McpToolPermissionRequest
   onRespond: (r: McpToolPermissionResponse) => void
+  inline?: boolean
 }
 
-export function McpPermissionDialog({ request, onRespond }: McpPermissionDialogProps) {
+export function McpPermissionDialog({ request, onRespond, inline = false }: McpPermissionDialogProps) {
   const [note,        setNote]        = useState('')
   const [argsOpen,    setArgsOpen]    = useState(false)
   const [responding,  setResponding]  = useState(false)
@@ -32,7 +33,7 @@ export function McpPermissionDialog({ request, onRespond }: McpPermissionDialogP
   }
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className={inline ? 'w-full max-w-md' : 'absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm'}>
       <div className="w-full max-w-md mx-4 rounded-xl border border-surface-border bg-surface-elevated shadow-2xl p-6 space-y-4">
 
         {/* Icon + title */}

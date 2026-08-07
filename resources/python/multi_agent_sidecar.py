@@ -182,9 +182,15 @@ async def run_graph_body(run: Run) -> None:
         if run.cancelled: return
         await run.emit("synthesis_start")
         synthesis_prompt = "Combine these worker outputs into a concise final answer. Cite each factual contribution with its source agent marker like [1.1].\n\n" + "\n\n".join(f"[{agent_id}] {output}" for agent_id, output in outputs.items())
-        final_message, tokens, cost = await ask(config.models.get("synthesizer", ""), "You are a careful synthesizer.", synthesis_prompt)
-        account(run, tokens, cost)
-        final = str(final_message.get("content") or "Partial synthesis unavailable.")
+        if run.budget_reached:
+            # Never start another paid model request once the observed
+            # OpenRouter spend reaches the hard cap. Preserve useful partial
+            # worker output instead of silently spending on synthesis.
+            final = "Budget cap reached. Partial worker output:\n\n" + (synthesis_prompt or "No worker output was completed.")
+        else:
+            final_message, tokens, cost = await ask(config.models.get("synthesizer", ""), "You are a careful synthesizer.", synthesis_prompt)
+            account(run, tokens, cost)
+            final = str(final_message.get("content") or "Partial synthesis unavailable.")
         for token in re.findall(r"\S+\s*", final): await run.emit("synthesis_token", token=token)
         await run.emit("task_complete", finalOutput=final, totalCostUsd=run.total_cost, totalTokens=run.total_tokens)
     except Exception as exc:
@@ -310,6 +316,7 @@ async def abort(run_id: str) -> dict[str, bool]:
     run = RUNS.get(run_id)
     if not run: raise HTTPException(404, "run not found")
     run.cancelled = True
+    await run.emit("task_failed", reason="Run aborted by user", partialOutputs={})
     if run.task: run.task.cancel()
     return {"ok": True}
 

@@ -14,7 +14,7 @@ import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { MultiAgentRunPanel } from '../chat/MultiAgentRunPanel'
-import { DEFAULT_MULTI_AGENT_CONFIG, type AgentEvent, type AgentStep, type Chat, type ProcessedAttachment, type StoredMessage, type McpToolPermissionRequest, type SandboxViolationTraceEvent } from '../../../../shared/types'
+import { DEFAULT_MULTI_AGENT_CONFIG, type AgentEvent, type AgentStep, type Chat, type MultiAgentConfig, type ProcessedAttachment, type StoredMessage, type McpToolPermissionRequest, type SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
@@ -22,12 +22,13 @@ export function Layout() {
   const { setContextUsage, isReloading } = useModelRuntime()
   const [sidebarMode,          setSidebarMode]          = useState<'chat' | 'starred' | null>('chat')
   const [settingsOpen,         setSettingsOpen]         = useState(false)
-  const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
+  const [mcpPermissionRequests, setMcpPermissionRequests] = useState<McpToolPermissionRequest[]>([])
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
   const [multiAgentEvents, setMultiAgentEvents] = useState<AgentEvent[]>([])
   const [multiAgentSteps, setMultiAgentSteps] = useState<AgentStep[]>([])
   const [multiAgentRunId, setMultiAgentRunId] = useState<string | null>(null)
   const [awaitingPlanApproval, setAwaitingPlanApproval] = useState(false)
+  const [multiAgentConfig, setMultiAgentConfig] = useState<MultiAgentConfig>(DEFAULT_MULTI_AGENT_CONFIG)
   const chatAreaRef     = useRef<ChatAreaHandle>(null)
   const lastSidebarMode = useRef<'chat' | 'starred'>('chat')
 
@@ -58,6 +59,10 @@ export function Layout() {
     if (event.type === 'hitl_pause' && event.serverName === 'multi-agent' && event.toolName === 'approve_plan') setAwaitingPlanApproval(true)
     if (event.type === 'task_complete' || event.type === 'task_failed') setIsMultiAgentRunning(false)
   }), [setIsMultiAgentRunning])
+
+  useEffect(() => {
+    window.api.getMultiAgentConfig().then(setMultiAgentConfig).catch((err) => console.warn('[MultiAgent] config load failed:', err))
+  }, [])
 
   const refreshChats = useCallback(async () => {
     try {
@@ -190,7 +195,7 @@ export function Layout() {
   // ── MCP permission dialog + activity indicator ────────────────
   useEffect(() => {
     const unsubPerm = window.api.onMcpToolPermissionRequest((req) => {
-      setMcpPermissionRequest(req)
+      setMcpPermissionRequests((current) => current.some((pending) => pending.requestId === req.requestId) ? current : [...current, req])
     })
     const unsubStart = window.api.onChatStreamToolStart((payload) => {
       // Show activity only for MCP tools (namespaced with __)
@@ -377,7 +382,7 @@ export function Layout() {
 
     if (multiAgentMode && effectiveChatId) {
       await window.api.saveMessage(effectiveChatId, uuid(), 'user', text)
-      const started = await window.api.startMultiAgentRun({ chatId: effectiveChatId, task: text, config: DEFAULT_MULTI_AGENT_CONFIG })
+      const started = await window.api.startMultiAgentRun({ chatId: effectiveChatId, task: text, config: multiAgentConfig })
       if (started.ok) {
         setMultiAgentRunId(started.runId)
         setMultiAgentEvents([])
@@ -390,7 +395,7 @@ export function Layout() {
 
     // Pass preChatId so useChat skips its own chat-creation step (avoiding double rows).
     sendMessageRef.current(text, processed.length ? processed : undefined, preChatId)
-  }, [activeChatId, handleChatCreated, multiAgentMode, setIsMultiAgentRunning])
+  }, [activeChatId, handleChatCreated, multiAgentConfig, multiAgentMode, setIsMultiAgentRunning])
 
   // Suggestion pill clicked → pre-fill and send immediately
   const handleSuggest = useCallback((text: string) => {
@@ -444,10 +449,11 @@ export function Layout() {
             onDrop={handleMainDrop}
             onDragOver={(e) => e.preventDefault()}
           >
-            {isMultiAgentRunning && <MultiAgentRunPanel
-              steps={multiAgentSteps} events={multiAgentEvents} awaitingApproval={awaitingPlanApproval}
+            {multiAgentRunId && <MultiAgentRunPanel
+              steps={multiAgentSteps} events={multiAgentEvents} budgetCapUsd={multiAgentConfig.budgetCapUsd} awaitingApproval={awaitingPlanApproval}
               onApprove={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: true }); setAwaitingPlanApproval(false) } }}
               onCancel={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: false }); setAwaitingPlanApproval(false) } }}
+              onAbort={() => { if (multiAgentRunId) { void window.api.abortMultiAgentRun(multiAgentRunId); setIsMultiAgentRunning(false) } }}
             />}
             {/* Window-level drag overlay */}
             {isDragging && (
@@ -467,18 +473,14 @@ export function Layout() {
             <CompactingGate isReloading={isReloading} />
 
             {/* MCP tool permission dialog */}
-            {mcpPermissionRequest && (
-              <McpPermissionDialog
-                request={mcpPermissionRequest}
-                onRespond={async (response) => {
-                  try {
-                    await window.api.mcpRespondToPermission(response)
-                  } catch (err) {
-                    console.warn('[Layout] mcpRespondToPermission failed:', err)
-                  }
-                  setMcpPermissionRequest(null)
-                }}
-              />
+            {mcpPermissionRequests.length > 0 && (
+              <div className="absolute inset-0 z-50 flex flex-wrap content-center justify-center gap-4 overflow-y-auto bg-black/70 p-6 backdrop-blur-sm">
+                {mcpPermissionRequests.map((request) => <McpPermissionDialog key={request.requestId} inline request={request} onRespond={async (response) => {
+                  try { await window.api.mcpRespondToPermission(response) }
+                  catch (err) { console.warn('[Layout] mcpRespondToPermission failed:', err) }
+                  finally { setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== request.requestId)) }
+                }} />)}
+              </div>
             )}
 
             <TopBar
@@ -503,6 +505,7 @@ export function Layout() {
               attachments={attachments}
               onAttachments={setAttachments}
               mcpActivity={mcpActivity}
+              disabled={isMultiAgentRunning}
             />
           </div>
         </>

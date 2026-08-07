@@ -200,6 +200,21 @@ describe('McpServerManager Security URL Checks', () => {
   })
 })
 
+describe('Multi-agent sandbox attribution', () => {
+  it('adds the active worker identity to an MCP sandbox violation', () => {
+    const mgr = newMgr()
+    ;(mgr as any).activeMultiAgentWorkers.set('filesystem', '1.2')
+    expect(mgr.attributeMultiAgentViolation({
+      source: 'mcp:filesystem', kind: 'read', target: '/Users/test/.ssh/id_ed25519', timestamp: 1,
+    })).toMatchObject({ source: 'multi-agent:1.2:mcp:filesystem', kind: 'read' })
+  })
+
+  it('leaves unrelated sandbox violations unchanged', () => {
+    const violation = { source: 'python-worker', kind: 'read' as const, target: '/tmp/a', timestamp: 1 }
+    expect(newMgr().attributeMultiAgentViolation(violation)).toEqual(violation)
+  })
+})
+
 describe('McpServerManager Lifecycle and meta-MCP', () => {
   beforeEach(() => {
     vi.clearAllMocks()

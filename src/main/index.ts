@@ -218,15 +218,17 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send(IPC_CHANNELS.MULTI_AGENT_EVENT, event)
     }
     const chatId = multiAgentSidecar.getChatId(event.runId)
-    if (chatId) appendMultiAgentEvent(chatId, event)
-    void observabilityService.captureArtifact({ type: 'code_artifact', ts: event.ts, payload: { multiAgentEvent: event } })
+    if (chatId) {
+      appendMultiAgentEvent(chatId, event)
+      observabilityService.emitMultiAgentEvent(chatId, event)
+    }
     // Plan approval is renderer-owned pre-flight UI. MCP tool pauses below
     // remain Electron-owned and pass through the existing permission stack.
     if (event.type === 'hitl_pause' && chatId && event.serverName !== 'multi-agent') {
       const [serverName, toolName] = event.serverName && event.toolName
         ? [event.serverName, event.toolName]
         : ['', '']
-      void mcpServerManager.callToolForMultiAgent(serverName, toolName, event.args, chatId)
+      void mcpServerManager.callToolForMultiAgent(serverName, toolName, event.args, chatId, event.agentId)
         .then((result) => multiAgentSidecar.respondHitl({ runId: event.runId, agentId: event.agentId, approved: true, result: result.text }))
         .catch((err: unknown) => multiAgentSidecar.respondHitl({
           runId: event.runId,
@@ -291,9 +293,10 @@ app.whenReady().then(async () => {
         // same main→renderer push pattern already used for
         // MCP_SERVER_STATUS_CHANGED below.
         srtBackend.subscribeToViolations((violation: SandboxViolationTraceEvent) => {
-          observabilityService.emitSandboxViolation(violation)
-          if (shouldAlertForViolation(violation) && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, violation)
+          const attributed = mcpServerManager.attributeMultiAgentViolation(violation)
+          observabilityService.emitSandboxViolation(attributed)
+          if (shouldAlertForViolation(attributed) && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, attributed)
           }
         })
       } else {

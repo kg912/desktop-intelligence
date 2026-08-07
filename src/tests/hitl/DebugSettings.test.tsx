@@ -12,6 +12,8 @@ const mockObsTotalSize              = vi.fn().mockResolvedValue(0)
 const mockObsListSandboxViolations  = vi.fn()
 const mockObsClearSandboxViolations = vi.fn().mockResolvedValue(undefined)
 const mockObsOpenSandboxViolationsFile = vi.fn().mockResolvedValue(undefined)
+const mockObsListMultiAgentEvents = vi.fn().mockResolvedValue([])
+const mockObsOpenMultiAgentEventsFile = vi.fn().mockResolvedValue(undefined)
 
 if (typeof window !== 'undefined') {
   ;(window as any).api = {
@@ -22,6 +24,8 @@ if (typeof window !== 'undefined') {
     obsListSandboxViolations:     (...args: any[]) => mockObsListSandboxViolations(...args),
     obsClearSandboxViolations:    (...args: any[]) => mockObsClearSandboxViolations(...args),
     obsOpenSandboxViolationsFile: (...args: any[]) => mockObsOpenSandboxViolationsFile(...args),
+    obsListMultiAgentEvents: (...args: any[]) => mockObsListMultiAgentEvents(...args),
+    obsOpenMultiAgentEventsFile: (...args: any[]) => mockObsOpenMultiAgentEventsFile(...args),
   }
 }
 
@@ -42,6 +46,7 @@ beforeEach(() => {
   mockObsListSessions.mockResolvedValue([])
   mockObsTotalSize.mockResolvedValue(0)
   mockObsListSandboxViolations.mockResolvedValue([])
+  mockObsListMultiAgentEvents.mockResolvedValue([])
 })
 
 describe('DebugSettings — Sandbox Violations section', () => {

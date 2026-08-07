@@ -32,8 +32,9 @@ import type {
   SidecarStatus,
   HitlResponse,
   AgentEvent,
+  MultiAgentConfig,
 } from '../shared/types'
-import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
+import type { DebugPrefs, SessionEntry, ObsEvent, MultiAgentTraceLogEntry } from '../main/services/ObservabilityService'
 
 const api = {
   // ── Model Connection ────────────────────────────────────────
@@ -266,6 +267,15 @@ const api = {
   obsOpenSandboxViolationsFile: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_SANDBOX_VIOLATIONS_FILE),
 
+  obsListMultiAgentEvents: (): Promise<MultiAgentTraceLogEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_EVENTS),
+
+  obsClearMultiAgentEvents: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_CLEAR_MULTI_AGENT_EVENTS),
+
+  obsOpenMultiAgentEventsFile: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_EVENTS_FILE),
+
   // ── Suggestion cards ─────────────────────────────────────────
   getSuggestions: (): Promise<string[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_SUGGESTIONS),
@@ -328,6 +338,12 @@ const api = {
 
   getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS),
+
+  getMultiAgentConfig: (): Promise<MultiAgentConfig> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG),
+
+  saveMultiAgentConfig: (config: MultiAgentConfig): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, config),
 
   onMultiAgentEvent: (cb: (e: AgentEvent) => void): (() => void) => {
     const h = (_: Electron.IpcRendererEvent, e: AgentEvent): void => cb(e)

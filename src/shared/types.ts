@@ -450,12 +450,17 @@ export const IPC_CHANNELS = {
   OBS_LIST_SANDBOX_VIOLATIONS:  'obs:listSandboxViolations',
   OBS_CLEAR_SANDBOX_VIOLATIONS: 'obs:clearSandboxViolations',
   OBS_OPEN_SANDBOX_VIOLATIONS_FILE: 'obs:openSandboxViolationsFile',
+  OBS_LIST_MULTI_AGENT_EVENTS: 'obs:listMultiAgentEvents',
+  OBS_CLEAR_MULTI_AGENT_EVENTS: 'obs:clearMultiAgentEvents',
+  OBS_OPEN_MULTI_AGENT_EVENTS_FILE: 'obs:openMultiAgentEventsFile',
 
   // ── Multi-Agent Orchestration ──────────────────────────────────────────────
   MULTI_AGENT_START:          'multi-agent:start',
   MULTI_AGENT_HITL_RESPOND:   'multi-agent:hitl-respond',
   MULTI_AGENT_ABORT:          'multi-agent:abort',
   MULTI_AGENT_SIDECAR_STATUS: 'multi-agent:sidecar-status',
+  MULTI_AGENT_GET_CONFIG: 'multi-agent:get-config',
+  MULTI_AGENT_SAVE_CONFIG: 'multi-agent:save-config',
   MULTI_AGENT_EVENT:          'multi-agent:event',   // main → renderer push (AgentEvent)
 
 } as const

@@ -2,7 +2,7 @@ import { app, shell } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
 import { readSettings, writeSettings } from './SettingsStore'
-import type { SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
+import type { AgentEvent, SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
 import { shouldAlertForViolation } from './sandbox/isCredentialPath'
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -21,6 +21,12 @@ export interface SessionEntry {
   hasImages: boolean
   sizeBytes: number
   filePath: string
+}
+
+/** A persistent, renderer-readable record for a multi-agent execution event. */
+export interface MultiAgentTraceLogEntry {
+  chatId: string
+  event: AgentEvent
 }
 
 export type ObsEventType =
@@ -297,6 +303,46 @@ export class ObservabilityService {
 
   private sandboxViolationsLogPath(): string {
     return path.join(this.logsDir, 'sandbox-violations.jsonl')
+  }
+
+  private multiAgentEventsLogPath(): string {
+    return path.join(this.logsDir, 'multi-agent-events.jsonl')
+  }
+
+  /**
+   * Multi-agent runs don't own a ChatService streaming session, so writing a
+   * code artifact would be silently dropped. Persist their validated events in
+   * a dedicated local JSONL log that the existing Debug panel can browse.
+   */
+  emitMultiAgentEvent(chatId: string, event: AgentEvent): void {
+    if (!this.isEnabled()) return
+    const line = JSON.stringify({ chatId, event }) + '\n'
+    fs.mkdir(this.logsDir, { recursive: true })
+      .then(() => fs.appendFile(this.multiAgentEventsLogPath(), line, 'utf8'))
+      .catch((err) => console.warn('[ObservabilityService] multi-agent event write failed:', err))
+  }
+
+  async listMultiAgentEvents(limit = 200): Promise<MultiAgentTraceLogEntry[]> {
+    try {
+      const raw = await fs.readFile(this.multiAgentEventsLogPath(), 'utf8')
+      const entries: MultiAgentTraceLogEntry[] = []
+      for (const line of raw.trim().split('\n')) {
+        if (!line) continue
+        try {
+          const parsed = JSON.parse(line) as MultiAgentTraceLogEntry
+          if (typeof parsed.chatId === 'string' && parsed.event && typeof parsed.event.type === 'string') entries.push(parsed)
+        } catch { /* corrupt line — skip */ }
+      }
+      return entries.slice(-limit).reverse()
+    } catch { return [] }
+  }
+
+  async clearMultiAgentEvents(): Promise<void> {
+    try { await fs.unlink(this.multiAgentEventsLogPath()) } catch { /* already gone */ }
+  }
+
+  async openMultiAgentEventsFile(): Promise<void> {
+    await shell.openPath(this.multiAgentEventsLogPath())
   }
 
   /**
