@@ -4,7 +4,9 @@
  * Electron is the authority for tools, permissions, persistence and UI.
  */
 import { EventEmitter } from 'events'
-import { mkdirSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { quote } from 'shell-quote'
 import type { ChildProcessWithoutNullStreams } from 'child_process'
@@ -22,6 +24,8 @@ export interface SidecarLaunchConfig {
   workspaceDir: string
   openRouterApiKey: string
   port?: number
+  /** Packaged pinned requirements; enables one-time userData venv bootstrap. */
+  requirementsPath?: string
 }
 
 type FetchFn = typeof fetch
@@ -45,6 +49,7 @@ export class MultiAgentSidecarManager extends EventEmitter {
   private readonly fetchFn: FetchFn
   private readonly spawnPersistent: SpawnFn
   private readonly healthIntervalMs: number
+  private runtimeSetup: Promise<string> | null = null
 
   constructor(options: MultiAgentSidecarManagerOptions = {}) {
     super()
@@ -84,7 +89,8 @@ export class MultiAgentSidecarManager extends EventEmitter {
     this.stopping = false
     this.setStatus('starting')
     mkdirSync(this.launchConfig.workspaceDir, { recursive: true })
-    const command = quote(['python3', this.launchConfig.scriptPath])
+    const python = await this.ensurePythonRuntime()
+    const command = quote([python, this.launchConfig.scriptPath])
 
     try {
       this.process = await this.spawnPersistent({
@@ -113,6 +119,38 @@ export class MultiAgentSidecarManager extends EventEmitter {
       this.setStatus('error')
       throw err
     }
+  }
+
+  /**
+   * A packaged app cannot assume FastAPI/LangGraph are installed globally.
+   * Build a private venv once in the permitted sidecar workspace, without
+   * changing the user's system interpreter; all later starts reuse it.
+   */
+  private async ensurePythonRuntime(): Promise<string> {
+    if (!this.launchConfig?.requirementsPath) return 'python3'
+    if (!this.runtimeSetup) this.runtimeSetup = this.createPythonRuntime()
+    return this.runtimeSetup
+  }
+
+  private async createPythonRuntime(): Promise<string> {
+    if (!this.launchConfig) throw new Error('Multi-agent sidecar has not been configured')
+    const venvDir = join(this.launchConfig.workspaceDir, 'venv')
+    const python = join(venvDir, 'bin', 'python')
+    if (!existsSync(python)) {
+      await this.runBootstrapCommand('python3', ['-m', 'venv', venvDir])
+      await this.runBootstrapCommand(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', this.launchConfig.requirementsPath!])
+    }
+    return python
+  }
+
+  private runBootstrapCommand(command: string, args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(command, args, { stdio: 'pipe' })
+      let stderr = ''
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+      child.once('error', reject)
+      child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`Multi-agent runtime setup failed (${code ?? 'signal'}): ${stderr.trim()}`)))
+    })
   }
 
   async startRun(payload: MultiAgentStartPayload): Promise<StartRunResult> {

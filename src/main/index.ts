@@ -212,6 +212,9 @@ app.whenReady().then(async () => {
       : join(app.getAppPath(), 'resources', 'python', 'multi_agent_sidecar.py'),
     workspaceDir: join(app.getPath('userData'), 'sandboxes', 'multi-agent-sidecar'),
     openRouterApiKey: savedSettings.openrouterApiKey ?? '',
+    requirementsPath: app.isPackaged
+      ? join(process.resourcesPath, 'python', 'requirements-multi-agent.txt')
+      : join(app.getAppPath(), 'resources', 'python', 'requirements-multi-agent.txt'),
   })
   multiAgentSidecar.on('event', (event: AgentEvent) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
