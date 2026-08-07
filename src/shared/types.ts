@@ -494,6 +494,16 @@ export interface MultiAgentConfig {
   requirePermissions:      boolean  // HITL default for multi-agent runs
 }
 
+/**
+ * Multi-agent workers never create a sandbox themselves. This documents the
+ * Electron-owned boundary used for every proxied MCP tool request.
+ */
+export interface SandboxConfig {
+  backend: 'sandbox-service'
+  allowedDomains: string[]
+  allowWrite: string[]
+}
+
 export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   maxAgents:               4,
   budgetCapUsd:            0.5,

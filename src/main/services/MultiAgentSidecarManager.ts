@@ -15,6 +15,7 @@ import { sandboxService } from './sandbox/sandboxServiceInstance'
 const DEFAULT_PORT = 7823
 const HEALTH_INTERVAL_MS = 10_000
 const REQUEST_TIMEOUT_MS = 15_000
+const RESTART_DELAY_MS = 2_000
 
 export interface SidecarLaunchConfig {
   scriptPath: string
@@ -37,6 +38,7 @@ export class MultiAgentSidecarManager extends EventEmitter {
   private process: ChildProcessWithoutNullStreams | null = null
   private launchConfig: SidecarLaunchConfig | null = null
   private healthTimer: ReturnType<typeof setInterval> | null = null
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
   private readonly streams = new Map<string, AbortController>()
   private readonly runChats = new Map<string, string>()
   private stopping = false
@@ -154,6 +156,8 @@ export class MultiAgentSidecarManager extends EventEmitter {
     this.stopping = true
     if (this.healthTimer) clearInterval(this.healthTimer)
     this.healthTimer = null
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.restartTimer = null
     for (const stream of this.streams.values()) stream.abort()
     this.streams.clear()
     const proc = this.process
@@ -197,6 +201,7 @@ export class MultiAgentSidecarManager extends EventEmitter {
         .catch((err) => {
           console.warn('[Sidecar] health check failed:', err)
           this.setStatus('error')
+          this.scheduleRestart()
         })
     }, this.healthIntervalMs)
   }
@@ -245,6 +250,18 @@ export class MultiAgentSidecarManager extends EventEmitter {
     if (this.stopping) return
     console.warn(`[Sidecar] exited unexpectedly (${code ?? 'signal'})`)
     this.setStatus('error')
+    this.scheduleRestart()
+  }
+
+  private scheduleRestart(): void {
+    if (this.stopping || this.restartTimer || !this.launchConfig?.openRouterApiKey) return
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      this.start().catch((err) => {
+        console.warn('[Sidecar] restart failed:', err)
+        this.scheduleRestart()
+      })
+    }, RESTART_DELAY_MS)
   }
 }
 
