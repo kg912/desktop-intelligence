@@ -13,12 +13,14 @@ import { registerRagDiagnosticsHandlers } from './ipc/ragDiagnosticsHandlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
-import { mcpServerManager } from './services/McpServerManager'
+import { McpDeniedError, mcpServerManager } from './services/McpServerManager'
+import { multiAgentSidecar } from './services/MultiAgentSidecarManager'
 import { observabilityService } from './services/ObservabilityService'
+import { appendMultiAgentEvent, beginMultiAgentRun } from './services/DatabaseService'
 import { srtBackend } from './services/sandbox/sandboxServiceInstance'
 import { shouldAlertForViolation } from './services/sandbox/isCredentialPath'
 import { IPC_CHANNELS } from '../shared/types'
-import type { McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
+import type { AgentEvent, McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
@@ -62,6 +64,7 @@ async function gracefulShutdown(): Promise<void> {
   console.log('[App] Graceful shutdown initiated…')
   modelConnectionManager.stop()
   pythonWorker.stop()
+  await multiAgentSidecar.stop()
   await mcpServerManager.stopAll()
 
   // Shut down the sandbox backend (resets SandboxManager).
@@ -202,6 +205,37 @@ app.whenReady().then(async () => {
   // On subsequent launches, reload the saved model automatically.
   const { readSettings } = await import('./services/SettingsStore')
   const savedSettings = readSettings()
+
+  multiAgentSidecar.configure({
+    scriptPath: app.isPackaged
+      ? join(process.resourcesPath, 'python', 'multi_agent_sidecar.py')
+      : join(app.getAppPath(), 'resources', 'python', 'multi_agent_sidecar.py'),
+    workspaceDir: join(app.getPath('userData'), 'sandboxes', 'multi-agent-sidecar'),
+    openRouterApiKey: savedSettings.openrouterApiKey ?? '',
+  })
+  multiAgentSidecar.on('event', (event: AgentEvent) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.MULTI_AGENT_EVENT, event)
+    }
+    const chatId = multiAgentSidecar.getChatId(event.runId)
+    if (chatId) appendMultiAgentEvent(chatId, event)
+    void observabilityService.captureArtifact({ type: 'code_artifact', ts: event.ts, payload: { multiAgentEvent: event } })
+    if (event.type === 'hitl_pause' && chatId) {
+      const [serverName, toolName] = event.serverName && event.toolName
+        ? [event.serverName, event.toolName]
+        : ['', '']
+      void mcpServerManager.callToolForMultiAgent(serverName, toolName, event.args, chatId)
+        .then((result) => multiAgentSidecar.respondHitl({ runId: event.runId, agentId: event.agentId, approved: true, result: result.text }))
+        .catch((err: unknown) => multiAgentSidecar.respondHitl({
+          runId: event.runId,
+          agentId: event.agentId,
+          approved: false,
+          result: err instanceof McpDeniedError ? err.userNote : (err instanceof Error ? err.message : 'MCP tool execution failed'),
+        }))
+    }
+  })
+  multiAgentSidecar.on('runStarted', ({ chatId }: { runId: string; chatId: string }) => beginMultiAgentRun(chatId))
+  multiAgentSidecar.on('status', (status) => console.log(`[Sidecar] status: ${status}`))
 
   const isCloudBackend = (savedSettings.backendProvider ?? 'lmstudio') !== 'lmstudio'
   if (!isCloudBackend) {

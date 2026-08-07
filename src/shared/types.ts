@@ -571,6 +571,12 @@ export interface HitlPauseEvent extends AgentEventBase {
   args:       Record<string, unknown>
 }
 
+export interface MultiAgentToolDefinition {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
 export interface HitlResumeEvent extends AgentEventBase {
   type:     'hitl_resume'
   agentId:  string
@@ -619,6 +625,8 @@ export interface HitlResponse {
   runId:    string
   agentId:  string
   approved: boolean
+  /** Electron-owned MCP result; never supplied by the renderer. */
+  result?: string
 }
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'error'
@@ -627,6 +635,8 @@ export interface MultiAgentStartPayload {
   chatId: string
   task:   string
   config: MultiAgentConfig
+  /** Electron supplies only currently-running MCP tool schemas. */
+  tools?: MultiAgentToolDefinition[]
 }
 
 // Phase 1 always returns the failure branch (sidecar not built yet).
@@ -753,6 +763,12 @@ export interface StdioMcpServerConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
+  /** Explicit SRT policy for local execution. Omit only for legacy single-agent servers. */
+  sandboxProfile?: {
+    allowedDomains: string[]
+    allowWrite: string[]
+    bypassSandbox?: boolean
+  }
   disabledTools?: string[]
   requiresApproval?: boolean
 }

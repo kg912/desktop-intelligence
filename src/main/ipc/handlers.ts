@@ -47,6 +47,7 @@ import type {
   HitlResponse,
 } from '../../shared/types'
 import { multiAgentSidecar } from '../services/MultiAgentSidecarManager'
+import { mcpServerManager } from '../services/McpServerManager'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
@@ -1479,7 +1480,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // here once the sidecar SSE stream exists — no ipcMain.handle for it now.
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, (_, payload: MultiAgentStartPayload) =>
-    multiAgentSidecar.startRun(payload)
+    multiAgentSidecar.startRun({
+      ...payload,
+      tools: mcpServerManager.getToolSchemas().map((tool) => ({
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters as unknown as Record<string, unknown>,
+      })),
+    })
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: HitlResponse) =>

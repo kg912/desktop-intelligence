@@ -1,85 +1,79 @@
-/**
- * Multi-Agent Phase 1 — MultiAgentSidecarManager unit tests.
- *
- * The manager has no Electron or native-module dependency, so no mocking
- * is needed — import and test directly.
- */
-
-import { describe, it, expect } from 'vitest'
+import { EventEmitter } from 'events'
+import { describe, it, expect, vi } from 'vitest'
 import { MultiAgentSidecarManager } from '../MultiAgentSidecarManager'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
-import type { MultiAgentStartPayload } from '../../../shared/types'
 
-const validPayload: MultiAgentStartPayload = {
-  chatId: 'chat-123',
-  task:   'Summarise the repo',
-  config: DEFAULT_MULTI_AGENT_CONFIG,
+const payload = { chatId: 'chat-123', task: 'Summarise the repo', config: DEFAULT_MULTI_AGENT_CONFIG }
+
+function child(): any {
+  const proc = new EventEmitter() as any
+  proc.stdout = new EventEmitter()
+  proc.stderr = new EventEmitter()
+  proc.killed = false
+  proc.kill = vi.fn(() => { proc.killed = true })
+  return proc
+}
+
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
 describe('MultiAgentSidecarManager', () => {
-  it('getStatus() returns "stopped" on a fresh instance', () => {
-    const mgr = new MultiAgentSidecarManager()
-    expect(mgr.getStatus()).toBe('stopped')
+  it('starts via SandboxService only and returns a sidecar run id', async () => {
+    const proc = child()
+    const spawnPersistent = vi.fn().mockResolvedValue(proc)
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(response({ ok: true }))
+      .mockResolvedValueOnce(response({ runId: 'run-from-sidecar' }))
+      .mockResolvedValueOnce(new Response(null, { status: 200, headers: { 'content-type': 'text/event-stream' } }))
+    const manager = new MultiAgentSidecarManager({ fetchFn: fetchFn as typeof fetch, spawnPersistent })
+    manager.configure({ scriptPath: '/app/multi_agent_sidecar.py', workspaceDir: '/tmp/sidecar', openRouterApiKey: 'secret', port: 7823 })
+
+    await expect(manager.startRun(payload)).resolves.toEqual({ ok: true, runId: 'run-from-sidecar' })
+    expect(spawnPersistent).toHaveBeenCalledWith(expect.objectContaining({
+      executionProfile: 'lightweight', allowedDomains: ['openrouter.ai'], callerLabel: 'multi-agent-sidecar',
+      command: "python3 /app/multi_agent_sidecar.py",
+    }))
+    expect(manager.getStatus()).toBe('running')
   })
 
-  it('startRun() returns ok=false', () => {
-    const mgr = new MultiAgentSidecarManager()
-    const result = mgr.startRun(validPayload)
-    expect(result.ok).toBe(false)
+  it('does not start when no OpenRouter key is configured', async () => {
+    const spawnPersistent = vi.fn()
+    const manager = new MultiAgentSidecarManager({ spawnPersistent })
+    manager.configure({ scriptPath: '/app/sidecar.py', workspaceDir: '/tmp/sidecar', openRouterApiKey: '' })
+    await expect(manager.startRun(payload)).resolves.toEqual(expect.objectContaining({ ok: false }))
+    expect(spawnPersistent).not.toHaveBeenCalled()
   })
 
-  it('startRun() returns exact shape { ok: false, reason: "sidecar_unavailable" }', () => {
-    const mgr = new MultiAgentSidecarManager()
-    expect(mgr.startRun(validPayload)).toEqual({ ok: false, reason: 'sidecar_unavailable' })
+  it('validates SSE events before emitting them and drops malformed data', async () => {
+    const manager = new MultiAgentSidecarManager()
+    const received: unknown[] = []
+    manager.on('event', (event) => received.push(event))
+    ;(manager as any).handleSseFrame('data: {"runId":"r","seq":1,"ts":1,"type":"synthesis_token","token":"Hi"}')
+    ;(manager as any).handleSseFrame('data: {"type":"unknown"}')
+    expect(received).toEqual([expect.objectContaining({ type: 'synthesis_token', token: 'Hi' })])
   })
 
-  it('startRun() reason is exactly "sidecar_unavailable"', () => {
-    const mgr = new MultiAgentSidecarManager()
-    const result = mgr.startRun(validPayload)
-    if (!result.ok) {
-      expect(result.reason).toBe('sidecar_unavailable')
-    }
+  it('aborts an active stream and sends DELETE to the sidecar', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(response({}))
+    const manager = new MultiAgentSidecarManager({ fetchFn: fetchFn as typeof fetch })
+    manager.configure({ scriptPath: '/app/sidecar.py', workspaceDir: '/tmp/sidecar', openRouterApiKey: 'secret' })
+    const controller = new AbortController()
+    ;(manager as any).streams.set('r1', controller)
+    await manager.abortRun('r1')
+    expect(controller.signal.aborted).toBe(true)
+    expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/run/r1'), expect.objectContaining({ method: 'DELETE' }))
   })
 
-  it('respondHitl() does not throw', () => {
-    const mgr = new MultiAgentSidecarManager()
-    expect(() => mgr.respondHitl({ runId: 'r1', agentId: 'a1', approved: true })).not.toThrow()
-  })
-
-  it('respondHitl() with approved=false does not throw', () => {
-    const mgr = new MultiAgentSidecarManager()
-    expect(() => mgr.respondHitl({ runId: 'r1', agentId: 'a1', approved: false })).not.toThrow()
-  })
-
-  it('abortRun() does not throw', () => {
-    const mgr = new MultiAgentSidecarManager()
-    expect(() => mgr.abortRun('run-999')).not.toThrow()
-  })
-
-  it('startRun() does not mutate status away from "stopped"', () => {
-    const mgr = new MultiAgentSidecarManager()
-    mgr.startRun(validPayload)
-    expect(mgr.getStatus()).toBe('stopped')
-  })
-
-  it('multiple startRun() calls all return the same synthetic failure', () => {
-    const mgr = new MultiAgentSidecarManager()
-    expect(mgr.startRun(validPayload)).toEqual({ ok: false, reason: 'sidecar_unavailable' })
-    expect(mgr.startRun(validPayload)).toEqual({ ok: false, reason: 'sidecar_unavailable' })
-    expect(mgr.startRun(validPayload)).toEqual({ ok: false, reason: 'sidecar_unavailable' })
-  })
-
-  it('status remains "stopped" after respondHitl() and abortRun()', () => {
-    const mgr = new MultiAgentSidecarManager()
-    mgr.respondHitl({ runId: 'r1', agentId: 'a1', approved: true })
-    mgr.abortRun('r1')
-    expect(mgr.getStatus()).toBe('stopped')
-  })
-
-  it('two independent instances have independent state', () => {
-    const a = new MultiAgentSidecarManager()
-    const b = new MultiAgentSidecarManager()
-    expect(a.getStatus()).toBe('stopped')
-    expect(b.getStatus()).toBe('stopped')
+  it('kills the sidecar and aborts streams on clean shutdown', async () => {
+    const manager = new MultiAgentSidecarManager()
+    const proc = child()
+    const controller = new AbortController()
+    ;(manager as any).process = proc
+    ;(manager as any).streams.set('r1', controller)
+    await manager.stop()
+    expect(proc.kill).toHaveBeenCalledOnce()
+    expect(controller.signal.aborted).toBe(true)
+    expect(manager.getStatus()).toBe('stopped')
   })
 })

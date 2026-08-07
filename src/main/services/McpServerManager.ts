@@ -301,6 +301,19 @@ export class McpServerManager extends EventEmitter {
     return { text, images, userNote: perm.userNote }
   }
 
+  /**
+   * Multi-agent workers never receive an MCP transport. Electron executes on
+   * their behalf, and local stdio tools must have an explicit SRT profile.
+   */
+  async callToolForMultiAgent(serverName: string, toolName: string, args: Record<string, unknown>, chatId: string): Promise<McpToolResult> {
+    const entry = this.servers.get(serverName)
+    if (!entry) throw new Error(`MCP server "${serverName}" is not running`)
+    if (!isHttpMcpConfig(entry.config) && (!entry.config.sandboxProfile || entry.config.sandboxProfile.bypassSandbox)) {
+      throw new Error(`MCP server "${serverName}" has no active SandboxService profile for multi-agent execution`)
+    }
+    return this.callTool(serverName, toolName, args, chatId)
+  }
+
   // ── Permission resolution (called by IPC handler) ────────────
 
   resolvePermission(response: import('../../shared/types').McpToolPermissionResponse): void {
