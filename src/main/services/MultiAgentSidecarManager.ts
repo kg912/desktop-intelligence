@@ -8,11 +8,9 @@ import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
-import { quote } from 'shell-quote'
 import type { ChildProcessWithoutNullStreams } from 'child_process'
 import type { AgentEvent, HitlResponse, MultiAgentStartPayload, SidecarStatus, StartRunResult } from '../../shared/types'
 import { parseAgentEvent } from '../../shared/agentEvents'
-import { sandboxService } from './sandbox/sandboxServiceInstance'
 
 const DEFAULT_PORT = 7823
 const HEALTH_INTERVAL_MS = 10_000
@@ -29,11 +27,16 @@ export interface SidecarLaunchConfig {
 }
 
 type FetchFn = typeof fetch
-type SpawnFn = typeof sandboxService.spawnPersistent
+type SpawnFn = typeof spawn
 
 export interface MultiAgentSidecarManagerOptions {
   fetchFn?: FetchFn
-  spawnPersistent?: SpawnFn
+  /**
+   * The coordinator binds a loopback-only HTTP port for Electron IPC. It has
+   * no tool transport; worker tool requests are proxied back to Electron,
+   * where McpServerManager routes them through SandboxService.
+   */
+  spawnSidecar?: SpawnFn
   healthIntervalMs?: number
 }
 
@@ -47,14 +50,14 @@ export class MultiAgentSidecarManager extends EventEmitter {
   private readonly runChats = new Map<string, string>()
   private stopping = false
   private readonly fetchFn: FetchFn
-  private readonly spawnPersistent: SpawnFn
+  private readonly spawnSidecar: SpawnFn
   private readonly healthIntervalMs: number
   private runtimeSetup: Promise<string> | null = null
 
   constructor(options: MultiAgentSidecarManagerOptions = {}) {
     super()
     this.fetchFn = options.fetchFn ?? fetch
-    this.spawnPersistent = options.spawnPersistent ?? sandboxService.spawnPersistent.bind(sandboxService)
+    this.spawnSidecar = options.spawnSidecar ?? spawn
     this.healthIntervalMs = options.healthIntervalMs ?? HEALTH_INTERVAL_MS
   }
 
@@ -90,24 +93,16 @@ export class MultiAgentSidecarManager extends EventEmitter {
     this.setStatus('starting')
     mkdirSync(this.launchConfig.workspaceDir, { recursive: true })
     const python = await this.ensurePythonRuntime()
-    const command = quote([python, this.launchConfig.scriptPath])
-
     try {
-      this.process = await this.spawnPersistent({
-        workspaceDir: this.launchConfig.workspaceDir,
-        command,
-        executionProfile: 'lightweight',
-        allowedDomains: ['openrouter.ai'],
-        allowWrite: [this.launchConfig.workspaceDir],
-        denyRead: [],
-        callerLabel: 'multi-agent-sidecar',
+      this.process = this.spawnSidecar(python, [this.launchConfig.scriptPath], {
+        cwd: this.launchConfig.workspaceDir,
+        stdio: 'pipe',
         env: {
+          ...process.env,
           OPENROUTER_API_KEY: this.launchConfig.openRouterApiKey,
           DI_MULTI_AGENT_PORT: String(this.launchConfig.port ?? DEFAULT_PORT),
           DI_MULTI_AGENT_WORKSPACE: this.launchConfig.workspaceDir,
         },
-        timeoutMs: 0,
-        maxRssMb: 768,
       })
       this.process.stdout.on('data', (chunk: Buffer) => console.log(`[Sidecar] ${chunk.toString().trimEnd()}`))
       this.process.stderr.on('data', (chunk: Buffer) => console.warn(`[Sidecar] ${chunk.toString().trimEnd()}`))

@@ -14,6 +14,7 @@ import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { MultiAgentRunPanel } from '../chat/MultiAgentRunPanel'
+import { MultiAgentExecutionArea } from '../chat/MultiAgentExecutionArea'
 import { DEFAULT_MULTI_AGENT_CONFIG, type AgentEvent, type AgentStep, type Chat, type MultiAgentConfig, type ProcessedAttachment, type StoredMessage, type McpToolPermissionRequest, type SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
@@ -443,18 +444,19 @@ export function Layout() {
             )}
           </div>
 
-          {/* ── Main column ── */}
+          {multiAgentRunId && <MultiAgentRunPanel
+            steps={multiAgentSteps} events={multiAgentEvents} budgetCapUsd={multiAgentConfig.budgetCapUsd} awaitingApproval={awaitingPlanApproval}
+            onApprove={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: true }); setAwaitingPlanApproval(false) } }}
+            onCancel={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: false }); setAwaitingPlanApproval(false) } }}
+            onAbort={() => { if (multiAgentRunId) { void window.api.abortMultiAgentRun(multiAgentRunId); setIsMultiAgentRunning(false) } }}
+          />}
+
+          {/* ── Main execution canvas ── */}
           <div
             className="flex-1 flex flex-col h-full min-w-0 bg-background relative"
             onDrop={handleMainDrop}
             onDragOver={(e) => e.preventDefault()}
           >
-            {multiAgentRunId && <MultiAgentRunPanel
-              steps={multiAgentSteps} events={multiAgentEvents} budgetCapUsd={multiAgentConfig.budgetCapUsd} awaitingApproval={awaitingPlanApproval}
-              onApprove={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: true }); setAwaitingPlanApproval(false) } }}
-              onCancel={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: false }); setAwaitingPlanApproval(false) } }}
-              onAbort={() => { if (multiAgentRunId) { void window.api.abortMultiAgentRun(multiAgentRunId); setIsMultiAgentRunning(false) } }}
-            />}
             {/* Window-level drag overlay */}
             {isDragging && (
               <div
@@ -492,12 +494,12 @@ export function Layout() {
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
 
-            <ChatArea
+            {multiAgentRunId ? <MultiAgentExecutionArea steps={multiAgentSteps} events={multiAgentEvents} /> : <ChatArea
               ref={chatAreaRef}
               activeChatId={activeChatId}
               onSuggest={handleSuggest}
               chatSystemInstructions={chatSystemInstructions}
-            />
+            />}
 
             <InputBar
               onSend={handleSend}

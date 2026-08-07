@@ -19,30 +19,29 @@ function response(body: unknown, status = 200): Response {
 }
 
 describe('MultiAgentSidecarManager', () => {
-  it('starts via SandboxService only and returns a sidecar run id', async () => {
+  it('starts the loopback-only coordinator and returns a sidecar run id', async () => {
     const proc = child()
-    const spawnPersistent = vi.fn().mockResolvedValue(proc)
+    const spawnSidecar = vi.fn().mockReturnValue(proc)
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(response({ ok: true }))
       .mockResolvedValueOnce(response({ runId: 'run-from-sidecar' }))
       .mockResolvedValueOnce(new Response(null, { status: 200, headers: { 'content-type': 'text/event-stream' } }))
-    const manager = new MultiAgentSidecarManager({ fetchFn: fetchFn as typeof fetch, spawnPersistent })
+    const manager = new MultiAgentSidecarManager({ fetchFn: fetchFn as typeof fetch, spawnSidecar })
     manager.configure({ scriptPath: '/app/multi_agent_sidecar.py', workspaceDir: '/tmp/sidecar', openRouterApiKey: 'secret', port: 7823 })
 
     await expect(manager.startRun(payload)).resolves.toEqual({ ok: true, runId: 'run-from-sidecar' })
-    expect(spawnPersistent).toHaveBeenCalledWith(expect.objectContaining({
-      executionProfile: 'lightweight', allowedDomains: ['openrouter.ai'], callerLabel: 'multi-agent-sidecar',
-      command: "python3 /app/multi_agent_sidecar.py",
+    expect(spawnSidecar).toHaveBeenCalledWith('python3', ['/app/multi_agent_sidecar.py'], expect.objectContaining({
+      cwd: '/tmp/sidecar', stdio: 'pipe', env: expect.objectContaining({ OPENROUTER_API_KEY: 'secret' }),
     }))
     expect(manager.getStatus()).toBe('running')
   })
 
   it('does not start when no OpenRouter key is configured', async () => {
-    const spawnPersistent = vi.fn()
-    const manager = new MultiAgentSidecarManager({ spawnPersistent })
+    const spawnSidecar = vi.fn()
+    const manager = new MultiAgentSidecarManager({ spawnSidecar })
     manager.configure({ scriptPath: '/app/sidecar.py', workspaceDir: '/tmp/sidecar', openRouterApiKey: '' })
     await expect(manager.startRun(payload)).resolves.toEqual(expect.objectContaining({ ok: false }))
-    expect(spawnPersistent).not.toHaveBeenCalled()
+    expect(spawnSidecar).not.toHaveBeenCalled()
   })
 
   it('validates SSE events before emitting them and drops malformed data', async () => {
