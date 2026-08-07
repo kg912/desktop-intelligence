@@ -442,6 +442,15 @@ export const IPC_CHANNELS = {
   CHAT_EXPORT_PDF:       'chat:exportPdf',
   CHAT_EXPORT_PDF_READY: 'chat:exportPdfReady',
 
+  // ── Sandbox violations (Phase 2) ───────────────────────────────
+  /** main→renderer push, credential-path denials only (see SrtBackend.subscribeToViolations) */
+  SANDBOX_VIOLATION_ALERT: 'sandbox:violationAlert',
+
+  // ── Sandbox violations — observability panel (Phase 3) ────────
+  OBS_LIST_SANDBOX_VIOLATIONS:  'obs:listSandboxViolations',
+  OBS_CLEAR_SANDBOX_VIOLATIONS: 'obs:clearSandboxViolations',
+  OBS_OPEN_SANDBOX_VIOLATIONS_FILE: 'obs:openSandboxViolationsFile',
+
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
@@ -623,4 +632,19 @@ export interface McpToolPermissionResponse {
   approved:    boolean
   alwaysAllow: 'session' | 'forever' | false
   userNote:    string
+}
+
+// ── Sandbox violations (Phase 2, SANDBOX_ARCHITECTURE_SPEC.html section 11/16) ─
+
+export interface SandboxViolationTraceEvent {
+  /** Which SrtBackend caller triggered this — e.g. 'python-worker' or 'mcp:<serverName>'. 'unknown' if unattributed. */
+  source:    string
+  kind:      'read' | 'write' | 'network'
+  /** The denied path, domain, or resource name. */
+  target:    string
+  timestamp: number
+}
+
+export interface SandboxViolationLogEntry extends SandboxViolationTraceEvent {
+  isCredential: boolean
 }

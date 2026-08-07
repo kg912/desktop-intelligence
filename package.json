@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.0.0-beta-51",
+  "version": "3.0.0-beta-63",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -16,12 +16,14 @@
     "test:coverage": "npm rebuild better-sqlite3 && vitest run --coverage",
     "spike:vec": "tsx scripts/spike-sqlite-vec.ts",
     "spike:rerank": "tsx scripts/spike-reranker.ts",
+    "spike:sandbox-yf-hosts": "tsx scripts/spike-sandbox-yf-hosts.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "postinstall": "electron-builder install-app-deps",
     "prepackage": "electron-builder install-app-deps",
     "prepare": "husky"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.65",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@preact/signals-react": "^3.10.0",
     "@tanstack/react-virtual": "^3.11.0",
@@ -47,6 +49,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "shell-quote": "1.10.0",
     "sqlite-vec": "^0.1.9",
     "tailwind-merge": "^3.5.0",
     "tiktoken": "^1.0.22",

@@ -14,9 +14,11 @@ import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
-import './services/ObservabilityService'
+import { observabilityService } from './services/ObservabilityService'
+import { srtBackend } from './services/sandbox/sandboxServiceInstance'
+import { shouldAlertForViolation } from './services/sandbox/isCredentialPath'
 import { IPC_CHANNELS } from '../shared/types'
-import type { McpServerRuntimeInfo, McpToolPermissionRequest } from '../shared/types'
+import type { McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
@@ -61,6 +63,12 @@ async function gracefulShutdown(): Promise<void> {
   modelConnectionManager.stop()
   pythonWorker.stop()
   await mcpServerManager.stopAll()
+
+  // Shut down the sandbox backend (resets SandboxManager).
+  // Non-fatal: if it throws, we still proceed with the rest of shutdown.
+  await srtBackend.shutdown().catch((err: Error) => {
+    console.warn('[Sandbox] SrtBackend shutdown error:', err.message)
+  })
 
   await lmsDaemonManager.shutdown()
   console.log('[App] Shutdown complete.')
@@ -205,6 +213,61 @@ app.whenReady().then(async () => {
     // Cloud backend (NVIDIA or Ollama) — skip LM Studio daemon and connection polling entirely.
     // IPC handlers return a synthetic 'ready' state so the UI shows immediately.
     console.log(`[App] Cloud backend active (${savedSettings.backendProvider}) — skipping LM Studio daemon and connection polling`)
+  }
+
+  // ── Sandbox dependency check ──────────────────────────────────────
+  // Verifies that @anthropic-ai/sandbox-runtime can enforce sandboxing on
+  // this platform, and — critically — runs BEFORE pythonWorker.start() /
+  // mcpServerManager.startAll() so it actually gates the first sandboxed
+  // spawn instead of racing it. srtBackend.initialize() is awaited here so
+  // the lazy self-initialize guard inside SrtBackend.run()/spawnPersistent()
+  // (`if (this.initialized) return`) is a no-op in the normal case.
+  // Non-fatal: if dependencies are missing, a warning is logged and the
+  // SrtBackend is not initialized — the app continues to run without
+  // sandboxing (same as before this feature was added).
+  // The warning should be surfaced in Settings in a future prompt.
+  //
+  // Dynamic import — @anthropic-ai/sandbox-runtime is ESM-only with no CJS
+  // `exports` fallback; a static import here compiled to a top-level
+  // require() in the CJS main-process bundle and crashed the packaged app
+  // on launch (ERR_REQUIRE_ESM, found via a real .dmg run — see SrtBackend.ts's
+  // header comment for the full writeup). This is already inside a try/catch,
+  // so an import failure degrades the same way a dependency-check failure does.
+  try {
+    const { SandboxManager } = await import('@anthropic-ai/sandbox-runtime')
+    if (SandboxManager.isSupportedPlatform()) {
+      const depCheck = SandboxManager.checkDependencies()
+      if (depCheck.errors.length > 0) {
+        console.warn('[Sandbox] Dependency check errors:', depCheck.errors)
+      }
+      if (depCheck.warnings.length > 0) {
+        console.warn('[Sandbox] Dependency check warnings:', depCheck.warnings)
+      }
+      if (depCheck.errors.length === 0) {
+        await srtBackend.initialize().catch((err: Error) => {
+          console.warn('[Sandbox] SrtBackend initialize failed:', err.message)
+        })
+
+        // ── Sandbox violation observation (Phase 2) ──────────────────────
+        // Every violation is logged to the observability panel (existing
+        // main→standalone-JSONL pattern, see ObservabilityService). Only
+        // credential-path READ denials additionally push an in-app alert —
+        // same main→renderer push pattern already used for
+        // MCP_SERVER_STATUS_CHANGED below.
+        srtBackend.subscribeToViolations((violation: SandboxViolationTraceEvent) => {
+          observabilityService.emitSandboxViolation(violation)
+          if (shouldAlertForViolation(violation) && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, violation)
+          }
+        })
+      } else {
+        console.warn('[Sandbox] SrtBackend not initialized — dependency errors above')
+      }
+    } else {
+      console.warn('[Sandbox] Platform not supported by @anthropic-ai/sandbox-runtime')
+    }
+  } catch (err) {
+    console.warn('[Sandbox] Dependency check failed:', err)
   }
 
   // Pre-warm the persistent Python worker so the first chart renders fast.

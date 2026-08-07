@@ -25,6 +25,8 @@ import type {
   McpToolPermissionRequest,
   BackendSettings,
   ExportChatPdfResult,
+  SandboxViolationTraceEvent,
+  SandboxViolationLogEntry,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
 
@@ -214,6 +216,13 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
   },
 
+  // ── Sandbox violations (Phase 2) ──────────────────────────────
+  onSandboxViolationAlert: (cb: (violation: SandboxViolationTraceEvent) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, violation: SandboxViolationTraceEvent): void => cb(violation)
+    ipcRenderer.on(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, h)
+  },
+
   // ── Observability ────────────────────────────────────────────
   obsGetPrefs: (): Promise<DebugPrefs> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_GET_PREFS),
@@ -241,6 +250,16 @@ const api = {
 
   obsCaptureArtifact: (event: ObsEvent): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_CAPTURE_ARTIFACT, event),
+
+  // ── Sandbox violations — observability panel (Phase 3) ────────
+  obsListSandboxViolations: (): Promise<SandboxViolationLogEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_LIST_SANDBOX_VIOLATIONS),
+
+  obsClearSandboxViolations: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_CLEAR_SANDBOX_VIOLATIONS),
+
+  obsOpenSandboxViolationsFile: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_SANDBOX_VIOLATIONS_FILE),
 
   // ── Suggestion cards ─────────────────────────────────────────
   getSuggestions: (): Promise<string[]> =>
