@@ -35,7 +35,7 @@ vi.mock('../sandbox/ResourceGovernor', () => ({
 }))
 
 // Import AFTER mocks are in place
-import { PythonWorkerService } from '../PythonWorkerService'
+import { buildPythonCommand, PythonWorkerService } from '../PythonWorkerService'
 import { srtBackend } from '../sandbox/sandboxServiceInstance'
 import { observabilityService } from '../ObservabilityService'
 import { shouldAlertForViolation } from '../sandbox/isCredentialPath'
@@ -59,6 +59,13 @@ function canRunSandboxTests(): boolean {
 }
 
 const SANDBOX_TESTS_ENABLED = canRunSandboxTests()
+
+describe('buildPythonCommand', () => {
+  it('keeps a packaged app resource path with spaces as one shell argument', () => {
+    expect(buildPythonCommand('/Applications/Desktop Intelligence.app/Contents/Resources/python/worker_harness.py'))
+      .toBe("python3 '/Applications/Desktop Intelligence.app/Contents/Resources/python/worker_harness.py'")
+  })
+})
 
 describe.skipIf(!SANDBOX_TESTS_ENABLED)('PythonWorkerService — real sandbox integration', () => {
   let worker: PythonWorkerService
