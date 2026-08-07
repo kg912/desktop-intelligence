@@ -241,7 +241,9 @@ export const InputBar = memo(function InputBar({
   }, [])
 
   useEffect(() => {
-    window.api.getBackendSettings()
+    const getBackendSettings = window.api?.getBackendSettings
+    if (!getBackendSettings) return
+    getBackendSettings()
       .then((s) => setIsOpenRouter(s.provider === 'openrouter'))
       .catch(() => {/* non-fatal */})
   }, [])
