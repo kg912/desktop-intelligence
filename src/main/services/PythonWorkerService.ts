@@ -27,6 +27,7 @@ import { execSync, ChildProcessWithoutNullStreams } from 'child_process'
 import * as path from 'path'
 import { app } from 'electron'
 import { mkdirSync } from 'fs'
+import { quote } from 'shell-quote'
 import { sandboxService } from './sandbox/sandboxServiceInstance'
 import { memoryWatch } from './sandbox/ResourceGovernor'
 
@@ -45,6 +46,15 @@ const YFINANCE_HOSTS = [
 
 const WORKER_TIMEOUT_MS = 30_000
 const READY_TIMEOUT_MS  = 15_000
+
+/**
+ * Build the shell command consumed by SandboxManager.wrapWithSandbox().
+ * `shell-quote` preserves fixed resource paths containing spaces in packaged
+ * app bundles without hand-rolling shell escaping.
+ */
+export function buildPythonCommand(scriptPath: string): string {
+  return quote(['python3', scriptPath])
+}
 
 interface QueueItem {
   code: string
@@ -117,7 +127,7 @@ export class PythonWorkerService {
     // workerPath is a fixed app-resource path (getWorkerPath()) — it never
     // contains anything derived from user/LLM input, so building the
     // command string this way is safe (spec section 08).
-    const command = `python3 ${workerPath}`
+    const command = buildPythonCommand(workerPath)
 
     console.log('[PythonWorker] Starting sandboxed worker:', workerPath)
 
@@ -399,7 +409,7 @@ _real_close('all')
     try {
       const runResult = await sandboxService.run({
         workspaceDir:     fallbackDir,
-        command:          `python3 ${scratchFile}`,
+        command:          buildPythonCommand(scratchFile),
         executionProfile: 'lightweight',
         allowedDomains:   YFINANCE_HOSTS,
         allowWrite:       [fallbackDir],
