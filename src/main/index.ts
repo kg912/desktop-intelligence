@@ -220,7 +220,9 @@ app.whenReady().then(async () => {
     const chatId = multiAgentSidecar.getChatId(event.runId)
     if (chatId) appendMultiAgentEvent(chatId, event)
     void observabilityService.captureArtifact({ type: 'code_artifact', ts: event.ts, payload: { multiAgentEvent: event } })
-    if (event.type === 'hitl_pause' && chatId) {
+    // Plan approval is renderer-owned pre-flight UI. MCP tool pauses below
+    // remain Electron-owned and pass through the existing permission stack.
+    if (event.type === 'hitl_pause' && chatId && event.serverName !== 'multi-agent') {
       const [serverName, toolName] = event.serverName && event.toolName
         ? [event.serverName, event.toolName]
         : ['', '']

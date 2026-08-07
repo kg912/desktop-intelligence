@@ -13,16 +13,21 @@ import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
-import type { Chat, ProcessedAttachment, StoredMessage, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../../../../shared/types'
+import { MultiAgentRunPanel } from '../chat/MultiAgentRunPanel'
+import { DEFAULT_MULTI_AGENT_CONFIG, type AgentEvent, type AgentStep, type Chat, type ProcessedAttachment, type StoredMessage, type McpToolPermissionRequest, type SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode, isMultiAgentRunning } = useModelConfig()
+  const { setThinkingMode, isMultiAgentRunning, setIsMultiAgentRunning, multiAgentMode } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
   const [sidebarMode,          setSidebarMode]          = useState<'chat' | 'starred' | null>('chat')
   const [settingsOpen,         setSettingsOpen]         = useState(false)
   const [mcpPermissionRequest, setMcpPermissionRequest] = useState<McpToolPermissionRequest | null>(null)
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
+  const [multiAgentEvents, setMultiAgentEvents] = useState<AgentEvent[]>([])
+  const [multiAgentSteps, setMultiAgentSteps] = useState<AgentStep[]>([])
+  const [multiAgentRunId, setMultiAgentRunId] = useState<string | null>(null)
+  const [awaitingPlanApproval, setAwaitingPlanApproval] = useState(false)
   const chatAreaRef     = useRef<ChatAreaHandle>(null)
   const lastSidebarMode = useRef<'chat' | 'starred'>('chat')
 
@@ -46,6 +51,13 @@ export function Layout() {
       .then(setChats)
       .catch((err) => console.warn('[DB] getChats failed:', err))
   }, [])
+
+  useEffect(() => window.api.onMultiAgentEvent((event) => {
+    setMultiAgentEvents((previous) => [...previous, event])
+    if (event.type === 'orchestrator_plan') setMultiAgentSteps(event.steps)
+    if (event.type === 'hitl_pause' && event.serverName === 'multi-agent' && event.toolName === 'approve_plan') setAwaitingPlanApproval(true)
+    if (event.type === 'task_complete' || event.type === 'task_failed') setIsMultiAgentRunning(false)
+  }), [setIsMultiAgentRunning])
 
   const refreshChats = useCallback(async () => {
     try {
@@ -295,7 +307,7 @@ export function Layout() {
     // here (before processFile) so every document is tagged with the correct ID.
     // We then pass preChatId to sendMessage so it skips its own creation step.
     let preChatId: string | undefined
-    if (list.length > 0 && !activeChatId) {
+    if ((list.length > 0 || multiAgentMode) && !activeChatId) {
       try {
         const newId = uuid()
         const title = text.slice(0, 80).trim() || 'New Chat'
@@ -363,9 +375,22 @@ export function Layout() {
         .catch(() => { /* non-fatal */ })
     }
 
+    if (multiAgentMode && effectiveChatId) {
+      await window.api.saveMessage(effectiveChatId, uuid(), 'user', text)
+      const started = await window.api.startMultiAgentRun({ chatId: effectiveChatId, task: text, config: DEFAULT_MULTI_AGENT_CONFIG })
+      if (started.ok) {
+        setMultiAgentRunId(started.runId)
+        setMultiAgentEvents([])
+        setMultiAgentSteps([])
+        setAwaitingPlanApproval(false)
+        setIsMultiAgentRunning(true)
+      } else console.warn('[MultiAgent] start failed:', started.reason)
+      return
+    }
+
     // Pass preChatId so useChat skips its own chat-creation step (avoiding double rows).
     sendMessageRef.current(text, processed.length ? processed : undefined, preChatId)
-  }, [activeChatId, handleChatCreated])
+  }, [activeChatId, handleChatCreated, multiAgentMode, setIsMultiAgentRunning])
 
   // Suggestion pill clicked → pre-fill and send immediately
   const handleSuggest = useCallback((text: string) => {
@@ -419,6 +444,11 @@ export function Layout() {
             onDrop={handleMainDrop}
             onDragOver={(e) => e.preventDefault()}
           >
+            {isMultiAgentRunning && <MultiAgentRunPanel
+              steps={multiAgentSteps} events={multiAgentEvents} awaitingApproval={awaitingPlanApproval}
+              onApprove={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: true }); setAwaitingPlanApproval(false) } }}
+              onCancel={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: false }); setAwaitingPlanApproval(false) } }}
+            />}
             {/* Window-level drag overlay */}
             {isDragging && (
               <div

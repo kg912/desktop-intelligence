@@ -64,6 +64,7 @@ class Run:
     task: asyncio.Task[None] | None = None
     total_cost: float = 0.0
     total_tokens: int = 0
+    approvals: dict[str, asyncio.Future[tuple[bool, str]]] = field(default_factory=dict)
 
     async def emit(self, event_type: str, **payload: Any) -> None:
         self.seq += 1
@@ -71,6 +72,17 @@ class Run:
         self.events.append(event)
         for subscriber in list(self.subscribers):
             await subscriber.put(event)
+
+    async def wait_for_approval(self, agent_id: str, role: str, tool_name: str, server_name: str, args: dict[str, Any]) -> tuple[bool, str]:
+        future: asyncio.Future[tuple[bool, str]] = asyncio.get_running_loop().create_future()
+        self.approvals[agent_id] = future
+        await self.emit("hitl_pause", agentId=agent_id, role=role, toolName=tool_name, serverName=server_name, args=args)
+        try:
+            return await asyncio.wait_for(future, timeout=self.request.config.hitlTimeoutMs / 1000)
+        except asyncio.TimeoutError:
+            return False, "approval timed out"
+        finally:
+            self.approvals.pop(agent_id, None)
 
 
 RUNS: dict[str, Run] = {}
@@ -130,6 +142,10 @@ async def orchestrate(run: Run) -> None:
         run.total_tokens += tokens; run.total_cost += cost
         steps = parse_plan(plan_text, config, request.task)
         await run.emit("orchestrator_plan", steps=steps)
+        approved, reason = await run.wait_for_approval("orchestrator", "Orchestrator", "approve_plan", "multi-agent", {"steps": steps})
+        if not approved:
+            await run.emit("task_failed", reason=f"Plan not approved: {reason}", partialOutputs={})
+            return
 
         outputs: dict[str, str] = {}
         for phase in sorted({step["phase"] for step in steps}):
@@ -213,6 +229,8 @@ async def stream(run_id: str) -> StreamingResponse:
 async def hitl(run_id: str, response: HitlResponse) -> dict[str, bool]:
     run = RUNS.get(run_id)
     if not run: raise HTTPException(404, "run not found")
+    future = run.approvals.get(response.agentId)
+    if future and not future.done(): future.set_result((response.approved, response.result or ""))
     await run.emit("hitl_resume", agentId=response.agentId, approved=response.approved)
     return {"ok": True}
 

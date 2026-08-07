@@ -1479,16 +1479,22 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // subscribes via preload.onMultiAgentEvent. Phase 2 adds the emission seam
   // here once the sidecar SSE stream exists — no ipcMain.handle for it now.
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, (_, payload: MultiAgentStartPayload) =>
-    multiAgentSidecar.startRun({
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, async (_, payload: MultiAgentStartPayload) => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const defaultModel = readSettings().openrouterModel ?? ''
+    return multiAgentSidecar.startRun({
       ...payload,
+      config: {
+        ...payload.config,
+        models: Object.fromEntries(Object.entries(payload.config.models).map(([role, model]) => [role, model || defaultModel])) as MultiAgentStartPayload['config']['models'],
+      },
       tools: mcpServerManager.getToolSchemas().map((tool) => ({
         name: tool.function.name,
         description: tool.function.description,
         parameters: tool.function.parameters as unknown as Record<string, unknown>,
       })),
     })
-  )
+  })
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: HitlResponse) =>
     multiAgentSidecar.respondHitl(r)
