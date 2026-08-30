@@ -32,6 +32,8 @@ export default function App() {
               if (backend.ollamaModel) setSelectedModel(backend.ollamaModel)
             } else if (backend.provider === 'openrouter') {
               if (backend.openrouterModel) setSelectedModel(backend.openrouterModel)
+            } else if (backend.provider === 'mtplx') {
+              if (backend.mtplxModel) setSelectedModel(backend.mtplxModel)
             } else {
               const cfg = await window.api.getModelConfig()
               if (cfg.modelId) setSelectedModel(cfg.modelId)

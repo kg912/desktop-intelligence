@@ -10,8 +10,9 @@ import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { registerRagSettingsHandlers } from './ipc/ragSettingsHandlers'
 import { registerRagDiagnosticsHandlers } from './ipc/ragDiagnosticsHandlers'
-import { modelConnectionManager } from './managers/ModelConnectionManager'
+import { modelConnectionManager, mtplxConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
+import { mtplxDaemonManager } from './managers/MTPLXDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
 import './services/ObservabilityService'
@@ -59,10 +60,14 @@ async function gracefulShutdown(): Promise<void> {
 
   console.log('[App] Graceful shutdown initiated…')
   modelConnectionManager.stop()
+  mtplxConnectionManager.stop()
   pythonWorker.stop()
   await mcpServerManager.stopAll()
 
   await lmsDaemonManager.shutdown()
+  // Safe unconditionally: no-ops when start() was never called (mtplxBin stays
+  // null) and when the MTPLX server was externally managed (spawnedByUs false).
+  await mtplxDaemonManager.shutdown()
   console.log('[App] Shutdown complete.')
 }
 
@@ -78,6 +83,7 @@ app.on('before-quit', (event) => {
 // window-all-closed fires when the last window closes (e.g. Cmd+W on non-macOS)
 app.on('window-all-closed', () => {
   modelConnectionManager.stop()
+  mtplxConnectionManager.stop()
   if (process.platform !== 'darwin') {
     gracefulShutdown().finally(() => app.quit())
   }
@@ -179,6 +185,9 @@ app.whenReady().then(async () => {
     try {
       await lmsDaemonManager.shutdown()
     } catch { /* non-fatal */ }
+    try {
+      await mtplxDaemonManager.shutdown()
+    } catch { /* non-fatal */ }
     app.relaunch()
     app.quit()
   })
@@ -195,16 +204,24 @@ app.whenReady().then(async () => {
   const { readSettings } = await import('./services/SettingsStore')
   const savedSettings = readSettings()
 
-  const isCloudBackend = (savedSettings.backendProvider ?? 'lmstudio') !== 'lmstudio'
-  if (!isCloudBackend) {
+  const backendProvider = savedSettings.backendProvider ?? 'lmstudio'
+  if (backendProvider === 'lmstudio') {
     lmsDaemonManager.start(savedSettings.modelId ?? undefined).catch((err: Error) => {
       console.error('[App] LMSDaemon unhandled error:', err)
     })
     modelConnectionManager.start()
+  } else if (backendProvider === 'mtplx') {
+    // MTPLX is local like LM Studio, but has its own daemon and its own poller.
+    // No modelId is passed — MTPLX manages model selection in its own config.
+    mtplxDaemonManager.start().catch((err: Error) => {
+      console.error('[App] MTPLXDaemon unhandled error:', err)
+    })
+    mtplxConnectionManager.start()
   } else {
-    // Cloud backend (NVIDIA or Ollama) — skip LM Studio daemon and connection polling entirely.
-    // IPC handlers return a synthetic 'ready' state so the UI shows immediately.
-    console.log(`[App] Cloud backend active (${savedSettings.backendProvider}) — skipping LM Studio daemon and connection polling`)
+    // Cloud backend (NVIDIA, Ollama, OpenRouter) — skip all local daemon and
+    // connection polling entirely. IPC handlers return a synthetic 'ready' state
+    // so the UI shows immediately.
+    console.log(`[App] Cloud backend active (${backendProvider}) — skipping local daemon and connection polling`)
   }
 
   // Pre-warm the persistent Python worker so the first chart renders fast.

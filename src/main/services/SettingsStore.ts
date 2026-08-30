@@ -62,6 +62,10 @@ export interface AppSettings {
   openrouterModel?:  string
   /** OpenRouter reasoning effort level for extended thinking. Default: 'auto' (no reasoning param sent) */
   openrouterReasoningEffort?: string
+  /** MTPLX base URL. Defaults to http://localhost:8000 — the port is user-configurable in MTPLX. */
+  mtplxBaseUrl?: string
+  /** MTPLX model identifier e.g. "Qwen3-30B-A3B-MLX-4bit" */
+  mtplxModel?: string
   /** When true, full session logs are captured to disk. Default: false */
   observabilityEnabled?: boolean
   /** When true, rendered charts/images are embedded in log folders. Default: false */

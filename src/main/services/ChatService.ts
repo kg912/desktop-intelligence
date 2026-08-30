@@ -43,6 +43,13 @@ const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions";
 /** OpenRouter chat completions endpoint. */
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
+/**
+ * MTPLX default base URL. The port is user-configurable in the MTPLX app, so the
+ * saved `mtplxBaseUrl` setting always wins — this is only the fallback when nothing
+ * has been configured yet.
+ */
+const MTPLX_DEFAULT_BASE_URL = "http://localhost:8000";
+
 // Debug logging — only active in dev builds (npm run package:dev sets DEV_MODE=true).
 // __DEV_MODE__ is a compile-time constant injected by Rollup define — see globals.d.ts.
 const DEBUG = __DEV_MODE__;
@@ -835,8 +842,19 @@ export function applyThinkingPrefix(
   model?: string,
   provider?: import("../../shared/types").BackendProvider,
 ): Array<{ role: string; content: string | ContentPart[] }> {
-  // NVIDIA-hosted, Ollama, and OpenRouter models do not use /think or /no_think soft-prompt tokens.
-  if (provider === "nvidia" || provider === "ollama" || provider === "openrouter") return messages;
+  // NVIDIA-hosted, Ollama, OpenRouter and MTPLX models do not use /think or /no_think
+  // soft-prompt tokens.
+  // MTPLX in particular silently IGNORES them: the tokens are echoed back as literal
+  // text in the response and thinking runs regardless of which one was sent. Thinking
+  // is controlled there by chat_template_kwargs.enable_thinking on the request body
+  // instead — see the isMtplx payload branch in send().
+  if (
+    provider === "nvidia" ||
+    provider === "ollama" ||
+    provider === "openrouter" ||
+    provider === "mtplx"
+  )
+    return messages;
   // Gemma models do not recognise /think or /no_think — they are Qwen/MLX-specific
   // soft-prompt tokens. Injecting them into Gemma messages causes them to be echoed
   // verbatim inside the <think> block, polluting the thought accordion with junk text.
@@ -1393,10 +1411,11 @@ export class ChatService {
     const isNvidia = provider === "nvidia";
     const isOllama = provider === "ollama";
     const isOpenRouter = provider === "openrouter";
+    const isMtplx = provider === "mtplx";
     const getToolResultLimit = (): number | null => {
       if (isOllama)                return OLLAMA_MAX_TOOL_RESULT_CHARS
       if (isNvidia || isOpenRouter) return CLOUD_MAX_TOOL_RESULT_CHARS
-      return null  // LM Studio: no limit
+      return null  // LM Studio and MTPLX: local backends, no limit
     }
     // 5i — session_start
     this.obsSessionId = observabilityService.startSession(payload.chatId ?? '', modelId, provider)
@@ -1445,7 +1464,7 @@ export class ChatService {
 
     if (DEBUG)
       console.log(
-        `🚀 FINAL ${isNvidia ? "NVIDIA" : isOllama ? "OLLAMA" : isOpenRouter ? "OPENROUTER" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
+        `🚀 FINAL ${isNvidia ? "NVIDIA" : isOllama ? "OLLAMA" : isOpenRouter ? "OPENROUTER" : isMtplx ? "MTPLX" : "LM STUDIO"} PAYLOAD (${builtMessages.length} messages):`,
         JSON.stringify(builtMessages, null, 2),
       );
 
@@ -1660,6 +1679,27 @@ export class ChatService {
             stream_options: { include_usage: true },
             ...toolsPayload,
           });
+        } else if (isMtplx) {
+          // ── MTPLX payload ─────────────────────────────────────────────────────
+          // Local OpenAI-compatible server (https://github.com/youssofal/MTPLX).
+          // Standard SSE streaming, so commonFields carry over unchanged.
+          //
+          // Thinking is controlled by chat_template_kwargs.enable_thinking — the
+          // /think and /no_think soft-prompt tokens are ignored (see
+          // applyThinkingPrefix). Sent unconditionally rather than gated on a
+          // model-name check like the NVIDIA branch: MTPLX only serves
+          // Qwen3-family models, which all accept the flag.
+          //
+          // Reasoning comes back on delta.reasoning_content, already split from
+          // delta.content server-side — the shared SSE branch below reads it,
+          // so no <think> tag scraping is needed for this provider.
+          const thinkingEnabled = payload.thinkingMode === "thinking";
+          streamBody = JSON.stringify({
+            ...commonFields,
+            chat_template_kwargs: { enable_thinking: thinkingEnabled },
+            stream_options: { include_usage: true },
+            ...toolsPayload,
+          });
         } else {
           // LM Studio payload — unchanged from original
           const step2ThinkingField = isThinking
@@ -1682,13 +1722,18 @@ export class ChatService {
         }
 
         const ollamaBaseUrl = (appSettings.ollamaBaseUrl ?? "https://ollama.com").replace(/\/$/, "");
+        const mtplxBaseUrl = (appSettings.mtplxBaseUrl ?? MTPLX_DEFAULT_BASE_URL).replace(/\/$/, "");
         const endpoint = isNvidia
           ? NVIDIA_ENDPOINT
           : isOllama
             ? `${ollamaBaseUrl}/api/chat`
             : isOpenRouter
               ? OPENROUTER_ENDPOINT
-              : LMS_ENDPOINT;
+              : isMtplx
+                ? `${mtplxBaseUrl}/v1/chat/completions`
+                : LMS_ENDPOINT;
+        // MTPLX needs no Authorization header — it is a local server with no auth,
+        // so Content-Type alone is correct and there is no key to validate.
         const fetchHeaders: Record<string, string> = {
           "Content-Type": "application/json",
         };
@@ -1795,7 +1840,7 @@ export class ChatService {
 
         if (!response.ok) {
           const errText = await response.text();
-          const label = isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : "LM Studio";
+          const label = isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : isMtplx ? "MTPLX" : "LM Studio";
           // Always log the full error body — critical for diagnosing EOS/special-token rejections.
           console.warn(`[EOS-TRACE] OpenRouter HTTP ${response.status} error body: ${errText}`);
           // If OpenRouter rejected for special token, log which messages survived into the final streamBody.
@@ -1820,7 +1865,7 @@ export class ChatService {
 
         if (!response.body)
           throw new Error(
-            `${isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : "LM Studio"} returned no response body`,
+            `${isNvidia ? "NVIDIA Build" : isOllama ? "Ollama" : isOpenRouter ? "OpenRouter" : isMtplx ? "MTPLX" : "LM Studio"} returned no response body`,
           );
 
         const reader = response.body.getReader();
@@ -1913,7 +1958,12 @@ export class ChatService {
               }
 
             } else {
-              // ── SSE (LM Studio + NVIDIA) ──────────────────────────────────────────────────────
+              // ── SSE (LM Studio + NVIDIA + OpenRouter + MTPLX) ─────────────────────────────────
+              // MTPLX splits reasoning from content server-side and delivers it on
+              // delta.reasoning_content, the same field LM Studio uses — it is read
+              // below with no provider-specific branch. Its delta.tool_calls[] shape is
+              // identical to OpenRouter's/NVIDIA's, so the accumulator below (keyed on
+              // delta shape, not provider) handles it unchanged too.
               if (!line.startsWith("data:")) continue;
               const data = line.slice(5).trim();
               if (data === "[DONE]") break;

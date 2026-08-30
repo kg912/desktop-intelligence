@@ -6,9 +6,16 @@ import type {
   ModelStatus,
   LMStudioModelsResponse,
 } from '../../shared/types'
+// Static top-level import (not require()) — the require() form silently failed to
+// resolve in the packaged build, see progress.md row 89. SettingsStore imports only
+// electron/path/fs, so there is no import cycle back into this module.
+import { readSettings } from '../services/SettingsStore'
 
-/** LM Studio health-check endpoint. Only supported inference runtime. */
+/** LM Studio health-check endpoint. */
 const LMS_HEALTH_URL = 'http://localhost:1234/v1/models'
+
+/** MTPLX default base URL — overridden by the user-configurable mtplxBaseUrl setting. */
+const MTPLX_DEFAULT_BASE_URL = 'http://localhost:8000'
 
 // Poll aggressively when offline, back off when connected
 const POLL_INTERVAL_OFFLINE_MS  = 3_000   // 3s — quick reconnect detection
@@ -23,6 +30,18 @@ const FAILURES_BEFORE_OFFLINE = 2
 // instance (e.g. mid-generation) still has time to respond.
 const HEALTH_CHECK_TIMEOUT_MS = 8_000
 
+/**
+ * Polls an OpenAI-compatible /v1/models endpoint and reports connection state.
+ *
+ * Parameterised rather than hardcoded to LM Studio so a second instance can watch
+ * a second local backend (MTPLX) independently:
+ *
+ *  - `getHealthUrl` is a FUNCTION, not a captured string, because MTPLX's base URL
+ *    is user-configurable at runtime — it must be re-read from settings on every
+ *    poll, not resolved once at construction.
+ *  - `label` is interpolated into every user-facing error message so the UI names
+ *    the backend that is actually down.
+ */
 export class ModelConnectionManager extends EventEmitter {
   private state: ConnectionState = {
     status:         'loading',
@@ -43,7 +62,14 @@ export class ModelConnectionManager extends EventEmitter {
    */
   private consecutiveFailures = 0
 
-  constructor() {
+  /**
+   * @param getHealthUrl Called on every poll — returns the /v1/models URL to probe.
+   * @param label        Backend name used in error messages e.g. 'LM Studio', 'MTPLX'.
+   */
+  constructor(
+    private readonly getHealthUrl: () => string,
+    private readonly label: string,
+  ) {
     super()
   }
 
@@ -92,7 +118,7 @@ export class ModelConnectionManager extends EventEmitter {
 
   private async poll(): Promise<void> {
     try {
-      const response = await axios.get<LMStudioModelsResponse>(LMS_HEALTH_URL, {
+      const response = await axios.get<LMStudioModelsResponse>(this.getHealthUrl(), {
         timeout: HEALTH_CHECK_TIMEOUT_MS,
         headers: { Accept: 'application/json' }
       })
@@ -104,26 +130,26 @@ export class ModelConnectionManager extends EventEmitter {
 
       if (models.length === 0) {
         this.transitionTo('offline', null,
-          'LM Studio is running but no model is loaded. Load a model in LM Studio to continue.')
+          `${this.label} is running but no model is loaded. Load a model in ${this.label} to continue.`)
       } else {
         const modelInfo: ModelInfo = models[0]
         this.transitionTo('ready', modelInfo)
       }
     } catch (err) {
       const error = err as AxiosError
-      let message = 'Cannot reach LM Studio.'
+      let message = `Cannot reach ${this.label}.`
 
       if (error.code === 'ECONNREFUSED') {
-        message = 'LM Studio server is not running.'
+        message = `${this.label} server is not running.`
       } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
-        message = 'Connection to LM Studio timed out.'
+        message = `Connection to ${this.label} timed out.`
       } else if (error.response) {
-        message = `LM Studio responded with error ${error.response.status}.`
+        message = `${this.label} responded with error ${error.response.status}.`
       }
 
       this.consecutiveFailures++
       console.log(
-        `[ModelConnection] Poll failed (${this.consecutiveFailures}/${FAILURES_BEFORE_OFFLINE}): ${message}`
+        `[ModelConnection][${this.label}] Poll failed (${this.consecutiveFailures}/${FAILURES_BEFORE_OFFLINE}): ${message}`
       )
 
       if (this.consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
@@ -179,5 +205,19 @@ export class ModelConnectionManager extends EventEmitter {
   }
 }
 
-// Singleton — imported by the IPC handler layer
-export const modelConnectionManager = new ModelConnectionManager()
+// Singletons — imported by the IPC handler layer.
+// The two backends are independent: whichever provider is active at boot gets its
+// poller started in src/main/index.ts; the other one is never started.
+export const modelConnectionManager = new ModelConnectionManager(
+  () => LMS_HEALTH_URL,
+  'LM Studio',
+)
+
+export const mtplxConnectionManager = new ModelConnectionManager(
+  () => {
+    // Re-read on every poll — the user can change the MTPLX port at runtime.
+    const base = readSettings().mtplxBaseUrl ?? MTPLX_DEFAULT_BASE_URL
+    return `${base.replace(/\/$/, '')}/v1/models`
+  },
+  'MTPLX',
+)

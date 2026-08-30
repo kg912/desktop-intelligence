@@ -162,7 +162,7 @@ export type MessageBlock =
 
 export type ThinkingMode = 'thinking' | 'fast'
 
-export type BackendProvider = 'lmstudio' | 'nvidia' | 'ollama' | 'openrouter'
+export type BackendProvider = 'lmstudio' | 'nvidia' | 'ollama' | 'openrouter' | 'mtplx'
 
 // ── RAG v2 types (Phase 1) ────────────────────────────────────────────────────
 
@@ -338,6 +338,12 @@ export const IPC_CHANNELS = {
   DAEMON_STATE_CHANGE: 'daemon:stateChange',
   DAEMON_RETRY:        'daemon:retry',
 
+  // MTPLX runs its own daemon, independent of the LM Studio one. Both may be
+  // reporting state to the UI at the same time, so they get separate channels.
+  MTPLX_DAEMON_GET_STATE:    'mtplxDaemon:getState',
+  MTPLX_DAEMON_STATE_CHANGE: 'mtplxDaemon:stateChange',
+  MTPLX_DAEMON_RETRY:        'mtplxDaemon:retry',
+
   CHAT_SEND:              'chat:send',
   CHAT_STREAM_CHUNK:      'chat:streamChunk',
   CHAT_STREAM_END:        'chat:streamEnd',
@@ -411,6 +417,7 @@ export const IPC_CHANNELS = {
   SETTINGS_SAVE_BACKEND: 'settings:saveBackend',
   APP_RESTART: 'app:restart',
   SETTINGS_GET_OLLAMA_MODELS: 'settings:getOllamaModels',
+  SETTINGS_GET_MTPLX_MODELS: 'settings:getMtplxModels',
   SETTINGS_GET_OPENROUTER_MODELS: 'settings:getOpenRouterModels',
   SETTINGS_GET_OPENROUTER_STATS:  'settings:getOpenRouterStats',
 
@@ -503,6 +510,10 @@ export interface BackendSettings {
   openrouterModel:            string
   /** Reasoning effort for OpenRouter models that support extended thinking. Default: 'auto' */
   openrouterReasoningEffort?: OpenRouterReasoningEffort
+  /** MTPLX base URL. Default http://localhost:8000 — port is user-configurable in the MTPLX app. */
+  mtplxBaseUrl:               string
+  /** MTPLX model identifier as reported by GET /v1/models (Qwen3-family only). */
+  mtplxModel:                 string
 }
 
 // --- Model selection & first-launch onboarding ---

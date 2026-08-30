@@ -175,19 +175,23 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         const nvidia     = backend.provider === 'nvidia'
         const ollama     = backend.provider === 'ollama'
         const openrouter = backend.provider === 'openrouter'
+        const mtplx      = backend.provider === 'mtplx'
         setIsNvidia(nvidia)
         setIsOllama(ollama)
         setIsOpenRouter(openrouter)
         if (nvidia) setNvidiaModel(backend.nvidiaModel)
 
-        // For cloud backends, modelId display comes from backend settings, not cfg.modelId
+        // For non-LM-Studio backends, modelId display comes from backend settings,
+        // not cfg.modelId (which is the LM Studio model).
         const displayModelId = nvidia
           ? backend.nvidiaModel
           : ollama
             ? backend.ollamaModel
             : openrouter
               ? backend.openrouterModel
-              : cfg.modelId
+              : mtplx
+                ? backend.mtplxModel
+                : cfg.modelId
 
         setFetchedCtx(ctx);     setDraftCtx(ctx)
         setFetchedModel(displayModelId); setDraftModel(displayModelId)
@@ -198,7 +202,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         setFetchedSysPrompt(sp); setDraftSysPrompt(sp)
         setFetchedGpuOffload(gpu); setDraftGpuOffload(gpu)
         setFetchedUnlimitedOutput(unlimited); setDraftUnlimitedOutput(unlimited)
-        setAvailableModels(nvidia || ollama || openrouter ? [] : models)
+        setAvailableModels(nvidia || ollama || openrouter || mtplx ? [] : models)
       })
       .catch(() => {
         setFetchedCtx(32768);   setDraftCtx(32768)

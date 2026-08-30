@@ -1,7 +1,8 @@
 import { ipcMain, shell, WebContents } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
-import { modelConnectionManager } from '../managers/ModelConnectionManager'
+import { modelConnectionManager, mtplxConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
+import { mtplxDaemonManager } from '../managers/MTPLXDaemonManager'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 
@@ -188,6 +189,18 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   const CLOUD_PROVIDERS: readonly string[] = ['nvidia', 'ollama', 'openrouter']
   const isCloud = (bp: string): boolean => CLOUD_PROVIDERS.includes(bp)
 
+  /**
+   * True for every backend whose model loading is NOT driven by the `lms` CLI.
+   * Cloud providers load nothing locally; MTPLX loads models through its own
+   * app/CLI config, which DI does not drive. Running `lms load` for any of them
+   * would reach into LM Studio, which is not the active backend.
+   */
+  const skipsLmsCli = (bp: string): boolean => isCloud(bp) || bp === 'mtplx'
+
+  /** The connection poller that watches whichever local backend is active. */
+  const activeConnectionManager = (bp: string) =>
+    bp === 'mtplx' ? mtplxConnectionManager : modelConnectionManager
+
   // ── Model Connection ────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, async (): Promise<ConnectionState> => {
     const { readSettings } = await import('../services/SettingsStore')
@@ -219,7 +232,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         pollIntervalMs: 0,
       }
     }
-    return modelConnectionManager.getState()
+    return activeConnectionManager(bp).getState()
   })
 
   ipcMain.handle(IPC_CHANNELS.MODEL_FORCE_POLL, async (): Promise<ConnectionState> => {
@@ -252,17 +265,25 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         pollIntervalMs: 0,
       }
     }
-    return modelConnectionManager.forcePoll()
+    return activeConnectionManager(bp).forcePoll()
   })
 
+  // Only one poller is ever started (see src/main/index.ts), so the inactive
+  // manager never emits — subscribing to both is safe and avoids a provider check.
   modelConnectionManager.on('statusChange', (state: ConnectionState) =>
+    send(IPC_CHANNELS.MODEL_STATUS_CHANGE, state)
+  )
+  mtplxConnectionManager.on('statusChange', (state: ConnectionState) =>
     send(IPC_CHANNELS.MODEL_STATUS_CHANGE, state)
   )
 
   // ── Daemon ──────────────────────────────────────────────────
+  // These report the LM STUDIO daemon only. MTPLX gets its own channels below —
+  // when MTPLX is active the LM Studio daemon is never started, so a synthetic
+  // 'ready' is returned rather than a permanently-idle real state.
   ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
     const { readSettings } = await import('../services/SettingsStore')
-    if (isCloud(readSettings().backendProvider ?? 'lmstudio')) {
+    if (skipsLmsCli(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
     return lmsDaemonManager.getState()
@@ -270,7 +291,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
     const { readSettings } = await import('../services/SettingsStore')
-    if (isCloud(readSettings().backendProvider ?? 'lmstudio')) {
+    if (skipsLmsCli(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
     await lmsDaemonManager.retry()
@@ -279,6 +300,30 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   lmsDaemonManager.on('stateChange', (state: DaemonState) =>
     send(IPC_CHANNELS.DAEMON_STATE_CHANGE, state)
+  )
+
+  // ── MTPLX daemon ────────────────────────────────────────────
+  // Independent of the LM Studio daemon above — separate channels so both can
+  // report state without one overwriting the other.
+  ipcMain.handle(IPC_CHANNELS.MTPLX_DAEMON_GET_STATE, async (): Promise<DaemonState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    if ((readSettings().backendProvider ?? 'lmstudio') !== 'mtplx') {
+      return { phase: 'ready', error: null, stderr: null }
+    }
+    return mtplxDaemonManager.getState()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MTPLX_DAEMON_RETRY, async (): Promise<DaemonState> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    if ((readSettings().backendProvider ?? 'lmstudio') !== 'mtplx') {
+      return { phase: 'ready', error: null, stderr: null }
+    }
+    await mtplxDaemonManager.retry()
+    return mtplxDaemonManager.getState()
+  })
+
+  mtplxDaemonManager.on('stateChange', (state: DaemonState) =>
+    send(IPC_CHANNELS.MTPLX_DAEMON_STATE_CHANGE, state)
   )
 
   // ── File processing ─────────────────────────────────────────
@@ -798,9 +843,10 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
       const { readSettings: _rs, writeSettings } = await import('../services/SettingsStore')
 
-      // ── Cloud provider guard: skip lms CLI entirely, just persist params ─────
+      // ── Non-LM-Studio guard: skip lms CLI entirely, just persist params ─────
+      // Covers cloud providers and MTPLX — none of them load models via `lms`.
       const currentSettings = _rs()
-      if (isCloud(currentSettings.backendProvider ?? 'lmstudio')) {
+      if (skipsLmsCli(currentSettings.backendProvider ?? 'lmstudio')) {
         const patch: Record<string, unknown> = {}
         if (payload.temperature          !== undefined) patch.temperature          = payload.temperature
         if (payload.topP                  !== undefined) patch.topP                  = payload.topP
@@ -810,7 +856,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         if (payload.contextLength         !== undefined) patch.contextLength         = payload.contextLength
         if (payload.unlimitedOutputTokens !== undefined) patch.unlimitedOutputTokens = payload.unlimitedOutputTokens
         writeSettings(patch as Parameters<typeof writeSettings>[0])
-        console.log(`[Settings] Cloud provider (${currentSettings.backendProvider}) — skipped lms CLI, params saved to SettingsStore`)
+        console.log(`[Settings] Non-LM-Studio provider (${currentSettings.backendProvider}) — skipped lms CLI, params saved to SettingsStore`)
         return { success: true, confirmedCtx: payload.contextLength }
       }
 
@@ -951,10 +997,11 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { readSettings: readInitSettings, writeSettings } = await import('../services/SettingsStore')
       writeSettings({ modelId, contextLength })
 
-      // ── Cloud provider guard: skip lms CLI, settings already saved above ─────
+      // ── Non-LM-Studio guard: skip lms CLI, settings already saved above ─────
+      // Covers cloud providers and MTPLX — none of them load models via `lms`.
       const _initSettings = readInitSettings()
-      if (isCloud(_initSettings.backendProvider ?? 'lmstudio')) {
-        console.log(`[App] Cloud provider (${_initSettings.backendProvider}) — skipping lms CLI`)
+      if (skipsLmsCli(_initSettings.backendProvider ?? 'lmstudio')) {
+        console.log(`[App] Non-LM-Studio provider (${_initSettings.backendProvider}) — skipping lms CLI`)
         return { success: true, confirmedCtx: contextLength }
       }
 
@@ -1051,12 +1098,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       openrouterApiKey:            s.openrouterApiKey            ?? '',
       openrouterModel:              s.openrouterModel             ?? 'anthropic/claude-sonnet-4',
       openrouterReasoningEffort:    s.openrouterReasoningEffort   ?? 'auto',
+      mtplxBaseUrl:      s.mtplxBaseUrl     ?? 'http://localhost:8000',
+      mtplxModel:        s.mtplxModel       ?? '',
     }
   })
 
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
-    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string; openrouterReasoningEffort?: string }) => {
+    async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string; openrouterReasoningEffort?: string; mtplxBaseUrl?: string; mtplxModel?: string }) => {
       const { writeSettings } = await import('../services/SettingsStore')
       const cleanPatch: Record<string, unknown> = {}
       if (patch.provider                  !== undefined) cleanPatch.backendProvider           = patch.provider
@@ -1068,6 +1117,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       if (patch.openrouterApiKey          !== undefined) cleanPatch.openrouterApiKey          = patch.openrouterApiKey
       if (patch.openrouterModel           !== undefined) cleanPatch.openrouterModel           = patch.openrouterModel
       if (patch.openrouterReasoningEffort !== undefined) cleanPatch.openrouterReasoningEffort = patch.openrouterReasoningEffort
+      if (patch.mtplxBaseUrl              !== undefined) cleanPatch.mtplxBaseUrl              = patch.mtplxBaseUrl
+      if (patch.mtplxModel                !== undefined) cleanPatch.mtplxModel                = patch.mtplxModel
       writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
     },
   )
@@ -1087,6 +1138,32 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
       const data = await res.json() as { models?: Array<{ name: string }> }
       return { models: (data.models ?? []).map((m) => m.name), error: null }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { models: [], error: msg }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_MTPLX_MODELS, async (_, baseUrl?: string) => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const s = readSettings()
+    const url = (baseUrl ?? s.mtplxBaseUrl ?? 'http://localhost:8000').replace(/\/$/, '')
+    try {
+      // MTPLX is a local server with no auth — no Authorization header needed.
+      const res = await fetch(`${url}/v1/models`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal:  AbortSignal.timeout(8000),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        return { models: [], error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
+      }
+      // Structurally identical to LM Studio's /v1/models — { data: [{ id, ... }] }.
+      const data = await res.json() as { data?: Array<{ id: string }> }
+      return {
+        models: (data.data ?? []).map((m) => m.id).filter((id) => typeof id === 'string' && id.length > 0),
+        error:  null,
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return { models: [], error: msg }

@@ -1,10 +1,13 @@
 /**
  * BackendSettingsPanel (InferenceProviderSettingsPanel.tsx)
  *
- * Three-way provider selector: LM Studio | Ollama | NVIDIA Build
+ * Provider selector: LM Studio | Ollama | MTPLX | OpenRouter | NVIDIA Build
  *
  * - LM Studio: no extra fields (managed via the Model tab)
  * - Ollama: base URL + optional API key + model dropdown (live-fetched from /api/tags)
+ * - MTPLX: base URL + model dropdown (live-fetched from /v1/models). No API key —
+ *   it is a local server with no auth.
+ * - OpenRouter: API key + model dropdown + reasoning effort
  * - NVIDIA Build: API key + free-text model ID (legacy, no enumeration API)
  *
  * Switching providers requires an app restart — a banner appears as soon as
@@ -98,9 +101,13 @@ let bootProvider: BackendProvider = 'lmstudio'
 const PROVIDER_LABELS: Record<BackendProvider, string> = {
   lmstudio:   'LM Studio',
   ollama:     'Ollama',
+  mtplx:      'MTPLX',
   openrouter: 'OpenRouter',
   nvidia:     'NVIDIA Build',
 }
+
+/** Fallback when nothing is saved yet — the port is user-configurable in MTPLX. */
+const MTPLX_DEFAULT_BASE_URL = 'http://localhost:8000'
 
 export function InferenceProviderSettingsPanel() {
   const [settings, setSettings] = useState<BackendSettings>({ 
@@ -113,6 +120,8 @@ export function InferenceProviderSettingsPanel() {
     openrouterApiKey:           '',
     openrouterModel:            'anthropic/claude-sonnet-4',
     openrouterReasoningEffort:  'auto',
+    mtplxBaseUrl:               MTPLX_DEFAULT_BASE_URL,
+    mtplxModel:                 '',
   })
   const [loading, setLoading]           = useState(true)
   const [restartNeeded, setRestartNeeded] = useState(false)
@@ -130,6 +139,11 @@ export function InferenceProviderSettingsPanel() {
   const [ollamaModels, setOllamaModels]               = useState<string[]>([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError]     = useState<string | null>(null)
+
+  // MTPLX model list state
+  const [mtplxModels, setMtplxModels]               = useState<string[]>([])
+  const [mtplxModelsLoading, setMtplxModelsLoading] = useState(false)
+  const [mtplxModelsError, setMtplxModelsError]     = useState<string | null>(null)
 
   // OpenRouter model list state
   const [openRouterModels, setOpenRouterModels]               = useState<string[]>([])
@@ -188,6 +202,39 @@ export function InferenceProviderSettingsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.provider, loading])
 
+  // ── Fetch MTPLX models ────────────────────────────────────────
+  // No API key argument — MTPLX is a local server with no auth.
+  const fetchMtplxModels = useCallback(async (baseUrl: string) => {
+    setMtplxModelsLoading(true)
+    setMtplxModelsError(null)
+    try {
+      const result = await window.api.getMtplxModels(baseUrl)
+      if (result.error) {
+        setMtplxModelsError(result.error)
+        setMtplxModels([])
+      } else {
+        setMtplxModels(result.models)
+        setMtplxModelsError(null)
+        // Auto-select first model if nothing saved yet
+        if (!settings.mtplxModel && result.models.length > 0) {
+          setSettings((prev) => ({ ...prev, mtplxModel: result.models[0] }))
+        }
+      }
+    } catch (err) {
+      setMtplxModelsError(err instanceof Error ? err.message : String(err))
+      setMtplxModels([])
+    } finally {
+      setMtplxModelsLoading(false)
+    }
+  }, [settings.mtplxModel])
+
+  // Auto-fetch when switching to MTPLX, or after settings load
+  useEffect(() => {
+    if (settings.provider !== 'mtplx' || loading) return
+    fetchMtplxModels(settings.mtplxBaseUrl)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.provider, loading])
+
   // ── Fetch OpenRouter models ───────────────────────────────────
   const fetchOpenRouterModels = useCallback(async (apiKey: string) => {
     if (!apiKey) return
@@ -238,6 +285,19 @@ export function InferenceProviderSettingsPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.ollamaBaseUrl, settings.ollamaApiKey])
+
+  // Debounced re-fetch when baseUrl changes while MTPLX is selected
+  useEffect(() => {
+    if (settings.provider !== 'mtplx' || loading) return
+    if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+    fetchTimerRef.current = setTimeout(() => {
+      fetchMtplxModels(settings.mtplxBaseUrl)
+    }, 800)
+    return () => {
+      if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.mtplxBaseUrl])
 
   // Debounced re-fetch when API key changes while OpenRouter is selected
   useEffect(() => {
@@ -295,11 +355,12 @@ export function InferenceProviderSettingsPanel() {
           Inference Backend
         </label>
         <p className="text-xs text-content-muted">
-          LM Studio runs models locally. Ollama connects to Ollama Cloud or a local Ollama
-          instance. NVIDIA Build uses the NVIDIA cloud API. Switching requires a restart.
+          LM Studio and MTPLX run models locally. Ollama connects to Ollama Cloud or a
+          local Ollama instance. OpenRouter and NVIDIA Build use cloud APIs.
+          Switching requires a restart.
         </p>
-        <div className="flex gap-2 mt-2">
-          {(['lmstudio', 'ollama', 'openrouter', 'nvidia'] as BackendProvider[]).map((p) => (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {(['lmstudio', 'ollama', 'mtplx', 'openrouter', 'nvidia'] as BackendProvider[]).map((p) => (
             <button
               key={p}
               onClick={() => update('provider', p)}
@@ -445,6 +506,87 @@ export function InferenceProviderSettingsPanel() {
                 Could not fetch models: {ollamaModelsError}
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── MTPLX fields ───────────────────────────────────────── */}
+      {settings.provider === 'mtplx' && (
+        <div className="space-y-4 pt-2 border-t border-surface-border/30">
+
+          {/* Base URL */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-content-primary">Base URL</label>
+            <p className="text-xs text-content-muted">
+              Where the MTPLX server is listening. Defaults to{' '}
+              <span className="font-mono">http://localhost:8000</span> — change the port
+              here if you configured MTPLX to use a different one.
+            </p>
+            <input
+              type="text"
+              value={settings.mtplxBaseUrl}
+              onChange={(e) => update('mtplxBaseUrl', e.target.value)}
+              placeholder="http://localhost:8000"
+              className={inputCls}
+              style={{ background: '#111', color: '#f5f5f5' }}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
+
+          {/* Model — dropdown when available, text input as fallback */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-content-primary">Model</label>
+              <button
+                type="button"
+                onClick={() => fetchMtplxModels(settings.mtplxBaseUrl)}
+                disabled={mtplxModelsLoading}
+                className="flex items-center gap-1 text-xs text-content-muted hover:text-content-primary transition-colors disabled:opacity-40"
+              >
+                <RefreshCw size={11} className={mtplxModelsLoading ? 'animate-spin' : ''} />
+                {mtplxModelsLoading ? 'Fetching…' : 'Refresh'}
+              </button>
+            </div>
+
+            {mtplxModels.length > 0 ? (
+              <select
+                value={settings.mtplxModel}
+                onChange={(e) => update('mtplxModel', e.target.value)}
+                className={cn(inputCls, 'cursor-pointer')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+              >
+                {settings.mtplxModel && !mtplxModels.includes(settings.mtplxModel) && (
+                  <option value={settings.mtplxModel}>{settings.mtplxModel}</option>
+                )}
+                {mtplxModels.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={settings.mtplxModel}
+                onChange={(e) => update('mtplxModel', e.target.value)}
+                placeholder={mtplxModelsLoading ? 'Fetching models…' : 'e.g. Qwen3-30B-A3B-MLX-4bit'}
+                disabled={mtplxModelsLoading}
+                className={cn(inputCls, mtplxModelsLoading && 'opacity-50')}
+                style={{ background: '#111', color: '#f5f5f5' }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            )}
+
+            {mtplxModelsError && (
+              <p className="text-xs text-red-400 mt-1">
+                Could not fetch models: {mtplxModelsError}
+              </p>
+            )}
+
+            <p className="text-xs text-content-muted">
+              Which model MTPLX actually loads is configured in the MTPLX app itself —
+              Desktop Intelligence only names it on the request.
+            </p>
           </div>
         </div>
       )}
