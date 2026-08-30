@@ -33,12 +33,31 @@ export default function App() {
             } else if (backend.provider === 'openrouter') {
               if (backend.openrouterModel) setSelectedModel(backend.openrouterModel)
             } else if (backend.provider === 'mtplx') {
-              if (backend.mtplxModel) setSelectedModel(backend.mtplxModel)
+              if (backend.mtplxModel) {
+                setSelectedModel(backend.mtplxModel)
+              } else {
+                // No saved model. This is reachable whenever the Backend
+                // Settings panel never completed a successful model fetch, so
+                // its auto-select-first-model never fired — leaving the TopBar
+                // permanently blank with nothing to recover it. Ask the server
+                // directly and adopt whatever it has installed.
+                const result = await window.api.getMtplxModels(backend.mtplxBaseUrl)
+                const first  = result.models?.[0]
+                if (first) {
+                  setSelectedModel(first)
+                  // Persist so later launches skip this round-trip entirely.
+                  await window.api.saveBackendSettings({ mtplxModel: first })
+                }
+              }
             } else {
               const cfg = await window.api.getModelConfig()
               if (cfg.modelId) setSelectedModel(cfg.modelId)
             }
-          } catch { /* non-fatal — model name will be empty until next getModelConfig */ }
+          } catch {
+            // Non-fatal by design — covers the MTPLX live fallback too. If the
+            // server is unreachable we leave selectedModel unset exactly as
+            // before rather than blocking startup on it.
+          }
         }
         setFirstLaunch(isFirst)
       })

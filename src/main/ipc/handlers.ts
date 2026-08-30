@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/types'
 import { modelConnectionManager, mtplxConnectionManager } from '../managers/ModelConnectionManager'
 import { lmsDaemonManager } from '../managers/LMSDaemonManager'
 import { mtplxDaemonManager } from '../managers/MTPLXDaemonManager'
+import { describeUnsafePort } from '../../shared/unsafePorts'
 import { chatService } from '../services/ChatService'
 import { processFile } from '../services/FileProcessorService'
 
@@ -1148,6 +1149,16 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const url = (baseUrl ?? s.mtplxBaseUrl ?? 'http://localhost:8000').replace(/\/$/, '')
+
+    // Checked before the request: fetch refuses blocked ports outright, and its
+    // failure ("fetch failed" / cause "bad port") gives the user nothing to act
+    // on. Catching it here turns a dead-end into an instruction.
+    const unsafe = describeUnsafePort(url, 'MTPLX')
+    if (unsafe) {
+      console.warn(`[MTPLX] Refusing to fetch models from ${url} — ${unsafe}`)
+      return { models: [], error: unsafe }
+    }
+
     try {
       // MTPLX is a local server with no auth — no Authorization header needed.
       const res = await fetch(`${url}/v1/models`, {
@@ -1156,17 +1167,26 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
+        console.warn(`[MTPLX] GET ${url}/v1/models → HTTP ${res.status}`)
         return { models: [], error: `HTTP ${res.status}: ${body.slice(0, 120)}` }
       }
       // Structurally identical to LM Studio's /v1/models — { data: [{ id, ... }] }.
       const data = await res.json() as { data?: Array<{ id: string }> }
-      return {
-        models: (data.data ?? []).map((m) => m.id).filter((id) => typeof id === 'string' && id.length > 0),
-        error:  null,
-      }
+      const models = (data.data ?? []).map((m) => m.id).filter((id) => typeof id === 'string' && id.length > 0)
+      console.log(`[MTPLX] GET ${url}/v1/models → ${models.length} model(s): ${models.join(', ') || '(none)'}`)
+      return { models, error: null }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return { models: [], error: msg }
+      // undici reports every connection-level failure as the generic "fetch
+      // failed" and hangs the real reason (ECONNREFUSED, ENOTFOUND, bad port…)
+      // off err.cause. Without unwrapping it there is nothing to diagnose from.
+      const msg   = err instanceof Error ? err.message : String(err)
+      const cause = (err as { cause?: unknown }).cause
+      const causeMsg = cause instanceof Error
+        ? `${(cause as NodeJS.ErrnoException).code ?? ''} ${cause.message}`.trim()
+        : cause !== undefined ? String(cause) : ''
+      console.error(`[MTPLX] Model fetch failed for ${url}/v1/models: ${msg}`)
+      if (causeMsg) console.error(`[MTPLX]   cause: ${causeMsg}`)
+      return { models: [], error: causeMsg ? `${msg} (${causeMsg})` : msg }
     }
   })
 
