@@ -10,6 +10,9 @@ import type {
 // resolve in the packaged build, see progress.md row 89. SettingsStore imports only
 // electron/path/fs, so there is no import cycle back into this module.
 import { readSettings } from '../services/SettingsStore'
+// Safe direction: MTPLXDaemonManager imports SettingsStore/axios/child_process
+// only — it never imports this module, so there is no cycle.
+import { mtplxDaemonManager } from './MTPLXDaemonManager'
 
 /** LM Studio health-check endpoint. */
 const LMS_HEALTH_URL = 'http://localhost:1234/v1/models'
@@ -41,6 +44,8 @@ const HEALTH_CHECK_TIMEOUT_MS = 8_000
  *    poll, not resolved once at construction.
  *  - `label` is interpolated into every user-facing error message so the UI names
  *    the backend that is actually down.
+ *  - `isBackendBooting` (optional) lets a local backend that DI starts itself
+ *    suppress the 'offline' transition while its daemon is legitimately mid-boot.
  */
 export class ModelConnectionManager extends EventEmitter {
   private state: ConnectionState = {
@@ -65,10 +70,16 @@ export class ModelConnectionManager extends EventEmitter {
   /**
    * @param getHealthUrl Called on every poll — returns the /v1/models URL to probe.
    * @param label        Backend name used in error messages e.g. 'LM Studio', 'MTPLX'.
+   * @param isBackendBooting
+   *   Optional. Called on every failed poll. While it returns true the poller
+   *   stays in 'connecting' no matter how many polls fail — the backend's own
+   *   daemon is still starting up, so a refused connection is expected rather
+   *   than a fault. Omitted for LM Studio, whose daemon DI does not gate on.
    */
   constructor(
     private readonly getHealthUrl: () => string,
     private readonly label: string,
+    private readonly isBackendBooting?: () => boolean,
   ) {
     super()
   }
@@ -147,10 +158,27 @@ export class ModelConnectionManager extends EventEmitter {
         message = `${this.label} responded with error ${error.response.status}.`
       }
 
-      this.consecutiveFailures++
-      console.log(
-        `[ModelConnection][${this.label}] Poll failed (${this.consecutiveFailures}/${FAILURES_BEFORE_OFFLINE}): ${message}`
-      )
+      // The counter exists only to gate the offline transition, so it is capped
+      // at the threshold. Letting it run unbounded produced nonsense log lines
+      // like "(4/2)" on any sustained outage.
+      if (this.consecutiveFailures < FAILURES_BEFORE_OFFLINE) {
+        this.consecutiveFailures++
+        console.log(
+          `[ModelConnection][${this.label}] Poll failed (${this.consecutiveFailures}/${FAILURES_BEFORE_OFFLINE}): ${message}`
+        )
+      } else {
+        console.log(`[ModelConnection][${this.label}] Still unreachable: ${message}`)
+      }
+
+      // A backend whose daemon DI started is allowed to be unreachable while it
+      // boots — MTPLX's cold start (spawn → model load → /health) takes several
+      // seconds, during which every poll legitimately fails. Reporting 'offline'
+      // there produces a false "not running" flash mid-boot, so we hold at
+      // 'connecting' until the daemon reaches 'ready' or 'error'.
+      if (this.isBackendBooting?.()) {
+        if (this.state.status !== 'connecting') this.transitionTo('connecting')
+        return
+      }
 
       if (this.consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
         this.transitionTo('offline', null, message)
@@ -220,4 +248,14 @@ export const mtplxConnectionManager = new ModelConnectionManager(
     return `${base.replace(/\/$/, '')}/v1/models`
   },
   'MTPLX',
+  // Read the daemon's phase on demand rather than subscribing to 'stateChange':
+  // getState() is always current, so a listener would only add bookkeeping.
+  // 'preflight' and 'starting-server' mean a cold boot we triggered is in
+  // progress; 'ready' and 'error' are both terminal enough for the poller to
+  // report the truth. 'idle' means start() was never called (or the mtplx binary
+  // was not found), so the poller should behave normally too.
+  () => {
+    const phase = mtplxDaemonManager.getState().phase
+    return phase === 'preflight' || phase === 'starting-server'
+  },
 )

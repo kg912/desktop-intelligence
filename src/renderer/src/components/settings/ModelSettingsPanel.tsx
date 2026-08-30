@@ -135,6 +135,13 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
   const [isNvidia,     setIsNvidia]     = useState(false)
   const [isOllama,     setIsOllama]     = useState(false)
   const [isOpenRouter, setIsOpenRouter] = useState(false)
+  const [isMtplx,      setIsMtplx]      = useState(false)
+  /**
+   * Everything on this tab that drives the `lms` CLI — Active Model, GPU
+   * Offload, Reload Model — is meaningful for LM Studio only. Default true so
+   * the LM Studio layout renders unchanged before getBackendSettings() resolves.
+   */
+  const [isLmStudio,   setIsLmStudio]   = useState(true)
   const [nvidiaModel,  setNvidiaModel]  = useState('')
   void nvidiaModel // consumed via setNvidiaModel; display uses fetchedModel
 
@@ -179,6 +186,8 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         setIsNvidia(nvidia)
         setIsOllama(ollama)
         setIsOpenRouter(openrouter)
+        setIsMtplx(mtplx)
+        setIsLmStudio(backend.provider === 'lmstudio')
         if (nvidia) setNvidiaModel(backend.nvidiaModel)
 
         // For non-LM-Studio backends, modelId display comes from backend settings,
@@ -285,6 +294,42 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
     }
   }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftUnlimitedOutput, setReloadingWithCb])
 
+  /**
+   * MTPLX has no DI-driven model load, so this only persists the generation
+   * parameters. The model itself is chosen in Backend Settings; reloadModel()
+   * no-ops the lms CLI for this provider (see skipsLmsCli in handlers.ts) and
+   * just writes the params through.
+   */
+  const handleSaveMtplx = useCallback(async () => {
+    if (reloading) return
+    setReloadingWithCb(true)
+    setResult(null)
+    try {
+      await window.api.reloadModel({
+        modelId:         draftModel,
+        contextLength:   draftCtx,
+        temperature:     draftTemp,
+        topP:            draftTopP,
+        maxOutputTokens: draftMaxTokens,
+        repeatPenalty:   draftRepeatPenalty,
+        systemPrompt:    draftSysPrompt,
+        gpuOffload:      false,
+        unlimitedOutputTokens: draftUnlimitedOutput,
+      })
+      setFetchedTemp(draftTemp)
+      setFetchedTopP(draftTopP)
+      setFetchedMaxTokens(draftMaxTokens)
+      setFetchedRepeatPenalty(draftRepeatPenalty)
+      setFetchedSysPrompt(draftSysPrompt)
+      setFetchedUnlimitedOutput(draftUnlimitedOutput)
+      setResult({ ok: true, msg: 'Settings saved.' })
+    } catch (err) {
+      setResult({ ok: false, msg: (err as Error).message })
+    } finally {
+      setReloadingWithCb(false)
+    }
+  }, [reloading, draftModel, draftCtx, draftTemp, draftTopP, draftMaxTokens, draftRepeatPenalty, draftSysPrompt, draftUnlimitedOutput, setReloadingWithCb])
+
   const handleSaveNvidia = useCallback(async () => {
     if (reloading) return
     setReloadingWithCb(true)
@@ -353,7 +398,22 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
 
   return (
     <div className="space-y-6">
-      {/* Active model selector */}
+      {/* MTPLX model selection lives in Backend Settings, not here — say so, so
+          the absent "Active Model" section does not read as a missing feature. */}
+      {isMtplx && (
+        <div className="flex gap-2.5 px-3 py-2.5 rounded-lg border border-surface-border/40" style={{ background: '#141414' }}>
+          <AlertCircle className="w-3.5 h-3.5 text-content-muted flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-content-tertiary leading-relaxed">
+            Model selection for MTPLX lives in <strong className="text-content-secondary">Backend Settings</strong>.
+            The parameters below are sent with every request.
+          </p>
+        </div>
+      )}
+
+      {/* Active model selector — LM Studio only. It reflects the model the lms
+          daemon has loaded; no other backend has a DI-driven equivalent, and
+          rendering it elsewhere just shows "Active Model: —". */}
+      {isLmStudio && (
       <div>
         <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted mb-2">
           Active Model
@@ -390,6 +450,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
           </div>
         )}
       </div>
+      )}
 
       {/* Context Length */}
       <div>
@@ -419,9 +480,10 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
           />
           <span className="text-xs text-content-muted">tokens</span>
 
-          {/* Right side: GPU Offload toggle (LM Studio only) + context label */}
+          {/* Right side: GPU Offload toggle (LM Studio only) + context label.
+              Drives `lms load --gpu max`, so it is inert for every other backend. */}
           <div className="ml-auto flex items-center gap-4">
-            {!isNvidia && !isOllama && !isOpenRouter && (
+            {isLmStudio && (
               <label className="flex items-center gap-2 cursor-pointer select-none" title="Offload all model layers to GPU for maximum throughput (--gpu max)">
                 <span className="text-[10px] text-content-muted tracking-wide whitespace-nowrap">GPU Offload</span>
                 <button
@@ -622,8 +684,9 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
         </div>
       </div>
 
-      {/* Warning — only shown for LM Studio */}
-      {!isNvidia && !isOllama && !isOpenRouter && (
+      {/* Reload warning — only meaningful alongside the Reload Model button,
+          which is LM Studio only. */}
+      {isLmStudio && (
         <div className="flex gap-2.5 px-3 py-2.5 rounded-lg border border-amber-900/30" style={{ background: 'rgba(120,53,15,0.08)' }}>
           <AlertCircle className="w-3.5 h-3.5 text-amber-600/80 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-amber-600/80 leading-relaxed">
@@ -676,6 +739,25 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
       ) : isOllama ? (
         <button
           onClick={handleSaveOllama}
+          disabled={!changed || reloading || loading}
+          className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
+            changed && !reloading && !loading
+              ? 'bg-accent-900/40 hover:bg-accent-800/50 active:bg-accent-900/60 border border-accent-800/50 hover:border-accent-700/60 text-accent-400 hover:text-accent-300'
+              : 'bg-surface-DEFAULT border border-surface-border text-content-muted cursor-not-allowed opacity-50'
+          }`}
+        >
+          {reloading ? (
+            <>
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-accent-700 border-t-accent-400 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            'Save Settings'
+          )}
+        </button>
+      ) : isMtplx ? (
+        <button
+          onClick={handleSaveMtplx}
           disabled={!changed || reloading || loading}
           className={`w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 focus:outline-none ${
             changed && !reloading && !loading
