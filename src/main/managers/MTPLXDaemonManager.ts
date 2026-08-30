@@ -4,7 +4,7 @@
  * Manages the `mtplx` CLI child process that controls MTPLX's local
  * OpenAI-compatible server (https://github.com/youssofal/MTPLX).
  *
- * Structurally mirrors LMSDaemonManager, with two deliberate differences:
+ * Structurally mirrors LMSDaemonManager, with three deliberate differences:
  *
  *   1. NO MODEL-LOAD STEP. LM Studio needs a separate `lms load <modelId>` call;
  *      MTPLX's model selection lives entirely in the MTPLX app/CLI's own config
@@ -13,10 +13,29 @@
  *
  *   2. OWNERSHIP-TRACKED SHUTDOWN. See `spawnedByUs` below.
  *
+ *   3. FIRE-AND-FORGET SPAWN. See the warning below — this is the one that bites.
+ *
+ * ⚠️  `mtplx serve` IS A LONG-RUNNING FOREGROUND PROCESS. ⚠️
+ *
+ * It does NOT fork-and-exit the way `lms server start` does — it holds the
+ * terminal and stays attached for the life of the server (hence its own
+ * `--no-stats-footer` flag, which suppresses the live-updating dashboard it
+ * otherwise redraws on stdout).
+ *
+ * Consequently the LMSDaemonManager-style one-shot `runCommand()` helper —
+ * spawn, await the child's 'close' event, resolve — is WRONG here and must not
+ * be reintroduced. Awaiting 'close' on a process that never closes hangs until
+ * the timeout guard fires, which then SIGTERMs the freshly-started server and
+ * reports a false failure, turning every cold start into an error. `spawnServer()`
+ * below therefore spawns and returns immediately; readiness is established by
+ * polling /health, never by waiting on process exit.
+ *
  * Architecture:
  *   1. Pre-flight → GET /health; if 200 the server is already up, skip start
- *   2. Start      → spawn `mtplx serve --port <port>` (headless)
- *   3. Cleanup    → on quit, `mtplx stop` — but ONLY if we started the server
+ *   2. Start      → spawn `mtplx serve --port <port> --no-stats-footer`
+ *                   FIRE-AND-FORGET — the process stays alive; do not await it
+ *   3. Ready      → poll GET /health until the server answers
+ *   4. Cleanup    → on quit, `mtplx stop` — but ONLY if we started the server
  */
 
 import { spawn, execFileSync, ChildProcess } from 'child_process'
@@ -81,6 +100,15 @@ export class MTPLXDaemonManager extends EventEmitter {
    * out from under the user's own MTPLX session on quit.
    */
   private spawnedByUs = false
+
+  /**
+   * Set by spawnServer()'s async 'error' / early-'close' handlers. Because the
+   * spawn is fire-and-forget there is no Promise for those events to reject, so
+   * the reason is parked here and reported by waitForServerUp() — which would
+   * otherwise fail with a generic "did not become reachable" after the full
+   * poll window, hiding an ENOENT or an immediate crash.
+   */
+  private spawnError: string | null = null
 
   constructor() {
     super()
@@ -168,6 +196,8 @@ export class MTPLXDaemonManager extends EventEmitter {
 
   private async runPreflightAndStart(): Promise<void> {
     const port = this.resolvePort()
+    // Fresh attempt — discard any failure recorded by a previous start()/retry().
+    this.spawnError = null
 
     // 1. Pre-flight: is the server already up?
     this.transition('preflight')
@@ -181,15 +211,23 @@ export class MTPLXDaemonManager extends EventEmitter {
       return
     }
 
-    // 2. Server not running — start it headless.
+    // 2. Server not running — start it.
     //    NOT `mtplx start`, which launches the interactive wizard.
-    await this.runCommand('starting-server', ['serve', '--port', String(port)])
-    this.spawnedByUs = true
+    //    NOT awaited: `mtplx serve` is a persistent foreground process and never
+    //    exits on its own. See the warning in the class docstring.
+    this.spawnServer(port)
 
-    // 3. Wait for the server to accept connections.
+    // 3. Readiness comes from polling /health, not from process exit.
+    //    Throws if the server never answers, which surfaces as phase 'error'.
     await this.waitForServerUp(port)
 
-    // 4. No model-load step — MTPLX manages its own model selection.
+    // 4. A server we started is confirmed up — from here shutdown() owns it.
+    //    Set only after the health check passes, so a spawn that never produced
+    //    a working server does not arm `mtplx stop`. Any spawned child is still
+    //    cleaned up unconditionally by killAllChildren().
+    this.spawnedByUs = true
+
+    // 5. No model-load step — MTPLX manages its own model selection.
     this.transition('ready')
   }
 
@@ -213,73 +251,77 @@ export class MTPLXDaemonManager extends EventEmitter {
   private async waitForServerUp(port: number, maxAttempts = 20, intervalMs = 500): Promise<void> {
     for (let i = 0; i < maxAttempts; i++) {
       if (await this.pingServer(port)) return
+      // The spawn failed outright or the server died — no point polling out the
+      // rest of the window for a process that is already gone.
+      if (this.spawnError) throw new Error(this.spawnError)
       await sleep(intervalMs)
     }
-    throw new Error('MTPLX server did not become reachable after `mtplx serve`. Check MTPLX logs.')
+    throw new Error(
+      this.spawnError ??
+      'MTPLX server did not become reachable after `mtplx serve`. Check MTPLX logs.',
+    )
   }
 
   /**
-   * Spawns `mtplx <args>` and wires up full error handling.
-   * Resolves when the process exits with code 0.
-   * Rejects on non-zero exit, timeout, or spawn error.
+   * Spawns the long-running `mtplx serve` process and returns IMMEDIATELY.
+   *
+   * There is deliberately no Promise here and nothing to await. `mtplx serve`
+   * holds the foreground for the life of the server, so any helper that resolves
+   * on the child's 'close' event would never settle — see the warning in the
+   * class docstring. Readiness is established by the caller polling /health.
+   *
+   * The child is registered in activeChildren so killAllChildren() (and through
+   * it retry() and shutdown()) still tears it down.
    */
-  private runCommand(
-    phase: DaemonPhase,
-    args: string[],
-    timeoutMs = 30_000
-  ): Promise<void> {
-    this.transition(phase)
+  private spawnServer(port: number): void {
+    this.transition('starting-server')
 
-    return new Promise((resolve, reject) => {
-      const bin = this.mtplxBin!
+    const bin = this.mtplxBin!
+    // --no-stats-footer suppresses MTPLX's live-updating terminal dashboard,
+    // which would otherwise flood the piped stdout with redraw sequences.
+    const args = ['serve', '--port', String(port), '--no-stats-footer']
 
-      console.log(`[MTPLXDaemon] Spawning: ${bin} ${args.join(' ')}`)
+    console.log(`[MTPLXDaemon] Spawning long-running server: ${bin} ${args.join(' ')}`)
 
-      const child = spawn(bin, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env }
-      })
+    const child = spawn(bin, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env }
+    })
 
-      this.activeChildren.add(child)
+    this.activeChildren.add(child)
 
-      // ── stdout (informational)
-      child.stdout?.on('data', (data: Buffer) => {
-        console.log(`[MTPLXDaemon stdout] ${data.toString().trim()}`)
-      })
+    // ── stdout (informational)
+    child.stdout?.on('data', (data: Buffer) => {
+      console.log(`[MTPLXDaemon stdout] ${data.toString().trim()}`)
+    })
 
-      // ── stderr: log and relay to renderer
-      child.stderr?.on('data', (data: Buffer) => {
-        const line = data.toString().trim()
-        console.error(`[MTPLXDaemon stderr] ${line}`)
-        this.state.stderr = line
-        this.emit('stateChange', this.getState())
-      })
+    // ── stderr: log and relay to renderer
+    child.stderr?.on('data', (data: Buffer) => {
+      const line = data.toString().trim()
+      console.error(`[MTPLXDaemon stderr] ${line}`)
+      this.state.stderr = line
+      this.emit('stateChange', this.getState())
+    })
 
-      // ── spawn error (binary not found, permission denied, etc.)
-      child.on('error', (err) => {
-        this.activeChildren.delete(child)
-        reject(new Error(`Failed to spawn mtplx ${args[0]}: ${err.message}`))
-      })
+    // ── spawn error (binary not executable, permission denied, etc.)
+    // A ChildProcess with no 'error' listener THROWS on this event, so the
+    // handler is mandatory even though nothing awaits it. The message is
+    // recorded for waitForServerUp() to report instead of its generic timeout.
+    child.on('error', (err) => {
+      this.activeChildren.delete(child)
+      this.spawnError = `Failed to spawn \`mtplx serve\`: ${err.message}`
+      console.error(`[MTPLXDaemon] ${this.spawnError}`)
+    })
 
-      // ── timeout guard
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM')
-        this.activeChildren.delete(child)
-        reject(new Error(`mtplx ${args[0]} timed out after ${timeoutMs / 1000}s`))
-      }, timeoutMs)
-
-      // ── exit
-      child.on('close', (code) => {
-        clearTimeout(timer)
-        this.activeChildren.delete(child)
-
-        if (code === 0 || code === null) {
-          // null = killed, which we treat as OK for serve (daemonizes)
-          resolve()
-        } else {
-          reject(new Error(`mtplx ${args[0]} exited with code ${code}. Check MTPLX logs.`))
-        }
-      })
+    // ── early exit: the server died instead of staying up
+    child.on('close', (code) => {
+      this.activeChildren.delete(child)
+      if (code !== 0 && code !== null) {
+        this.spawnError = `\`mtplx serve\` exited with code ${code}. Check MTPLX logs.`
+        console.error(`[MTPLXDaemon] ${this.spawnError}`)
+      } else {
+        console.log(`[MTPLXDaemon] mtplx serve exited (code=${code}).`)
+      }
     })
   }
 
