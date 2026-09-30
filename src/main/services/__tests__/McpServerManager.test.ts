@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { McpServerManager } from '../McpServerManager'
+import { McpServerManager, SANDBOX_REVIEW_REQUIRED } from '../McpServerManager'
 import type { McpServerSettings } from '../../../shared/types'
 
-const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch } = vi.hoisted(() => {
+const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch, mockRelease } = vi.hoisted(() => {
   const fsMock = {
     existsSync:    vi.fn<(path: string) => boolean>().mockReturnValue(false),
     readFileSync:  vi.fn<(path: string, options?: any) => string>().mockReturnValue('{}'),
@@ -21,14 +21,16 @@ const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWa
   const mockStdioTransport = vi.fn(function MockTransport(
     _params: { command: string; args: string[]; env: Record<string, string> }
   ) { return {} })
+  const mockRelease = vi.fn()
   const mockWrapStdioCommand = vi.fn(async (_spec: unknown) => ({
     command: '/sandboxed/bin',
     args:    ['--sandboxed-arg'],
     env:     { SANDBOX_ENV: '1' },
+    release: mockRelease,
   }))
   const mockStopMemoryWatch = vi.fn()
   const mockMemoryWatch = vi.fn(() => mockStopMemoryWatch)
-  return { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch }
+  return { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch, mockRelease }
 })
 
 vi.mock('electron', () => ({
@@ -59,6 +61,8 @@ vi.mock('../sandbox/ResourceGovernor', () => ({
 }))
 
 const newMgr = () => new McpServerManager()
+/** A reviewed deny-all sandbox manifest — lets non-sandbox tests start stdio servers. */
+const REVIEWED = { allowedDomains: [], allowWrite: [] }
 function setConfig(data: McpServerSettings) {
   fsMock.existsSync.mockReturnValue(true)
   fsMock.readFileSync.mockReturnValue(JSON.stringify(data))
@@ -76,25 +80,26 @@ beforeEach(() => {
     command: '/sandboxed/bin',
     args:    ['--sandboxed-arg'],
     env:     { SANDBOX_ENV: '1' },
+    release: mockRelease,
   })
   mockMemoryWatch.mockReturnValue(mockStopMemoryWatch)
 })
 
 describe('setToolEnabled()', () => {
   it('disabling a tool persists it to disabledTools in config', async () => {
-    setConfig({ 'my-server': { command: 'node', enabled: true } })
+    setConfig({ 'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED } })
     const mgr = newMgr()
     await mgr.setToolEnabled('my-server', 'toolA', false)
 
     expect(fsMock.writeFileSync).toHaveBeenCalled()
     const written = fsMock.writeFileSync.mock.calls[0][1] as string
     expect(JSON.parse(written)).toEqual({
-      'my-server': { command: 'node', enabled: true, disabledTools: ['toolA'] }
+      'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED, disabledTools: ['toolA'] }
     })
   })
 
   it('re-enabling a tool removes it from disabledTools', async () => {
-    setConfig({ 'my-server': { command: 'node', enabled: true, disabledTools: ['toolA'] } })
+    setConfig({ 'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED, disabledTools: ['toolA'] } })
     const mgr = newMgr()
     await mgr.setToolEnabled('my-server', 'toolA', true)
 
@@ -104,7 +109,7 @@ describe('setToolEnabled()', () => {
   })
 
   it('getToolSchemas() excludes disabled tools', async () => {
-    setConfig({ 'my-server': { command: 'node', enabled: true, disabledTools: ['toolA'] } })
+    setConfig({ 'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED, disabledTools: ['toolA'] } })
     sdkMocks.listTools.mockResolvedValue({
       tools: [
         { name: 'toolA', description: 'A' },
@@ -120,7 +125,7 @@ describe('setToolEnabled()', () => {
   })
 
   it('getToolSchemas() returns all tools when disabledTools is empty', async () => {
-    setConfig({ 'my-server': { command: 'node', enabled: true, disabledTools: [] } })
+    setConfig({ 'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED, disabledTools: [] } })
     sdkMocks.listTools.mockResolvedValue({
       tools: [
         { name: 'toolA', description: 'A' },
@@ -134,7 +139,7 @@ describe('setToolEnabled()', () => {
   })
 
   it('getServerStatus() includes disabledTools', async () => {
-    setConfig({ 'my-server': { command: 'node', enabled: true, disabledTools: ['toolA'] } })
+    setConfig({ 'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED, disabledTools: ['toolA'] } })
     const mgr = newMgr()
     await mgr.startAll()
 
@@ -214,6 +219,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'fail-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -254,6 +260,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'meta-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -315,6 +322,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'meta-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -361,6 +369,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'meta-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -413,6 +422,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'meta-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -432,13 +442,13 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
   })
 
   it('handles writeConfig failures gracefully inside setServerApprovalMode', async () => {
-    setConfig({ 'my-server': { command: 'node', enabled: true } })
+    setConfig({ 'my-server': { command: 'node', enabled: true, sandboxProfile: REVIEWED } })
     const mgr = newMgr();
     
     // Seed the running server in memory
     (mgr as any).servers.set('my-server', {
       name: 'my-server',
-      config: { command: 'node', enabled: true, requiresApproval: true },
+      config: { command: 'node', enabled: true, sandboxProfile: REVIEWED, requiresApproval: true },
       client: null,
       status: 'running',
       tools: [],
@@ -488,6 +498,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'meta-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -559,6 +570,7 @@ describe('McpServerManager Lifecycle and meta-MCP', () => {
     setConfig({
       'active-server': {
         command: 'node',
+        sandboxProfile: REVIEWED,
         enabled: true,
       }
     })
@@ -585,29 +597,62 @@ describe('McpServerManager sandbox retrofit (Phase 1)', () => {
       command: '/sandboxed/bin',
       args:    ['--sandboxed-arg'],
       env:     { SANDBOX_ENV: '1' },
+      release: mockRelease,
     })
     mockMemoryWatch.mockReturnValue(mockStopMemoryWatch)
   })
 
-  it('starts unsandboxed and logs a warning when no sandboxProfile is declared', async () => {
+  it('refuses to start (fails closed) a stdio server whose sandbox manifest has not been reviewed', async () => {
     setConfig({
       'plain-server': { command: 'node', args: ['server.js'], enabled: true },
     })
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     const mgr = newMgr()
     await mgr.startAll()
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('"plain-server" running WITHOUT sandbox — no sandboxProfile declared')
-    )
     expect(mockWrapStdioCommand).not.toHaveBeenCalled()
-    expect(mockStdioTransport).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'node', args: ['server.js'] })
-    )
-    const status = mgr.getServerStatus()
-    expect(status[0].status).toBe('running')
+    expect(mockStdioTransport).not.toHaveBeenCalled()
+    const [status] = mgr.getServerStatus()
+    expect(status.status).toBe('error')
+    expect(status.error).toBe(SANDBOX_REVIEW_REQUIRED)
+    expect(status.needsSandboxReview).toBe(true)
+  })
 
-    warnSpy.mockRestore()
+  it('reports needsSandboxReview=false once a profile exists, and never for HTTP servers', async () => {
+    setConfig({
+      'reviewed': { command: 'node', enabled: true, sandboxProfile: { allowedDomains: [], allowWrite: [] } },
+      'remote':   { url: 'https://mcp.example.com/mcp', enabled: false },
+    })
+    const mgr = newMgr()
+    await mgr.startAll()
+    const byName = Object.fromEntries(mgr.getServerStatus().map((s) => [s.name, s]))
+    expect(byName['reviewed'].needsSandboxReview).toBe(false)
+    expect(byName['remote'].needsSandboxReview).toBe(false)
+  })
+
+  it('releases the sandbox lease when a sandboxed server is stopped', async () => {
+    setConfig({
+      'sandboxed': { command: 'node', enabled: true, sandboxProfile: { allowedDomains: [], allowWrite: [] } },
+    })
+    const mgr = newMgr()
+    await mgr.startAll()
+    expect(mockRelease).not.toHaveBeenCalled()
+
+    await mgr.stopAll()
+    expect(mockRelease).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases the sandbox lease when a sandboxed server fails to connect', async () => {
+    setConfig({
+      'broken': { command: 'node', enabled: true, sandboxProfile: { allowedDomains: [], allowWrite: [] } },
+    })
+    sdkMocks.connect.mockRejectedValueOnce(new Error('spawn failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const mgr = newMgr()
+    await mgr.startAll()
+
+    expect(mgr.getServerStatus()[0].status).toBe('error')
+    expect(mockRelease).toHaveBeenCalledTimes(1)
   })
 
   it('starts unsandboxed and logs a warning when bypassSandbox is explicitly true', async () => {
@@ -674,9 +719,15 @@ describe('McpServerManager sandbox retrofit (Phase 1)', () => {
     expect(mockStdioTransport).toHaveBeenCalledWith(
       expect.objectContaining({ command: '/sandboxed/bin', args: ['--sandboxed-arg'] })
     )
-    // The wrapped env AND the user's configured env must both reach the process.
-    const transportArgs = mockStdioTransport.mock.calls[0][0] as { env: Record<string, string> }
-    expect(transportArgs.env).toMatchObject({ SANDBOX_ENV: '1', API_KEY: 'user-provided-key' })
+    // The wrapped env AND the user's configured env must both reach the process;
+    // npm's cache is redirected into the writable scratch dir, which is the cwd.
+    const transportArgs = mockStdioTransport.mock.calls[0][0] as unknown as { env: Record<string, string>; cwd: string }
+    expect(transportArgs.env).toMatchObject({
+      SANDBOX_ENV: '1',
+      API_KEY: 'user-provided-key',
+      npm_config_cache: '/mock/userData/sandboxes/mcp/sandboxed-server/.npm-cache',
+    })
+    expect(transportArgs.cwd).toBe('/mock/userData/sandboxes/mcp/sandboxed-server')
 
     const status = mgr.getServerStatus()
     expect(status[0].status).toBe('running')

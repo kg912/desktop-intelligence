@@ -250,6 +250,9 @@ export const mockApi: ElectronAPI = {
   obsListSandboxViolations:     async () => [],
   obsClearSandboxViolations:    async () => {},
   obsOpenSandboxViolationsFile: async () => {},
+  getSandboxStatus:             async () => ({
+    supported: true, ready: true, errors: [], warnings: [], baselineDenyRead: [], activePolicies: [],
+  }),
 
   // ── Shell utilities ───────────────────────────────────────────
   openExternal: async (url: string) => { console.log('[mock] openExternal:', url) },

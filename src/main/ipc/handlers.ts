@@ -11,6 +11,7 @@ import { processFile } from '../services/FileProcessorService'
 import { pythonWorker } from '../services/PythonWorkerService'
 import { savePlot, searchPlots } from '../services/PlotStore'
 import { observabilityService } from '../services/ObservabilityService'
+import { getSandboxStatus } from '../services/sandbox/sandboxStatus'
 import type { DebugPrefs } from '../services/ObservabilityService'
 import {
   getDB,
@@ -1460,6 +1461,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.OBS_OPEN_SANDBOX_VIOLATIONS_FILE, async (): Promise<void> =>
     observabilityService.openSandboxViolationsFile()
   )
+
+  ipcMain.handle(IPC_CHANNELS.SANDBOX_GET_STATUS, async () => getSandboxStatus())
 
   // ── Per-chat system instructions ────────────────────────────────
   ipcMain.handle('chat:get-system-instructions', (_event, chatId: string) => {

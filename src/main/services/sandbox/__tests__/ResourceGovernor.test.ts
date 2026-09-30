@@ -5,13 +5,16 @@ const { mockExecFile } = vi.hoisted(() => ({ mockExecFile: vi.fn() }))
 vi.mock('child_process', () => ({ execFile: mockExecFile }))
 
 // Import AFTER mocks are in place
-import { memoryWatch } from '../ResourceGovernor'
+import { memoryWatch, wallClockWatch } from '../ResourceGovernor'
 
 const POLL_INTERVAL_MS = 5000
 
-/** Mock `ps -o pid=,rss= -p <pids>` stdout: one "<pid> <rssKb>" row per pid. */
-function psStdout(entries: Array<[pid: number, rssMb: number]>): string {
-  return entries.map(([pid, rssMb]) => `${pid} ${rssMb * 1024}`).join('\n')
+/**
+ * Mock `ps -A -o pid=,ppid=,rss=` stdout: one "<pid> <ppid> <rssKb>" row per
+ * process. Entries without a parent are children of pid 1.
+ */
+function psStdout(entries: Array<[pid: number, rssMb: number, ppid?: number]>): string {
+  return entries.map(([pid, rssMb, ppid = 1]) => `${pid} ${ppid} ${rssMb * 1024}`).join('\n')
 }
 
 describe('memoryWatch', () => {
@@ -52,7 +55,7 @@ describe('memoryWatch', () => {
     // One shared interval, one execFile call per tick — not one per watcher.
     expect(mockExecFile).toHaveBeenCalledTimes(1)
     const [, args] = mockExecFile.mock.calls[0]
-    expect(args).toEqual(['-o', 'pid=,rss=', '-p', '123,456'])
+    expect(args).toEqual(['-A', '-o', 'pid=,ppid=,rss='])
     expect(onExceeded1).not.toHaveBeenCalled()
     expect(onExceeded2).not.toHaveBeenCalled()
     stop1()
@@ -136,5 +139,56 @@ describe('memoryWatch', () => {
     expect(onExceeded456).not.toHaveBeenCalled()
     stop1()
     stop2()
+  })
+
+  it('sums RSS over the watched pid descendants (sandbox-exec/shell wrappers)', () => {
+    // 123 is a thin shell; its grandchild 789 holds the memory.
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: (err: null, stdout: string) => void) =>
+      cb(null, psStdout([[123, 2], [456, 3, 123], [789, 700, 456], [999, 5000]]))
+    )
+    const onExceeded = vi.fn()
+    memoryWatch(123, 512, onExceeded)
+
+    vi.advanceTimersByTime(POLL_INTERVAL_MS)
+
+    // 2 + 3 + 700 MB > 512; unrelated pid 999 is not counted toward it.
+    expect(onExceeded).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not count unrelated processes toward a watched tree', () => {
+    mockExecFile.mockImplementation((_cmd: string, _args: string[], cb: (err: null, stdout: string) => void) =>
+      cb(null, psStdout([[123, 100], [456, 100, 123], [999, 5000]]))
+    )
+    const onExceeded = vi.fn()
+    const stop = memoryWatch(123, 512, onExceeded)
+
+    vi.advanceTimersByTime(POLL_INTERVAL_MS * 2)
+
+    expect(onExceeded).not.toHaveBeenCalled()
+    stop()
+  })
+})
+
+describe('wallClockWatch', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('fires once after the timeout', () => {
+    const onExpired = vi.fn()
+    wallClockWatch(1000, onExpired)
+    vi.advanceTimersByTime(999)
+    expect(onExpired).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(onExpired).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancel prevents firing, and 0 means no limit', () => {
+    const cancelled = vi.fn()
+    const unlimited = vi.fn()
+    wallClockWatch(1000, cancelled)()
+    wallClockWatch(0, unlimited)
+    vi.advanceTimersByTime(60_000)
+    expect(cancelled).not.toHaveBeenCalled()
+    expect(unlimited).not.toHaveBeenCalled()
   })
 })

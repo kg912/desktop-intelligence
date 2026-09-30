@@ -34,25 +34,44 @@ interface Watcher {
 const watchers = new Map<number, Watcher>()
 let intervalHandle: ReturnType<typeof setInterval> | null = null
 
+// Rewritten again 2026-09-30: sandboxed commands are spawned through a shell
+// (`sh -c "env … sandbox-exec … bash -c '<cmd>'"`), so the pid a caller
+// holds may be a thin wrapper whose own RSS never grows — the real worker is
+// a descendant. RSS is therefore summed over the watched pid's whole process
+// tree, still from ONE `ps` call per tick (every process's pid/ppid/rss).
 function tick(): void {
-  const pids = [...watchers.keys()]
-  if (pids.length === 0) return
+  if (watchers.size === 0) return
 
-  // -o pid=,rss= — the trailing `=` on each keyword suppresses that
-  // column's header, so stdout is bare "<pid> <rss-in-kb>" rows, one per
-  // pid. A pid that exited between the previous tick and now is simply
-  // omitted from the output (verified: not an error, exit code 0) — no
-  // special-casing needed for that, which is why `err` itself is ignored
-  // below and only `stdout` is trusted.
-  execFile('ps', ['-o', 'pid=,rss=', '-p', pids.join(',')], (_err, stdout) => {
+  // -o pid=,ppid=,rss= — the trailing `=` suppresses each column header, so
+  // stdout is bare "<pid> <ppid> <rss-in-kb>" rows. A watched pid that has
+  // exited is simply absent (no special-casing needed); `err` is ignored and
+  // only `stdout` is trusted.
+  execFile('ps', ['-A', '-o', 'pid=,ppid=,rss='], (_err, stdout) => {
     if (!stdout) return
+    const rssKb = new Map<number, number>()
+    const children = new Map<number, number[]>()
     for (const line of stdout.trim().split('\n')) {
-      const [pidStr, rssKbStr] = line.trim().split(/\s+/)
-      const pid = Number(pidStr)
-      const rssMb = Number(rssKbStr) / 1024
-      const watcher = watchers.get(pid)
-      if (!watcher || !Number.isFinite(rssMb)) continue
-      if (rssMb > watcher.maxRssMb) {
+      const [pid, ppid, rss] = line.trim().split(/\s+/).map(Number)
+      if (!Number.isFinite(pid) || !Number.isFinite(rss)) continue
+      rssKb.set(pid, rss)
+      const siblings = children.get(ppid)
+      if (siblings) siblings.push(pid)
+      else children.set(ppid, [pid])
+    }
+
+    for (const [pid, watcher] of [...watchers]) {
+      if (!rssKb.has(pid)) continue
+      let totalKb = 0
+      const stack = [pid]
+      const seen = new Set<number>()
+      while (stack.length > 0) {
+        const p = stack.pop()!
+        if (seen.has(p)) continue
+        seen.add(p)
+        totalKb += rssKb.get(p) ?? 0
+        stack.push(...(children.get(p) ?? []))
+      }
+      if (totalKb / 1024 > watcher.maxRssMb) {
         watchers.delete(pid)
         stopIntervalIfIdle()
         watcher.onExceeded()
@@ -69,7 +88,17 @@ function stopIntervalIfIdle(): void {
 }
 
 /**
- * Start polling the given pid's RSS on the shared batched interval.
+ * Wall-clock limit (spec section 09's wallClockKill): calls `onExpired` once
+ * after `timeoutMs`. Returns a cancel function. 0 or less = no limit.
+ */
+export function wallClockWatch(timeoutMs: number, onExpired: () => void): () => void {
+  if (!(timeoutMs > 0)) return () => {}
+  const handle = setTimeout(onExpired, timeoutMs)
+  return () => clearTimeout(handle)
+}
+
+/**
+ * Start polling the RSS of the given pid's process tree on the shared batched interval.
  * If RSS exceeds `maxRssMb`, calls `onExceeded` ONCE and stops watching it.
  * Returns a stop function that unregisters this pid early.
  */

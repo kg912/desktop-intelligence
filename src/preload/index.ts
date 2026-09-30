@@ -26,6 +26,7 @@ import type {
   BackendSettings,
   ExportChatPdfResult,
   SandboxViolationTraceEvent,
+  SandboxStatusInfo,
   SandboxViolationLogEntry,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
@@ -260,6 +261,9 @@ const api = {
 
   obsOpenSandboxViolationsFile: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_SANDBOX_VIOLATIONS_FILE),
+
+  getSandboxStatus: (): Promise<SandboxStatusInfo> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_GET_STATUS),
 
   // ── Suggestion cards ─────────────────────────────────────────
   getSuggestions: (): Promise<string[]> =>

@@ -22,9 +22,17 @@ export interface SandboxRunSpec {
   allowWrite: string[]
   /** Caller-supplied deny-read paths — merged with BASELINE_DENY_READ (Section 07). */
   denyRead: string[]
-  /** Wall-clock timeout in milliseconds (enforced by ResourceGovernor, Phase 0 future item). */
+  /**
+   * Wall-clock timeout in milliseconds. Enforced by the backend for run()
+   * (whole process group killed); 0 = none. Persistent processes are the
+   * caller's to time out.
+   */
   timeoutMs: number
-  /** Maximum RSS in MB (enforced by ResourceGovernor, Phase 0 future item). */
+  /**
+   * Maximum RSS in MB across the process tree (ResourceGovernor). Enforced
+   * by the backend for run(); persistent callers register their own watch.
+   * 0 = none.
+   */
   maxRssMb: number
   /**
    * Environment variables to merge with process.env at spawn time.
@@ -68,9 +76,17 @@ export interface SandboxExecutionBackend {
    * e.g. the MCP SDK's StdioClientTransport owns the spawn call internally.
    * Returns argv-ready values (command + args array + env), not a shell
    * string, so the caller can hand them to its own spawn-owning API.
+   * The caller MUST call release() once the process it spawned has exited,
+   * so the backend can drop the network policy it holds open for it.
    */
-  wrapStdioCommand(
-    spec: SandboxRunSpec
-  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>
+  wrapStdioCommand(spec: SandboxRunSpec): Promise<WrappedStdioCommand>
   shutdown(): Promise<void>
+}
+
+export interface WrappedStdioCommand {
+  command: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  /** Idempotent. Call when the spawned process has exited. */
+  release: () => void
 }

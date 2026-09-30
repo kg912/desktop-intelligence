@@ -1,339 +1,248 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventEmitter } from 'events'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { join } from 'path'
+import { mkdtempSync, readFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { execSync } from 'child_process'
+import type { ChildProcessWithoutNullStreams } from 'child_process'
 import type { SandboxRunSpec } from '../types'
 
-interface FakeViolation {
-  line: string
-  command?: string
-  timestamp: Date
-}
-
-// ── Mock @anthropic-ai/sandbox-runtime — SrtBackend delegates config/command
-// building to SandboxManager; we only care that SrtBackend passes the right
-// spawn() options through, not that the real sandbox-exec wrapping happens.
-const { mockInitialize, mockUpdateConfig, mockWrapWithSandbox, mockWrapWithSandboxArgv, mockReset, mockGetSandboxViolationStore, fakeStoreState } = vi.hoisted(() => {
-  const fakeStoreState = {
-    violations: [] as FakeViolation[],
-    totalCount: 0,
-    listeners: [] as Array<(v: FakeViolation[]) => void>,
-  }
-  const mockGetSandboxViolationStore = vi.fn(() => ({
-    getTotalCount: () => fakeStoreState.totalCount,
-    getViolations: () => [...fakeStoreState.violations],
-    subscribe: (listener: (v: FakeViolation[]) => void) => {
-      fakeStoreState.listeners.push(listener)
-      listener([...fakeStoreState.violations])
-      return () => {
-        const i = fakeStoreState.listeners.indexOf(listener)
-        if (i !== -1) fakeStoreState.listeners.splice(i, 1)
-      }
-    },
-  }))
-  return {
-    mockInitialize: vi.fn(async () => {}),
-    mockUpdateConfig: vi.fn((_config: { network: { allowedDomains: string[] } }) => {}),
-    mockWrapWithSandbox: vi.fn(async (command: string) => `sandbox-exec -f wrapped -- ${command}`),
-    mockWrapWithSandboxArgv: vi.fn(async (command: string) => ({
-      argv: ['sandbox-exec', '-f', 'wrapped', '--', ...command.split(' ')],
-      env: { ...process.env, SANDBOX_MARKER: '1' },
-    })),
-    mockReset: vi.fn(async () => {}),
-    mockGetSandboxViolationStore,
-    fakeStoreState,
-  }
-})
-
-// Simulates SandboxViolationStore.addViolation() — pushes + notifies all
-// current subscribers with the FULL array (matches the real store's
-// "always notify with all violations" behavior, see SrtBackend.ts header).
-function fakeAddViolation(v: FakeViolation): void {
-  fakeStoreState.violations.push(v)
-  fakeStoreState.totalCount++
-  for (const listener of [...fakeStoreState.listeners]) {
-    listener([...fakeStoreState.violations])
-  }
-}
-
-vi.mock('@anthropic-ai/sandbox-runtime', () => ({
-  SandboxManager: {
-    initialize: mockInitialize,
-    updateConfig: mockUpdateConfig,
-    wrapWithSandbox: mockWrapWithSandbox,
-    wrapWithSandboxArgv: mockWrapWithSandboxArgv,
-    reset: mockReset,
-    getSandboxViolationStore: mockGetSandboxViolationStore,
-  },
+// BASELINE_DENY_READ resolves the app settings path via electron's app.
+vi.mock('electron', () => ({
+  app: { getPath: (name: string) => (name === 'userData' ? '/tmp/di-srt-test-userdata' : '/tmp') },
 }))
 
-// ── Mock child_process.spawn — capture the options passed by SrtBackend ────
-function makeMockChild(): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter } {
-  const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter }
-  child.stdout = new EventEmitter()
-  child.stderr = new EventEmitter()
-  return child
-}
-
-const { mockSpawn } = vi.hoisted(() => ({ mockSpawn: vi.fn() }))
-
-vi.mock('child_process', () => ({
-  spawn: mockSpawn,
-}))
-
-// Import AFTER mocks are in place
 import { SrtBackend } from '../SrtBackend'
+import { BASELINE_DENY_READ } from '../BASELINE_DENY_READ'
+import type { SandboxViolationTraceEvent } from '../../../../shared/types'
+
+// Real child processes throughout; only the policy host is a protocol-level
+// fake (no sandbox-exec) — see fixtures/fakePolicyHost.mjs.
+const FAKE_HOST = join(__dirname, 'fixtures', 'fakePolicyHost.mjs')
 
 const baseSpec: SandboxRunSpec = {
   workspaceDir: '/tmp/workspace',
-  command: 'python3 /tmp/workspace/_exec.py',
+  command: 'true',
   executionProfile: 'lightweight',
   allowedDomains: [],
-  allowWrite: ['/tmp/workspace'],
+  allowWrite: [],
   denyRead: [],
-  timeoutMs: 30_000,
-  maxRssMb: 512,
+  timeoutMs: 10_000,
+  maxRssMb: 0,
+}
+
+let backend: SrtBackend
+function makeBackend(opts: { hostIdleMs?: number } = {}): SrtBackend {
+  backend = new SrtBackend({ hostEntry: FAKE_HOST, hostExecArgv: [], ...opts })
+  return backend
+}
+
+afterEach(async () => {
+  await backend?.shutdown()
+})
+
+function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => child.once('exit', () => resolve()))
+}
+
+function readLine(child: ChildProcessWithoutNullStreams): Promise<string> {
+  return new Promise((resolve) => {
+    let buf = ''
+    child.stdout.on('data', (d: Buffer) => {
+      buf += d.toString()
+      if (buf.includes('\n')) resolve(buf.split('\n')[0])
+    })
+  })
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 describe('SrtBackend.run', () => {
-  beforeEach(() => {
-    mockSpawn.mockReset()
-    mockInitialize.mockClear()
-    mockUpdateConfig.mockClear()
-    mockWrapWithSandbox.mockClear()
+  it('returns stdout, stderr and exit code from the wrapped command', async () => {
+    const result = await makeBackend().run({ ...baseSpec, command: 'echo out; echo err >&2; exit 3' })
+    expect(result).toMatchObject({ stdout: 'out\n', exitCode: 3, backend: 'srt' })
+    expect(result.stderr).toContain('err')
   })
 
-  it('merges spec.env with process.env and passes it to spawn()', async () => {
-    const child = makeMockChild()
-    mockSpawn.mockImplementation(() => {
-      queueMicrotask(() => child.emit('exit', 0))
-      return child
-    })
-
-    const backend = new SrtBackend()
-    const spec: SandboxRunSpec = { ...baseSpec, env: { MPLBACKEND: 'Agg' } }
-
-    const originalPathEnv = process.env['PATH']
-    const result = await backend.run(spec)
-
-    expect(mockSpawn).toHaveBeenCalledTimes(1)
-    const [, options] = mockSpawn.mock.calls[0]
-    expect(options.env).toMatchObject({ MPLBACKEND: 'Agg' })
-    // process.env is preserved additively — an unrelated existing var survives.
-    expect(options.env.PATH).toBe(originalPathEnv)
-    expect(result.exitCode).toBe(0)
-  })
-
-  it('does not throw when spec.env is undefined', async () => {
-    const child = makeMockChild()
-    mockSpawn.mockImplementation(() => {
-      queueMicrotask(() => child.emit('exit', 0))
-      return child
-    })
-
-    const backend = new SrtBackend()
-    await expect(backend.run(baseSpec)).resolves.toMatchObject({ exitCode: 0 })
-
-    const [, options] = mockSpawn.mock.calls[0]
-    expect(options.env).toMatchObject(process.env as Record<string, string>)
-  })
-
-  // Regression test for a real bug found 2026-07-13 (progress.md row 303):
-  // wrapWithSandbox()'s customConfig does NOT push a new network allowlist to
-  // the live enforcement proxy — only SandboxManager.updateConfig() does.
-  // Every spec-specific network policy must be pushed via updateConfig()
-  // before wrapWithSandbox() is called, or the process silently gets
-  // initialize()'s (deny-all) network policy instead of spec.allowedDomains.
-  it('calls SandboxManager.updateConfig() with the per-spec allowlist before wrapWithSandbox()', async () => {
-    const child = makeMockChild()
-    mockSpawn.mockImplementation(() => {
-      queueMicrotask(() => child.emit('exit', 0))
-      return child
-    })
-
-    const backend = new SrtBackend()
-    const spec: SandboxRunSpec = {
+  it('merges spec.env over process.env', async () => {
+    const result = await makeBackend().run({
       ...baseSpec,
-      allowedDomains: ['query1.finance.yahoo.com', 'query2.finance.yahoo.com', 'fc.yahoo.com'],
-    }
-
-    await backend.run(spec)
-
-    expect(mockUpdateConfig).toHaveBeenCalledTimes(1)
-    const [config] = mockUpdateConfig.mock.calls[0]
-    expect(config.network.allowedDomains).toEqual([
-      'query1.finance.yahoo.com',
-      'query2.finance.yahoo.com',
-      'fc.yahoo.com',
-    ])
-
-    // updateConfig() must run before wrapWithSandbox() — check call order.
-    const updateOrder = mockUpdateConfig.mock.invocationCallOrder[0]
-    const wrapOrder = mockWrapWithSandbox.mock.invocationCallOrder[0]
-    expect(updateOrder).toBeLessThan(wrapOrder)
+      command: 'printf "%s|%s" "$SPEC_VAR" "$HOME"',
+      env: { SPEC_VAR: 'from-spec' },
+    })
+    expect(result.stdout).toBe(`from-spec|${process.env.HOME}`)
   })
+
+  it('passes the merged deny-read baseline, workspace-writable allowlist and network policy to the host', async () => {
+    const result = await makeBackend().run({
+      ...baseSpec,
+      command: 'printf "%s" "$WRAP_CONFIG"',
+      allowedDomains: ['api.example.com'],
+      allowWrite: ['/tmp/extra'],
+      denyRead: ['/secret/file'],
+    })
+    const config = JSON.parse(Buffer.from(result.stdout, 'base64').toString())
+    expect(config.network.allowedDomains).toEqual(['api.example.com'])
+    expect(config.filesystem.denyRead).toEqual(expect.arrayContaining([...BASELINE_DENY_READ, '/secret/file']))
+    expect(config.filesystem.allowWrite).toEqual(['/tmp/workspace', '/tmp/extra'])
+  })
+
+  it('kills the whole process group when the wall-clock timeout expires (D6)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'srt-timeout-'))
+    const pidFile = join(dir, 'grandchild.pid')
+    const started = Date.now()
+    const result = await makeBackend().run({
+      ...baseSpec,
+      // A backgrounded grandchild — killing only the shell would orphan it.
+      command: `sleep 30 & echo $! > ${pidFile}; wait`,
+      timeoutMs: 400,
+    })
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(result.exitCode).toBe(-1)
+    expect(result.stderr).toContain('wall-clock timeout (400 ms)')
+    const grandchild = Number(readFileSync(pidFile, 'utf8'))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(isAlive(grandchild)).toBe(false)
+  })
+
+  it('kills a process tree that exceeds maxRssMb within one polling interval (D7)', async () => {
+    try {
+      execSync('which python3', { stdio: 'ignore' })
+    } catch {
+      return // python3 unavailable — covered by ResourceGovernor unit tests
+    }
+    const started = Date.now()
+    const result = await makeBackend().run({
+      ...baseSpec,
+      // The memory is held by python, a descendant of the spawned shell.
+      command: `python3 -c "x = bytearray(300 * 1024 * 1024); import time; time.sleep(30)"`,
+      timeoutMs: 20_000,
+      maxRssMb: 100,
+    })
+    expect(result.exitCode).toBe(-1)
+    expect(result.stderr).toContain('RSS exceeded 100 MB')
+    expect(Date.now() - started).toBeLessThan(12_000)
+  }, 20_000)
 })
 
-describe('SrtBackend.wrapStdioCommand', () => {
-  beforeEach(() => {
-    mockInitialize.mockClear()
-    mockUpdateConfig.mockClear()
-    mockWrapWithSandboxArgv.mockClear()
+describe('SrtBackend network policy isolation', () => {
+  it('gives processes with different allowlists different policy hosts, and identical allowlists the same one', async () => {
+    const b = makeBackend()
+    const a = await b.spawnPersistent({ ...baseSpec, allowedDomains: ['a.test', 'b.test'], command: 'echo "$HOST_PID $HOST_POLICY"; cat' })
+    const sameSet = await b.spawnPersistent({ ...baseSpec, allowedDomains: ['b.test', 'a.test'], command: 'echo "$HOST_PID $HOST_POLICY"; cat' })
+    const none = await b.spawnPersistent({ ...baseSpec, allowedDomains: [], command: 'echo "$HOST_PID $HOST_POLICY"; cat' })
+
+    const [lineA, lineSame, lineNone] = await Promise.all([readLine(a), readLine(sameSet), readLine(none)])
+    const [pidA, policyA] = lineA.split(' ')
+    const [pidSame] = lineSame.split(' ')
+    const [pidNone, policyNone] = lineNone.split(' ')
+
+    expect(pidSame).toBe(pidA)
+    expect(pidNone).not.toBe(pidA)
+    expect(JSON.parse(policyA)).toEqual(['a.test', 'b.test'])
+    expect(JSON.parse(policyNone)).toEqual([])
+    expect(b.getActivePolicies()).toEqual(
+      expect.arrayContaining([
+        { allowedDomains: ['a.test', 'b.test'], leases: 2 },
+        { allowedDomains: [], leases: 1 },
+      ])
+    )
+
+    for (const child of [a, sameSet, none]) child.kill()
   })
 
-  it('calls updateConfig() with the per-spec allowlist before wrapWithSandboxArgv()', async () => {
-    const backend = new SrtBackend()
-    const spec: SandboxRunSpec = {
-      ...baseSpec,
-      command: 'node /path/to/server.js --flag',
-      allowedDomains: ['api.example.com'],
-    }
-
-    await backend.wrapStdioCommand(spec)
-
-    expect(mockUpdateConfig).toHaveBeenCalledTimes(1)
-    const [config] = mockUpdateConfig.mock.calls[0]
-    expect(config.network.allowedDomains).toEqual(['api.example.com'])
-
-    expect(mockWrapWithSandboxArgv).toHaveBeenCalledTimes(1)
-    const updateOrder = mockUpdateConfig.mock.invocationCallOrder[0]
-    const wrapOrder = mockWrapWithSandboxArgv.mock.invocationCallOrder[0]
-    expect(updateOrder).toBeLessThan(wrapOrder)
+  it('releases a persistent lease on exit and stops the idle host', async () => {
+    const b = makeBackend({ hostIdleMs: 50 })
+    const child = await b.spawnPersistent({ ...baseSpec, allowedDomains: ['idle.test'], command: 'exit 0' })
+    await waitForExit(child)
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['idle.test'], leases: 0 }])
+    await new Promise((r) => setTimeout(r, 400))
+    expect(b.getActivePolicies()).toEqual([])
   })
 
-  it('reshapes { argv, env } into { command, args, env }', async () => {
-    const backend = new SrtBackend()
-    const spec: SandboxRunSpec = { ...baseSpec, command: 'node /path/to/server.js --flag' }
-
-    const result = await backend.wrapStdioCommand(spec)
-
-    expect(result.command).toBe('sandbox-exec')
-    expect(result.args).toEqual(['-f', 'wrapped', '--', 'node', '/path/to/server.js', '--flag'])
-    expect(result.env).toMatchObject({ SANDBOX_MARKER: '1' })
+  it('keeps the deny-all host warm after initialize()', async () => {
+    const b = makeBackend({ hostIdleMs: 20 })
+    await b.initialize()
+    await b.run({ ...baseSpec })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: [], leases: 0 }])
   })
 
-  it('lazily initializes if not already initialized', async () => {
-    const backend = new SrtBackend()
-    await backend.wrapStdioCommand(baseSpec)
-    expect(mockInitialize).toHaveBeenCalledTimes(1)
+  it('wrapStdioCommand returns a bash -c argv and holds the lease until release()', async () => {
+    const b = makeBackend({ hostIdleMs: 20 })
+    const wrapped = await b.wrapStdioCommand({ ...baseSpec, allowedDomains: ['mcp.test'], command: 'my-server --flag' })
+    expect(wrapped.command).toBe('/bin/bash')
+    expect(wrapped.args[0]).toBe('-c')
+    expect(wrapped.args[1]).toMatch(/HOST_POLICY='\["mcp.test"\]' .*; my-server --flag$/)
+    expect(wrapped.env.PATH).toBe(process.env.PATH)
+    expect(wrapped.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['mcp.test'], leases: 1 }])
+
+    wrapped.release()
+    wrapped.release() // idempotent
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['mcp.test'], leases: 0 }])
+  })
+
+  it('replaces a crashed policy host on the next lease', async () => {
+    const b = makeBackend()
+    const first = await b.run({ ...baseSpec, allowedDomains: ['crash.test'], command: 'printf "%s" "$HOST_PID"' })
+    process.kill(Number(first.stdout), 'SIGKILL')
+    await new Promise((r) => setTimeout(r, 100))
+    const second = await b.run({ ...baseSpec, allowedDomains: ['crash.test'], command: 'printf "%s" "$HOST_PID"' })
+    expect(second.exitCode).toBe(0)
+    expect(second.stdout).not.toBe(first.stdout)
+  })
+
+  it('rejects (fails closed) when the policy host cannot initialize, without leaking a lease', async () => {
+    const b = makeBackend()
+    await expect(b.run({ ...baseSpec, allowedDomains: ['fail-init.test'] })).rejects.toThrow(
+      'simulated init failure'
+    )
+    expect(b.getActivePolicies().filter((p) => p.leases > 0)).toEqual([])
   })
 })
 
 describe('SrtBackend.subscribeToViolations', () => {
-  beforeEach(() => {
-    fakeStoreState.violations = []
-    fakeStoreState.totalCount = 0
-    fakeStoreState.listeners = []
-    mockGetSandboxViolationStore.mockClear()
-  })
-
-  it('delivers a new violation labeled with the caller that triggered it, classified from the line', async () => {
-    const backend = new SrtBackend()
-    const spec: SandboxRunSpec = {
-      ...baseSpec,
-      command: 'python3 /path/to/worker.py',
-      callerLabel: 'python-worker',
-    }
-    await backend.wrapStdioCommand(spec) // populates commandLabels via buildPerSpecConfig
-
-    const received: unknown[] = []
-    backend.subscribeToViolations((event) => received.push(event))
-
-    fakeAddViolation({
-      line: 'python3(123) deny(1) file-read-data /Users/x/.ssh/id_ed25519',
-      command: 'python3 /path/to/worker.py',
-      timestamp: new Date('2026-07-13T12:00:00.000Z'),
-    })
-
-    expect(received).toEqual([
-      {
-        source: 'python-worker',
-        kind: 'read',
-        target: '/Users/x/.ssh/id_ed25519',
-        timestamp: new Date('2026-07-13T12:00:00.000Z').getTime(),
-      },
+  it('delivers host violations parsed and attributed to the caller label; skips unclassifiable ones', async () => {
+    const b = makeBackend()
+    const events: SandboxViolationTraceEvent[] = []
+    b.subscribeToViolations((e) => events.push(e))
+    await b.run({ ...baseSpec, command: 'echo violate', callerLabel: 'python-worker' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(events).toEqual([
+      { source: 'python-worker', kind: 'read', target: '/Users/someone/.ssh/id_rsa', timestamp: 1234 },
     ])
   })
 
-  it('classifies write and network operations correctly', async () => {
-    const backend = new SrtBackend()
-    await backend.initialize()
-    const received: Array<{ kind: string }> = []
-    backend.subscribeToViolations((event) => received.push(event))
-
-    fakeAddViolation({ line: 'proc(1) deny(1) file-write-create /tmp/x', timestamp: new Date() })
-    fakeAddViolation({ line: 'proc(1) deny(1) network-outbound 93.184.216.34:443', timestamp: new Date() })
-
-    expect(received.map((e) => e.kind)).toEqual(['write', 'network'])
-  })
-
-  it('skips violations whose operation does not map to read/write/network', async () => {
-    const backend = new SrtBackend()
-    await backend.initialize()
-    const received: unknown[] = []
-    backend.subscribeToViolations((event) => received.push(event))
-
-    fakeAddViolation({ line: 'bash(1) deny(1) sysctl-read kern.iossupportversion', timestamp: new Date() })
-    // sysctl-read DOES contain "read" per the generalized classifier — use
-    // a genuinely unclassifiable operation to test the skip path instead.
-    fakeAddViolation({ line: 'proc(1) deny(1) mach-lookup com.apple.foo', timestamp: new Date() })
-
-    // sysctl-read → 'read' (1 delivered), mach-lookup → skipped (0 delivered)
-    expect(received).toHaveLength(1)
-  })
-
-  it('falls back to "unknown" when the violation is not attributable to a tracked command', async () => {
-    const backend = new SrtBackend()
-    await backend.initialize()
-    const received: Array<{ source: string }> = []
-    backend.subscribeToViolations((event) => received.push(event))
-
-    fakeAddViolation({
-      line: 'proc(1) deny(1) file-read-data /some/path',
-      command: 'node /never-called-through-srtbackend.js',
-      timestamp: new Date(),
-    })
-
-    expect(received).toEqual([{ source: 'unknown', kind: 'read', target: '/some/path', timestamp: expect.any(Number) }])
-  })
-
-  it('does not replay violations that existed before subscribing', async () => {
-    fakeAddViolation({ line: 'proc(1) deny(1) file-read-data /pre-existing', timestamp: new Date() })
-
-    const backend = new SrtBackend()
-    await backend.initialize()
-    const received: unknown[] = []
-    backend.subscribeToViolations((event) => received.push(event))
-
-    expect(received).toHaveLength(0)
-  })
-
-  it('the returned unsubscribe function stops delivery', async () => {
-    const backend = new SrtBackend()
-    await backend.initialize()
-    const received: unknown[] = []
-    const unsubscribe = backend.subscribeToViolations((event) => received.push(event))
+  it('falls back to "unknown" for an unlabeled command, and unsubscribe stops delivery', async () => {
+    const b = makeBackend()
+    const events: SandboxViolationTraceEvent[] = []
+    const unsubscribe = b.subscribeToViolations((e) => events.push(e))
+    await b.run({ ...baseSpec, command: 'echo violate unlabeled' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(events.map((e) => e.source)).toEqual(['unknown'])
 
     unsubscribe()
-    fakeAddViolation({ line: 'proc(1) deny(1) file-read-data /after-unsubscribe', timestamp: new Date() })
-
-    expect(received).toHaveLength(0)
+    await b.run({ ...baseSpec, command: 'echo violate again' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(events).toHaveLength(1)
   })
+})
 
-  // Regression test for the ESM-only dynamic-import fix (2026-07-14, see
-  // SrtBackend.ts's header comment) — subscribeToViolations() is
-  // synchronous and cannot itself await the lazy import, so it must no-op
-  // safely (not throw) when called before initialize() has populated the
-  // cache, rather than crashing on `this.sandboxManagerCache.getSandboxViolationStore`.
-  it('does not throw and returns a no-op unsubscribe when called before initialize()', () => {
-    const backend = new SrtBackend()
-    const received: unknown[] = []
-
-    let unsubscribe: (() => void) | undefined
-    expect(() => {
-      unsubscribe = backend.subscribeToViolations((event) => received.push(event))
-    }).not.toThrow()
-
-    expect(typeof unsubscribe).toBe('function')
-    expect(() => unsubscribe!()).not.toThrow()
-    expect(mockGetSandboxViolationStore).not.toHaveBeenCalled()
+describe('SrtBackend.shutdown', () => {
+  it('stops every policy host and kills in-flight runs', async () => {
+    const b = makeBackend()
+    const pending = b.run({ ...baseSpec, allowedDomains: ['slow.test'], command: 'sleep 30', timeoutMs: 0 })
+    await new Promise((r) => setTimeout(r, 300))
+    await b.shutdown()
+    const result = await pending
+    expect(result.exitCode).toBe(-1)
+    expect(b.getActivePolicies()).toEqual([])
   })
 })

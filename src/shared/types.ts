@@ -445,6 +445,7 @@ export const IPC_CHANNELS = {
   // ── Sandbox violations (Phase 2) ──────────────────────────────────────────────
   /** main→renderer push, credential-path denials only (see SrtBackend.subscribeToViolations) */
   SANDBOX_VIOLATION_ALERT: 'sandbox:violationAlert',
+  SANDBOX_GET_STATUS: 'sandbox:getStatus',
 
   // ── Sandbox violations — observability panel (Phase 3) ────────────────────────
   OBS_LIST_SANDBOX_VIOLATIONS:  'obs:listSandboxViolations',
@@ -578,10 +579,10 @@ export interface StdioMcpServerConfig {
   requiresApproval?: boolean
   /**
    * Sandbox policy for this server's local process (Phase 1 retrofit,
-   * SANDBOX_ARCHITECTURE_SPEC.html section 16). Optional and
-   * backward-compatible — servers without this field (every server
-   * currently in mcp.json) run exactly as they do today: unsandboxed,
-   * with a startup warning logged every launch.
+   * SANDBOX_ARCHITECTURE_SPEC.html section 16). Its presence records that
+   * the user reviewed the server's manifest: a stdio server WITHOUT one does
+   * not start (fails closed with a review-required error) until the user
+   * approves a profile in Settings — or explicitly sets bypassSandbox.
    */
   sandboxProfile?: {
     allowedDomains: string[]
@@ -629,6 +630,8 @@ export interface McpServerRuntimeInfo {
   error?:        string      // last error message if status === 'error'
   disabledTools: string[]    // currently disabled tools for this server
   requiresApproval: boolean  // whether tool calls require user approval
+  /** stdio server with no reviewed sandboxProfile — it will not start until approved */
+  needsSandboxReview?: boolean
 }
 
 /** Tool permission request — shown as approval dialog in renderer */
@@ -658,6 +661,20 @@ export interface McpToolPermissionResponse {
  * pattern as rag_ingest/rag_query/rag_eval), not appended to a session's
  * trace array.
  */
+/** Sandbox health + policy summary for Settings (SANDBOX_GET_STATUS). */
+export interface SandboxStatusInfo {
+  /** Platform is supported by @anthropic-ai/sandbox-runtime. */
+  supported: boolean
+  /** Dependency check passed and the backend initialized — tool calls are sandboxed. */
+  ready: boolean
+  errors: string[]
+  warnings: string[]
+  /** Credential paths no sandboxed process can read (spec section 07). */
+  baselineDenyRead: string[]
+  /** One entry per live network policy host. */
+  activePolicies: Array<{ allowedDomains: string[]; leases: number }>
+}
+
 export interface SandboxViolationTraceEvent {
   /** Which SrtBackend caller triggered this — e.g. 'python-worker' or 'mcp:<serverName>'. 'unknown' if unattributed. */
   source:    string

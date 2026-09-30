@@ -23,7 +23,9 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // Forked per network policy by SrtBackend — see policyHost.ts.
+          sandboxPolicyHost: resolve(__dirname, 'src/main/services/sandbox/policyHost.ts')
         }
       }
     }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'events'
 import type { ChildProcessWithoutNullStreams } from 'child_process'
-import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from '../types'
+import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult, WrappedStdioCommand } from '../types'
 import { SandboxService } from '../../SandboxService'
 
 // ── Mock helpers ──────────────────────────────────────────────────────────────
@@ -29,9 +29,7 @@ function makeMockBackend(
   name: 'srt' | 'microsandbox',
   runImpl?: (spec: SandboxRunSpec) => Promise<SandboxRunResult>,
   spawnPersistentImpl?: (spec: SandboxRunSpec) => Promise<ChildProcessWithoutNullStreams>,
-  wrapStdioCommandImpl?: (
-    spec: SandboxRunSpec
-  ) => Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>
+  wrapStdioCommandImpl?: (spec: SandboxRunSpec) => Promise<WrappedStdioCommand>
 ): SandboxExecutionBackend {
   return {
     name,
@@ -55,6 +53,7 @@ function makeMockBackend(
         command: `mock-${name}-command`,
         args: ['--mock'],
         env: {} as NodeJS.ProcessEnv,
+        release: () => {},
       })),
     shutdown: vi.fn(async () => {})
   }

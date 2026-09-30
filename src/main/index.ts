@@ -17,6 +17,7 @@ import { mcpServerManager } from './services/McpServerManager'
 import { observabilityService } from './services/ObservabilityService'
 import { srtBackend } from './services/sandbox/sandboxServiceInstance'
 import { shouldAlertForViolation } from './services/sandbox/isCredentialPath'
+import { setSandboxStartupCheck } from './services/sandbox/sandboxStatus'
 import { IPC_CHANNELS } from '../shared/types'
 import type { McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
 
@@ -222,10 +223,11 @@ app.whenReady().then(async () => {
   // spawn instead of racing it. srtBackend.initialize() is awaited here so
   // the lazy self-initialize guard inside SrtBackend.run()/spawnPersistent()
   // (`if (this.initialized) return`) is a no-op in the normal case.
-  // Non-fatal: if dependencies are missing, a warning is logged and the
-  // SrtBackend is not initialized — the app continues to run without
-  // sandboxing (same as before this feature was added).
-  // The warning should be surfaced in Settings in a future prompt.
+  // Non-fatal for the app: if dependencies are missing, the result is
+  // recorded for Settings (SANDBOX_GET_STATUS) and the backend is not
+  // initialized. Sandboxed callers then fail closed on their own — the
+  // Python worker cannot start and MCP stdio servers error — rather than
+  // running unsandboxed; only an explicit per-server bypass runs unconfined.
   //
   // Dynamic import — @anthropic-ai/sandbox-runtime is ESM-only with no CJS
   // `exports` fallback; a static import here compiled to a top-level
@@ -237,6 +239,7 @@ app.whenReady().then(async () => {
     const { SandboxManager } = await import('@anthropic-ai/sandbox-runtime')
     if (SandboxManager.isSupportedPlatform()) {
       const depCheck = SandboxManager.checkDependencies()
+      const errors = [...depCheck.errors]
       if (depCheck.errors.length > 0) {
         console.warn('[Sandbox] Dependency check errors:', depCheck.errors)
       }
@@ -244,10 +247,6 @@ app.whenReady().then(async () => {
         console.warn('[Sandbox] Dependency check warnings:', depCheck.warnings)
       }
       if (depCheck.errors.length === 0) {
-        await srtBackend.initialize().catch((err: Error) => {
-          console.warn('[Sandbox] SrtBackend initialize failed:', err.message)
-        })
-
         // ── Sandbox violation observation (Phase 2) ──────────────────────
         // Every violation is logged to the observability panel (existing
         // main→standalone-JSONL pattern, see ObservabilityService). Only
@@ -260,14 +259,36 @@ app.whenReady().then(async () => {
             mainWindow.webContents.send(IPC_CHANNELS.SANDBOX_VIOLATION_ALERT, violation)
           }
         })
+        await srtBackend.initialize().catch((err: Error) => {
+          console.warn('[Sandbox] SrtBackend initialize failed:', err.message)
+          errors.push(`Sandbox backend failed to start: ${err.message}`)
+        })
       } else {
         console.warn('[Sandbox] SrtBackend not initialized — dependency errors above')
       }
+      setSandboxStartupCheck({
+        supported: true,
+        ready: errors.length === 0,
+        errors,
+        warnings: depCheck.warnings,
+      })
     } else {
       console.warn('[Sandbox] Platform not supported by @anthropic-ai/sandbox-runtime')
+      setSandboxStartupCheck({
+        supported: false,
+        ready: false,
+        errors: ['This platform is not supported by @anthropic-ai/sandbox-runtime'],
+        warnings: [],
+      })
     }
   } catch (err) {
     console.warn('[Sandbox] Dependency check failed:', err)
+    setSandboxStartupCheck({
+      supported: false,
+      ready: false,
+      errors: [`Sandbox dependency check failed: ${err instanceof Error ? err.message : String(err)}`],
+      warnings: [],
+    })
   }
 
   // Pre-warm the persistent Python worker so the first chart renders fast.

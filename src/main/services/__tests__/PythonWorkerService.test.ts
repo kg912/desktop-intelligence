@@ -30,7 +30,8 @@ const { mockMemoryWatch } = vi.hoisted(() => ({
   mockMemoryWatch: vi.fn((_pid: number, _maxRssMb: number, _onExceeded: () => void) => vi.fn()),
 }))
 
-vi.mock('../sandbox/ResourceGovernor', () => ({
+vi.mock('../sandbox/ResourceGovernor', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../sandbox/ResourceGovernor')>()),
   memoryWatch: mockMemoryWatch,
 }))
 

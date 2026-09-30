@@ -12,7 +12,7 @@
 // loudly, not degrade quietly.
 
 import type { ChildProcessWithoutNullStreams } from 'child_process'
-import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from './sandbox/types'
+import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult, WrappedStdioCommand } from './sandbox/types'
 
 export class SandboxService {
   private readonly srt: SandboxExecutionBackend
@@ -38,9 +38,7 @@ export class SandboxService {
     return this.srt.spawnPersistent(spec)
   }
 
-  async wrapStdioCommand(
-    spec: SandboxRunSpec
-  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> {
+  async wrapStdioCommand(spec: SandboxRunSpec): Promise<WrappedStdioCommand> {
     if (spec.executionProfile === 'untrusted-heavy') {
       // Throws per MicrosandboxBackend stub — no silent fallback to srt.
       return this.microsandbox.wrapStdioCommand(spec)

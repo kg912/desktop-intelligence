@@ -38,6 +38,15 @@ import { memoryWatch } from './sandbox/ResourceGovernor'
 // matplotlib/numpy/yfinance workloads.
 const MCP_SERVER_MAX_RSS_MB = 512
 
+/** A stdio server whose sandbox manifest the user has not reviewed yet. */
+function needsSandboxReview(config: McpServerConfig): boolean {
+  return !isHttpMcpConfig(config) && !config.sandboxProfile
+}
+
+export const SANDBOX_REVIEW_REQUIRED =
+  'Sandbox review required — approve this server\'s allowed domains and writable paths ' +
+  '(Settings → MCP → Sandbox profile) before it can run'
+
 // ── MCP tool call result ─────────────────────────────────────────
 
 export interface McpToolResult {
@@ -119,6 +128,8 @@ interface ServerEntry {
    * StdioClientTransport.pid is available. Cleared on _stopServer().
    */
   stopMemoryWatch?: () => void
+  /** Releases the sandbox network policy held for this server's process. */
+  releaseSandbox?: () => void
 }
 
 // ── Permission promise map ────────────────────────────────────────
@@ -227,6 +238,7 @@ export class McpServerManager extends EventEmitter {
       error:            e.error,
       disabledTools:    e.config.disabledTools ?? [],
       requiresApproval: e.requiresApproval,
+      needsSandboxReview: needsSandboxReview(e.config),
     }))
   }
 
@@ -396,15 +408,17 @@ export class McpServerManager extends EventEmitter {
         )
       } else {
         const sandboxProfile = config.sandboxProfile
-        if (!sandboxProfile || sandboxProfile.bypassSandbox === true) {
+        if (!sandboxProfile) {
+          // Spec section 10/16: the user reviews a server's requested domains
+          // and writable paths before it is first allowed to run. No profile
+          // = not reviewed = fail closed (never silently unsandboxed).
+          throw new Error(SANDBOX_REVIEW_REQUIRED)
+        }
+        if (sandboxProfile.bypassSandbox === true) {
           // Visible every start — not a one-time warning — so an operator
           // scanning logs after the fact can't miss that this server has
           // unrestricted filesystem/network access on the host.
-          console.warn(
-            sandboxProfile?.bypassSandbox
-              ? `[McpServerManager] ⚠️ "${name}" running WITHOUT sandbox — bypassSandbox: true`
-              : `[McpServerManager] ⚠️ "${name}" running WITHOUT sandbox — no sandboxProfile declared`
-          )
+          console.warn(`[McpServerManager] ⚠️ "${name}" running WITHOUT sandbox — bypassSandbox: true`)
           transport = new StdioClientTransport({
             command: config.command,
             args:    config.args ?? [],
@@ -428,14 +442,22 @@ export class McpServerManager extends EventEmitter {
             timeoutMs:        0, // persistent process, no wall-clock timeout
             maxRssMb:         MCP_SERVER_MAX_RSS_MB,
           })
+          entry.releaseSandbox = wrapped.release
 
           // wrapped.env carries the sandbox's own env; config.env entries
           // (server-specific vars the user configured, e.g. API keys) must
-          // still reach the process, so they're merged on top.
+          // still reach the process, so they're merged on top. npm's cache
+          // is pointed into the (writable) scratch dir so `npx` servers work
+          // under deny-write-by-default; a user-set value still wins.
           transport = new StdioClientTransport({
             command: wrapped.command,
             args:    wrapped.args,
-            env:     { ...wrapped.env, ...(config.env ?? {}) } as Record<string, string>,
+            cwd:     scratchDir,
+            env:     {
+              ...wrapped.env,
+              npm_config_cache: join(scratchDir, '.npm-cache'),
+              ...(config.env ?? {}),
+            } as Record<string, string>,
           })
         }
       }
@@ -452,6 +474,8 @@ export class McpServerManager extends EventEmitter {
       )
 
       entry.client = client
+      // The process can exit on its own (crash) — drop its sandbox lease then too.
+      client.onclose = () => entry.releaseSandbox?.()
 
       // ── ResourceGovernor: RSS watchdog for the stdio child ────────────
       // StdioClientTransport does not expose the underlying ChildProcess
@@ -561,6 +585,10 @@ export class McpServerManager extends EventEmitter {
 
       console.log(`[McpServerManager] ✅ "${name}" running — tools: ${entry.tools.join(', ') || '(none)'}`)
     } catch (err) {
+      try { await entry.client?.close() } catch { /* ignore */ }
+      entry.client = null
+      entry.releaseSandbox?.()
+      entry.releaseSandbox = undefined
       entry.status = 'error'
       entry.error  = err instanceof Error ? err.message : String(err)
       console.error(`[McpServerManager] ❌ "${name}" failed to start:`, entry.error)
@@ -579,6 +607,8 @@ export class McpServerManager extends EventEmitter {
     try {
       await entry.client?.close()
     } catch { /* ignore */ }
+    entry.releaseSandbox?.()
+    entry.releaseSandbox = undefined
     entry.client  = null
     entry.status  = 'stopped'
     entry.tools   = []
@@ -729,6 +759,7 @@ export class McpServerManager extends EventEmitter {
       error:            entry.error,
       disabledTools:    entry.config.disabledTools ?? [],
       requiresApproval: entry.requiresApproval,
+      needsSandboxReview: needsSandboxReview(entry.config),
     } as McpServerRuntimeInfo)
   }
 

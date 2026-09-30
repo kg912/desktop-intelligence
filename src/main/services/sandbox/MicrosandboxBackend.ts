@@ -10,7 +10,7 @@
 // not vendor marketing figures.
 
 import type { ChildProcessWithoutNullStreams } from 'child_process'
-import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult } from './types'
+import type { SandboxExecutionBackend, SandboxRunSpec, SandboxRunResult, WrappedStdioCommand } from './types'
 
 const NOT_IMPLEMENTED =
   'MicrosandboxBackend is not yet implemented — ' +
@@ -32,9 +32,7 @@ export class MicrosandboxBackend implements SandboxExecutionBackend {
     throw new Error(NOT_IMPLEMENTED)
   }
 
-  async wrapStdioCommand(
-    _spec: SandboxRunSpec
-  ): Promise<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> {
+  async wrapStdioCommand(_spec: SandboxRunSpec): Promise<WrappedStdioCommand> {
     throw new Error(NOT_IMPLEMENTED)
   }
 

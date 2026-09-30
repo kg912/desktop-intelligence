@@ -16,6 +16,7 @@ import {
 import { cn } from '../../lib/utils'
 import type { McpServerRuntimeInfo, McpServerSettings, McpServerConfig, StdioMcpServerConfig } from '../../../../shared/types'
 import { isHttpMcpConfig } from '../../../../shared/types'
+import { SandboxStatusPanel } from './SandboxStatusPanel'
 
 // ── Toggle — matches MCPSettingsPanel exactly ────────────────────
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -75,9 +76,9 @@ function SandboxStatusBadge({ profile }: { profile: StdioMcpServerConfig['sandbo
     return (
       <span
         className="flex items-center gap-1 text-xs text-amber-400"
-        title="No sandboxProfile declared — this server runs with full host filesystem and network access."
+        title="No sandbox profile reviewed yet — this server will not start until you approve its allowed domains and writable paths."
       >
-        <ShieldOff className="w-3 h-3" /> unsandboxed
+        <ShieldOff className="w-3 h-3" /> review required
       </span>
     )
   }
@@ -134,7 +135,11 @@ function SandboxProfileEditor({ serverName, profile, isRunning, onSaved }: Sandb
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedDomainsRaw, savedWriteRaw, savedBypass])
 
+  // No saved profile = the manifest has never been reviewed; saving (even
+  // an empty, deny-all profile) is the approval that lets the server start.
+  const needsReview = !profile
   const isDirty =
+    needsReview ||
     allowedDomainsRaw !== savedDomainsRaw ||
     allowWriteRaw !== savedWriteRaw ||
     bypassSandbox !== savedBypass
@@ -166,8 +171,11 @@ function SandboxProfileEditor({ serverName, profile, isRunning, onSaved }: Sandb
 
       // sandboxProfile only takes effect on next start (McpServerManager
       // reads it in _startServer) — restarting a running server is the only
-      // way this change actually applies right away.
-      if (isRunning && confirm(
+      // way this change actually applies right away. A first approval starts
+      // the server, which was blocked waiting for exactly this review.
+      if (needsReview) {
+        await window.api.mcpRestartServer(serverName)
+      } else if (isRunning && confirm(
         `Restart "${serverName}" now to apply the new sandbox profile? ` +
         `Sandbox changes only take effect on next start.`
       )) {
@@ -179,7 +187,7 @@ function SandboxProfileEditor({ serverName, profile, isRunning, onSaved }: Sandb
     } finally {
       setSaving(false)
     }
-  }, [serverName, allowedDomainsRaw, allowWriteRaw, bypassSandbox, isRunning, onSaved])
+  }, [serverName, allowedDomainsRaw, allowWriteRaw, bypassSandbox, isRunning, onSaved, needsReview])
 
   return (
     <div
@@ -187,6 +195,12 @@ function SandboxProfileEditor({ serverName, profile, isRunning, onSaved }: Sandb
       onClick={(e) => e.stopPropagation()}
     >
       <p className="text-xs font-medium text-content-secondary">Sandbox profile</p>
+      {needsReview && (
+        <p className="text-xs text-amber-400 leading-relaxed">
+          Review required — this server stays stopped until you approve the network
+          domains and writable paths it may use.
+        </p>
+      )}
       <p className="text-xs text-content-muted leading-relaxed">
         These are allowlists, not blocklists — anything not listed below is denied.
         Leave both empty (with bypass off) to block all outbound network access
@@ -237,7 +251,7 @@ function SandboxProfileEditor({ serverName, profile, isRunning, onSaved }: Sandb
               : 'bg-surface-border text-content-muted cursor-not-allowed'
           )}
         >
-          {saving ? 'Saving…' : 'Save sandbox profile'}
+          {saving ? 'Saving…' : needsReview ? 'Approve & start' : 'Save sandbox profile'}
         </button>
       </div>
     </div>
@@ -257,7 +271,7 @@ interface ServerCardProps {
 }
 
 function ServerCard({ info, config, onRestart, onRemove, onToggleTool, onToggleApproval, onConfigChanged }: ServerCardProps) {
-  const [expanded,   setExpanded]   = useState(false)
+  const [expanded,   setExpanded]   = useState(!!info.needsSandboxReview)
   const [restarting, setRestarting] = useState(false)
   const [removing,   setRemoving]   = useState(false)
 
@@ -832,6 +846,8 @@ export function McpToolsPanel() {
           Each running server exposes one or more tools the model can call.
         </p>
       </div>
+
+      <SandboxStatusPanel />
 
       {/* Server list */}
       <div className="space-y-2">
