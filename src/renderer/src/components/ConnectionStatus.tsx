@@ -1,7 +1,33 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Wifi, WifiOff, RefreshCw, AlertCircle } from 'lucide-react'
-import type { ModelStatus } from '../../../shared/types'
+import type { ModelStatus, BackendProvider } from '../../../shared/types'
+
+// Cloud backends never poll a local server — the main process returns a
+// synthetic 'ready' state for them, so the overlay must never appear.
+const CLOUD_PROVIDERS: readonly BackendProvider[] = ['nvidia', 'ollama', 'openrouter']
+
+const MTPLX_DEFAULT_BASE_URL = 'http://localhost:8000'
+
+/** Human-readable backend name shown in the overlay headings. */
+function providerLabel(provider: BackendProvider): string {
+  return provider === 'mtplx' ? 'MTPLX' : 'LM Studio'
+}
+
+/**
+ * host:port shown under "Polling …". LM Studio's port is fixed; MTPLX's is
+ * user-configurable, so it is derived from the saved base URL.
+ */
+function providerHostDisplay(provider: BackendProvider, mtplxBaseUrl: string): string {
+  if (provider !== 'mtplx') return 'localhost:1234'
+  try {
+    return new URL(mtplxBaseUrl || MTPLX_DEFAULT_BASE_URL).host
+  } catch {
+    // Unparseable saved value — fall back to the documented default rather
+    // than rendering a broken string.
+    return new URL(MTPLX_DEFAULT_BASE_URL).host
+  }
+}
 
 // ----------------------------------------------------------------
 // Phase variants for Framer Motion
@@ -47,7 +73,13 @@ function LoadingView() {
   )
 }
 
-function ConnectingView() {
+function ConnectingView({
+  label,
+  hostDisplay
+}: {
+  label:       string
+  hostDisplay: string
+}) {
   return (
     <div className="flex flex-col items-center gap-6">
       {/* Pulsing red orb */}
@@ -68,9 +100,9 @@ function ConnectingView() {
         </div>
       </div>
       <div className="text-center">
-        <h2 className="text-lg font-semibold text-content-primary">Connecting to LM Studio</h2>
+        <h2 className="text-lg font-semibold text-content-primary">Connecting to {label}</h2>
         <p className="text-sm text-content-tertiary mt-1">
-          Polling <span className="font-mono text-content-secondary">localhost:1234</span>
+          Polling <span className="font-mono text-content-secondary">{hostDisplay}</span>
         </p>
         <motion.div
           className="flex gap-1 justify-center mt-3"
@@ -94,10 +126,14 @@ function ConnectingView() {
 
 function OfflineView({
   error,
-  onRetry
+  onRetry,
+  provider,
+  label
 }: {
-  error:   string | null
-  onRetry: () => void
+  error:    string | null
+  onRetry:  () => void
+  provider: BackendProvider
+  label:    string
 }) {
   return (
     <div className="flex flex-col items-center gap-6">
@@ -111,7 +147,7 @@ function OfflineView({
       </motion.div>
 
       <div className="text-center max-w-xs">
-        <h2 className="text-lg font-semibold text-content-primary">LM Studio Offline</h2>
+        <h2 className="text-lg font-semibold text-content-primary">{label} Offline</h2>
         {error && (
           <p className="text-sm text-content-tertiary mt-2 leading-relaxed">{error}</p>
         )}
@@ -120,12 +156,24 @@ function OfflineView({
             <AlertCircle className="w-3 h-3 text-accent-500" />
             Quick fix
           </p>
-          <ol className="text-xs text-content-tertiary space-y-1 list-decimal list-inside">
-            <li>Open LM Studio</li>
-            <li>Go to <span className="font-mono text-content-secondary">Local Server</span> tab</li>
-            <li>Click <span className="font-mono text-content-secondary">Start Server</span></li>
-            <li>Load your model in the Local Server tab</li>
-          </ol>
+          {/* These are UI navigation steps for a specific app — they must match
+              the backend that is actually offline, not always LM Studio. */}
+          {provider === 'mtplx' ? (
+            <ol className="text-xs text-content-tertiary space-y-1 list-decimal list-inside">
+              <li>Open the MTPLX app</li>
+              <li>Click <span className="font-mono text-content-secondary">▶ Start serving</span></li>
+              <li>
+                Or run <span className="font-mono text-content-secondary">mtplx serve</span> from a terminal
+              </li>
+            </ol>
+          ) : (
+            <ol className="text-xs text-content-tertiary space-y-1 list-decimal list-inside">
+              <li>Open LM Studio</li>
+              <li>Go to <span className="font-mono text-content-secondary">Local Server</span> tab</li>
+              <li>Click <span className="font-mono text-content-secondary">Start Server</span></li>
+              <li>Load your model in the Local Server tab</li>
+            </ol>
+          )}
         </div>
       </div>
 
@@ -165,18 +213,26 @@ export function ConnectionStatus({
   error,
   onRetry
 }: ConnectionStatusProps) {
-  const [isNvidia, setIsNvidia] = useState(false)
+  const [provider, setProvider]         = useState<BackendProvider>('lmstudio')
+  const [mtplxBaseUrl, setMtplxBaseUrl] = useState(MTPLX_DEFAULT_BASE_URL)
 
   useEffect(() => {
     window.api.getBackendSettings()
-      .then((s) => setIsNvidia(s.provider === 'nvidia'))
+      .then((s) => {
+        setProvider(s.provider)
+        setMtplxBaseUrl(s.mtplxBaseUrl ?? MTPLX_DEFAULT_BASE_URL)
+      })
       .catch(() => {/* non-fatal */})
   }, [])
 
-  // When NVIDIA is the active backend, never show the LM Studio offline overlay.
-  // The main process returns a synthetic 'ready' state for NVIDIA, but there is
-  // a brief window on startup where the first poll hasn't resolved yet.
-  const isVisible = status !== 'ready' && !isNvidia
+  // Cloud backends never show this overlay. The main process returns a synthetic
+  // 'ready' state for them, but there is a brief window on startup — before the
+  // first getModelStatus() resolves — where status is still 'loading' and the
+  // overlay would otherwise flash the wrong backend's name.
+  const isVisible = status !== 'ready' && !CLOUD_PROVIDERS.includes(provider)
+
+  const label       = providerLabel(provider)
+  const hostDisplay = providerHostDisplay(provider, mtplxBaseUrl)
 
   return (
     <AnimatePresence mode="wait">
@@ -213,8 +269,10 @@ export function ConnectionStatus({
               style={{ boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03)' }}
             >
               {status === 'loading'    && <LoadingView />}
-              {status === 'connecting' && <ConnectingView />}
-              {status === 'offline'    && <OfflineView error={error} onRetry={onRetry} />}
+              {status === 'connecting' && <ConnectingView label={label} hostDisplay={hostDisplay} />}
+              {status === 'offline'    && (
+                <OfflineView error={error} onRetry={onRetry} provider={provider} label={label} />
+              )}
             </motion.div>
           </AnimatePresence>
 

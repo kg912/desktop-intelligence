@@ -210,6 +210,47 @@ describe('applyThinkingPrefix — multimodal messages', () => {
   })
 })
 
+// ── Suite: applyThinkingPrefix — provider skip-list ───────────────────────────
+//
+// /think and /no_think are Qwen/MLX soft-prompt tokens that only LM Studio's
+// runtime honours. Every other backend must receive the messages untouched:
+// NVIDIA/Ollama/OpenRouter have their own thinking switches, and MTPLX silently
+// IGNORES the tokens — they are echoed back to the user as literal text while
+// thinking runs regardless. MTPLX uses chat_template_kwargs.enable_thinking
+// on the request body instead.
+
+describe('applyThinkingPrefix — provider skip-list', () => {
+  const skipped = ['nvidia', 'ollama', 'openrouter', 'mtplx'] as const
+
+  for (const provider of skipped) {
+    it(`returns messages unchanged for "${provider}" in fast mode`, () => {
+      const msgs = [textMsg('user', 'hello')]
+      const result = applyThinkingPrefix(msgs, 'fast', 'qwen3-30b', provider)
+      expect(result).toBe(msgs)
+      expect(result[0].content).toBe('hello')
+    })
+
+    it(`returns messages unchanged for "${provider}" in thinking mode`, () => {
+      const msgs = [textMsg('user', 'hello')]
+      const result = applyThinkingPrefix(msgs, 'thinking', 'qwen3-30b', provider)
+      expect(result).toBe(msgs)
+      expect(result[0].content).toBe('hello')
+    })
+  }
+
+  it('still applies the prefix for LM Studio', () => {
+    const msgs = [textMsg('user', 'hello')]
+    const result = applyThinkingPrefix(msgs, 'fast', 'qwen3-30b', 'lmstudio')
+    expect(result[0].content).toBe('/no_think\nhello')
+  })
+
+  it('still applies the prefix when no provider is supplied (LM Studio default)', () => {
+    const msgs = [textMsg('user', 'hello')]
+    const result = applyThinkingPrefix(msgs, 'thinking', 'qwen3-30b')
+    expect(result[0].content).toBe('/think\nhello')
+  })
+})
+
 // ── Suite: STOP_SEQUENCES ─────────────────────────────────────────────────────
 //
 // Guards the EOS tokens that prevent generation past the natural end-of-turn

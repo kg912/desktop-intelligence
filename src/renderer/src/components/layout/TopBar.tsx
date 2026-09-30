@@ -46,6 +46,7 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
   const [isNvidia,    setIsNvidia]    = useState(false)
   const [isOllama,    setIsOllama]    = useState(false)
   const [isOpenRouter, setIsOpenRouter] = useState(false)
+  const [isMtplx,     setIsMtplx]     = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   const [isExporting,        setIsExporting]        = useState(false)
@@ -69,6 +70,7 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
         setIsNvidia(s.provider === 'nvidia')
         setIsOllama(s.provider === 'ollama')
         setIsOpenRouter(s.provider === 'openrouter')
+        setIsMtplx(s.provider === 'mtplx')
       })
       .catch(() => {/* non-fatal */})
   }, [])
@@ -223,8 +225,10 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
           </span>
         </div>
 
-        {/* Reload model button — hidden for cloud backends (Ollama, NVIDIA, OpenRouter) */}
-        {!isNvidia && !isOllama && !isOpenRouter && (
+        {/* Reload model button — LM Studio only. It drives the `lms` CLI, which is
+            skipped for every other backend (cloud providers and MTPLX alike), so
+            showing it there would be a silent no-op. */}
+        {!isNvidia && !isOllama && !isOpenRouter && !isMtplx && (
           <button
             onClick={handleReload}
             disabled={isBusy}
@@ -367,8 +371,9 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
               )}
             </div>
 
-            {/* Compact button — LM Studio only */}
-            {!isNvidia && !isOllama && !isOpenRouter && (
+            {/* Compact button — LM Studio only: CHAT_COMPACT posts to LM Studio's
+                hardcoded localhost:1234 endpoint, so it cannot serve MTPLX either. */}
+            {!isNvidia && !isOllama && !isOpenRouter && !isMtplx && (
               <button
                 onClick={handleCompact}
                 disabled={!canCompact}

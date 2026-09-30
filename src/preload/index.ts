@@ -65,6 +65,20 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.DAEMON_STATE_CHANGE, h)
   },
 
+  // ── MTPLX daemon ────────────────────────────────────────────
+  // Separate from the LM Studio daemon above — the two are independent.
+  getMtplxDaemonState: (): Promise<DaemonState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MTPLX_DAEMON_GET_STATE),
+
+  retryMtplxDaemon: (): Promise<DaemonState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MTPLX_DAEMON_RETRY),
+
+  onMtplxDaemonStateChange: (cb: (s: DaemonState) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, s: DaemonState): void => cb(s)
+    ipcRenderer.on(IPC_CHANNELS.MTPLX_DAEMON_STATE_CHANGE, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MTPLX_DAEMON_STATE_CHANGE, h)
+  },
+
   // ── Chat ────────────────────────────────────────────────────
   sendChatMessage: (payload: ChatSendPayload): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_SEND, payload),
@@ -166,6 +180,10 @@ const api = {
 
   getOllamaModels: (baseUrl?: string, apiKey?: string): Promise<{ models: string[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, baseUrl, apiKey),
+
+  // No apiKey parameter — MTPLX is a local server with no auth.
+  getMtplxModels: (baseUrl?: string): Promise<{ models: string[]; error: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_MTPLX_MODELS, baseUrl),
 
   getOpenRouterModels: (apiKey?: string): Promise<{ models: string[]; modalities: Record<string, string[]>; pricing: Record<string, { prompt: number | null; completion: number | null; cacheRead: number | null }>; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_MODELS, apiKey),
