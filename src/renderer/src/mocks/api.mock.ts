@@ -254,6 +254,12 @@ export const mockApi: ElectronAPI = {
     supported: true, ready: true, errors: [], warnings: [], baselineDenyRead: [], activePolicies: [],
   }),
 
+  obsListMultiAgentEvents: async () => [],
+  obsClearMultiAgentEvents: async () => {},
+  obsOpenMultiAgentEventsFile: async () => {},
+  getMultiAgentConfig: async () => ({ maxAgents: 4, budgetCapUsd: 0.5, models: { orchestrator: '', worker: '', reflection: '', synthesizer: '' }, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, hitlTimeoutMs: 300000, requirePermissions: true }),
+  saveMultiAgentConfig: async () => {},
+
   // ── Shell utilities ───────────────────────────────────────────
   openExternal: async (url: string) => { console.log('[mock] openExternal:', url) },
 

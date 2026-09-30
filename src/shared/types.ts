@@ -447,14 +447,218 @@ export const IPC_CHANNELS = {
   SANDBOX_VIOLATION_ALERT: 'sandbox:violationAlert',
   SANDBOX_GET_STATUS: 'sandbox:getStatus',
 
-  // ── Sandbox violations — observability panel (Phase 3) ────────────────────────
+  // ── Sandbox violations — observability panel (Phase 3) ────────
   OBS_LIST_SANDBOX_VIOLATIONS:  'obs:listSandboxViolations',
   OBS_CLEAR_SANDBOX_VIOLATIONS: 'obs:clearSandboxViolations',
   OBS_OPEN_SANDBOX_VIOLATIONS_FILE: 'obs:openSandboxViolationsFile',
+  OBS_LIST_MULTI_AGENT_EVENTS: 'obs:listMultiAgentEvents',
+  OBS_CLEAR_MULTI_AGENT_EVENTS: 'obs:clearMultiAgentEvents',
+  OBS_OPEN_MULTI_AGENT_EVENTS_FILE: 'obs:openMultiAgentEventsFile',
+
+  // ── Multi-Agent Orchestration ──────────────────────────────────────────────
+  MULTI_AGENT_START:          'multi-agent:start',
+  MULTI_AGENT_HITL_RESPOND:   'multi-agent:hitl-respond',
+  MULTI_AGENT_ABORT:          'multi-agent:abort',
+  MULTI_AGENT_SIDECAR_STATUS: 'multi-agent:sidecar-status',
+  MULTI_AGENT_GET_CONFIG: 'multi-agent:get-config',
+  MULTI_AGENT_SAVE_CONFIG: 'multi-agent:save-config',
+  MULTI_AGENT_EVENT:          'multi-agent:event',   // main → renderer push (AgentEvent)
 
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]
+
+// ── Multi-Agent Orchestration ─────────────────────────────────────────────────
+
+export type ConversationMode = 'single' | 'multi-agent'
+
+export type RunStatus = 'idle' | 'running' | 'paused_hitl' | 'completed' | 'failed'
+
+export type AgentStageType = 'orchestrator' | 'worker' | 'reflection' | 'synthesizer'
+
+export interface AgentStep {
+  id:    string          // e.g. "1.1", "1.2", "2.1"
+  label: string          // human-readable, e.g. "Market research"
+  stage: AgentStageType
+  role:  string          // display role for workers; same as stage for fixed roles
+  model: string          // OpenRouter model id
+  phase: number          // steps sharing a phase run in parallel; phases run in sequence
+}
+
+export interface MultiAgentConfig {
+  maxAgents:               number
+  budgetCapUsd:            number
+  models: {
+    orchestrator: string
+    worker:       string
+    reflection:   string
+    synthesizer:  string
+  }
+  reflectionPassThreshold: number   // 1–5, min score to pass without retry
+  maxRetriesPerAgent:      number
+  hitlTimeoutMs:           number
+  requirePermissions:      boolean  // HITL default for multi-agent runs
+}
+
+/**
+ * Multi-agent workers never create a sandbox themselves. This documents the
+ * Electron-owned boundary used for every proxied MCP tool request.
+ */
+export interface SandboxConfig {
+  backend: 'sandbox-service'
+  allowedDomains: string[]
+  allowWrite: string[]
+}
+
+export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
+  maxAgents:               4,
+  budgetCapUsd:            0.5,
+  models: {
+    orchestrator: '',
+    worker:       '',
+    reflection:   '',
+    synthesizer:  '',
+  },
+  reflectionPassThreshold: 3,
+  maxRetriesPerAgent:      2,
+  hitlTimeoutMs:           300000,
+  requirePermissions:      true,
+}
+
+// AgentEvent base envelope — every event carries these so the trace can be ordered and replayed.
+export interface AgentEventBase {
+  runId: string
+  seq:   number   // monotonically increasing per run, assigned by the sidecar
+  ts:    number   // epoch ms
+}
+
+export interface OrchestratorPlanEvent extends AgentEventBase {
+  type:  'orchestrator_plan'
+  steps: AgentStep[]
+}
+
+export interface AgentStartEvent extends AgentEventBase {
+  type:    'agent_start'
+  agentId: string
+  role:    string
+  model:   string
+}
+
+export interface AgentTokenEvent extends AgentEventBase {
+  type:    'agent_token'
+  agentId: string
+  token:   string
+}
+
+export interface AgentCompleteEvent extends AgentEventBase {
+  type:       'agent_complete'
+  agentId:    string
+  output:     string
+  tokenCount: number
+  costUsd:    number
+}
+
+export interface ReflectionStartEvent extends AgentEventBase {
+  type:    'reflection_start'
+  agentId: string
+}
+
+export interface ReflectionResultEvent extends AgentEventBase {
+  type:    'reflection_result'
+  agentId: string
+  score:   number
+  passed:  boolean
+  reason:  string
+}
+
+export interface RetryEvent extends AgentEventBase {
+  type:    'retry'
+  agentId: string
+  attempt: number
+  reason:  string
+}
+
+export interface HitlPauseEvent extends AgentEventBase {
+  type:       'hitl_pause'
+  agentId:    string
+  role:       string
+  toolName:   string
+  serverName: string
+  args:       Record<string, unknown>
+}
+
+export interface MultiAgentToolDefinition {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface HitlResumeEvent extends AgentEventBase {
+  type:     'hitl_resume'
+  agentId:  string
+  approved: boolean
+}
+
+export interface SynthesisStartEvent extends AgentEventBase {
+  type: 'synthesis_start'
+}
+
+export interface SynthesisTokenEvent extends AgentEventBase {
+  type:  'synthesis_token'
+  token: string
+}
+
+export interface TaskCompleteEvent extends AgentEventBase {
+  type:         'task_complete'
+  finalOutput:  string
+  totalCostUsd: number
+  totalTokens:  number
+}
+
+export interface TaskFailedEvent extends AgentEventBase {
+  type:             'task_failed'
+  reason:           string
+  partialOutputs?:  Record<string, string>
+}
+
+export type AgentEvent =
+  | OrchestratorPlanEvent
+  | AgentStartEvent
+  | AgentTokenEvent
+  | AgentCompleteEvent
+  | ReflectionStartEvent
+  | ReflectionResultEvent
+  | RetryEvent
+  | HitlPauseEvent
+  | HitlResumeEvent
+  | SynthesisStartEvent
+  | SynthesisTokenEvent
+  | TaskCompleteEvent
+  | TaskFailedEvent
+
+// Outbound type — Electron → sidecar HITL response
+export interface HitlResponse {
+  runId:    string
+  agentId:  string
+  approved: boolean
+  /** Electron-owned MCP result; never supplied by the renderer. */
+  result?: string
+}
+
+export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'error'
+
+export interface MultiAgentStartPayload {
+  chatId: string
+  task:   string
+  config: MultiAgentConfig
+  /** Electron supplies only currently-running MCP tool schemas. */
+  tools?: MultiAgentToolDefinition[]
+}
+
+// Phase 1 always returns the failure branch (sidecar not built yet).
+export type StartRunResult =
+  | { ok: true;  runId: string }
+  | { ok: false; reason: string }
 
 // --- LM Studio API shapes ---
 export interface LMStudioModelsResponse {
@@ -575,8 +779,6 @@ export interface StdioMcpServerConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
-  disabledTools?: string[]
-  requiresApproval?: boolean
   /**
    * Sandbox policy for this server's local process (Phase 1 retrofit,
    * SANDBOX_ARCHITECTURE_SPEC.html section 16). Its presence records that
@@ -587,9 +789,10 @@ export interface StdioMcpServerConfig {
   sandboxProfile?: {
     allowedDomains: string[]
     allowWrite: string[]
-    /** When true, explicitly opts out of sandboxing even if declared. */
     bypassSandbox?: boolean
   }
+  disabledTools?: string[]
+  requiresApproval?: boolean
 }
 
 /**
@@ -652,15 +855,6 @@ export interface McpToolPermissionResponse {
 
 // ── Sandbox violations (Phase 2, SANDBOX_ARCHITECTURE_SPEC.html section 11/16) ─
 
-/**
- * One denied filesystem/network operation observed via the sandbox's
- * violation log monitor. Matches the RagTrace* naming/shape convention
- * (flat, one-event-per-observation) rather than the per-chat-session
- * TraceEvent union in ObservabilityService — violations aren't tied to any
- * particular chat turn, so they're logged as standalone events (same
- * pattern as rag_ingest/rag_query/rag_eval), not appended to a session's
- * trace array.
- */
 /** Sandbox health + policy summary for Settings (SANDBOX_GET_STATUS). */
 export interface SandboxStatusInfo {
   /** Platform is supported by @anthropic-ai/sandbox-runtime. */
@@ -675,6 +869,15 @@ export interface SandboxStatusInfo {
   activePolicies: Array<{ allowedDomains: string[]; leases: number }>
 }
 
+/**
+ * One denied filesystem/network operation observed via the sandbox's
+ * violation log monitor. Matches the RagTrace* naming/shape convention
+ * (flat, one-event-per-observation) rather than the per-chat-session
+ * TraceEvent union in ObservabilityService — violations aren't tied to any
+ * particular chat turn, so they're logged as standalone events (same
+ * pattern as rag_ingest/rag_query/rag_eval), not appended to a session's
+ * trace array.
+ */
 export interface SandboxViolationTraceEvent {
   /** Which SrtBackend caller triggered this — e.g. 'python-worker' or 'mcp:<serverName>'. 'unknown' if unattributed. */
   source:    string
@@ -684,13 +887,6 @@ export interface SandboxViolationTraceEvent {
   timestamp: number
 }
 
-/**
- * One historical entry as returned by ObservabilityService.listSandboxViolations()
- * (Phase 3, spec section 11/16) — the persisted event plus whether it would
- * have triggered the in-app alert (same shouldAlertForViolation() check used
- * live), so the observability panel can badge credential-path denials
- * without duplicating that decision logic in the renderer.
- */
 export interface SandboxViolationLogEntry extends SandboxViolationTraceEvent {
   isCredential: boolean
 }

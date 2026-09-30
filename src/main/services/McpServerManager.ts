@@ -32,6 +32,7 @@ import type {
 import { isHttpMcpConfig } from '../../shared/types'
 import { sandboxService } from './sandbox/sandboxServiceInstance'
 import { memoryWatch } from './sandbox/ResourceGovernor'
+import type { SandboxViolationTraceEvent } from '../../shared/types'
 
 // RSS cap for sandboxed MCP stdio servers — lower than PythonWorkerService's
 // 1 GB since these are typically lightweight tool servers, not
@@ -149,6 +150,8 @@ export class McpServerManager extends EventEmitter {
   private pendingPermissions = new Map<string, PendingPermission>()
   private sessionAllowList     = new Set<string>()
   private bypassAllPermissions = false
+  /** Maps a currently-proxied MCP server call to its requesting worker. */
+  private activeMultiAgentWorkers = new Map<string, string>()
 
   // ── Config helpers ───────────────────────────────────────────
 
@@ -311,6 +314,33 @@ export class McpServerManager extends EventEmitter {
       .map((c) => ({ mimeType: c.mimeType ?? 'image/png', data: c.data! }))
 
     return { text, images, userNote: perm.userNote }
+  }
+
+  /**
+   * Multi-agent workers never receive an MCP transport. Electron executes on
+   * their behalf, and local stdio tools must have an explicit SRT profile.
+   */
+  async callToolForMultiAgent(serverName: string, toolName: string, args: Record<string, unknown>, chatId: string, agentId: string): Promise<McpToolResult> {
+    const entry = this.servers.get(serverName)
+    if (!entry) throw new Error(`MCP server "${serverName}" is not running`)
+    if (!isHttpMcpConfig(entry.config) && (!entry.config.sandboxProfile || entry.config.sandboxProfile.bypassSandbox)) {
+      throw new Error(`MCP server "${serverName}" has no active SandboxService profile for multi-agent execution`)
+    }
+    this.activeMultiAgentWorkers.set(serverName, agentId)
+    try {
+      return await this.callTool(serverName, toolName, args, chatId)
+    } finally {
+      this.activeMultiAgentWorkers.delete(serverName)
+    }
+  }
+
+  /** Attach the in-flight worker id to an OS-observed MCP sandbox denial. */
+  attributeMultiAgentViolation(violation: SandboxViolationTraceEvent): SandboxViolationTraceEvent {
+    const prefix = 'mcp:'
+    if (!violation.source.startsWith(prefix)) return violation
+    const serverName = violation.source.slice(prefix.length)
+    const agentId = this.activeMultiAgentWorkers.get(serverName)
+    return agentId ? { ...violation, source: `multi-agent:${agentId}:${violation.source}` } : violation
   }
 
   // ── Permission resolution (called by IPC handler) ────────────

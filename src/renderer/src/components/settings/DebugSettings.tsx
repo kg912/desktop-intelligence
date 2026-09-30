@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { FolderOpen, Trash2, ShieldAlert } from 'lucide-react'
-import type { SessionEntry } from '../../../../main/services/ObservabilityService'
+import type { MultiAgentTraceLogEntry, SessionEntry } from '../../../../main/services/ObservabilityService'
 import type { SandboxViolationLogEntry } from '../../../../shared/types'
 
 function Toggle({
@@ -89,6 +89,7 @@ export function DebugSettings() {
 
   const [violations,        setViolations]        = useState<SandboxViolationLogEntry[]>([])
   const [confirmClearViolations, setConfirmClearViolations] = useState(false)
+  const [multiAgentEvents, setMultiAgentEvents] = useState<MultiAgentTraceLogEntry[]>([])
 
   const refreshStats = useCallback(async () => {
     const [list, bytes] = await Promise.all([
@@ -104,6 +105,10 @@ export function DebugSettings() {
     setViolations(await window.api.obsListSandboxViolations())
   }, [])
 
+  const refreshMultiAgentEvents = useCallback(async () => {
+    setMultiAgentEvents(await window.api.obsListMultiAgentEvents())
+  }, [])
+
   useEffect(() => {
     window.api.obsGetPrefs()
       .then((prefs) => {
@@ -113,7 +118,8 @@ export function DebugSettings() {
       .catch(console.error)
     refreshStats().catch(console.error)
     refreshViolations().catch(console.error)
-  }, [refreshStats, refreshViolations])
+    refreshMultiAgentEvents().catch(console.error)
+  }, [refreshStats, refreshViolations, refreshMultiAgentEvents])
 
   const handleObsToggle = (v: boolean) => {
     setObservabilityEnabled(v)
@@ -329,6 +335,17 @@ export function DebugSettings() {
               Clear All Logs
             </button>
           )}
+        </div>
+      </div>
+
+      {/* ── Multi-agent execution trace (Phase 4) ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] font-semibold tracking-widest uppercase text-content-muted">Multi-Agent Execution Trace</p>
+          <button onClick={() => void window.api.obsOpenMultiAgentEventsFile()} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-surface-border text-content-secondary hover:text-content-primary"><FolderOpen className="w-3 h-3" />Open</button>
+        </div>
+        <div className="rounded-xl border border-surface-border/40 overflow-hidden" style={{ background: '#111' }}>
+          {multiAgentEvents.length === 0 ? <div className="py-6 px-4 text-xs text-content-muted text-center">No multi-agent events recorded.</div> : multiAgentEvents.slice(0, 25).map((entry, index) => <div key={`${entry.event.runId}-${entry.event.seq}-${index}`} className={`flex items-center gap-3 px-4 py-2 text-xs ${index < Math.min(multiAgentEvents.length, 25) - 1 ? 'border-b border-surface-border/20' : ''}`}><span className="font-mono text-content-muted w-14">#{entry.event.seq}</span><span className="font-mono text-accent-300 w-32 truncate">{entry.event.type}</span><span className="text-content-secondary flex-1 truncate">{entry.event.type === 'agent_start' ? `${entry.event.role} (${entry.event.agentId})` : entry.event.type === 'hitl_pause' ? `${entry.event.role} → ${entry.event.serverName}:${entry.event.toolName}` : entry.chatId}</span></div>)}
         </div>
       </div>
 

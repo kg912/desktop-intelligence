@@ -44,8 +44,13 @@ import type {
   CompactPayload,
   CompactResult,
   ExportChatPdfResult,
+  MultiAgentStartPayload,
+  MultiAgentConfig,
+  HitlResponse,
 } from '../../shared/types'
-import { DEFAULT_MODEL_ID } from '../../shared/types'
+import { multiAgentSidecar } from '../services/MultiAgentSidecarManager'
+import { mcpServerManager } from '../services/McpServerManager'
+import { DEFAULT_MODEL_ID, DEFAULT_MULTI_AGENT_CONFIG } from '../../shared/types'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
 
@@ -1464,6 +1469,18 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.SANDBOX_GET_STATUS, async () => getSandboxStatus())
 
+  ipcMain.handle(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_EVENTS, async () =>
+    observabilityService.listMultiAgentEvents()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_CLEAR_MULTI_AGENT_EVENTS, async (): Promise<void> =>
+    observabilityService.clearMultiAgentEvents()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_EVENTS_FILE, async (): Promise<void> =>
+    observabilityService.openMultiAgentEventsFile()
+  )
+
   // ── Per-chat system instructions ────────────────────────────────
   ipcMain.handle('chat:get-system-instructions', (_event, chatId: string) => {
     return getChatSystemInstructions(chatId)
@@ -1471,6 +1488,52 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle('chat:set-system-instructions', (_event, chatId: string, text: string) => {
     setChatSystemInstructions(chatId, text)
+  })
+
+  // ── Multi-Agent Orchestration ──────────────────────────────────────────────
+  // MULTI_AGENT_EVENT is a push channel (main → renderer); the renderer
+  // subscribes via preload.onMultiAgentEvent. Phase 2 adds the emission seam
+  // here once the sidecar SSE stream exists — no ipcMain.handle for it now.
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, async (_, payload: MultiAgentStartPayload) => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const defaultModel = readSettings().openrouterModel ?? ''
+    return multiAgentSidecar.startRun({
+      ...payload,
+      config: {
+        ...payload.config,
+        models: Object.fromEntries(Object.entries(payload.config.models).map(([role, model]) => [role, model || defaultModel])) as MultiAgentStartPayload['config']['models'],
+      },
+      tools: mcpServerManager.getToolSchemas().map((tool) => ({
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters as unknown as Record<string, unknown>,
+      })),
+    })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: HitlResponse) =>
+    multiAgentSidecar.respondHitl(r)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ABORT, (_, runId: string) =>
+    multiAgentSidecar.abortRun(runId)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>
+    multiAgentSidecar.getStatus()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG, async (): Promise<MultiAgentConfig> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const saved = readSettings().multiAgentConfig
+    return { ...DEFAULT_MULTI_AGENT_CONFIG, ...saved,
+      models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, ...saved?.models } }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, async (_, config: MultiAgentConfig): Promise<void> => {
+    const { writeSettings } = await import('../services/SettingsStore')
+    writeSettings({ multiAgentConfig: config })
   })
 
 }

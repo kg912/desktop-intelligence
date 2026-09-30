@@ -43,11 +43,13 @@ import { isStreamingSignal } from '../../renderer/src/signals/chatSignals'
 // Mock Electron IPC bridge on existing window object without overwriting it!
 const mockSetBypassPermissions = vi.fn().mockResolvedValue(undefined)
 const mockGetFilePath = vi.fn().mockImplementation((file: any) => file.path || `/mock/${file.name}`)
+const mockGetBackendSettings = vi.fn().mockResolvedValue({ provider: 'lmstudio' })
 
 if (typeof window !== 'undefined') {
   (window as any).api = {
     setBypassPermissions: (...args: any[]) => mockSetBypassPermissions(...args),
     getFilePath: (...args: any[]) => mockGetFilePath(...args),
+    getBackendSettings: (...args: any[]) => mockGetBackendSettings(...args),
   }
 }
 
@@ -488,4 +490,3 @@ describe('InputBar', () => {
     }
   })
 })
-

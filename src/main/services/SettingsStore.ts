@@ -15,7 +15,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import type { BackendProvider } from '../../shared/types'
+import type { BackendProvider, MultiAgentConfig } from '../../shared/types'
 
 export interface AppSettings {
   /** Context length (n_ctx) to use when loading the model. */
@@ -79,6 +79,8 @@ export interface AppSettings {
    * events lightweight. Default: false.
    */
   ragVerboseTrace?: boolean
+  /** Persistent defaults for OpenRouter multi-agent runs. */
+  multiAgentConfig?: MultiAgentConfig
 }
 
 function settingsPath(): string {

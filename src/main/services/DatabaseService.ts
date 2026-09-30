@@ -20,11 +20,28 @@
 import Database from 'better-sqlite3'
 import { app }  from 'electron'
 import path     from 'path'
-import type { Chat, StoredMessage } from '../../shared/types'
+import type { AgentEvent, AgentStep, Chat, RunStatus, StoredMessage } from '../../shared/types'
 import { ensureVecLoaded, isVecAvailable } from './rag/sqliteVecLoader'
 import { EMBEDDING_DIM } from './EmbeddingService'
 
 let _db: Database.Database | null = null
+
+/**
+ * Multi-Agent Phase 1 — adds run-persistence columns to the chats table.
+ * Additive, try/catch-guarded, idempotent (runs every launch).
+ * NOTE: chats.mode ('single' | 'multi-agent') is unrelated to documents.mode
+ *       ('inline' | 'indexed') — different table, different meaning.
+ */
+export function applyMultiAgentMigration(db: Database.Database): void {
+  // mode: which kind of conversation this is. Existing chats backfill to 'single'.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'`) } catch { /* column already exists */ }
+  // run_status: lifecycle of the most recent multi-agent run on this chat.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN run_status TEXT NOT NULL DEFAULT 'idle'`) } catch { /* column already exists */ }
+  // agent_graph: JSON-encoded AgentStep[] (the orchestrator plan). NULL for single-mode chats.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN agent_graph TEXT`) } catch { /* column already exists */ }
+  // execution_trace: JSON-encoded ordered AgentEvent[] for replay. NULL until a run produces one.
+  try { db.exec(`ALTER TABLE chats ADD COLUMN execution_trace TEXT`) } catch { /* column already exists */ }
+}
 
 export function getDB(): Database.Database {
   if (_db) return _db
@@ -147,6 +164,9 @@ export function getDB(): Database.Database {
 
   // Starred chats — pinned to the top of the sidebar
   try { _db.exec(`ALTER TABLE chats ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`) } catch { /* already exists */ }
+
+  // Multi-Agent Orchestration Phase 1 — run-persistence columns on chats
+  applyMultiAgentMigration(_db)
 
   // ── RAG v2 Phase 1 — load sqlite-vec extension (before migration) ────────────
   // Must run on every launch so that if the extension was unavailable on a prior
@@ -315,6 +335,58 @@ export function createChat(id: string, title: string): Chat {
 
 export function starChatById(chatId: string, starred: boolean): void {
   getDB().prepare('UPDATE chats SET starred = ? WHERE id = ?').run(starred ? 1 : 0, chatId)
+}
+
+export interface MultiAgentRunRecord {
+  mode: 'single' | 'multi-agent'
+  runStatus: RunStatus
+  agentGraph: AgentStep[]
+  executionTrace: AgentEvent[]
+}
+
+/** Persist the plan before workers start, replacing any stale replay trace. */
+export function beginMultiAgentRun(chatId: string, steps: AgentStep[] = []): void {
+  getDB().prepare(`
+    UPDATE chats
+    SET mode = 'multi-agent', run_status = 'running', agent_graph = ?, execution_trace = ?, updated_at = ?
+    WHERE id = ?
+  `).run(JSON.stringify(steps), JSON.stringify([]), Date.now(), chatId)
+}
+
+/** Append one validated event in sequence order; malformed historical JSON is safely reset. */
+export function appendMultiAgentEvent(chatId: string, event: AgentEvent): void {
+  const db = getDB()
+  const row = db.prepare('SELECT execution_trace FROM chats WHERE id = ?').get(chatId) as { execution_trace?: string | null } | undefined
+  let trace: AgentEvent[] = []
+  try { trace = row?.execution_trace ? JSON.parse(row.execution_trace) as AgentEvent[] : [] } catch { /* reset corrupted replay data */ }
+  trace.push(event)
+  trace.sort((a, b) => a.seq - b.seq)
+  const status: RunStatus = event.type === 'task_complete' ? 'completed'
+    : event.type === 'task_failed' ? 'failed'
+    : event.type === 'hitl_pause' ? 'paused_hitl'
+    : event.type === 'hitl_resume' ? 'running'
+    : 'running'
+  const graph = event.type === 'orchestrator_plan' ? JSON.stringify(event.steps) : undefined
+  db.prepare(`
+    UPDATE chats
+    SET run_status = ?, execution_trace = ?, agent_graph = COALESCE(?, agent_graph), updated_at = ?
+    WHERE id = ?
+  `).run(status, JSON.stringify(trace), graph, Date.now(), chatId)
+}
+
+export function getMultiAgentRun(chatId: string): MultiAgentRunRecord | null {
+  const row = getDB().prepare('SELECT mode, run_status, agent_graph, execution_trace FROM chats WHERE id = ?').get(chatId) as {
+    mode: 'single' | 'multi-agent'; run_status: RunStatus; agent_graph?: string | null; execution_trace?: string | null
+  } | undefined
+  if (!row) return null
+  try {
+    return {
+      mode: row.mode,
+      runStatus: row.run_status,
+      agentGraph: row.agent_graph ? JSON.parse(row.agent_graph) as AgentStep[] : [],
+      executionTrace: row.execution_trace ? JSON.parse(row.execution_trace) as AgentEvent[] : [],
+    }
+  } catch { return { mode: row.mode, runStatus: row.run_status, agentGraph: [], executionTrace: [] } }
 }
 
 export function getChatMessages(chatId: string): StoredMessage[] {

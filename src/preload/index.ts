@@ -2,7 +2,7 @@
  * Preload — contextBridge surface exposed as window.api
  * Every method typed; no raw ipcRenderer exposed.
  */
-import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, shell, webUtils, webFrame } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import type {
   ConnectionState,
@@ -28,8 +28,14 @@ import type {
   SandboxViolationTraceEvent,
   SandboxStatusInfo,
   SandboxViolationLogEntry,
+  MultiAgentStartPayload,
+  StartRunResult,
+  SidecarStatus,
+  HitlResponse,
+  AgentEvent,
+  MultiAgentConfig,
 } from '../shared/types'
-import type { DebugPrefs, SessionEntry, ObsEvent } from '../main/services/ObservabilityService'
+import type { DebugPrefs, SessionEntry, ObsEvent, MultiAgentTraceLogEntry } from '../main/services/ObservabilityService'
 
 const api = {
   // ── Model Connection ────────────────────────────────────────
@@ -265,6 +271,15 @@ const api = {
   getSandboxStatus: (): Promise<SandboxStatusInfo> =>
     ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_GET_STATUS),
 
+  obsListMultiAgentEvents: (): Promise<MultiAgentTraceLogEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_EVENTS),
+
+  obsClearMultiAgentEvents: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_CLEAR_MULTI_AGENT_EVENTS),
+
+  obsOpenMultiAgentEventsFile: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_EVENTS_FILE),
+
   // ── Suggestion cards ─────────────────────────────────────────
   getSuggestions: (): Promise<string[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_SUGGESTIONS),
@@ -314,6 +329,31 @@ const api = {
     RERANKER_MODEL_ID: string
   }> =>
     ipcRenderer.invoke(IPC_CHANNELS.RAG_GET_CONFIG),
+
+  // ── Multi-Agent Orchestration ──────────────────────────────────────────────
+  startMultiAgentRun: (payload: MultiAgentStartPayload): Promise<StartRunResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_START, payload),
+
+  respondMultiAgentHitl: (r: HitlResponse): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, r),
+
+  abortMultiAgentRun: (runId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ABORT, runId),
+
+  getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS),
+
+  getMultiAgentConfig: (): Promise<MultiAgentConfig> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG),
+
+  saveMultiAgentConfig: (config: MultiAgentConfig): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, config),
+
+  onMultiAgentEvent: (cb: (e: AgentEvent) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, e: AgentEvent): void => cb(e)
+    ipcRenderer.on(IPC_CHANNELS.MULTI_AGENT_EVENT, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MULTI_AGENT_EVENT, h)
+  },
 
   // ── Shell utilities ──────────────────────────────────────────
   openExternal: (url: string): Promise<void> => shell.openExternal(url),
@@ -380,6 +420,9 @@ const api = {
   // all messages (including async Mermaid/ECharts renders) have settled.
   notifyPrintReady: (): void =>
     ipcRenderer.send(IPC_CHANNELS.CHAT_EXPORT_PDF_READY),
+  // ── Zoom Utilities ───────────────────────────────────────────
+  getZoomLevel: (): number => webFrame.getZoomLevel(),
+  setZoomLevel: (level: number): void => webFrame.setZoomLevel(level),
 }
 
 contextBridge.exposeInMainWorld('api', api)

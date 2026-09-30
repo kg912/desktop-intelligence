@@ -19,6 +19,7 @@ vi.mock('electron', () => ({
 }))
 
 export const mockWriteFile = vi.fn().mockResolvedValue(undefined)
+export const mockAppendFile = vi.fn().mockResolvedValue(undefined)
 export const mockMkdir = vi.fn().mockResolvedValue(undefined)
 export const mockReaddir = vi.fn().mockResolvedValue([])
 export const mockReadFile = vi.fn().mockResolvedValue('{}')
@@ -29,6 +30,7 @@ export const mockStat = vi.fn().mockResolvedValue({ size: 100 })
 vi.mock('fs/promises', () => ({
   default: {
     writeFile: (...args: any[]) => mockWriteFile(...args),
+    appendFile: (...args: any[]) => mockAppendFile(...args),
     mkdir: (...args: any[]) => mockMkdir(...args),
     readdir: (...args: any[]) => mockReaddir(...args),
     readFile: (...args: any[]) => mockReadFile(...args),
@@ -197,6 +199,33 @@ describe('ObservabilityService', () => {
         ext: 'png',
         base64: 'xyz',
       })
+    })
+  })
+
+  describe('Multi-agent trace persistence', () => {
+    it('writes a validated multi-agent event outside a ChatService session', async () => {
+      const obs = new ObservabilityService()
+      obs.emitMultiAgentEvent('chat-1', {
+        runId: 'run-1', seq: 1, ts: 1, type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'test/model',
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(mockMkdir).toHaveBeenCalled()
+      expect(mockAppendFile).toHaveBeenCalledWith(
+        expect.stringContaining('multi-agent-events.jsonl'),
+        expect.stringContaining('"chatId":"chat-1"'),
+        'utf8',
+      )
+    })
+
+    it('lists valid multi-agent trace entries newest first and skips corrupt lines', async () => {
+      mockReadFile.mockResolvedValueOnce([
+        'not-json',
+        JSON.stringify({ chatId: 'old', event: { runId: 'r', seq: 1, ts: 1, type: 'synthesis_token', token: 'a' } }),
+        JSON.stringify({ chatId: 'new', event: { runId: 'r', seq: 2, ts: 2, type: 'task_complete', finalOutput: 'ok', totalCostUsd: 0, totalTokens: 1 } }),
+      ].join('\n'))
+      const entries = await new ObservabilityService().listMultiAgentEvents()
+      expect(entries.map((entry) => entry.chatId)).toEqual(['new', 'old'])
     })
   })
 

@@ -969,9 +969,9 @@
           <div class="decision-reason">No curated shortlist — too much maintenance burden. Fetch /api/v1/models at runtime, filter by tool-call support + context length. Show price/1M tokens. Default: Llama 3.3 70B for orchestrator + reflection; user picks worker model.</div>
         </div>
         <div class="decision-card">
-          <div class="decision-label">Sandboxing (code execution)</div>
-          <div class="decision-value">Docker (opt-in, Phase 2)</div>
-          <div class="decision-reason">E2B considered but adds cloud dependency and ongoing cost. Docker runs locally, no data leaves machine, user brings their own Docker Desktop. Not required for MVP — agents can read via Filesystem MCP without execution.</div>
+          <div class="decision-label">Sandboxing (worker tool execution)</div>
+          <div class="decision-value">Electron SandboxService proxy</div>
+          <div class="decision-reason">The LangGraph sidecar has no host shell or MCP transport. It requests namespaced MCP tools over localhost; Electron proxies them through SandboxService and McpServerManager, preserving one enforcement point and one audit trail.</div>
         </div>
         <div class="decision-card">
           <div class="decision-label">Per-chat system prompt</div>
@@ -1619,14 +1619,14 @@ InputBar (ma-mode toggle)             multi-agent:sidecar-status
  
     <hr>
  
-    <!-- DOCKER SANDBOXING -->
+    <!-- SANDBOX SERVICE PROXY — supersedes the original Docker proposal -->
     <section id="sandbox">
-      <h2><span class="section-num">10</span> Docker Sandboxing (Phase 2)</h2>
+      <h2><span class="section-num">10</span> SandboxService Proxy</h2>
  
-      <p>Without sandboxing, agents doing real work — cloning repos, running code, writing files — operate directly on the host machine. One hallucinated path causes real damage. Sandboxing provides an isolated, ephemeral environment where agents can execute freely and fail safely.</p>
+      <p>The original Docker proposal is superseded. Worker-agent tool calls are executed only by Electron's existing <code>SandboxService</code> and <code>McpServerManager</code> proxy. The sidecar has no host shell, filesystem transport, or sandbox-runtime dependency.</p>
  
       <div class="callout callout-yellow">
-        <strong>Phase 2 only.</strong> MVP ships without Docker sandboxing. Agents read local files via the existing Filesystem MCP (already restricted to allowed directories), do web research, and call APIs. That's already more capable than any frontier product. Docker execution is added as an opt-in capability flag in Phase 2.
+        <strong>One enforcement point.</strong> Every worker tool request is namespaced as <code>server__tool</code>, paused as a HITL event, then proxied by Electron through the configured <code>SandboxService</code> profile. Baseline-denied paths produce a <code>sandbox_violation</code> tagged with the requesting worker.
       </div>
  
       <h3>Why Docker over alternatives</h3>
