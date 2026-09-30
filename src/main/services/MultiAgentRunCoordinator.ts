@@ -142,7 +142,7 @@ export class MultiAgentRunCoordinator {
     for (const model of new Set(Object.values(models))) {
       const info = known.get(model)
       if (info?.promptPrice != null && info.completionPrice != null) {
-        pricing[model] = { prompt: info.promptPrice, completion: info.completionPrice }
+        pricing[model] = { prompt: info.promptPrice, completion: info.completionPrice, contextLength: info.contextLength }
       }
     }
 

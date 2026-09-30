@@ -77,6 +77,8 @@ export const ESTIMATE = {
 export interface ModelPricing {
   prompt: number
   completion: number
+  /** Model context window in tokens (0 = unknown). Caps max_tokens in the sidecar. */
+  contextLength?: number
 }
 
 export interface CostEstimate {

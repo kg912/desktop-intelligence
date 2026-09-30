@@ -91,8 +91,8 @@ describe('MultiAgentRunCoordinator.start', () => {
       synthesizer: 'active/model',
     })
     expect(sent.pricing).toEqual({
-      'meta-llama/llama-3.3-70b-instruct': { prompt: 1e-6, completion: 2e-6 },
-      'active/model': { prompt: 3e-6, completion: 4e-6 },
+      'meta-llama/llama-3.3-70b-instruct': { prompt: 1e-6, completion: 2e-6, contextLength: 128000 },
+      'active/model': { prompt: 3e-6, completion: 4e-6, contextLength: 128000 },
     })
     expect(sent.tools).toEqual([expect.objectContaining({ name: 'fs__read' })])
     expect(sent.openRouterApiKey).toBe('sk-or-1')

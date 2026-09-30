@@ -52,11 +52,15 @@ RUN_RETENTION_S = 600
 SYNTHESIS_RESERVE_PROMPT_TOKENS = 6_000
 SYNTHESIS_RESERVE_COMPLETION_TOKENS = 1_500
 SYNTHESIS_MAX_COMPLETION_TOKENS = 2_000
+# Budget alone can imply millions of tokens on cheap models; providers 400 when
+# max_tokens exceeds the context window. Hard ceiling when context is unknown.
+MAX_COMPLETION_TOKENS = 32_768
 
 
 class Pricing(BaseModel):
     prompt: float = Field(ge=0)
     completion: float = Field(ge=0)
+    contextLength: int = Field(default=0, ge=0)  # 0 = unknown
 
 
 class Config(BaseModel):
@@ -193,8 +197,12 @@ class Run:
         if not p or p.completion == 0:
             return (SYNTHESIS_MAX_COMPLETION_TOKENS if synthesis else None), 0.0
         allowance = self.config.budgetCapUsd - self.total_cost - self.reserved - (0.0 if synthesis else self.synthesis_reserve())
-        prompt_cost = estimate_tokens(json.dumps(messages)) * p.prompt
+        prompt_tokens = estimate_tokens(json.dumps(messages))
+        prompt_cost = prompt_tokens * p.prompt
         tokens = math.floor((allowance - prompt_cost) / p.completion)
+        tokens = min(tokens, MAX_COMPLETION_TOKENS)
+        if p.contextLength:  # 1.25x: estimate_tokens is len/4, real tokenisers can run denser
+            tokens = min(tokens, p.contextLength - math.ceil(prompt_tokens * 1.25))
         if synthesis:
             tokens = min(tokens, SYNTHESIS_MAX_COMPLETION_TOKENS)
         return tokens, prompt_cost + max(tokens, 0) * p.completion
