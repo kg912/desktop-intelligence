@@ -228,3 +228,43 @@ describe('applyMultiAgentMigration', () => {
     })
   })
 })
+
+// ── Run persistence (begin / saveMultiAgentTrace / getMultiAgentRun) ─────────
+
+import { beginMultiAgentRun, getMultiAgentRun, saveMultiAgentTrace } from '../DatabaseService'
+import type { AgentEvent, AgentStep } from '../../../shared/types'
+
+describe('multi-agent run persistence', () => {
+  const steps: AgentStep[] = [{ id: '1.1', label: 'x', stage: 'worker', role: 'R', model: 'm', phase: 1 }]
+  const trace: AgentEvent[] = [
+    { runId: 'r', seq: 1, ts: 1, type: 'orchestrator_plan', steps },
+    { runId: 'r', seq: 2, ts: 2, type: 'task_complete', finalOutput: 'done', totalCostUsd: 0.01, totalTokens: 5 },
+  ]
+  function seeded(): Database.Database {
+    const db = makeDb()
+    applyMultiAgentMigration(db)
+    db.prepare('INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run('chat-1', 't', 1, 1)
+    return db
+  }
+
+  it('begin marks the chat multi-agent and running with an empty trace', () => {
+    const db = seeded()
+    beginMultiAgentRun('chat-1', [], db)
+    expect(getMultiAgentRun('chat-1', db)).toEqual({ mode: 'multi-agent', runStatus: 'running', agentGraph: [], executionTrace: [] })
+  })
+
+  it('saves the whole trace, status and plan in one statement, and keeps the plan when omitted', () => {
+    const db = seeded()
+    beginMultiAgentRun('chat-1', [], db)
+    saveMultiAgentTrace('chat-1', trace.slice(0, 1), 'running', steps, db)
+    saveMultiAgentTrace('chat-1', trace, 'completed', undefined, db)
+    expect(getMultiAgentRun('chat-1', db)).toEqual({ mode: 'multi-agent', runStatus: 'completed', agentGraph: steps, executionTrace: trace })
+  })
+
+  it('returns null for an unknown chat and survives a corrupted trace', () => {
+    const db = seeded()
+    expect(getMultiAgentRun('nope', db)).toBeNull()
+    db.prepare(`UPDATE chats SET mode = 'multi-agent', execution_trace = '{not json' WHERE id = 'chat-1'`).run()
+    expect(getMultiAgentRun('chat-1', db)).toMatchObject({ mode: 'multi-agent', executionTrace: [] })
+  })
+})

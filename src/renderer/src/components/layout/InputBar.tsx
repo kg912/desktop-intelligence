@@ -131,6 +131,8 @@ export interface InputBarProps {
   attachments?: Attachment[]
   onAttachments?: (a: Attachment[]) => void
   mcpActivity?: { serverName: string; toolName: string } | null
+  /** Shown while `disabled` — e.g. the multi-agent layout state ("Agents running…"). */
+  lockedMessage?: string | null
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
@@ -143,12 +145,14 @@ export const InputBar = memo(function InputBar({
   attachments: externalAttachments,
   onAttachments,
   mcpActivity = null,
+  lockedMessage = null,
 }: InputBarProps) {
   useSignals();
   const isStreaming = isStreamingSignal.value
   const { thinkingMode, setThinkingMode, multiAgentMode, setMultiAgentMode } = useModelStore();
   const textAreaSignal = useSignal('');
-  const [isOpenRouter, setIsOpenRouter] = useState(false)
+  // null until the backend is known — so an unresolved probe never resets the mode.
+  const [isOpenRouter, setIsOpenRouter] = useState<boolean | null>(null)
   const [localAttachments, setLocalAttachments] = useState<Attachment[]>([])
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [sizeError, setSizeError] = useState<string | null>(null)
@@ -172,6 +176,25 @@ export const InputBar = memo(function InputBar({
       @keyframes ma-pulse-kf {
         from { box-shadow: 0 0 0px 0px rgba(229, 57, 53, 0); }
         to   { box-shadow: 0 0 8px 2px rgba(229, 57, 53, 0.25); }
+      }
+      /* Multi-agent breathing glow: the shadow is painted once on a layer and
+         only its opacity animates (compositor-only — no per-frame repaint). */
+      @keyframes ma-breathe-kf {
+        from { opacity: 0.3; }
+        to   { opacity: 1; }
+      }
+      .ma-breathe::after {
+        content: '';
+        position: absolute;
+        inset: -1px;
+        border-radius: inherit;
+        pointer-events: none;
+        box-shadow: 0 0 0 1px rgba(220,38,38,0.55), 0 0 22px rgba(220,38,38,0.28);
+        animation: ma-breathe-kf 2.4s ease-in-out infinite alternate;
+        will-change: opacity;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ma-breathe::after { animation: none; opacity: 0.7; }
       }
       .ma-pulse {
         animation: ma-pulse-kf 1.8s ease-in-out infinite alternate;
@@ -247,6 +270,12 @@ export const InputBar = memo(function InputBar({
       .then((s) => setIsOpenRouter(s.provider === 'openrouter'))
       .catch(() => {/* non-fatal */})
   }, [])
+
+  // Multi-agent is OpenRouter-only (spec D10): a stale toggle from an earlier
+  // OpenRouter session must never start a run on another backend.
+  useEffect(() => {
+    if (isOpenRouter === false && multiAgentMode) setMultiAgentMode(false)
+  }, [isOpenRouter, multiAgentMode, setMultiAgentMode])
 
   useEffect(() => {
     return () => {
@@ -417,10 +446,11 @@ export const InputBar = memo(function InputBar({
       <div className="flex items-end gap-2 px-3 py-3">
         <button
           onClick={() => fileInputRef.current?.click()}
+          disabled={multiAgentMode}
           className="flex-shrink-0 p-1.5 rounded-lg text-content-muted hover:text-content-secondary
-                     hover:bg-surface-hover transition-colors duration-100
+                     hover:bg-surface-hover transition-colors duration-100 disabled:opacity-30 disabled:pointer-events-none
                      focus:outline-none focus:ring-1 focus:ring-accent-900/40 self-end mb-px"
-          title="Attach file or image"
+          title={multiAgentMode ? 'Multi-agent runs do not take attachments' : 'Attach file or image'}
         >
           <Paperclip className="w-4 h-4" />
         </button>
@@ -481,7 +511,7 @@ export const InputBar = memo(function InputBar({
             <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
           </button>
           <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
-          {isOpenRouter && (
+          {isOpenRouter === true && (
             <MultiAgentModeButton active={multiAgentMode} onToggle={setMultiAgentMode} />
           )}
         </div>
@@ -527,15 +557,31 @@ export const InputBar = memo(function InputBar({
             'relative rounded-2xl border transition-all duration-200 bg-surface-DEFAULT',
             isDraggingOver
               ? 'border-accent-700/70'
-              : 'border-surface-border hover:border-surface-border/80',
+              : multiAgentMode && !disabled
+                ? 'border-accent-800/70 ma-breathe'
+                : 'border-surface-border hover:border-surface-border/80',
             disabled && 'opacity-50 pointer-events-none'
           )}
-          style={{
-            boxShadow: isDraggingOver
-              ? '0 0 0 1px rgba(185,28,28,0.4), 0 0 20px rgba(139,0,0,0.2)'
-              : '0 -1px 32px rgba(0,0,0,0.3)'
-          }}
+          style={
+            multiAgentMode && !disabled && !isDraggingOver
+              ? undefined // the breathing animation owns box-shadow
+              : {
+                  boxShadow: isDraggingOver
+                    ? '0 0 0 1px rgba(185,28,28,0.4), 0 0 20px rgba(139,0,0,0.2)'
+                    : '0 -1px 32px rgba(0,0,0,0.3)'
+                }
+          }
         >
+          {disabled && lockedMessage && (
+            <div
+              className="flex items-center gap-2 px-4 pt-2.5 text-[11px] text-accent-300"
+              role="status"
+              data-testid="input-locked-message"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-accent-500 animate-pulse" />
+              {lockedMessage}
+            </div>
+          )}
           {innerContent}
         </div>
       )}

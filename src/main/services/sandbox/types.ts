@@ -18,6 +18,12 @@ export interface SandboxRunSpec {
   executionProfile: 'lightweight' | 'untrusted-heavy'
   /** Network allowlist — empty means zero network access (srt allow-only). */
   allowedDomains: string[]
+  /**
+   * Let the process bind/listen on loopback and connect to loopback ports
+   * (e.g. a local HTTP server Electron talks to). Off by default; part of the
+   * network policy, so it never leaks to processes that did not ask for it.
+   */
+  allowLocalBinding?: boolean
   /** Paths the sandboxed process may write to (srt deny-write-by-default). */
   allowWrite: string[]
   /** Caller-supplied deny-read paths — merged with BASELINE_DENY_READ (Section 07). */

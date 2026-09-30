@@ -274,29 +274,34 @@ app quits mid-run      ──► sidecar terminated cleanly on quit             
 
 ## 12. Build status
 
-Phases mirror `specs/MULTI_AGENT_SPEC.html` §11. Claude Code prompts are run sequentially with
-inspection between each; this table is the source of truth for "done."
+Phases mirror `specs/MULTI_AGENT_SPEC.html` §11. All four shippable phases are implemented and
+verified (progress.md rows 316–322, 325); Phase 5 (Docker) is superseded by the SandboxService proxy.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | **Foundation** — `AgentEvent` contract + validator (prompt 1), SQLite migration, IPC channels w/ synthetic ready-states, sidecar lifecycle in `index.ts`, UI scaffold on mock events, OpenRouter-gated mode button. No LangGraph yet. | ⏳ In progress — prompt 1 ✅ event contract merged; prompt 2 ✅ SQLite migration merged (`applyMultiAgentMigration` in `DatabaseService.ts`, 17 new tests); prompt 3 ✅ IPC surface + sidecar-manager skeleton merged (`MultiAgentSidecarManager.ts`, 11 new tests, 5 IPC channels, preload bridge); prompt 4 ✅ OpenRouter-gated `MultiAgentModeButton` in InputBar merged (`multiAgentMode` in ModelStore, 8 unit tests + 2 gating tests — button toggles session UI state only, does not start a run until Phase 2) |
-| 2 | **Basic orchestration** — FastAPI sidecar, LangGraph orchestrator → workers → synthesizer, parallel execution, events streaming, layout state machine, one real end-to-end run. No reflection yet. | ⏳ |
-| 3 | **Reflection + HITL** — reflection nodes w/ pass/fail + retry, HITL popup w/ agent identity, per-agent parallel pause/resume, pre-flight approval + cost estimate, budget cap enforcement. | ⏳ |
-| 4 | **Polish + observability** — provenance tags in synthesis, collapsed-card transitions, live cost/token counters, trace extension, settings panel for all knobs, full state-machine test. | ⏳ |
-| 5 | **Docker sandboxing (Phase 2)** — container lifecycle, `sandbox_*` events, pre-flight sandbox config, HITL for destructive commands, output extraction + diff review, E2B as opt-in alternative. | ⏳ |
+| 1 | **Foundation** — `AgentEvent` contract + validator, SQLite migration, IPC channels, sidecar lifecycle, OpenRouter-gated mode button. | ✅ |
+| 2 | **Basic orchestration** — FastAPI sidecar, LangGraph `plan → approve → workers → synthesize` graph, parallel phases, streamed events, layout state machine, real end-to-end run. | ✅ |
+| 3 | **Reflection + HITL** — reflection gates with retry, `agent_failed` for per-agent failure, HITL popup with agent identity, per-agent trust/block within a run, non-blocking parallel pauses, pre-flight approval with cost range, budget cap with in-flight reservations. | ✅ |
+| 4 | **Polish + observability** — clickable provenance chips, collapsing agent cards, live counters, `stepType`/`agentId`/run-cost trace fields, settings with filtered catalogue. | ✅ |
+| 5 | **Docker sandboxing** — superseded: worker tools run through Electron's McpServerManager → SandboxService (SANDBOX_ARCHITECTURE_SPEC.html §04). | n/a |
 
-*(Update this table and any sections that drift as phases land — same rule as the RAG doc.)*
+**Runtime guarantees** (see `MultiAgentSidecarManager.ts` / `MultiAgentRunCoordinator.ts`):
+the sidecar runs inside the srt sandbox (only `openrouter.ai` + loopback bind), authenticates every
+request with a per-launch token, streams OpenRouter with usage accounting (`usage.include`), never
+starts a paid request that could exceed the cap (worst-case reservations shared by parallel
+requests, a synthesis reserve, and a `max_tokens` bound), exits on stdin EOF, and every run ends
+with exactly one terminal event — synthesized by Electron if the sidecar or its stream dies.
 
 ---
 
-## 13. Open decisions (resolve before the relevant phase)
+## 13. Decisions taken
 
-| Decision | Blocks | Current lean |
-|---|---|---|
-| Sidecar binary strategy — pyinstaller frozen vs. system Python + venv | shipping | frozen binary for distribution; system Python during dev |
-| When to spawn the sidecar — app start (if OpenRouter active) vs. first multi-agent run | Phase 1 lifecycle | lazy on first run, to avoid idle Python for single-model users |
-| Per-chat custom system prompt | nothing (MVP) | deferred; global prompt is the base for all agents |
-| Sidecar binary packaging in the DMG | shipping | tied to the binary-strategy decision above |
+| Decision | Resolution |
+|---|---|
+| Sidecar binary strategy | System Python + a private venv under `userData/sandboxes/multi-agent-sidecar/venv`, installed from the packaged, exact-pinned `requirements-multi-agent.txt` on first use and re-installed when that file's hash changes. PyInstaller remains an option if a Python-less machine must be supported. |
+| When to spawn the sidecar | Lazily: when Multi-Agent mode is switched on (warm-up) or on the first run — no idle Python for single-model users. |
+| Per-chat custom system prompt | Still deferred; the global prompt is the base for all agents. |
+| Port | 7823 by default (Settings → Multi-Agent); a busy port falls back to a free one. |
 
 ---
 
@@ -304,5 +309,5 @@ inspection between each; this table is the source of truth for "done."
 
 Non-OpenRouter backends (single-model by nature), agent-to-agent direct messaging (all coordination
 via orchestrator), user-editable orchestration graph (Phase 3), cloud sync of traces (never —
-local only), background/daemon agents (Phase 3). Docker/E2B code execution is Phase 2 — MVP agents
-read via the existing Filesystem MCP, which is already more capable than any frontier web product.
+local only), background/daemon agents (Phase 3). Docker/E2B code execution is superseded by the
+SandboxService proxy; agents act only through MCP tools the user has approved.

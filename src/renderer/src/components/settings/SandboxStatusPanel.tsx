@@ -53,8 +53,9 @@ export function SandboxStatusPanel() {
         <div className="text-xs text-content-muted space-y-0.5">
           <p className="text-content-secondary">Active network policies</p>
           {status.activePolicies.map((p) => (
-            <p key={p.allowedDomains.join(',')} className="font-mono">
+            <p key={`${p.allowedDomains.join(',')}|${p.allowLocalBinding}`} className="font-mono">
               {p.allowedDomains.length ? p.allowedDomains.join(', ') : 'no network'}
+              {p.allowLocalBinding && <span className="text-content-muted"> + loopback</span>}
               <span className="text-content-muted"> · {p.leases} process(es)</span>
             </p>
           ))}

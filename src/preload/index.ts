@@ -4,6 +4,7 @@
  */
 import { contextBridge, ipcRenderer, shell, webUtils, webFrame } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
+import type { OpenRouterModelInfo } from '../shared/multiAgentModels'
 import type {
   ConnectionState,
   DaemonState,
@@ -31,7 +32,7 @@ import type {
   MultiAgentStartPayload,
   StartRunResult,
   SidecarStatus,
-  HitlResponse,
+  MultiAgentRunRecord,
   AgentEvent,
   MultiAgentConfig,
 } from '../shared/types'
@@ -223,6 +224,13 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, h)
   },
 
+  /** A pending permission dialog was auto-denied (timeout) or its run ended. */
+  onMcpToolPermissionExpired: (cb: (requestId: string) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, requestId: string): void => cb(requestId)
+    ipcRenderer.on(IPC_CHANNELS.MCP_TOOL_PERMISSION_EXPIRED, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_EXPIRED, h)
+  },
+
   // ── Sandbox violations (Phase 2) ──────────────────────────────
   onSandboxViolationAlert: (cb: (violation: SandboxViolationTraceEvent) => void): (() => void) => {
     const h = (_: Electron.IpcRendererEvent, violation: SandboxViolationTraceEvent): void => cb(violation)
@@ -334,8 +342,9 @@ const api = {
   startMultiAgentRun: (payload: MultiAgentStartPayload): Promise<StartRunResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_START, payload),
 
-  respondMultiAgentHitl: (r: HitlResponse): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, r),
+  /** Pre-flight plan approval only — worker tool pauses are answered in main. */
+  respondMultiAgentPlan: (runId: string, approved: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, { runId, approved }),
 
   abortMultiAgentRun: (runId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ABORT, runId),
@@ -343,11 +352,20 @@ const api = {
   getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS),
 
-  getMultiAgentConfig: (): Promise<MultiAgentConfig> =>
+  warmUpMultiAgent: (): Promise<SidecarStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_WARM_UP),
+
+  getMultiAgentConfig: (): Promise<MultiAgentConfig & { sidecarPort: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG),
 
-  saveMultiAgentConfig: (config: MultiAgentConfig): Promise<void> =>
+  saveMultiAgentConfig: (config: MultiAgentConfig & { sidecarPort?: number }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, config),
+
+  getMultiAgentRun: (chatId: string): Promise<MultiAgentRunRecord | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_RUN, chatId),
+
+  getMultiAgentCatalogue: (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE),
 
   onMultiAgentEvent: (cb: (e: AgentEvent) => void): (() => void) => {
     const h = (_: Electron.IpcRendererEvent, e: AgentEvent): void => cb(e)

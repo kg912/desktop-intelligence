@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { ShieldQuestion, Plug, ChevronDown, ChevronUp } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ShieldQuestion, Plug, ChevronDown, ChevronUp, Bot } from 'lucide-react'
 import type { McpToolPermissionRequest, McpToolPermissionResponse } from '../../../../shared/types'
 
 interface McpPermissionDialogProps {
@@ -20,12 +20,21 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
 
   const argsJson    = JSON.stringify(request.args, null, 2)
   const hasArgs     = Object.keys(request.args).length > 0
+  const agent       = request.agent
+  const remaining   = useCountdown(request.timeoutMs)
 
-  const respond = async (approved: boolean, alwaysAllow: McpToolPermissionResponse['alwaysAllow']) => {
+  const respond = async (
+    approved: boolean,
+    alwaysAllow: McpToolPermissionResponse['alwaysAllow'],
+    agentTrust?: McpToolPermissionResponse['agentTrust'],
+  ) => {
     if (responding) return
     setResponding(true)
     try {
-      onRespond({ requestId: request.requestId, approved, alwaysAllow, userNote: note.trim() })
+      onRespond({
+        requestId: request.requestId, approved, alwaysAllow, userNote: note.trim(),
+        ...(agentTrust ? { agentTrust } : {}),
+      })
     } catch (err) {
       console.warn('[McpPermissionDialog] respond failed:', err)
       setResponding(false)
@@ -42,13 +51,29 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
             <ShieldQuestion className="w-4 h-4 text-accent-400" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-content-primary">Tool permission required</h3>
-            <p className="text-xs text-content-muted mt-0.5">The assistant wants to call an MCP tool.</p>
+            <h3 className="text-sm font-semibold text-content-primary">
+              {agent ? `${agent.role} Agent needs approval` : 'Tool permission required'}
+            </h3>
+            <p className="text-xs text-content-muted mt-0.5" data-testid="permission-subtitle">
+              {agent
+                ? `${agent.role} Agent (${agent.model || 'default model'}) is requesting access to ${displayToolName}.`
+                : 'The assistant wants to call an MCP tool.'}
+            </p>
+            {remaining !== null && (
+              <p className="text-[10px] text-content-muted mt-1">Auto-denies in {remaining}</p>
+            )}
           </div>
         </div>
 
         {/* Tool info */}
         <div className="space-y-1.5">
+          {agent && (
+            <div className="flex items-center gap-2 text-xs">
+              <Bot className="w-3.5 h-3.5 text-accent-500 flex-shrink-0" />
+              <span className="text-content-muted">Agent:</span>
+              <span className="text-content-primary font-mono">{agent.agentId} · {agent.role}</span>
+            </div>
+          )}
           <div className="flex items-center gap-2 text-xs">
             <Plug className="w-3.5 h-3.5 text-accent-500 flex-shrink-0" />
             <span className="text-content-muted">Server:</span>
@@ -94,6 +119,28 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
           />
         </div>
 
+        {/* Per-agent trust within this run (spec §07) */}
+        {agent && (
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => respond(false, false, 'block')}
+              disabled={responding}
+              className="px-3 py-1.5 text-xs rounded border border-red-900/50 text-red-400
+                         hover:bg-red-950/40 disabled:opacity-40 transition-colors"
+            >
+              Block this agent
+            </button>
+            <button
+              onClick={() => respond(true, false, 'trust')}
+              disabled={responding}
+              className="px-3 py-1.5 text-xs rounded border border-surface-border text-content-secondary
+                         hover:text-content-primary disabled:opacity-40 transition-colors"
+            >
+              Allow all from this agent
+            </button>
+          </div>
+        )}
+
         {/* Buttons */}
         <div className="flex gap-2 justify-end pt-1">
           <button
@@ -126,4 +173,18 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
       </div>
     </div>
   )
+}
+
+/** "4:59" until the dialog's auto-deny deadline, or null when it has none. */
+function useCountdown(timeoutMs: number | undefined): string | null {
+  const [deadline] = useState(() => (timeoutMs ? Date.now() + timeoutMs : null))
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!deadline) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [deadline])
+  if (!deadline) return null
+  const s = Math.max(0, Math.ceil((deadline - now) / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }

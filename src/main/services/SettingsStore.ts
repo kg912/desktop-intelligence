@@ -81,6 +81,8 @@ export interface AppSettings {
   ragVerboseTrace?: boolean
   /** Persistent defaults for OpenRouter multi-agent runs. */
   multiAgentConfig?: MultiAgentConfig
+  /** Preferred loopback port for the multi-agent sidecar (spec default 7823; busy → free port). */
+  multiAgentSidecarPort?: number
 }
 
 function settingsPath(): string {

@@ -13,6 +13,7 @@ const KNOWN_TYPES = new Set<string>([
   'agent_start',
   'agent_token',
   'agent_complete',
+  'agent_failed',
   'reflection_start',
   'reflection_result',
   'retry',
@@ -41,9 +42,18 @@ function checkFields(obj: Record<string, unknown>, fields: Array<[string, Prim]>
 
 function validateVariant(obj: Record<string, unknown>): string | null {
   switch (obj.type as string) {
-    case 'orchestrator_plan':
+    case 'orchestrator_plan': {
       if (!Array.isArray(obj.steps)) return '"steps" must be an array'
+      for (const [i, step] of (obj.steps as unknown[]).entries()) {
+        if (typeof step !== 'object' || step === null) return `"steps[${i}]" must be an object`
+        const err = checkFields(step as Record<string, unknown>, [
+          ['id', 'string'], ['label', 'string'], ['stage', 'string'],
+          ['role', 'string'], ['model', 'string'], ['phase', 'number'],
+        ])
+        if (err) return `"steps[${i}]": ${err}`
+      }
       return null
+    }
 
     case 'agent_start':
       return checkFields(obj, [['agentId', 'string'], ['role', 'string'], ['model', 'string']])
@@ -58,6 +68,9 @@ function validateVariant(obj: Record<string, unknown>): string | null {
         ['tokenCount', 'number'],
         ['costUsd',    'number'],
       ])
+
+    case 'agent_failed':
+      return checkFields(obj, [['agentId', 'string'], ['reason', 'string']])
 
     case 'reflection_start':
       return checkFields(obj, [['agentId', 'string']])
@@ -115,6 +128,15 @@ function validateVariant(obj: Record<string, unknown>): string | null {
   }
 }
 
+function validateRunTotals(obj: Record<string, unknown>): string | null {
+  if (obj.runTotals === undefined) return null
+  if (typeof obj.runTotals !== 'object' || obj.runTotals === null) return '"runTotals" must be an object'
+  const err = checkFields(obj.runTotals as Record<string, unknown>, [
+    ['costUsd', 'number'], ['tokens', 'number'], ['budgetReached', 'boolean'],
+  ])
+  return err ? `"runTotals": ${err}` : null
+}
+
 export function isAgentEvent(raw: unknown): raw is AgentEvent {
   if (typeof raw !== 'object' || raw === null) return false
   const obj = raw as Record<string, unknown>
@@ -122,7 +144,7 @@ export function isAgentEvent(raw: unknown): raw is AgentEvent {
   if (typeof obj.seq   !== 'number') return false
   if (typeof obj.ts    !== 'number') return false
   if (typeof obj.type  !== 'string' || !KNOWN_TYPES.has(obj.type)) return false
-  return validateVariant(obj) === null
+  return validateVariant(obj) === null && validateRunTotals(obj) === null
 }
 
 export function parseAgentEvent(raw: unknown): AgentEvent {
@@ -135,7 +157,38 @@ export function parseAgentEvent(raw: unknown): AgentEvent {
   if (typeof obj.ts    !== 'number') throw new Error('"ts" must be a number')
   if (typeof obj.type  !== 'string') throw new Error('"type" must be a string')
   if (!KNOWN_TYPES.has(obj.type))   throw new Error(`Unknown AgentEvent type: "${obj.type}"`)
-  const variantError = validateVariant(obj)
+  const variantError = validateVariant(obj) ?? validateRunTotals(obj)
   if (variantError) throw new Error(`Invalid AgentEvent (type="${obj.type as string}"): ${variantError}`)
   return raw as AgentEvent
+}
+
+/** Run-level terminal events — a run emits exactly one, last. */
+export function isTerminalAgentEvent(
+  event: AgentEvent
+): event is Extract<AgentEvent, { type: 'task_complete' | 'task_failed' }> {
+  return event.type === 'task_complete' || event.type === 'task_failed'
+}
+
+/** Trace `stepType` (spec §08 Observability): which part of the run an event belongs to. */
+export type AgentTraceStepType = 'orchestrator' | 'worker' | 'reflection' | 'synthesizer' | 'run'
+
+export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
+  switch (event.type) {
+    case 'orchestrator_plan':
+      return 'orchestrator'
+    case 'reflection_start':
+    case 'reflection_result':
+      return 'reflection'
+    case 'synthesis_start':
+    case 'synthesis_token':
+      return 'synthesizer'
+    case 'task_complete':
+    case 'task_failed':
+      return 'run'
+    case 'hitl_pause':
+    case 'hitl_resume':
+      return event.agentId === 'orchestrator' ? 'orchestrator' : 'worker'
+    default:
+      return 'worker'
+  }
 }

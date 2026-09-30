@@ -226,6 +226,24 @@ describe('ObservabilityService', () => {
       ].join('\n'))
       const entries = await new ObservabilityService().listMultiAgentEvents()
       expect(entries.map((entry) => entry.chatId)).toEqual(['new', 'old'])
+      // Legacy lines (no stepType/runId) are backfilled.
+      expect(entries.map((entry) => [entry.runId, entry.stepType])).toEqual([['r', 'run'], ['r', 'synthesizer']])
+    })
+
+    it('records agentId, stepType and the per-run cost summary (spec §08 Observability)', async () => {
+      const obs = new ObservabilityService()
+      obs.emitMultiAgentEvent('chat-1', {
+        runId: 'run-1', seq: 7, ts: 1, type: 'reflection_result', agentId: '1.2', score: 4, passed: true, reason: 'ok',
+        runTotals: { costUsd: 0.012, tokens: 900, budgetReached: false },
+      })
+      obs.emitMultiAgentEvent('chat-1', {
+        runId: 'run-1', seq: 9, ts: 2, type: 'task_complete', finalOutput: 'done', totalCostUsd: 0.02, totalTokens: 1500,
+      })
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+      const lines = mockAppendFile.mock.calls.map((call) => JSON.parse(String(call[1]).trim()))
+      expect(lines[0]).toMatchObject({ chatId: 'chat-1', runId: 'run-1', agentId: '1.2', stepType: 'reflection', runCostUsd: 0.012, runTokens: 900 })
+      expect(lines[1]).toMatchObject({ runId: 'run-1', stepType: 'run', runCostUsd: 0.02, runTokens: 1500 })
+      expect(lines[1].agentId).toBeUndefined()
     })
   })
 

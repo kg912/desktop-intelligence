@@ -133,6 +133,7 @@ const MAX_COMMAND_LABELS = 500
 interface PolicyHost {
   key: string
   domains: string[]
+  allowLocalBinding: boolean
   proc: ChildProcess
   ready: Promise<void>
   leases: number
@@ -168,8 +169,8 @@ function defaultHost(): { entry: string; execArgv: string[] } {
   return { entry: join(__dirname, 'policyHost.ts'), execArgv: ['--import', 'tsx'] }
 }
 
-function policyKey(domains: string[]): string {
-  return JSON.stringify([...new Set(domains)].sort())
+function policyKey(domains: string[], allowLocalBinding: boolean): string {
+  return JSON.stringify({ domains: [...new Set(domains)].sort(), allowLocalBinding })
 }
 
 export class SrtBackend implements SandboxExecutionBackend {
@@ -202,7 +203,7 @@ export class SrtBackend implements SandboxExecutionBackend {
    */
   async initialize(): Promise<void> {
     if (this.initialized) return
-    const host = this.hostFor([])
+    const host = this.hostFor([], false)
     host.pinned = true
     await host.ready
     this.initialized = true
@@ -222,7 +223,11 @@ export class SrtBackend implements SandboxExecutionBackend {
     // L3 workspace confinement: the scratch dir is always writable.
     const allowWrite = [...new Set([spec.workspaceDir, ...spec.allowWrite].filter(Boolean))]
     return {
-      network: { allowedDomains: spec.allowedDomains, deniedDomains: [] },
+      network: {
+        allowedDomains: spec.allowedDomains,
+        deniedDomains: [],
+        allowLocalBinding: spec.allowLocalBinding === true,
+      },
       filesystem: { denyRead: mergedDenyRead, allowWrite, denyWrite: [] },
       enableWeakerNestedSandbox: false,
       enableWeakerNetworkIsolation: false,
@@ -231,8 +236,8 @@ export class SrtBackend implements SandboxExecutionBackend {
 
   // ── Policy hosts ──────────────────────────────────────────────────────────
 
-  private hostFor(domains: string[]): PolicyHost {
-    const key = policyKey(domains)
+  private hostFor(domains: string[], allowLocalBinding: boolean): PolicyHost {
+    const key = policyKey(domains, allowLocalBinding)
     const existing = this.hosts.get(key)
     if (existing && !existing.dead) return existing
 
@@ -243,7 +248,8 @@ export class SrtBackend implements SandboxExecutionBackend {
     })
     const host: PolicyHost = {
       key,
-      domains: JSON.parse(key) as string[],
+      domains: (JSON.parse(key) as { domains: string[] }).domains,
+      allowLocalBinding,
       proc,
       ready: Promise.resolve(),
       leases: 0,
@@ -304,7 +310,7 @@ export class SrtBackend implements SandboxExecutionBackend {
     proc.send({
       t: 'init',
       config: {
-        network: { allowedDomains: host.domains, deniedDomains: [] },
+        network: { allowedDomains: host.domains, deniedDomains: [], allowLocalBinding },
         filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
         enableWeakerNestedSandbox: false,
         enableWeakerNetworkIsolation: false,
@@ -317,7 +323,7 @@ export class SrtBackend implements SandboxExecutionBackend {
   /** Wrap `spec.command` under its policy host and hold that host open until release(). */
   private async lease(spec: SandboxRunSpec): Promise<{ command: string; release: () => void }> {
     const customConfig = this.buildPerSpecConfig(spec)
-    const host = this.hostFor(spec.allowedDomains)
+    const host = this.hostFor(spec.allowedDomains, spec.allowLocalBinding === true)
     host.leases++
     if (host.idleTimer) {
       clearTimeout(host.idleTimer)
@@ -479,10 +485,10 @@ export class SrtBackend implements SandboxExecutionBackend {
   }
 
   /** Policies with a live host — for Settings/status display. */
-  getActivePolicies(): Array<{ allowedDomains: string[]; leases: number }> {
+  getActivePolicies(): Array<{ allowedDomains: string[]; allowLocalBinding: boolean; leases: number }> {
     return [...this.hosts.values()]
       .filter((h) => !h.dead)
-      .map((h) => ({ allowedDomains: h.domains, leases: h.leases }))
+      .map((h) => ({ allowedDomains: h.domains, allowLocalBinding: h.allowLocalBinding, leases: h.leases }))
   }
 
   async shutdown(): Promise<void> {

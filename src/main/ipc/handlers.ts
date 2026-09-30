@@ -45,12 +45,16 @@ import type {
   CompactResult,
   ExportChatPdfResult,
   MultiAgentStartPayload,
+  SidecarStatus,
   MultiAgentConfig,
   HitlResponse,
 } from '../../shared/types'
-import { multiAgentSidecar } from '../services/MultiAgentSidecarManager'
-import { mcpServerManager } from '../services/McpServerManager'
-import { DEFAULT_MODEL_ID, DEFAULT_MULTI_AGENT_CONFIG } from '../../shared/types'
+import { DEFAULT_SIDECAR_PORT, multiAgentSidecar } from '../services/MultiAgentSidecarManager'
+import { getMultiAgentCoordinator } from '../services/multiAgentRuntime'
+import { getOpenRouterCatalogue } from '../services/OpenRouterCatalogue'
+import { sanitizeMultiAgentConfig } from '../../shared/multiAgentModels'
+import type { OpenRouterModelInfo } from '../../shared/multiAgentModels'
+import { DEFAULT_MODEL_ID } from '../../shared/types'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
 
@@ -1491,49 +1495,71 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   // ── Multi-Agent Orchestration ──────────────────────────────────────────────
-  // MULTI_AGENT_EVENT is a push channel (main → renderer); the renderer
-  // subscribes via preload.onMultiAgentEvent. Phase 2 adds the emission seam
-  // here once the sidecar SSE stream exists — no ipcMain.handle for it now.
+  // MULTI_AGENT_EVENT is a push channel (main → renderer), sent by the
+  // MultiAgentRunCoordinator. Worker tool pauses are answered in main only.
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, async (_, payload: MultiAgentStartPayload) => {
-    const { readSettings } = await import('../services/SettingsStore')
-    const defaultModel = readSettings().openrouterModel ?? ''
-    return multiAgentSidecar.startRun({
-      ...payload,
-      config: {
-        ...payload.config,
-        models: Object.fromEntries(Object.entries(payload.config.models).map(([role, model]) => [role, model || defaultModel])) as MultiAgentStartPayload['config']['models'],
-      },
-      tools: mcpServerManager.getToolSchemas().map((tool) => ({
-        name: tool.function.name,
-        description: tool.function.description,
-        parameters: tool.function.parameters as unknown as Record<string, unknown>,
-      })),
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_START, (_, payload: MultiAgentStartPayload) =>
+    getMultiAgentCoordinator().start({
+      chatId: String(payload.chatId),
+      task: String(payload.task),
+      config: sanitizeMultiAgentConfig(payload.config),
     })
-  })
+  )
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: HitlResponse) =>
-    multiAgentSidecar.respondHitl(r)
+  // The renderer may only answer the pre-flight plan approval; tool results
+  // come exclusively from McpServerManager, so any `result` here is ignored.
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: Pick<HitlResponse, 'runId' | 'approved'>) =>
+    getMultiAgentCoordinator().respondToPlan(String(r.runId), r.approved === true)
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ABORT, (_, runId: string) =>
-    multiAgentSidecar.abortRun(runId)
+    getMultiAgentCoordinator().abort(String(runId))
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>
     multiAgentSidecar.getStatus()
   )
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG, async (): Promise<MultiAgentConfig> => {
+  // Enabling Multi-Agent mode starts the sidecar (and, on first use, its
+  // private venv install) in the background so the first run doesn't wait.
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_WARM_UP, async (): Promise<SidecarStatus> => {
     const { readSettings } = await import('../services/SettingsStore')
-    const saved = readSettings().multiAgentConfig
-    return { ...DEFAULT_MULTI_AGENT_CONFIG, ...saved,
-      models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, ...saved?.models } }
+    if (readSettings().backendProvider !== 'openrouter') return multiAgentSidecar.getStatus()
+    multiAgentSidecar.start().catch((err: Error) => console.warn('[Sidecar] warm-up failed:', err.message))
+    return multiAgentSidecar.getStatus()
   })
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, async (_, config: MultiAgentConfig): Promise<void> => {
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_RUN, (_, chatId: string) =>
+    getMultiAgentCoordinator().getRun(String(chatId))
+  )
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE, async (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const key = readSettings().openrouterApiKey ?? ''
+    if (!key) return { models: [], error: 'No OpenRouter API key configured' }
+    try {
+      return { models: await getOpenRouterCatalogue(key), error: null }
+    } catch (err) {
+      return { models: [], error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG, async (): Promise<MultiAgentConfig & { sidecarPort: number }> => {
+    const { readSettings } = await import('../services/SettingsStore')
+    const settings = readSettings()
+    return {
+      ...sanitizeMultiAgentConfig(settings.multiAgentConfig),
+      sidecarPort: settings.multiAgentSidecarPort ?? DEFAULT_SIDECAR_PORT,
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, async (_, config: MultiAgentConfig & { sidecarPort?: number }): Promise<void> => {
     const { writeSettings } = await import('../services/SettingsStore')
-    writeSettings({ multiAgentConfig: config })
+    const port = Math.trunc(Number(config.sidecarPort))
+    writeSettings({
+      multiAgentConfig: sanitizeMultiAgentConfig(config),
+      ...(port >= 1024 && port <= 65535 ? { multiAgentSidecarPort: port } : {}),
+    })
   })
 
 }

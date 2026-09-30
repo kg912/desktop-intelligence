@@ -28,6 +28,7 @@ import type {
   McpServerConfig,
   McpServerSettings,
   McpServerRuntimeInfo,
+  McpToolPermissionRequest,
 } from '../../shared/types'
 import { isHttpMcpConfig } from '../../shared/types'
 import { sandboxService } from './sandbox/sandboxServiceInstance'
@@ -139,9 +140,27 @@ interface PendingPermission {
   serverName: string
   toolName:   string
   chatId:     string
+  /** `${runId}\u0000${agentId}` for multi-agent requests (per-agent trust). */
+  agentKey?:  string
   resolve:    (result: { approved: boolean; userNote: string }) => void
   timer:      ReturnType<typeof setTimeout>
 }
+
+/** Who is calling, for a proxied multi-agent worker tool request. */
+export interface MultiAgentToolContext {
+  chatId:  string
+  runId:   string
+  agentId: string
+  role:    string
+  model:   string
+  /** Multi-agent HITL default (Settings): prompt for every tool call not otherwise trusted. */
+  requirePermissions: boolean
+  /** The run's HITL timeout — the dialog auto-denies after this. */
+  hitlTimeoutMs: number
+}
+
+const PERMISSION_TIMEOUT_MS = 60_000
+const agentKey = (runId: string, agentId: string): string => `${runId}\u0000${agentId}`
 
 // ── McpServerManager ─────────────────────────────────────────────
 
@@ -150,8 +169,13 @@ export class McpServerManager extends EventEmitter {
   private pendingPermissions = new Map<string, PendingPermission>()
   private sessionAllowList     = new Set<string>()
   private bypassAllPermissions = false
-  /** Maps a currently-proxied MCP server call to its requesting worker. */
-  private activeMultiAgentWorkers = new Map<string, string>()
+  /** serverName → agentIds with a proxied call in flight (for violation attribution). */
+  private activeMultiAgentWorkers = new Map<string, Map<string, number>>()
+  /**
+   * Agent-level trust within a run (spec §07) — sits between the per-chat
+   * layers (bypass-all, session allow) and the per-server approval setting.
+   */
+  private agentTrust = new Map<string, 'trust' | 'block'>()
 
   // ── Config helpers ───────────────────────────────────────────
 
@@ -271,13 +295,18 @@ export class McpServerManager extends EventEmitter {
     args:       Record<string, unknown>,
     chatId:     string = '',
   ): Promise<McpToolResult> {
-    const entry = this.servers.get(serverName)
-    if (!entry || entry.status !== 'running' || !entry.client) {
-      throw new Error(`MCP server "${serverName}" is not running`)
-    }
-
+    const entry = this._runningEntry(serverName)
     const perm = await this._requestPermission(serverName, toolName, args, chatId)
     if (!perm.approved) throw new McpDeniedError(perm.userNote)
+    return this._executeTool(entry, toolName, args, perm.userNote)
+  }
+
+  private async _executeTool(
+    entry:    ServerEntry & { client: Client },
+    toolName: string,
+    args:     Record<string, unknown>,
+    userNote: string,
+  ): Promise<McpToolResult> {
 
     // Meta-MCP translation: if this server uses a TOOL_LIST/TOOL_CALL proxy
     // layer, the model was given expanded tool names (e.g. "TIME_SERIES_DAILY").
@@ -313,24 +342,68 @@ export class McpServerManager extends EventEmitter {
       .filter((c) => c.type === 'image' && c.data)
       .map((c) => ({ mimeType: c.mimeType ?? 'image/png', data: c.data! }))
 
-    return { text, images, userNote: perm.userNote }
+    return { text, images, userNote }
+  }
+
+  private _runningEntry(serverName: string): ServerEntry & { client: Client } {
+    const entry = this.servers.get(serverName)
+    if (!entry || entry.status !== 'running' || !entry.client) {
+      throw new Error(`MCP server "${serverName}" is not running`)
+    }
+    return entry as ServerEntry & { client: Client }
   }
 
   /**
-   * Multi-agent workers never receive an MCP transport. Electron executes on
-   * their behalf, and local stdio tools must have an explicit SRT profile.
+   * Multi-agent workers never receive an MCP transport: Electron executes on
+   * their behalf (spec §07, sandbox spec §04). Permission layers, in order:
+   *   per-chat bypass-all → agent block → agent trust → per-chat session
+   *   allow → [multi-agent requirePermissions default | per-server setting]
+   * A local stdio server must run under an active SandboxService profile.
    */
-  async callToolForMultiAgent(serverName: string, toolName: string, args: Record<string, unknown>, chatId: string, agentId: string): Promise<McpToolResult> {
-    const entry = this.servers.get(serverName)
-    if (!entry) throw new Error(`MCP server "${serverName}" is not running`)
+  async callToolForMultiAgent(
+    serverName: string,
+    toolName:   string,
+    args:       Record<string, unknown>,
+    ctx:        MultiAgentToolContext,
+  ): Promise<McpToolResult> {
+    const entry = this._runningEntry(serverName)
     if (!isHttpMcpConfig(entry.config) && (!entry.config.sandboxProfile || entry.config.sandboxProfile.bypassSandbox)) {
       throw new Error(`MCP server "${serverName}" has no active SandboxService profile for multi-agent execution`)
     }
-    this.activeMultiAgentWorkers.set(serverName, agentId)
+
+    const key   = agentKey(ctx.runId, ctx.agentId)
+    const trust = this.agentTrust.get(key)
+    let perm: { approved: boolean; userNote: string }
+    if (this.bypassAllPermissions) perm = { approved: true, userNote: '' }
+    else if (trust === 'block') perm = { approved: false, userNote: `${ctx.role} is blocked for this run` }
+    else if (trust === 'trust') perm = { approved: true, userNote: '' }
+    else if (this.sessionAllowList.has(`${ctx.chatId}__${serverName}__${toolName}`)) perm = { approved: true, userNote: '' }
+    else if (!ctx.requirePermissions && !entry.requiresApproval) perm = { approved: true, userNote: '' }
+    else {
+      perm = await this._awaitPermissionDialog(serverName, toolName, args, ctx.chatId, {
+        agent: { runId: ctx.runId, agentId: ctx.agentId, role: ctx.role, model: ctx.model },
+        timeoutMs: ctx.hitlTimeoutMs,
+      })
+    }
+    if (!perm.approved) throw new McpDeniedError(perm.userNote)
+
+    const inFlight = this.activeMultiAgentWorkers.get(serverName) ?? new Map<string, number>()
+    inFlight.set(ctx.agentId, (inFlight.get(ctx.agentId) ?? 0) + 1)
+    this.activeMultiAgentWorkers.set(serverName, inFlight)
     try {
-      return await this.callTool(serverName, toolName, args, chatId)
+      return await this._executeTool(entry, toolName, args, perm.userNote)
     } finally {
-      this.activeMultiAgentWorkers.delete(serverName)
+      const left = (inFlight.get(ctx.agentId) ?? 1) - 1
+      if (left > 0) inFlight.set(ctx.agentId, left)
+      else inFlight.delete(ctx.agentId)
+      if (inFlight.size === 0) this.activeMultiAgentWorkers.delete(serverName)
+    }
+  }
+
+  /** Drop a finished run's agent trust decisions (they are run-scoped). */
+  clearRunTrust(runId: string): void {
+    for (const key of this.agentTrust.keys()) {
+      if (key.startsWith(`${runId}\u0000`)) this.agentTrust.delete(key)
     }
   }
 
@@ -339,8 +412,10 @@ export class McpServerManager extends EventEmitter {
     const prefix = 'mcp:'
     if (!violation.source.startsWith(prefix)) return violation
     const serverName = violation.source.slice(prefix.length)
-    const agentId = this.activeMultiAgentWorkers.get(serverName)
-    return agentId ? { ...violation, source: `multi-agent:${agentId}:${violation.source}` } : violation
+    const agents = this.activeMultiAgentWorkers.get(serverName)
+    if (!agents?.size) return violation
+    // Concurrent calls to one server can't be told apart by the OS log; name all.
+    return { ...violation, source: `multi-agent:${[...agents.keys()].sort().join('|')}:${violation.source}` }
   }
 
   // ── Permission resolution (called by IPC handler) ────────────
@@ -350,6 +425,13 @@ export class McpServerManager extends EventEmitter {
     if (!pending) return
     clearTimeout(pending.timer)
     this.pendingPermissions.delete(response.requestId)
+    if (pending.agentKey && response.agentTrust) {
+      this.agentTrust.set(pending.agentKey, response.agentTrust)
+      if (response.agentTrust === 'block') {
+        pending.resolve({ approved: false, userNote: response.userNote })
+        return
+      }
+    }
     if (response.approved && response.alwaysAllow === 'forever') {
       this._persistServerApprovalMode(pending.serverName, false)
       const entry = this.servers.get(pending.serverName)
@@ -667,22 +749,43 @@ export class McpServerManager extends EventEmitter {
     toolName:   string,
     args:       Record<string, unknown>,
     chatId:     string,
+    options:    { agent?: McpToolPermissionRequest['agent']; timeoutMs?: number } = {},
   ): Promise<{ approved: boolean; userNote: string }> {
     const requestId = randomUUID()
+    const timeoutMs = options.timeoutMs ?? PERMISSION_TIMEOUT_MS
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pendingPermissions.delete(requestId)
-        resolve({ approved: false, userNote: '' })
-      }, 60_000)
+        this.emit('permissionExpired', requestId)
+        // Agents get a reason they can act on; single-model keeps its silent deny.
+        resolve({ approved: false, userNote: options.agent ? 'Approval timed out' : '' })
+      }, timeoutMs)
       this.pendingPermissions.set(requestId, {
         serverName,
         toolName,
         chatId,
+        agentKey: options.agent ? agentKey(options.agent.runId, options.agent.agentId) : undefined,
         resolve,
         timer,
       })
-      this.emit('permissionRequest', { serverName, toolName, args, requestId, chatId })
+      const request: McpToolPermissionRequest = {
+        serverName, toolName, args, requestId, chatId,
+        ...(options.agent ? { agent: options.agent } : {}),
+        timeoutMs,
+      }
+      this.emit('permissionRequest', request)
     })
+  }
+
+  /** Deny every pending dialog raised for one multi-agent run (it ended). */
+  cancelRunPermissions(runId: string): void {
+    for (const [requestId, pending] of this.pendingPermissions) {
+      if (!pending.agentKey?.startsWith(`${runId}\u0000`)) continue
+      clearTimeout(pending.timer)
+      this.pendingPermissions.delete(requestId)
+      this.emit('permissionExpired', requestId)
+      pending.resolve({ approved: false, userNote: 'Run ended' })
+    }
   }
 
   // ── Private: schema mapping ──────────────────────────────────

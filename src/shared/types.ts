@@ -391,6 +391,7 @@ export const IPC_CHANNELS = {
   MCP_REMOVE_SERVER:            'mcp:removeServer',
   MCP_TOOL_PERMISSION_REQUEST:  'mcp:toolPermissionRequest',   // main→renderer
   MCP_TOOL_PERMISSION_RESPONSE: 'mcp:toolPermissionResponse',  // renderer→main
+  MCP_TOOL_PERMISSION_EXPIRED:  'mcp:toolPermissionExpired',   // main→renderer (timed out / run ended)
   MCP_BYPASS_PERMISSIONS_CHANGED: 'mcp:bypassPermissionsChanged',
   MCP_SET_SERVER_APPROVAL_MODE:   'mcp:setServerApprovalMode',
   MCP_SERVER_STATUS_CHANGED:    'mcp:serverStatusChanged',     // main→renderer push
@@ -463,6 +464,9 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_GET_CONFIG: 'multi-agent:get-config',
   MULTI_AGENT_SAVE_CONFIG: 'multi-agent:save-config',
   MULTI_AGENT_EVENT:          'multi-agent:event',   // main → renderer push (AgentEvent)
+  MULTI_AGENT_GET_RUN:        'multi-agent:get-run',
+  MULTI_AGENT_GET_CATALOGUE:  'multi-agent:get-catalogue',
+  MULTI_AGENT_WARM_UP:        'multi-agent:warm-up',
 
 } as const
 
@@ -510,14 +514,21 @@ export interface SandboxConfig {
   allowWrite: string[]
 }
 
+/**
+ * Spec §04/§06 role defaults. An empty slot (and any id missing from the live
+ * OpenRouter catalogue at run start) falls back to the active OpenRouter model.
+ */
+export const DEFAULT_ORCHESTRATOR_MODEL = 'meta-llama/llama-3.3-70b-instruct'
+export const DEFAULT_SYNTHESIZER_MODEL = 'qwen/qwen3-235b-a22b-2507'
+
 export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   maxAgents:               4,
   budgetCapUsd:            0.5,
   models: {
-    orchestrator: '',
+    orchestrator: DEFAULT_ORCHESTRATOR_MODEL,
     worker:       '',
-    reflection:   '',
-    synthesizer:  '',
+    reflection:   DEFAULT_ORCHESTRATOR_MODEL,
+    synthesizer:  DEFAULT_SYNTHESIZER_MODEL,
   },
   reflectionPassThreshold: 3,
   maxRetriesPerAgent:      2,
@@ -525,11 +536,21 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   requirePermissions:      true,
 }
 
+/** Cumulative spend for the whole run, as observed from OpenRouter usage. */
+export interface RunTotals {
+  costUsd:       number
+  tokens:        number
+  /** True once no further paid work may start (spend + synthesis reserve ≥ cap). */
+  budgetReached: boolean
+}
+
 // AgentEvent base envelope — every event carries these so the trace can be ordered and replayed.
 export interface AgentEventBase {
   runId: string
   seq:   number   // monotonically increasing per run, assigned by the sidecar
   ts:    number   // epoch ms
+  /** Attached by the sidecar to every event after its first paid request. */
+  runTotals?: RunTotals
 }
 
 export interface OrchestratorPlanEvent extends AgentEventBase {
@@ -554,8 +575,20 @@ export interface AgentCompleteEvent extends AgentEventBase {
   type:       'agent_complete'
   agentId:    string
   output:     string
+  /** This agent's cumulative OpenRouter usage across all attempts and tool rounds. */
   tokenCount: number
   costUsd:    number
+}
+
+/**
+ * One agent failed (retry limit, HITL timeout, model error, budget). The run
+ * continues with the other agents and synthesizes on partial output —
+ * task_failed is reserved for the run as a whole.
+ */
+export interface AgentFailedEvent extends AgentEventBase {
+  type:    'agent_failed'
+  agentId: string
+  reason:  string
 }
 
 export interface ReflectionStartEvent extends AgentEventBase {
@@ -585,6 +618,8 @@ export interface HitlPauseEvent extends AgentEventBase {
   toolName:   string
   serverName: string
   args:       Record<string, unknown>
+  /** Model of the requesting agent — shown on the approval popup. */
+  model?:     string
 }
 
 export interface MultiAgentToolDefinition {
@@ -626,6 +661,7 @@ export type AgentEvent =
   | AgentStartEvent
   | AgentTokenEvent
   | AgentCompleteEvent
+  | AgentFailedEvent
   | ReflectionStartEvent
   | ReflectionResultEvent
   | RetryEvent
@@ -635,6 +671,14 @@ export type AgentEvent =
   | SynthesisTokenEvent
   | TaskCompleteEvent
   | TaskFailedEvent
+
+/** A chat's persisted multi-agent run, for review (MULTI_AGENT_GET_RUN). */
+export interface MultiAgentRunRecord {
+  mode: 'single' | 'multi-agent'
+  runStatus: RunStatus
+  agentGraph: AgentStep[]
+  executionTrace: AgentEvent[]
+}
 
 // Outbound type — Electron → sidecar HITL response
 export interface HitlResponse {
@@ -657,7 +701,7 @@ export interface MultiAgentStartPayload {
 
 // Phase 1 always returns the failure branch (sidecar not built yet).
 export type StartRunResult =
-  | { ok: true;  runId: string }
+  | { ok: true;  runId: string; /** Role models as resolved by main (catalogue fallback applied). */ config?: MultiAgentConfig }
   | { ok: false; reason: string }
 
 // --- LM Studio API shapes ---
@@ -844,6 +888,10 @@ export interface McpToolPermissionRequest {
   args:       Record<string, unknown>
   requestId:  string
   chatId:     string   // active chat — used for session-scoped allow list key
+  /** Set when a multi-agent worker made the call (spec §07 agent identity). */
+  agent?: { runId: string; agentId: string; role: string; model: string }
+  /** Auto-deny deadline for this dialog. */
+  timeoutMs?: number
 }
 
 export interface McpToolPermissionResponse {
@@ -851,6 +899,8 @@ export interface McpToolPermissionResponse {
   approved:    boolean
   alwaysAllow: 'session' | 'forever' | false
   userNote:    string
+  /** Multi-agent only: trust or block this agent for the rest of the run. */
+  agentTrust?: 'trust' | 'block'
 }
 
 // ── Sandbox violations (Phase 2, SANDBOX_ARCHITECTURE_SPEC.html section 11/16) ─
@@ -866,7 +916,7 @@ export interface SandboxStatusInfo {
   /** Credential paths no sandboxed process can read (spec section 07). */
   baselineDenyRead: string[]
   /** One entry per live network policy host. */
-  activePolicies: Array<{ allowedDomains: string[]; leases: number }>
+  activePolicies: Array<{ allowedDomains: string[]; allowLocalBinding: boolean; leases: number }>
 }
 
 /**

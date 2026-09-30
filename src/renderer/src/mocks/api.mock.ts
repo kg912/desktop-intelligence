@@ -5,6 +5,7 @@
  */
 
 import type { ElectronAPI } from '../../../preload/index'
+import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
 import type {
   ConnectionState,
   DaemonState,
@@ -257,7 +258,12 @@ export const mockApi: ElectronAPI = {
   obsListMultiAgentEvents: async () => [],
   obsClearMultiAgentEvents: async () => {},
   obsOpenMultiAgentEventsFile: async () => {},
-  getMultiAgentConfig: async () => ({ maxAgents: 4, budgetCapUsd: 0.5, models: { orchestrator: '', worker: '', reflection: '', synthesizer: '' }, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, hitlTimeoutMs: 300000, requirePermissions: true }),
+  getMultiAgentRun: async () => null,
+  warmUpMultiAgent: async () => 'stopped' as const,
+  getMultiAgentCatalogue: async () => ({ models: [], error: null }),
+  respondMultiAgentPlan: async () => {},
+  onMcpToolPermissionExpired: () => () => {},
+  getMultiAgentConfig: async () => ({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
   saveMultiAgentConfig: async () => {},
 
   // ── Shell utilities ───────────────────────────────────────────

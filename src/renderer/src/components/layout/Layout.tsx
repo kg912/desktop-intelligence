@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
@@ -13,23 +13,26 @@ import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
-import { MultiAgentRunPanel } from '../chat/MultiAgentRunPanel'
+import { MultiAgentPlanPane } from '../chat/MultiAgentPlanPane'
 import { MultiAgentExecutionArea } from '../chat/MultiAgentExecutionArea'
-import { DEFAULT_MULTI_AGENT_CONFIG, type AgentEvent, type AgentStep, type Chat, type MultiAgentConfig, type ProcessedAttachment, type StoredMessage, type McpToolPermissionRequest, type SandboxViolationTraceEvent } from '../../../../shared/types'
+import { useMultiAgentRun } from '../../hooks/useMultiAgentRun'
+import { inputLockMessage, isRunActive } from '../../lib/multiAgentRunState'
+import { estimateRunCost } from '../../../../shared/multiAgentModels'
+import type { Chat, McpToolPermissionResponse, ProcessedAttachment, StoredMessage, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode, isMultiAgentRunning, setIsMultiAgentRunning, multiAgentMode } = useModelConfig()
+  const { setThinkingMode, setIsMultiAgentRunning, multiAgentMode } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
   const [sidebarMode,          setSidebarMode]          = useState<'chat' | 'starred' | null>('chat')
   const [settingsOpen,         setSettingsOpen]         = useState(false)
   const [mcpPermissionRequests, setMcpPermissionRequests] = useState<McpToolPermissionRequest[]>([])
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
-  const [multiAgentEvents, setMultiAgentEvents] = useState<AgentEvent[]>([])
-  const [multiAgentSteps, setMultiAgentSteps] = useState<AgentStep[]>([])
-  const [multiAgentRunId, setMultiAgentRunId] = useState<string | null>(null)
-  const [awaitingPlanApproval, setAwaitingPlanApproval] = useState(false)
-  const [multiAgentConfig, setMultiAgentConfig] = useState<MultiAgentConfig>(DEFAULT_MULTI_AGENT_CONFIG)
+  // Multi-agent layout state machine (spec §08): the chat sidebar and the
+  // plan pane are mutually exclusive; both collapse to a rail, never to zero.
+  const [planCollapsed,  setPlanCollapsed]  = useState(false)
+  const [focusAgentId,   setFocusAgentId]   = useState<string | null>(null)
+  const [reviewableChat, setReviewableChat] = useState<string | null>(null)
   const chatAreaRef     = useRef<ChatAreaHandle>(null)
   const lastSidebarMode = useRef<'chat' | 'starred'>('chat')
 
@@ -37,11 +40,6 @@ export function Layout() {
   useEffect(() => {
     if (sidebarMode !== null) lastSidebarMode.current = sidebarMode
   }, [sidebarMode])
-
-  // Auto-collapse sidebar when multi-agent orchestrator becomes active
-  useEffect(() => {
-    if (isMultiAgentRunning) setSidebarMode(null)
-  }, [isMultiAgentRunning])
 
   // ── Chat history list (sidebar) ───────────────────────────────
   const [chats,        setChats]        = useState<Chat[]>([])
@@ -52,17 +50,6 @@ export function Layout() {
     window.api.getChats()
       .then(setChats)
       .catch((err) => console.warn('[DB] getChats failed:', err))
-  }, [])
-
-  useEffect(() => window.api.onMultiAgentEvent((event) => {
-    setMultiAgentEvents((previous) => [...previous, event])
-    if (event.type === 'orchestrator_plan') setMultiAgentSteps(event.steps)
-    if (event.type === 'hitl_pause' && event.serverName === 'multi-agent' && event.toolName === 'approve_plan') setAwaitingPlanApproval(true)
-    if (event.type === 'task_complete' || event.type === 'task_failed') setIsMultiAgentRunning(false)
-  }), [setIsMultiAgentRunning])
-
-  useEffect(() => {
-    window.api.getMultiAgentConfig().then(setMultiAgentConfig).catch((err) => console.warn('[MultiAgent] config load failed:', err))
   }, [])
 
   const refreshChats = useCallback(async () => {
@@ -103,14 +90,8 @@ export function Layout() {
   const abortRef = useRef(abort)
   useEffect(() => { abortRef.current = abort }, [abort])
 
-  // ── Sidebar: select an existing chat ─────────────────────────
-  const handleSelectChat = useCallback(async (chatId: string) => {
-    if (isStreaming) return
-
-    // Set the active ID immediately so useChat's ref is updated on the
-    // next render before any messages are loaded.
-    setActiveChatId(chatId)
-
+  // ── Load a chat's stored messages into the chat view ─────────
+  const loadChatMessages = useCallback(async (chatId: string) => {
     try {
       const stored: StoredMessage[] = await window.api.getChatMessages(chatId)
       const msgs: Message[] = stored.map((wm) => ({
@@ -142,13 +123,84 @@ export function Layout() {
     } catch (err) {
       console.warn('[DB] getChatMessages failed:', err)
     }
-  }, [isStreaming, loadMessages])
+  }, [loadMessages])
+
+  // ── Multi-agent run (live or under review) ────────────────────
+  const activeChatIdRef = useRef(activeChatId)
+  activeChatIdRef.current = activeChatId
+  const handleRunFinished = useCallback((chatId: string) => {
+    void refreshChats()
+    // The coordinator saved the final answer as an assistant message.
+    if (activeChatIdRef.current === chatId) void loadChatMessages(chatId)
+  }, [loadChatMessages])
+  const multiAgent = useMultiAgentRun(handleRunFinished)
+  const shownRun = multiAgent.run && multiAgent.run.chatId === activeChatId ? multiAgent.run : null
+  const shownRunActive = !!shownRun && !shownRun.review && isRunActive(shownRun.view)
+
+  useEffect(() => {
+    setIsMultiAgentRunning(!!multiAgent.run && !multiAgent.run.review && isRunActive(multiAgent.run.view))
+  }, [multiAgent.run, setIsMultiAgentRunning])
+
+  // Warm the sidecar as soon as the mode is switched on.
+  useEffect(() => {
+    if (multiAgentMode) window.api.warmUpMultiAgent?.().catch(() => { /* reported at run start */ })
+  }, [multiAgentMode])
+
+  const estimate = useMemo(() => {
+    if (!shownRun || shownRun.view.steps.length === 0 || Object.keys(multiAgent.pricing).length === 0) return null
+    return estimateRunCost({ task: shownRun.task, steps: shownRun.view.steps, config: shownRun.config, pricing: multiAgent.pricing })
+  }, [shownRun, multiAgent.pricing])
+
+  // Mutual exclusion: opening the chat sidebar collapses the plan pane…
+  const openSidebar = useCallback((mode: 'chat' | 'starred' | null) => {
+    setSidebarMode(mode)
+    if (mode !== null) setPlanCollapsed(true)
+  }, [])
+  // …and expanding the plan pane collapses the chat sidebar.
+  const togglePlan = useCallback(() => {
+    setPlanCollapsed((collapsed) => {
+      if (collapsed) setSidebarMode(null)
+      return !collapsed
+    })
+  }, [])
+  const selectAgent = useCallback((agentId: string) => {
+    setFocusAgentId(null)
+    requestAnimationFrame(() => setFocusAgentId(agentId))
+  }, [])
+
+  // ── Sidebar: select an existing chat ─────────────────────────
+  const handleSelectChat = useCallback(async (chatId: string) => {
+    if (isStreaming) return
+
+    // Set the active ID immediately so useChat's ref is updated on the
+    // next render before any messages are loaded.
+    setActiveChatId(chatId)
+    // A finished run belongs to its own chat; leave its view when navigating away.
+    if (multiAgent.run && multiAgent.run.chatId !== chatId && (multiAgent.run.review || !isRunActive(multiAgent.run.view))) {
+      multiAgent.dismiss()
+    }
+    await loadChatMessages(chatId)
+  }, [isStreaming, loadChatMessages, multiAgent])
+
+  // Offer "View agent run" for chats that hold a persisted multi-agent trace.
+  useEffect(() => {
+    setReviewableChat(null)
+    if (!activeChatId) return
+    let cancelled = false
+    window.api.getMultiAgentRun(activeChatId)
+      .then((record) => {
+        if (!cancelled && record?.mode === 'multi-agent' && record.executionTrace.length > 0) setReviewableChat(activeChatId)
+      })
+      .catch(() => { /* non-fatal */ })
+    return () => { cancelled = true }
+  }, [activeChatId, multiAgent.run])
 
   // ── Sidebar: new chat ─────────────────────────────────────────
   const handleNewChat = useCallback(() => {
     clearMessages()
     setActiveChatId(null)
-  }, [clearMessages])
+    if (multiAgent.run && (multiAgent.run.review || !isRunActive(multiAgent.run.view))) multiAgent.dismiss()
+  }, [clearMessages, multiAgent])
 
   // ── Sidebar: rename a chat ────────────────────────────────────
   const handleRenameChat = useCallback(async (chatId: string, title: string) => {
@@ -198,6 +250,9 @@ export function Layout() {
     const unsubPerm = window.api.onMcpToolPermissionRequest((req) => {
       setMcpPermissionRequests((current) => current.some((pending) => pending.requestId === req.requestId) ? current : [...current, req])
     })
+    const unsubExpired = window.api.onMcpToolPermissionExpired((requestId) => {
+      setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== requestId))
+    })
     const unsubStart = window.api.onChatStreamToolStart((payload) => {
       // Show activity only for MCP tools (namespaced with __)
       if (payload.query && payload.query.includes('__')) {
@@ -211,7 +266,7 @@ export function Layout() {
     const unsubError = window.api.onChatStreamToolError(() => {
       setMcpActivity(null)
     })
-    return () => { unsubPerm(); unsubStart(); unsubDone(); unsubError() }
+    return () => { unsubPerm(); unsubExpired(); unsubStart(); unsubDone(); unsubError() }
   }, [])
 
   // ── Sandbox credential-path violation toast (Phase 3) ──────────
@@ -266,6 +321,7 @@ export function Layout() {
     e.preventDefault()
     dragCounter.current = 0
     setIsDragging(false)
+    if (multiAgentMode) return // multi-agent runs take no attachments
 
     const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
@@ -292,7 +348,7 @@ export function Layout() {
         ]
       })
     })
-  }, [])
+  }, [multiAgentMode])
 
   // ── Process attachments and send ──────────────────────────────
   const handleSend = useCallback(async (text: string, rawAttachments?: Attachment[]) => {
@@ -301,6 +357,12 @@ export function Layout() {
     // setMessages) would land at the pre-send bottom position.
 
     const list = rawAttachments ?? []
+    if (multiAgentMode && list.length > 0) {
+      multiAgent.setStartError('Multi-agent runs do not take attachments — remove them or turn Multi-Agent mode off.')
+      return
+    }
+    // Sending normally from a finished run view returns to the chat.
+    if (!multiAgentMode && multiAgent.run?.chatId === activeChatId && !shownRunActive) multiAgent.dismiss()
 
     // ── Pre-create the chat row BEFORE processFile is called ─────
     // Root-cause fix: if the user attaches a file on the very first message of a
@@ -383,25 +445,33 @@ export function Layout() {
 
     if (multiAgentMode && effectiveChatId) {
       await window.api.saveMessage(effectiveChatId, uuid(), 'user', text)
-      const started = await window.api.startMultiAgentRun({ chatId: effectiveChatId, task: text, config: multiAgentConfig })
-      if (started.ok) {
-        setMultiAgentRunId(started.runId)
-        setMultiAgentEvents([])
-        setMultiAgentSteps([])
-        setAwaitingPlanApproval(false)
-        setIsMultiAgentRunning(true)
-      } else console.warn('[MultiAgent] start failed:', started.reason)
+      await loadChatMessages(effectiveChatId)
+      if (await multiAgent.start(effectiveChatId, text)) {
+        // Composing → Pre-flight: sidebar collapses as the plan pane slides in.
+        setSidebarMode(null)
+        setPlanCollapsed(false)
+      }
       return
     }
 
     // Pass preChatId so useChat skips its own chat-creation step (avoiding double rows).
     sendMessageRef.current(text, processed.length ? processed : undefined, preChatId)
-  }, [activeChatId, handleChatCreated, multiAgentConfig, multiAgentMode, setIsMultiAgentRunning])
+  }, [activeChatId, handleChatCreated, loadChatMessages, multiAgent, multiAgentMode, shownRunActive])
 
   // Suggestion pill clicked → pre-fill and send immediately
   const handleSuggest = useCallback((text: string) => {
     sendMessageRef.current(text)
   }, [])
+
+  const respondToPermission = useCallback(async (response: McpToolPermissionResponse) => {
+    try { await window.api.mcpRespondToPermission(response) }
+    catch (err) { console.warn('[Layout] mcpRespondToPermission failed:', err) }
+    finally { setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== response.requestId)) }
+  }, [])
+  const modalPermissionRequests = useMemo(
+    () => mcpPermissionRequests.filter((r) => !(r.agent && shownRun && !shownRun.review && r.agent.runId === shownRun.view.runId)),
+    [mcpPermissionRequests, shownRun]
+  )
 
   // After compaction: only reset the context bar.
   // Message history in the UI is intentionally preserved — the compacted summary
@@ -424,8 +494,8 @@ export function Layout() {
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
               sidebarMode={sidebarMode}
-              onToggleChat={() => setSidebarMode((m) => m === 'chat' ? null : 'chat')}
-              onToggleStarred={() => setSidebarMode((m) => m === 'starred' ? null : 'starred')}
+              onToggleChat={() => openSidebar(sidebarMode === 'chat' ? null : 'chat')}
+              onToggleStarred={() => openSidebar(sidebarMode === 'starred' ? null : 'starred')}
               chats={chats}
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
@@ -444,12 +514,21 @@ export function Layout() {
             )}
           </div>
 
-          {multiAgentRunId && <MultiAgentRunPanel
-            steps={multiAgentSteps} events={multiAgentEvents} budgetCapUsd={multiAgentConfig.budgetCapUsd} awaitingApproval={awaitingPlanApproval}
-            onApprove={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: true }); setAwaitingPlanApproval(false) } }}
-            onCancel={() => { if (multiAgentRunId) { void window.api.respondMultiAgentHitl({ runId: multiAgentRunId, agentId: 'orchestrator', approved: false }); setAwaitingPlanApproval(false) } }}
-            onAbort={() => { if (multiAgentRunId) { void window.api.abortMultiAgentRun(multiAgentRunId); setIsMultiAgentRunning(false) } }}
-          />}
+          {shownRun && (
+            <MultiAgentPlanPane
+              view={shownRun.view}
+              task={shownRun.task}
+              collapsed={planCollapsed}
+              onToggleCollapsed={togglePlan}
+              estimate={estimate}
+              budgetCapUsd={shownRun.config.budgetCapUsd}
+              readOnly={shownRun.review}
+              onApprove={() => multiAgent.approvePlan(true)}
+              onCancel={() => multiAgent.approvePlan(false)}
+              onAbort={multiAgent.abort}
+              onSelectAgent={selectAgent}
+            />
+          )}
 
           {/* ── Main execution canvas ── */}
           <div
@@ -474,14 +553,14 @@ export function Layout() {
                 signal subscriber so Layout itself is not a signal subscriber */}
             <CompactingGate isReloading={isReloading} />
 
-            {/* MCP tool permission dialog */}
-            {mcpPermissionRequests.length > 0 && (
+            {/* MCP tool permission dialogs. Requests from agents of the run on
+                screen render inline in their agent card (non-blocking, spec §07);
+                everything else stays modal so it cannot be missed. */}
+            {modalPermissionRequests.length > 0 && (
               <div className="absolute inset-0 z-50 flex flex-wrap content-center justify-center gap-4 overflow-y-auto bg-black/70 p-6 backdrop-blur-sm">
-                {mcpPermissionRequests.map((request) => <McpPermissionDialog key={request.requestId} inline request={request} onRespond={async (response) => {
-                  try { await window.api.mcpRespondToPermission(response) }
-                  catch (err) { console.warn('[Layout] mcpRespondToPermission failed:', err) }
-                  finally { setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== request.requestId)) }
-                }} />)}
+                {modalPermissionRequests.map((request) => (
+                  <McpPermissionDialog key={request.requestId} inline request={request} onRespond={respondToPermission} />
+                ))}
               </div>
             )}
 
@@ -489,17 +568,48 @@ export function Layout() {
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
               sidebarCollapsed={sidebarMode === null}
-              onSidebarToggle={() => setSidebarMode((m) => m !== null ? null : lastSidebarMode.current)}
+              onSidebarToggle={() => openSidebar(sidebarMode !== null ? null : lastSidebarMode.current)}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
 
-            {multiAgentRunId ? <MultiAgentExecutionArea steps={multiAgentSteps} events={multiAgentEvents} /> : <ChatArea
-              ref={chatAreaRef}
-              activeChatId={activeChatId}
-              onSuggest={handleSuggest}
-              chatSystemInstructions={chatSystemInstructions}
-            />}
+            {shownRun ? (
+              <MultiAgentExecutionArea
+                view={shownRun.view}
+                readOnly={shownRun.review}
+                permissionRequests={mcpPermissionRequests}
+                onRespondPermission={respondToPermission}
+                focusAgentId={focusAgentId}
+                onSelectAgent={selectAgent}
+                onBack={multiAgent.dismiss}
+              />
+            ) : (
+              <>
+                {reviewableChat === activeChatId && activeChatId && (
+                  <div className="flex justify-center pt-2">
+                    <button
+                      onClick={() => { void multiAgent.review(activeChatId, chats.find((c) => c.id === activeChatId)?.title ?? '') }}
+                      className="rounded-full border border-accent-900/60 bg-accent-950/30 px-3 py-1 text-[11px] text-accent-300 hover:bg-accent-950/60"
+                    >
+                      View agent run
+                    </button>
+                  </div>
+                )}
+                <ChatArea
+                  ref={chatAreaRef}
+                  activeChatId={activeChatId}
+                  onSuggest={handleSuggest}
+                  chatSystemInstructions={chatSystemInstructions}
+                />
+              </>
+            )}
+
+            {multiAgent.startError && (
+              <div className="mx-4 mb-1 flex items-start gap-2 rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300" role="alert">
+                <span className="flex-1">{multiAgent.startError}</span>
+                <button onClick={() => multiAgent.setStartError(null)} className="text-red-400 hover:text-red-200">Dismiss</button>
+              </div>
+            )}
 
             <InputBar
               onSend={handleSend}
@@ -507,7 +617,8 @@ export function Layout() {
               attachments={attachments}
               onAttachments={setAttachments}
               mcpActivity={mcpActivity}
-              disabled={isMultiAgentRunning}
+              disabled={shownRunActive}
+              lockedMessage={shownRunActive && shownRun ? inputLockMessage(shownRun.view) : null}
             />
           </div>
         </>

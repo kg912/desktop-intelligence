@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { McpServerManager, SANDBOX_REVIEW_REQUIRED } from '../McpServerManager'
-import type { McpServerSettings } from '../../../shared/types'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { McpDeniedError, McpServerManager, SANDBOX_REVIEW_REQUIRED } from '../McpServerManager'
+import type { McpServerSettings, McpToolPermissionRequest } from '../../../shared/types'
 
 const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch, mockRelease } = vi.hoisted(() => {
   const fsMock = {
@@ -36,8 +36,9 @@ const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWa
 vi.mock('electron', () => ({
   app: { getPath: (_: string) => '/mock/userData' },
 }))
+const { mockRandomUUID } = vi.hoisted(() => ({ mockRandomUUID: vi.fn(() => 'mock-uuid-1234') }))
 vi.mock('crypto', () => ({
-  randomUUID: () => 'mock-uuid-1234',
+  randomUUID: mockRandomUUID,
 }))
 vi.mock('fs', () => fsMock)
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -208,7 +209,7 @@ describe('McpServerManager Security URL Checks', () => {
 describe('Multi-agent sandbox attribution', () => {
   it('adds the active worker identity to an MCP sandbox violation', () => {
     const mgr = newMgr()
-    ;(mgr as any).activeMultiAgentWorkers.set('filesystem', '1.2')
+    ;(mgr as any).activeMultiAgentWorkers.set('filesystem', new Map([['1.2', 1]]))
     expect(mgr.attributeMultiAgentViolation({
       source: 'mcp:filesystem', kind: 'read', target: '/Users/test/.ssh/id_ed25519', timestamp: 1,
     })).toMatchObject({ source: 'multi-agent:1.2:mcp:filesystem', kind: 'read' })
@@ -746,5 +747,139 @@ describe('McpServerManager sandbox retrofit (Phase 1)', () => {
 
     const status = mgr.getServerStatus()
     expect(status[0].status).toBe('running')
+  })
+})
+
+describe('McpServerManager multi-agent tool proxy (spec §07 HITL expansion)', () => {
+  // Concurrent dialogs need distinct request ids (the file-level mock is constant).
+  beforeEach(() => {
+    let n = 0
+    mockRandomUUID.mockImplementation(() => `req-${++n}`)
+  })
+  afterEach(() => {
+    mockRandomUUID.mockImplementation(() => 'mock-uuid-1234')
+  })
+  const ctx = (over: Partial<Parameters<McpServerManager['callToolForMultiAgent']>[3]> = {}) => ({
+    chatId: 'chat-1', runId: 'run-1', agentId: '1.2', role: 'Analyzer', model: 'w/model',
+    requirePermissions: true, hitlTimeoutMs: 300_000, ...over,
+  })
+
+  async function running(extra: Partial<McpServerSettings[string]> = {}) {
+    setConfig({ fs: { command: 'node', enabled: true, sandboxProfile: REVIEWED, ...extra } as McpServerSettings[string] })
+    const mgr = newMgr()
+    await mgr.startAll()
+    return mgr
+  }
+
+  it('asks with the agent identity and the run timeout, and executes on approval', async () => {
+    const mgr = await running()
+    const requests: McpToolPermissionRequest[] = []
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      requests.push(r)
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: '' })
+    })
+    const result = await mgr.callToolForMultiAgent('fs', 'read', { path: '/x' }, ctx())
+    expect(result.text).toBe('ok')
+    expect(requests[0]).toMatchObject({
+      serverName: 'fs', toolName: 'read', chatId: 'chat-1', timeoutMs: 300_000,
+      agent: { runId: 'run-1', agentId: '1.2', role: 'Analyzer', model: 'w/model' },
+    })
+  })
+
+  it('"Allow all from this agent" trusts only that agent, only in that run', async () => {
+    const mgr = await running()
+    const asked: string[] = []
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      asked.push(`${r.agent?.runId}/${r.agent?.agentId}`)
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: '', agentTrust: 'trust' })
+    })
+    await mgr.callToolForMultiAgent('fs', 'read', {}, ctx())
+    await mgr.callToolForMultiAgent('fs', 'read', {}, ctx())                       // trusted: no prompt
+    await mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ agentId: '1.3' }))     // other agent: prompted
+    await mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ runId: 'run-2' }))     // other run: prompted
+    expect(asked).toEqual(['run-1/1.2', 'run-1/1.3', 'run-2/1.2'])
+  })
+
+  it('"Block this agent" denies now and every later call from it without asking', async () => {
+    const mgr = await running()
+    const onRequest = vi.fn((r: McpToolPermissionRequest) =>
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: 'no', agentTrust: 'block' }))
+    mgr.on('permissionRequest', onRequest)
+    await expect(mgr.callToolForMultiAgent('fs', 'read', {}, ctx())).rejects.toBeInstanceOf(McpDeniedError)
+    await expect(mgr.callToolForMultiAgent('fs', 'read', {}, ctx())).rejects.toThrow()
+    expect(onRequest).toHaveBeenCalledTimes(1)
+    expect(sdkMocks.callTool).not.toHaveBeenCalled()
+    mgr.clearRunTrust('run-1')
+    await expect(mgr.callToolForMultiAgent('fs', 'read', {}, ctx())).rejects.toBeInstanceOf(McpDeniedError)
+    expect(onRequest).toHaveBeenCalledTimes(2) // trust decisions are run-scoped and cleared at run end
+  })
+
+  it('without the multi-agent HITL default, follows the server setting (auto-approve servers run unprompted)', async () => {
+    const mgr = await running({ requiresApproval: false })
+    const onRequest = vi.fn()
+    mgr.on('permissionRequest', onRequest)
+    await mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ requirePermissions: false }))
+    expect(onRequest).not.toHaveBeenCalled()
+    // …but the multi-agent default prompts even for such a server.
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) =>
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: '' }))
+    await mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ requirePermissions: true }))
+    expect(onRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('auto-denies after the run timeout and tells the renderer to drop the dialog', async () => {
+    vi.useFakeTimers()
+    try {
+      const mgr = await running()
+      const expired = vi.fn()
+      mgr.on('permissionExpired', expired)
+      // Capture the rejection before advancing time so it is never unhandled.
+      const pending = mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ hitlTimeoutMs: 5_000 })).catch((err: unknown) => err)
+      await vi.advanceTimersByTimeAsync(5_000)
+      const denied = await pending
+      expect(denied).toBeInstanceOf(McpDeniedError)
+      expect((denied as McpDeniedError).userNote).toBe('Approval timed out')
+      expect(expired).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancelRunPermissions denies only the ended run\'s dialogs', async () => {
+    const mgr = await running()
+    const expired: string[] = []
+    const requests: McpToolPermissionRequest[] = []
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => requests.push(r))
+    mgr.on('permissionExpired', (id: string) => expired.push(id))
+    const a = mgr.callToolForMultiAgent('fs', 'read', {}, ctx())
+    const b = mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ runId: 'run-2' }))
+    await Promise.resolve()
+    mgr.cancelRunPermissions('run-1')
+    await expect(a).rejects.toBeInstanceOf(McpDeniedError)
+    expect(expired).toEqual([requests[0].requestId])
+    mgr.resolvePermission({ requestId: requests[1].requestId, approved: true, alwaysAllow: false, userNote: '' })
+    await expect(b).resolves.toMatchObject({ text: 'ok' })
+  })
+
+  it('refuses unsandboxed (bypassed) local servers for agents', async () => {
+    setConfig({ raw: { command: 'node', enabled: true, sandboxProfile: { ...REVIEWED, bypassSandbox: true } } })
+    const mgr = newMgr()
+    await mgr.startAll()
+    await expect(mgr.callToolForMultiAgent('raw', 'x', {}, ctx())).rejects.toThrow(/no active SandboxService profile/)
+  })
+
+  it('attributes a sandbox violation to every agent with a call in flight on that server', async () => {
+    const mgr = await running({ requiresApproval: false })
+    const releases: Array<() => void> = []
+    sdkMocks.callTool.mockImplementation(() => new Promise((r) => { releases.push(() => r({ isError: false, content: [] })) }))
+    const one = mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ agentId: '1.1', requirePermissions: false }))
+    const two = mgr.callToolForMultiAgent('fs', 'read', {}, ctx({ agentId: '1.2', requirePermissions: false }))
+    await new Promise((r) => setTimeout(r, 0))
+    const v = { source: 'mcp:fs', kind: 'read' as const, target: '/etc', timestamp: 1 }
+    expect(mgr.attributeMultiAgentViolation(v).source).toBe('multi-agent:1.1|1.2:mcp:fs')
+    releases.forEach((release) => release())
+    await Promise.allSettled([one, two])
+    expect(mgr.attributeMultiAgentViolation(v).source).toBe('mcp:fs') // nothing in flight any more
+    sdkMocks.callTool.mockResolvedValue({ isError: false, content: [{ type: 'text', text: 'ok' }] })
   })
 })

@@ -149,8 +149,8 @@ describe('SrtBackend network policy isolation', () => {
     expect(JSON.parse(policyNone)).toEqual([])
     expect(b.getActivePolicies()).toEqual(
       expect.arrayContaining([
-        { allowedDomains: ['a.test', 'b.test'], leases: 2 },
-        { allowedDomains: [], leases: 1 },
+        { allowedDomains: ['a.test', 'b.test'], allowLocalBinding: false, leases: 2 },
+        { allowedDomains: [], allowLocalBinding: false, leases: 1 },
       ])
     )
 
@@ -161,7 +161,7 @@ describe('SrtBackend network policy isolation', () => {
     const b = makeBackend({ hostIdleMs: 50 })
     const child = await b.spawnPersistent({ ...baseSpec, allowedDomains: ['idle.test'], command: 'exit 0' })
     await waitForExit(child)
-    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['idle.test'], leases: 0 }])
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['idle.test'], allowLocalBinding: false, leases: 0 }])
     await new Promise((r) => setTimeout(r, 400))
     expect(b.getActivePolicies()).toEqual([])
   })
@@ -171,7 +171,7 @@ describe('SrtBackend network policy isolation', () => {
     await b.initialize()
     await b.run({ ...baseSpec })
     await new Promise((r) => setTimeout(r, 200))
-    expect(b.getActivePolicies()).toEqual([{ allowedDomains: [], leases: 0 }])
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: [], allowLocalBinding: false, leases: 0 }])
   })
 
   it('wrapStdioCommand returns a bash -c argv and holds the lease until release()', async () => {
@@ -182,11 +182,11 @@ describe('SrtBackend network policy isolation', () => {
     expect(wrapped.args[1]).toMatch(/HOST_POLICY='\["mcp.test"\]' .*; my-server --flag$/)
     expect(wrapped.env.PATH).toBe(process.env.PATH)
     expect(wrapped.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
-    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['mcp.test'], leases: 1 }])
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['mcp.test'], allowLocalBinding: false, leases: 1 }])
 
     wrapped.release()
     wrapped.release() // idempotent
-    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['mcp.test'], leases: 0 }])
+    expect(b.getActivePolicies()).toEqual([{ allowedDomains: ['mcp.test'], allowLocalBinding: false, leases: 0 }])
   })
 
   it('replaces a crashed policy host on the next lease', async () => {
@@ -197,6 +197,19 @@ describe('SrtBackend network policy isolation', () => {
     const second = await b.run({ ...baseSpec, allowedDomains: ['crash.test'], command: 'printf "%s" "$HOST_PID"' })
     expect(second.exitCode).toBe(0)
     expect(second.stdout).not.toBe(first.stdout)
+  })
+
+  it('isolates loopback binding as part of the policy (same domains, different host)', async () => {
+    const b = makeBackend()
+    const plain = await b.run({ ...baseSpec, allowedDomains: ['x.test'], command: 'printf "%s" "$HOST_PID"' })
+    const binding = await b.run({ ...baseSpec, allowedDomains: ['x.test'], allowLocalBinding: true, command: 'printf "%s" "$HOST_PID"' })
+    expect(binding.stdout).not.toBe(plain.stdout)
+    expect(b.getActivePolicies()).toEqual(
+      expect.arrayContaining([
+        { allowedDomains: ['x.test'], allowLocalBinding: false, leases: 0 },
+        { allowedDomains: ['x.test'], allowLocalBinding: true, leases: 0 },
+      ])
+    )
   })
 
   it('rejects (fails closed) when the policy host cannot initialize, without leaking a lease', async () => {

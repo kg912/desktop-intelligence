@@ -13,15 +13,18 @@ import { registerRagDiagnosticsHandlers } from './ipc/ragDiagnosticsHandlers'
 import { modelConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
 import { pythonWorker } from './services/PythonWorkerService'
-import { McpDeniedError, mcpServerManager } from './services/McpServerManager'
-import { multiAgentSidecar } from './services/MultiAgentSidecarManager'
+import { mcpServerManager } from './services/McpServerManager'
+import { DEFAULT_SIDECAR_PORT, multiAgentSidecar } from './services/MultiAgentSidecarManager'
 import { observabilityService } from './services/ObservabilityService'
-import { appendMultiAgentEvent, beginMultiAgentRun } from './services/DatabaseService'
+import { beginMultiAgentRun, getMultiAgentRun, saveMessage, saveMultiAgentTrace } from './services/DatabaseService'
+import { MultiAgentRunCoordinator } from './services/MultiAgentRunCoordinator'
+import { setMultiAgentCoordinator } from './services/multiAgentRuntime'
+import { getOpenRouterCatalogue } from './services/OpenRouterCatalogue'
 import { srtBackend } from './services/sandbox/sandboxServiceInstance'
 import { shouldAlertForViolation } from './services/sandbox/isCredentialPath'
 import { setSandboxStartupCheck } from './services/sandbox/sandboxStatus'
 import { IPC_CHANNELS } from '../shared/types'
-import type { AgentEvent, McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
+import type { McpServerRuntimeInfo, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../shared/types'
 
 // Baked in at build time by Rollup define — see electron.vite.config.ts + globals.d.ts.
 // DO NOT use process.env.DEV_MODE — Rollup leaves process.env alone in Node.js code.
@@ -207,43 +210,40 @@ app.whenReady().then(async () => {
   const { readSettings } = await import('./services/SettingsStore')
   const savedSettings = readSettings()
 
+  const pythonResource = (file: string): string =>
+    app.isPackaged ? join(process.resourcesPath, 'python', file) : join(app.getAppPath(), 'resources', 'python', file)
   multiAgentSidecar.configure({
-    scriptPath: app.isPackaged
-      ? join(process.resourcesPath, 'python', 'multi_agent_sidecar.py')
-      : join(app.getAppPath(), 'resources', 'python', 'multi_agent_sidecar.py'),
+    scriptPath: pythonResource('multi_agent_sidecar.py'),
+    requirementsPath: pythonResource('requirements-multi-agent.txt'),
     workspaceDir: join(app.getPath('userData'), 'sandboxes', 'multi-agent-sidecar'),
-    openRouterApiKey: savedSettings.openrouterApiKey ?? '',
-    requirementsPath: app.isPackaged
-      ? join(process.resourcesPath, 'python', 'requirements-multi-agent.txt')
-      : join(app.getAppPath(), 'resources', 'python', 'requirements-multi-agent.txt'),
+    port: savedSettings.multiAgentSidecarPort ?? DEFAULT_SIDECAR_PORT,
+    // Dev/test only (never in a packaged build): route the sidecar to a local OpenRouter fake.
+    openRouterBaseUrl: app.isPackaged ? undefined : process.env.DI_OPENROUTER_BASE_URL,
   })
-  multiAgentSidecar.on('event', (event: AgentEvent) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC_CHANNELS.MULTI_AGENT_EVENT, event)
-    }
-    const chatId = multiAgentSidecar.getChatId(event.runId)
-    if (chatId) {
-      appendMultiAgentEvent(chatId, event)
-      observabilityService.emitMultiAgentEvent(chatId, event)
-    }
-    // Plan approval is renderer-owned pre-flight UI. MCP tool pauses below
-    // remain Electron-owned and pass through the existing permission stack.
-    if (event.type === 'hitl_pause' && chatId && event.serverName !== 'multi-agent') {
-      const [serverName, toolName] = event.serverName && event.toolName
-        ? [event.serverName, event.toolName]
-        : ['', '']
-      void mcpServerManager.callToolForMultiAgent(serverName, toolName, event.args, chatId, event.agentId)
-        .then((result) => multiAgentSidecar.respondHitl({ runId: event.runId, agentId: event.agentId, approved: true, result: result.text }))
-        .catch((err: unknown) => multiAgentSidecar.respondHitl({
-          runId: event.runId,
-          agentId: event.agentId,
-          approved: false,
-          result: err instanceof McpDeniedError ? err.userNote : (err instanceof Error ? err.message : 'MCP tool execution failed'),
-        }))
-    }
-  })
-  multiAgentSidecar.on('runStarted', ({ chatId }: { runId: string; chatId: string }) => beginMultiAgentRun(chatId))
   multiAgentSidecar.on('status', (status) => console.log(`[Sidecar] status: ${status}`))
+  setMultiAgentCoordinator(new MultiAgentRunCoordinator({
+    sidecar: multiAgentSidecar,
+    mcp: mcpServerManager,
+    sendEvent: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_CHANNELS.MULTI_AGENT_EVENT, event)
+    },
+    db: {
+      begin: (chatId) => beginMultiAgentRun(chatId),
+      saveTrace: (chatId, trace, status, steps) => saveMultiAgentTrace(chatId, trace, status, steps),
+      saveAssistantMessage: (chatId, id, content) => saveMessage(chatId, id, 'assistant', content),
+      getRun: (chatId) => getMultiAgentRun(chatId),
+    },
+    observe: (chatId, event) => observabilityService.emitMultiAgentEvent(chatId, event),
+    settings: () => {
+      const current = readSettings()
+      return {
+        backendProvider: current.backendProvider ?? 'lmstudio',
+        openRouterApiKey: current.openrouterApiKey ?? '',
+        openRouterModel: current.openrouterModel ?? '',
+      }
+    },
+    catalogue: (apiKey) => getOpenRouterCatalogue(apiKey),
+  }))
 
   const isCloudBackend = (savedSettings.backendProvider ?? 'lmstudio') !== 'lmstudio'
   if (!isCloudBackend) {
@@ -351,6 +351,11 @@ app.whenReady().then(async () => {
   mcpServerManager.on('permissionRequest', (req: McpToolPermissionRequest) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.MCP_TOOL_PERMISSION_REQUEST, req)
+    }
+  })
+  mcpServerManager.on('permissionExpired', (requestId: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.MCP_TOOL_PERMISSION_EXPIRED, requestId)
     }
   })
 

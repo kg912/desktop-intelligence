@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isAgentEvent, parseAgentEvent } from '../agentEvents'
+import { isAgentEvent, isTerminalAgentEvent, parseAgentEvent } from '../agentEvents'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../types'
 
 // ── Fixtures — one well-formed example per variant ───────────────────────────
@@ -32,6 +32,12 @@ const VALID_EVENTS = {
     output: 'Done.',
     tokenCount: 42,
     costUsd: 0.001,
+  },
+  agent_failed: {
+    ...BASE,
+    type: 'agent_failed',
+    agentId: 'a1',
+    reason: 'HITL approval timed out',
   },
   reflection_start: {
     ...BASE,
@@ -91,9 +97,9 @@ const VALID_EVENTS = {
   },
 } as const
 
-// ── Accept: all 13 variants ───────────────────────────────────────────────────
+// ── Accept: all 14 variants ───────────────────────────────────────────────────
 
-describe('isAgentEvent — accepts all 13 variants', () => {
+describe('isAgentEvent — accepts all 14 variants', () => {
   for (const [variant, event] of Object.entries(VALID_EVENTS)) {
     it(`accepts ${variant}`, () => {
       expect(isAgentEvent(event)).toBe(true)
@@ -101,7 +107,7 @@ describe('isAgentEvent — accepts all 13 variants', () => {
   }
 })
 
-describe('parseAgentEvent — accepts all 13 variants', () => {
+describe('parseAgentEvent — accepts all 14 variants', () => {
   for (const [variant, event] of Object.entries(VALID_EVENTS)) {
     it(`parses ${variant} and returns the event object`, () => {
       expect(parseAgentEvent(event)).toBe(event)
@@ -270,10 +276,13 @@ describe('DEFAULT_MULTI_AGENT_CONFIG', () => {
   it('reflectionPassThreshold is 3', () => expect(DEFAULT_MULTI_AGENT_CONFIG.reflectionPassThreshold).toBe(3))
   it('maxRetriesPerAgent is 2', () => expect(DEFAULT_MULTI_AGENT_CONFIG.maxRetriesPerAgent).toBe(2))
   it('hitlTimeoutMs is 300000', () => expect(DEFAULT_MULTI_AGENT_CONFIG.hitlTimeoutMs).toBe(300000))
-  it('models.orchestrator is empty string', () => expect(DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator).toBe(''))
-  it('models.worker is empty string', () => expect(DEFAULT_MULTI_AGENT_CONFIG.models.worker).toBe(''))
-  it('models.reflection is empty string', () => expect(DEFAULT_MULTI_AGENT_CONFIG.models.reflection).toBe(''))
-  it('models.synthesizer is empty string', () => expect(DEFAULT_MULTI_AGENT_CONFIG.models.synthesizer).toBe(''))
+  it('orchestrator and reflection default to Llama 3.3 70B (spec §04)', () => {
+    expect(DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator).toBe('meta-llama/llama-3.3-70b-instruct')
+    expect(DEFAULT_MULTI_AGENT_CONFIG.models.reflection).toBe('meta-llama/llama-3.3-70b-instruct')
+  })
+  it('worker is user-chosen (empty = active OpenRouter model)', () => expect(DEFAULT_MULTI_AGENT_CONFIG.models.worker).toBe(''))
+  it('synthesizer defaults to Qwen3 235B (spec §04)', () => expect(DEFAULT_MULTI_AGENT_CONFIG.models.synthesizer).toBe('qwen/qwen3-235b-a22b-2507'))
+  it('requires permissions by default', () => expect(DEFAULT_MULTI_AGENT_CONFIG.requirePermissions).toBe(true))
 })
 
 // ── task_failed: optional partialOutputs ─────────────────────────────────────
@@ -288,5 +297,43 @@ describe('task_failed with optional partialOutputs', () => {
     expect(isAgentEvent(withPartial)).toBe(true)
     const parsed = parseAgentEvent(withPartial)
     expect(parsed).toBe(withPartial)
+  })
+})
+
+// ── agent_failed, plan step shape, runTotals, terminal helper ─────────────────
+
+describe('agent_failed', () => {
+  it('rejects a missing reason', () => {
+    const { reason: _r, ...bad } = VALID_EVENTS.agent_failed
+    expect(isAgentEvent(bad)).toBe(false)
+  })
+})
+
+describe('orchestrator_plan step validation (untrusted sidecar JSON rendered by the UI)', () => {
+  it('rejects a step missing its phase', () => {
+    const bad = { ...BASE, type: 'orchestrator_plan', steps: [{ id: '1.1', label: 'x', stage: 'worker', role: 'r', model: 'm' }] }
+    expect(() => parseAgentEvent(bad)).toThrow('steps[0]')
+  })
+  it('rejects a non-object step', () => {
+    expect(isAgentEvent({ ...BASE, type: 'orchestrator_plan', steps: ['1.1'] })).toBe(false)
+  })
+})
+
+describe('runTotals envelope', () => {
+  it('accepts a well-formed runTotals on any event', () => {
+    const e = { ...VALID_EVENTS.agent_start, runTotals: { costUsd: 0.01, tokens: 900, budgetReached: false } }
+    expect(isAgentEvent(e)).toBe(true)
+  })
+  it('rejects a malformed runTotals', () => {
+    const e = { ...VALID_EVENTS.agent_start, runTotals: { costUsd: '0.01', tokens: 900, budgetReached: false } }
+    expect(() => parseAgentEvent(e)).toThrow('runTotals')
+  })
+})
+
+describe('isTerminalAgentEvent', () => {
+  it('is true only for run-level completion/failure', () => {
+    expect(isTerminalAgentEvent(VALID_EVENTS.task_complete as never)).toBe(true)
+    expect(isTerminalAgentEvent(VALID_EVENTS.task_failed as never)).toBe(true)
+    expect(isTerminalAgentEvent(VALID_EVENTS.agent_failed as never)).toBe(false)
   })
 })

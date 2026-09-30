@@ -4,6 +4,8 @@ import path from 'path'
 import { readSettings, writeSettings } from './SettingsStore'
 import type { AgentEvent, SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
 import { shouldAlertForViolation } from './sandbox/isCredentialPath'
+import { agentEventStepType } from '../../shared/agentEvents'
+import type { AgentTraceStepType } from '../../shared/agentEvents'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -26,6 +28,13 @@ export interface SessionEntry {
 /** A persistent, renderer-readable record for a multi-agent execution event. */
 export interface MultiAgentTraceLogEntry {
   chatId: string
+  runId: string
+  /** Worker/orchestrator id for agent-scoped events. */
+  agentId?: string
+  stepType: AgentTraceStepType
+  /** Cumulative run spend when the event was emitted (per-run cost summary). */
+  runCostUsd?: number
+  runTokens?: number
   event: AgentEvent
 }
 
@@ -316,7 +325,19 @@ export class ObservabilityService {
    */
   emitMultiAgentEvent(chatId: string, event: AgentEvent): void {
     if (!this.isEnabled()) return
-    const line = JSON.stringify({ chatId, event }) + '\n'
+    const entry: MultiAgentTraceLogEntry = {
+      chatId,
+      runId: event.runId,
+      ...('agentId' in event ? { agentId: event.agentId } : {}),
+      stepType: agentEventStepType(event),
+      ...(event.type === 'task_complete'
+        ? { runCostUsd: event.totalCostUsd, runTokens: event.totalTokens }
+        : event.runTotals
+          ? { runCostUsd: event.runTotals.costUsd, runTokens: event.runTotals.tokens }
+          : {}),
+      event,
+    }
+    const line = JSON.stringify(entry) + '\n'
     fs.mkdir(this.logsDir, { recursive: true })
       .then(() => fs.appendFile(this.multiAgentEventsLogPath(), line, 'utf8'))
       .catch((err) => console.warn('[ObservabilityService] multi-agent event write failed:', err))
@@ -330,7 +351,10 @@ export class ObservabilityService {
         if (!line) continue
         try {
           const parsed = JSON.parse(line) as MultiAgentTraceLogEntry
-          if (typeof parsed.chatId === 'string' && parsed.event && typeof parsed.event.type === 'string') entries.push(parsed)
+          if (typeof parsed.chatId === 'string' && parsed.event && typeof parsed.event.type === 'string') {
+            // Lines written before stepType/runId existed are backfilled on read.
+            entries.push({ ...parsed, runId: parsed.runId ?? parsed.event.runId, stepType: parsed.stepType ?? agentEventStepType(parsed.event) })
+          }
         } catch { /* corrupt line — skip */ }
       }
       return entries.slice(-limit).reverse()
