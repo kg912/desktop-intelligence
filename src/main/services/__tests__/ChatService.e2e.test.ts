@@ -76,8 +76,8 @@ vi.mock('../McpServerManager', () => ({
 }))
 
 vi.mock('../BraveSearchService', () => ({
-  braveSearch: (...args: any[]) => mockBraveSearch(...args),
-  augmentAndFormatResults: (...args: any[]) => mockAugmentAndFormatResults(...args),
+  braveSearch: (...args: any[]) => (mockBraveSearch as (...a: any[]) => unknown)(...args),
+  augmentAndFormatResults: (...args: any[]) => (mockAugmentAndFormatResults as (...a: any[]) => unknown)(...args),
   resolveBraveApiKey: vi.fn().mockReturnValue('mock-api-key'),
 }))
 
@@ -712,7 +712,7 @@ describe('ChatService Agent Loop E2E integration', () => {
     await chatService.send(payload, 'ollama-model', mockWebContents)
 
     expect(mockFetch).toHaveBeenCalledTimes(2)
-    const [endpoint, options] = mockFetch.mock.calls[0]
+    const [, options] = mockFetch.mock.calls[0]
     expect(options.headers['Authorization']).toBe('Bearer ollama-key')
   })
 
@@ -796,7 +796,7 @@ describe('ChatService Agent Loop E2E integration', () => {
     const payload: ChatSendPayload = {
       chatId: 'chat-uuid-12-vision',
       messages: [{ role: 'user', content: 'What is this image?' }],
-      attachments: [{ kind: 'image', dataUrl: 'data:image/png;base64,iVBORw0K', name: 'image.png' }],
+      attachments: [{ kind: 'image', dataUrl: 'data:image/png;base64,iVBORw0K', name: 'image.png' }] as any,
       model: 'lm-model',
       thinkingMode: 'fast',
     }

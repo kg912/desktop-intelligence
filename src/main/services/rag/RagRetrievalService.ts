@@ -598,12 +598,6 @@ function _buildTrace(t: TraceInput): RagQueryTrace {
   // Allocation decisions
   const admittedWinnerIds   = new Set(t.admittedWinners.map(w => w.row.id))
   const skippedTooBigIds    = t.skippedTooBig ?? new Set<number>()
-  const stitchedIds         = new Set(
-    (t.stitchAttempts ?? []).filter(s => s.admitted).map(s => s.row.id)
-  )
-  const stitchRejectedIds   = new Set(
-    (t.stitchAttempts ?? []).filter(s => !s.admitted).map(s => s.row.id)
-  )
 
   const allocation: RagTraceAllocationEntry[] = []
 

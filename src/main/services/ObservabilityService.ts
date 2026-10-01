@@ -285,7 +285,7 @@ export class ObservabilityService {
    */
   emitRagEvent(event: ObsEvent): void {
     if (!this.isEnabled()) return
-    const line = JSON.stringify({ ts: Date.now(), ...event }) + '\n'
+    const line = JSON.stringify(event) + '\n' // ObsEvent always carries ts
     const logPath = path.join(this.logsDir, 'rag-events.jsonl')
     // fire-and-forget: non-fatal if write fails
     fs.mkdir(this.logsDir, { recursive: true })

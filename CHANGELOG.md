@@ -4,6 +4,19 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [3.0.0-beta-76] — 2026-10-01
+
+### Multi-agent refinement (specs/multi-agent-refinement.md)
+
+- **Real parallelism.** Plans are a dependency graph (`dependsOn`); each step starts as soon as the steps it needs have passed, up to the agent cap. The planner is told to split work for parallel execution and gets one correction if it returns a pure chain. Parallel agents share the budget fairly instead of the first request reserving the whole cap. One thread pool per run, shut down on finish or abort.
+- **Trace fidelity.** Worker reasoning (configurable effort: off/low/medium/high), every tool call with its arguments, result size and duration, and per-attempt traces now reach the UI.
+- **Honest reflection gate.** The reviewer sees the tool evidence and a rubric and returns specific issues, which are fed into the retry. Empty, very short or refusal-only answers fail without a model call. An unusable verdict counts as a failure ("gate unavailable"), never a pass.
+- **Config truthfulness.** Each run records the models it actually used and where each came from. A configured model that is not in the OpenRouter catalogue stops the run with a clear message instead of being swapped silently. Settings shows "Models the next run will use", live.
+- **Sidebar dock.** The run now lives in the sidebar, widened: a stateful rail button, a concurrency timeline, step list with dependency hints, and one card per agent with reasoning, tool calls, the answer, the gate and inline approvals. The main area stays a chat with the final synthesis. The separate plan pane and execution page are gone.
+- **Dark form controls.** Settings inputs were rendering white because a Tailwind colour token (`surface.elevated`) was missing. Fixed at the token level, `color-scheme: dark` added, and new shared form controls, including a keyboard-accessible model picker.
+
+---
+
 ## [2.0.0-beta-7] — 2026-04-14
 
 ### Improvements

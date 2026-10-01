@@ -1183,7 +1183,7 @@ describe('buildOllamaMessages', () => {
       }
     ]
 
-    const result = buildOllamaMessages(messages)
+    const result = buildOllamaMessages(messages as any)
     const tc: any = result[0].tool_calls
     expect(tc).toHaveLength(1)
     expect(tc[0].function.arguments).toEqual({ q: 'weather' })
@@ -1197,7 +1197,7 @@ describe('buildOllamaMessages', () => {
       }
     ]
 
-    const result = buildOllamaMessages(messages)
+    const result = buildOllamaMessages(messages as any)
     const tc: any = result[0].tool_calls
     expect(tc[0].function.arguments).toEqual({})
   })
@@ -2098,6 +2098,7 @@ describe('DSML stub-leak sentinel -- \x00RESET\x00 emission and renderer reset',
     const accumulatedChunks: string[] = []
     const forceFinalAnswer = true
     const dsmlDetected = false // model wrote a normal text answer, no DSML
+    void forceFinalAnswer, void dsmlDetected // documents the scenario; the sentinel path reads neither
 
     const chunks = [
       'Great question. Here\'s the complete picture on measuring your M5 Pro.',

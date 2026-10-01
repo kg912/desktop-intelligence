@@ -980,7 +980,7 @@
         </div>
         <div class="decision-card">
           <div class="decision-label">Sidebar layout</div>
-          <div class="decision-value">Mutually exclusive panels</div>
+          <div class="decision-value">Mutually exclusive panels <em>(superseded — see §14 Addendum)</em></div>
           <div class="decision-reason">Chat sidebar and orchestrator plan pane cannot both be open simultaneously. Sending a task auto-collapses the chat sidebar. Opening the sidebar collapses the plan pane. Both collapse to a 40px dot rail, never to zero.</div>
         </div>
       </div>
@@ -1270,6 +1270,7 @@ InputBar (ma-mode toggle)             multi-agent:sidecar-status
       </ul>
  
       <h3>Frontend — Layout State Machine</h3>
+      <p><em>Superseded by the sidebar dock — see §14 Addendum and specs/multi-agent-refinement.md.</em></p>
       <table>
         <tr><th>State</th><th>Chat Sidebar</th><th>Plan Pane</th><th>Input Bar</th></tr>
         <tr><td>Composing</td><td>Open</td><td>Hidden</td><td>Active</td></tr>
@@ -1803,6 +1804,22 @@ InputBar (ma-mode toggle)             multi-agent:sidecar-status
         <tr><td>Cloud sync of execution traces</td><td>Never</td><td>Local only. Consistent with existing privacy stance on observability logs.</td></tr>
         <tr><td>Docker sandboxing / code execution</td><td>Phase 2</td><td>MVP agents read via Filesystem MCP. Docker adds code execution capability.</td></tr>
         <tr><td>E2B sandboxing</td><td>Phase 2, opt-in</td><td>User supplies own API key. Alternative to Docker for users without Docker Desktop.</td></tr>
+      </table>
+    </section>
+
+    <hr>
+
+    <section id="addendum-2026-10">
+      <h2><span class="section-num">14</span> Addendum (2026-10-01): refinement</h2>
+      <p>The rows below supersede parts of §02, §08 and §12. Full detail and rationale: <code>specs/multi-agent-refinement.md</code>. The original objectives above are unchanged.</p>
+      <table>
+        <tr><th>Was</th><th>Now</th></tr>
+        <tr><td>§02 "Mutually exclusive panels": chat sidebar and a separate plan pane, each collapsing to a 40px rail</td><td>No plan pane. The run lives in the sidebar itself, widened to 760px (<code>sidebarMode = 'agents'</code>); chat and favourites stay 264px. Below a 1280px window the dock overlays the chat. Closed by the chat/favourites rail icons, the "Viewing agent run · close" pill, or Esc.</td></tr>
+        <tr><td>§08 layout state machine: plan pane + full-page execution area, "Back to chat"</td><td>The main area stays a chat: user message, the pill, and while live a Final synthesis block. Agent cards, timeline and approvals are in the dock. "Back to chat" is removed; "View agent run" opens the dock read-only on a saved trace.</td></tr>
+        <tr><td>§06 phases: steps in a phase run in parallel, phases in sequence</td><td>Steps declare <code>dependsOn</code>; a ready-queue starts each step as soon as its dependencies pass. <code>phase</code> is derived (dependency depth) for display and old traces.</td></tr>
+        <tr><td>§05 events</td><td>Adds <code>run_config</code>, <code>agent_reasoning</code>, <code>tool_start</code>, <code>tool_done</code>; <code>reflection_result</code> gains model, rubric, issues; agent events carry <code>attempt</code>; every event carries <code>elapsedMs</code>.</td></tr>
+        <tr><td>§06 unknown configured model falls back to the active model</td><td>An unknown model stops the run with the role named. A blank slot still follows the active model.</td></tr>
+        <tr><td>§12 D6 "all 6 states" of the old layout machine</td><td>Verified instead by the dock tests (rail states, widths, accordion, focus, read-only, Esc) and 1440×900 screenshots in <code>designs/shipped/</code>.</td></tr>
       </table>
     </section>
  
