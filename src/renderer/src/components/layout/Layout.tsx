@@ -22,7 +22,7 @@ import type { Chat, McpToolPermissionResponse, ProcessedAttachment, StoredMessag
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
-  const { setThinkingMode, setIsMultiAgentRunning, multiAgentMode } = useModelConfig()
+  const { setThinkingMode, setIsMultiAgentRunning, multiAgentMode, setMultiAgentMode } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
   const [sidebarMode,          setSidebarMode]          = useState<SidebarMode | null>('chat')
   const [settingsOpen,         setSettingsOpen]         = useState(false)
@@ -78,6 +78,15 @@ export function Layout() {
     setActiveChatId(chat.id)
     setChats((prev) => [chat, ...prev.filter((c) => c.id !== chat.id)])
   }, [])
+
+  // ── Mode lock: regular and agent chats never cross over ──────
+  // A listed chat has been sent to, so its mode is fixed; a new chat (no id) may choose.
+  const chatMode = chats.find((c) => c.id === activeChatId)?.mode ?? null
+  const useAgents = chatMode ? chatMode === 'multi-agent' : multiAgentMode
+  // The toggle follows the destination chat, never the previous chat's value.
+  useEffect(() => {
+    setMultiAgentMode(chatMode === 'multi-agent')
+  }, [activeChatId, chatMode, setMultiAgentMode])
 
   // ── useChat (streaming + DB persistence) ─────────────────────
   const {
@@ -342,7 +351,7 @@ export function Layout() {
     e.preventDefault()
     dragCounter.current = 0
     setIsDragging(false)
-    if (multiAgentMode) return // multi-agent runs take no attachments
+    if (useAgents) return // multi-agent runs take no attachments
 
     const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
@@ -369,7 +378,7 @@ export function Layout() {
         ]
       })
     })
-  }, [multiAgentMode])
+  }, [useAgents])
 
   // ── Process attachments and send ──────────────────────────────
   const handleSend = useCallback(async (text: string, rawAttachments?: Attachment[]) => {
@@ -378,12 +387,12 @@ export function Layout() {
     // setMessages) would land at the pre-send bottom position.
 
     const list = rawAttachments ?? []
-    if (multiAgentMode && list.length > 0) {
+    if (useAgents && list.length > 0) {
       multiAgent.setStartError('Multi-agent runs do not take attachments — remove them or turn Multi-Agent mode off.')
       return
     }
     // Sending normally from a finished run view returns to the chat.
-    if (!multiAgentMode && multiAgent.run?.chatId === activeChatId && !shownRunActive) multiAgent.dismiss()
+    if (!useAgents && multiAgent.run?.chatId === activeChatId && !shownRunActive) multiAgent.dismiss()
 
     // ── Pre-create the chat row BEFORE processFile is called ─────
     // Root-cause fix: if the user attaches a file on the very first message of a
@@ -396,11 +405,12 @@ export function Layout() {
     // here (before processFile) so every document is tagged with the correct ID.
     // We then pass preChatId to sendMessage so it skips its own creation step.
     let preChatId: string | undefined
-    if ((list.length > 0 || multiAgentMode) && !activeChatId) {
+    if ((list.length > 0 || useAgents) && !activeChatId) {
       try {
         const newId = uuid()
         const title = text.slice(0, 80).trim() || 'New Chat'
-        const chat  = await window.api.newChat(newId, title)
+        // The mode is fixed at creation: the first message locks it.
+        const chat  = await window.api.newChat(newId, title, useAgents ? 'multi-agent' : 'single')
         preChatId   = chat.id
         console.log(`[Layout] Pre-created chat for file ingest: id=${chat.id}`)
         // Update the sidebar and activeChatId state immediately so subsequent
@@ -464,7 +474,7 @@ export function Layout() {
         .catch(() => { /* non-fatal */ })
     }
 
-    if (multiAgentMode && effectiveChatId) {
+    if (useAgents && effectiveChatId) {
       await window.api.saveMessage(effectiveChatId, uuid(), 'user', text)
       await loadChatMessages(effectiveChatId)
       // Sending a multi-agent task opens the dock; it stays open after the run ends.
@@ -474,7 +484,7 @@ export function Layout() {
 
     // Pass preChatId so useChat skips its own chat-creation step (avoiding double rows).
     sendMessageRef.current(text, processed.length ? processed : undefined, preChatId)
-  }, [activeChatId, handleChatCreated, loadChatMessages, multiAgent, multiAgentMode, shownRunActive])
+  }, [activeChatId, handleChatCreated, loadChatMessages, multiAgent, useAgents, shownRunActive])
 
   // Suggestion pill clicked → pre-fill and send immediately
   const handleSuggest = useCallback((text: string) => {
@@ -638,6 +648,7 @@ export function Layout() {
               mcpActivity={mcpActivity}
               disabled={shownRunActive}
               lockedMessage={shownRunActive && shownRun ? inputLockMessage(shownRun.view) : null}
+              modeLock={chatMode}
             />
           </div>
         </>

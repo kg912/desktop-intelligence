@@ -13,6 +13,7 @@ import type {
   AttachmentFilePayload,
   ProcessedAttachment,
   Chat,
+  ChatMode,
   StoredMessage,
   ModelConfig,
   ReloadModelPayload,
@@ -425,8 +426,8 @@ const api = {
   getChatMessages: (chatId: string): Promise<StoredMessage[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.DB_GET_MESSAGES, chatId),
 
-  newChat: (id: string, title: string): Promise<Chat> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DB_NEW_CHAT, id, title),
+  newChat: (id: string, title: string, mode?: ChatMode): Promise<Chat> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_NEW_CHAT, id, title, mode),
 
   deleteChat: (chatId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.DB_DELETE_CHAT, chatId),

@@ -19,6 +19,7 @@ import {
   getDB,
   getAllChats,
   createChat,
+  claimChatMode,
   getChatMessages,
   saveMessage,
   deleteChatById,
@@ -362,6 +363,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.CHAT_SEND, async (_, payload: ChatSendPayload): Promise<void> => {
     const wc = webContents()
     if (!wc || wc.isDestroyed()) return
+    // Mode lock: an agent chat never takes a regular send.
+    const modeError = payload.chatId ? claimChatMode(payload.chatId, 'single') : null
+    if (modeError) throw new Error(modeError)
 
     // Model is dictated by the frontend (ModelStore). Fall back to DEFAULT_MODEL_ID
     // if the payload field is absent (e.g. during browser mock / unit tests).
@@ -699,8 +703,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     getChatMessages(chatId)
   )
 
-  ipcMain.handle(IPC_CHANNELS.DB_NEW_CHAT, (_, id: string, title: string): Chat =>
-    createChat(id, title)
+  ipcMain.handle(IPC_CHANNELS.DB_NEW_CHAT, (_, id: string, title: string, mode?: string): Chat =>
+    createChat(id, title, mode === 'multi-agent' ? 'multi-agent' : 'single')
   )
 
   ipcMain.handle(IPC_CHANNELS.DB_DELETE_CHAT, (_, chatId: string): void =>

@@ -55,7 +55,11 @@ export interface Chat {
   updatedAt:          number
   systemInstructions: string | null
   starred:            boolean
+  /** Locked once the chat has messages: regular and agent chats never cross over. */
+  mode?:              ChatMode
 }
+
+export type ChatMode = 'single' | 'multi-agent'
 
 /**
  * Wire message shape sent over IPC — lean, no id/timestamp overhead.

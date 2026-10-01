@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
 import { isStreamingSignal } from '../../signals/chatSignals'
 import { InputTextArea } from './InputTextArea'
+import type { ChatMode } from '../../../../shared/types'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
 
@@ -91,18 +92,31 @@ export function BypassPermissionsButton({
 // ----------------------------------------------------------------
 // Multi-Agent mode toggle button (exported for tests)
 // ----------------------------------------------------------------
+export const MODE_LOCK_TOOLTIP: Record<ChatMode, string> = {
+  single:        'This chat is a regular chat. Start a new chat to use agents.',
+  'multi-agent': 'Agent chats stay in agent mode.',
+}
+
 export function MultiAgentModeButton({
   active,
   onToggle,
+  locked = null,
 }: {
   active:   boolean
   onToggle: (next: boolean) => void
+  /** The active chat's mode once it has messages: the toggle is fixed to it. */
+  locked?:  ChatMode | null
 }) {
+  const on = locked ? locked === 'multi-agent' : active
   return (
     <button
-      onClick={() => onToggle(!active)}
-      data-active={active}
-      title={active
+      // aria-disabled, not disabled: a disabled button shows no tooltip on hover.
+      onClick={() => { if (!locked) onToggle(!active) }}
+      aria-disabled={!!locked}
+      data-active={on}
+      title={locked
+        ? MODE_LOCK_TOOLTIP[locked]
+        : on
         ? 'Multi-agent mode on — click to disable'
         : 'Multi-agent mode off — click to enable'
       }
@@ -110,9 +124,10 @@ export function MultiAgentModeButton({
         'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
         'text-[10px] font-medium transition-all duration-150',
         'focus:outline-none',
-        active
-          ? 'bg-accent-950/70 text-accent-300 border border-accent-700 ma-pulse'
-          : 'border border-accent-900/40 text-accent-500/70 hover:text-accent-400'
+        on
+          ? 'bg-accent-950/70 text-accent-300 border border-accent-700'
+          : 'border border-accent-900/40 text-accent-500/70',
+        locked ? 'opacity-40 cursor-not-allowed' : on ? 'ma-pulse' : 'hover:text-accent-400'
       )}
     >
       <Network className="w-3 h-3" />
@@ -133,6 +148,8 @@ export interface InputBarProps {
   mcpActivity?: { serverName: string; toolName: string } | null
   /** Shown while `disabled` — e.g. the multi-agent layout state ("Agents running…"). */
   lockedMessage?: string | null
+  /** Mode of the active chat once it has messages; null for a new chat (either mode). */
+  modeLock?: ChatMode | null
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
@@ -146,6 +163,7 @@ export const InputBar = memo(function InputBar({
   onAttachments,
   mcpActivity = null,
   lockedMessage = null,
+  modeLock = null,
 }: InputBarProps) {
   useSignals();
   const isStreaming = isStreamingSignal.value
@@ -512,7 +530,7 @@ export const InputBar = memo(function InputBar({
           </button>
           <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
           {isOpenRouter === true && (
-            <MultiAgentModeButton active={multiAgentMode} onToggle={setMultiAgentMode} />
+            <MultiAgentModeButton active={multiAgentMode} onToggle={setMultiAgentMode} locked={modeLock} />
           )}
         </div>
         <div className="flex items-center gap-2">

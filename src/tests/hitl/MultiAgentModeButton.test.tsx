@@ -54,3 +54,27 @@ describe('MultiAgentModeButton', () => {
     expect(onToggle).not.toHaveBeenCalled()
   })
 })
+
+describe('MultiAgentModeButton — mode lock', () => {
+  it('a regular chat: shown off, greyed, never toggles, explains why', () => {
+    const onToggle = vi.fn()
+    render(<MultiAgentModeButton active={true} onToggle={onToggle} locked="single" />)
+    const button = screen.getByRole('button')
+    expect(button.getAttribute('data-active')).toBe('false')
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.getAttribute('title')).toBe('This chat is a regular chat. Start a new chat to use agents.')
+    fireEvent.click(button)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  it('an agent chat: forced on, greyed, never toggles, explains why', () => {
+    const onToggle = vi.fn()
+    render(<MultiAgentModeButton active={false} onToggle={onToggle} locked="multi-agent" />)
+    const button = screen.getByRole('button')
+    expect(button.getAttribute('data-active')).toBe('true')
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.getAttribute('title')).toBe('Agent chats stay in agent mode.')
+    fireEvent.click(button)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+})

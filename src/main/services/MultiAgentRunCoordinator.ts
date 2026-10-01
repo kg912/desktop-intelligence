@@ -64,6 +64,8 @@ export interface CoordinatorDeps {
     saveTrace(chatId: string, trace: AgentEvent[], status: RunStatus, steps?: AgentStep[]): void
     saveAssistantMessage(chatId: string, id: string, content: string): void
     getRun(chatId: string): MultiAgentRunRecord | null
+    /** Mode lock: refusal message when the chat is a regular chat with messages, else null. */
+    claimMode(chatId: string): string | null
   }
   observe(chatId: string, event: AgentEvent): void
   settings(): { backendProvider: string; openRouterApiKey: string; openRouterModel: string }
@@ -115,6 +117,8 @@ export class MultiAgentRunCoordinator {
     if ([...this.runs.values()].some((r) => r.chatId === payload.chatId) || this.starting.has(payload.chatId)) {
       return { ok: false, reason: 'A multi-agent run is already in progress for this chat' }
     }
+    const modeError = this.deps.db.claimMode(payload.chatId)
+    if (modeError) return { ok: false, reason: modeError }
 
     let catalogue: OpenRouterModelInfo[] = []
     try {

@@ -42,6 +42,7 @@ function setup(over: { settings?: Partial<ReturnType<CoordinatorDeps['settings']
     saveTrace: vi.fn(),
     saveAssistantMessage: vi.fn(),
     getRun: vi.fn(() => null),
+    claimMode: vi.fn((): string | null => null),
   }
   const sent: AgentEvent[] = []
   const observed: AgentEvent[] = []
@@ -71,6 +72,17 @@ const config = (models: Partial<MultiAgentConfig['models']> = {}): MultiAgentCon
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms))
 
 describe('MultiAgentRunCoordinator.start', () => {
+  it('mode lock: a regular chat with messages is refused before the sidecar is touched', async () => {
+    const { coordinator, sidecar, db } = setup()
+    db.claimMode.mockReturnValueOnce('This chat is a regular chat. Start a new chat to use agents.')
+    expect(await coordinator.start({ chatId: 'regular', task: 't', config: config() })).toEqual({
+      ok: false, reason: 'This chat is a regular chat. Start a new chat to use agents.',
+    })
+    expect(db.claimMode).toHaveBeenCalledWith('regular')
+    expect(sidecar.startRun).not.toHaveBeenCalled()
+    expect(db.begin).not.toHaveBeenCalled()
+  })
+
   it('refuses non-OpenRouter backends and missing keys (spec D10)', async () => {
     const lm = setup({ settings: { backendProvider: 'lmstudio' } })
     expect(await lm.coordinator.start({ chatId: 'c', task: 't', config: config() })).toEqual({ ok: false, reason: expect.stringMatching(/OpenRouter backend/) })

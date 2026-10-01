@@ -17,7 +17,7 @@ import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
 import { DEFAULT_SIDECAR_PORT, multiAgentSidecar } from './services/MultiAgentSidecarManager'
 import { observabilityService } from './services/ObservabilityService'
-import { beginMultiAgentRun, getMultiAgentRun, saveMessage, saveMultiAgentTrace } from './services/DatabaseService'
+import { beginMultiAgentRun, claimChatMode, getMultiAgentRun, saveMessage, saveMultiAgentTrace } from './services/DatabaseService'
 import { MultiAgentRunCoordinator } from './services/MultiAgentRunCoordinator'
 import { setMultiAgentCoordinator } from './services/multiAgentRuntime'
 import { getOpenRouterCatalogue } from './services/OpenRouterCatalogue'
@@ -241,6 +241,7 @@ app.whenReady().then(async () => {
       saveTrace: (chatId, trace, status, steps) => saveMultiAgentTrace(chatId, trace, status, steps),
       saveAssistantMessage: (chatId, id, content) => saveMessage(chatId, id, 'assistant', content),
       getRun: (chatId) => getMultiAgentRun(chatId),
+      claimMode: (chatId) => claimChatMode(chatId, 'multi-agent'),
     },
     observe: (chatId, event) => observabilityService.emitMultiAgentEvent(chatId, event),
     settings: () => {

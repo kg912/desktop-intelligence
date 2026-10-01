@@ -20,7 +20,7 @@
 import Database from 'better-sqlite3'
 import { app }  from 'electron'
 import path     from 'path'
-import type { AgentEvent, AgentStep, Chat, MultiAgentRunRecord, RunStatus, StoredMessage } from '../../shared/types'
+import type { AgentEvent, AgentStep, Chat, ChatMode, MultiAgentRunRecord, RunStatus, StoredMessage } from '../../shared/types'
 import { ensureVecLoaded, isVecAvailable } from './rag/sqliteVecLoader'
 import { EMBEDDING_DIM } from './EmbeddingService'
 
@@ -313,8 +313,8 @@ export function getDB(): Database.Database {
 
 export function getAllChats(): Chat[] {
   const rows = getDB()
-    .prepare('SELECT id, title, created_at, updated_at, system_instructions, starred FROM chats ORDER BY updated_at DESC')
-    .all() as Array<{ id: string; title: string; created_at: number; updated_at: number; system_instructions: string | null; starred: number }>
+    .prepare('SELECT id, title, created_at, updated_at, system_instructions, starred, mode FROM chats ORDER BY updated_at DESC')
+    .all() as Array<{ id: string; title: string; created_at: number; updated_at: number; system_instructions: string | null; starred: number; mode: ChatMode }>
   return rows.map((r) => ({
     id:                 r.id,
     title:              r.title,
@@ -322,15 +322,36 @@ export function getAllChats(): Chat[] {
     updatedAt:          r.updated_at,
     systemInstructions: r.system_instructions ?? null,
     starred:            r.starred === 1,
+    mode:               r.mode,
   }))
 }
 
-export function createChat(id: string, title: string): Chat {
+export function createChat(id: string, title: string, mode: ChatMode = 'single'): Chat {
   const now = Date.now()
   getDB()
-    .prepare('INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
-    .run(id, title, now, now)
-  return { id, title, createdAt: now, updatedAt: now, systemInstructions: null, starred: false }
+    .prepare('INSERT INTO chats (id, title, created_at, updated_at, mode) VALUES (?, ?, ?, ?, ?)')
+    .run(id, title, now, now, mode)
+  return { id, title, createdAt: now, updatedAt: now, systemInstructions: null, starred: false, mode }
+}
+
+export const MODE_LOCK_ERROR: Record<ChatMode, string> = {
+  'multi-agent': 'This chat is a regular chat. Start a new chat to use agents.',
+  single:        'Agent chats stay in agent mode.',
+}
+
+/**
+ * Mode lock: regular and agent chats never cross over. A chat with messages
+ * keeps its mode; an empty chat takes the requested one. Returns the refusal
+ * message, or null when `mode` may proceed (an unknown chat is not refused).
+ */
+export function claimChatMode(chatId: string, mode: ChatMode, db: Database.Database = getDB()): string | null {
+  const row = db.prepare(
+    'SELECT mode, (SELECT COUNT(*) FROM chat_messages WHERE chat_id = chats.id) AS n FROM chats WHERE id = ?'
+  ).get(chatId) as { mode: ChatMode; n: number } | undefined
+  if (!row || row.mode === mode) return null
+  if (row.n > 0) return MODE_LOCK_ERROR[mode]
+  db.prepare('UPDATE chats SET mode = ? WHERE id = ?').run(mode, chatId)
+  return null
 }
 
 export function starChatById(chatId: string, starred: boolean): void {

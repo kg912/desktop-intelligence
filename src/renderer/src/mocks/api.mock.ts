@@ -272,9 +272,9 @@ export const mockApi: ElectronAPI = {
   getChatMessages: async (chatId: string): Promise<StoredMessage[]> =>
     mockMessages[chatId] ? [...mockMessages[chatId]] : [],
 
-  newChat: async (id: string, title: string): Promise<Chat> => {
+  newChat: async (id: string, title: string, mode: Chat['mode'] = 'single'): Promise<Chat> => {
     const now  = Date.now()
-    const chat: Chat = { id, title, createdAt: now, updatedAt: now, systemInstructions: null, starred: false }
+    const chat: Chat = { id, title, createdAt: now, updatedAt: now, systemInstructions: null, starred: false, mode }
     mockChats = [chat, ...mockChats]
     mockMessages[id] = []
     return chat
