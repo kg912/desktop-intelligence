@@ -107,9 +107,15 @@ export function PrintChatView({ chatId }: PrintChatViewProps) {
           ))}
         </div>
       </div>
-      {/* Print-specific overrides — no scroll containers, no clipped content,
+      {/* Print-specific overrides — the app shell's html/body/#root
+          height:100% + overflow:hidden (globals.css) would clip the PDF to one
+          window height; no scroll containers, no clipped content,
           chart/code cards never split across a page break. */}
       <style>{`
+        html, body, #root {
+          height: auto !important;
+          overflow: visible !important;
+        }
         .print-chat-view .overflow-y-auto,
         .print-chat-view .overflow-x-auto {
           overflow: visible !important;
