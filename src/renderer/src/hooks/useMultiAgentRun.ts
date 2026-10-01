@@ -14,6 +14,8 @@ export interface ActiveRun {
   review: boolean
   /** Config the run was started with (for the pre-flight estimate). */
   config: MultiAgentConfig
+  /** Every run of this chat, oldest first (absent until the chat has run history). */
+  runIds?: string[]
 }
 
 /** Events for a run id the renderer has not learned yet (IPC reply vs first stream event race). */
@@ -88,23 +90,24 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     const buffered = early.current.filter((e) => e.runId === started.runId)
     early.current = early.current.filter((e) => e.runId !== started.runId)
     const view = buffered.reduce(applyAgentEvent, emptyRunView(started.runId))
-    const next: ActiveRun = { chatId, task, view, review: false, config: started.config ?? config }
+    const next: ActiveRun = { chatId, task, view, review: false, config: started.config ?? config, runIds: started.runIds }
     runRef.current = next
     setRun(next)
     if (buffered.some(isTerminalAgentEvent)) finishedRef.current(chatId)
     return true
   }, [])
 
-  const review = useCallback(async (chatId: string, task = ''): Promise<boolean> => {
+  /** Open a saved run read-only — the chat's latest, or `runId` (an earlier one). */
+  const review = useCallback(async (chatId: string, task = '', runId?: string): Promise<boolean> => {
     // A live run is never replaced by a saved one; its events would be lost.
     const current = runRef.current
     if (current && !current.review && isRunActive(current.view)) return false
-    const record = await window.api.getMultiAgentRun(chatId).catch(() => null)
+    const record = await window.api.getMultiAgentRun(chatId, runId).catch(() => null)
     if (!record || record.mode !== 'multi-agent' || record.executionTrace.length === 0) return false
-    const runId = record.executionTrace[0].runId
     const next: ActiveRun = {
-      chatId, task, review: true, config: DEFAULT_MULTI_AGENT_CONFIG,
-      view: reduceRunEvents(runId, record.executionTrace),
+      chatId, task: record.task ?? task, review: true, config: DEFAULT_MULTI_AGENT_CONFIG,
+      view: reduceRunEvents(record.executionTrace[0].runId, record.executionTrace),
+      runIds: record.runIds,
     }
     runRef.current = next
     setRun(next)

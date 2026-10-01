@@ -1630,8 +1630,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     return multiAgentSidecar.getStatus()
   })
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_RUN, (_, chatId: string) =>
-    getMultiAgentCoordinator().getRun(String(chatId))
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_RUN, (_, chatId: string, runId?: string) =>
+    getMultiAgentCoordinator().getRun(String(chatId), typeof runId === 'string' ? runId : undefined)
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE, async (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> => {

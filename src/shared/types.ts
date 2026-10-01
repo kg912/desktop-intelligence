@@ -772,6 +772,11 @@ export interface MultiAgentRunRecord {
   runStatus: RunStatus
   agentGraph: AgentStep[]
   executionTrace: AgentEvent[]
+  /** Set once the chat has run history (multi_agent_runs): this run's id. */
+  runId?: string
+  /** Every run of the chat, oldest first. */
+  runIds?: string[]
+  task?: string
 }
 
 // Outbound type — Electron → sidecar HITL response
@@ -795,7 +800,7 @@ export interface MultiAgentStartPayload {
 
 // Phase 1 always returns the failure branch (sidecar not built yet).
 export type StartRunResult =
-  | { ok: true;  runId: string; /** Role models as resolved by main (catalogue fallback applied). */ config?: MultiAgentConfig }
+  | { ok: true;  runId: string; /** Role models as resolved by main (catalogue fallback applied). */ config?: MultiAgentConfig; /** The chat's runs, oldest first, this one last. */ runIds?: string[] }
   | { ok: false; reason: string }
 
 // --- LM Studio API shapes ---

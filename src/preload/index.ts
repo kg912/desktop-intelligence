@@ -380,8 +380,8 @@ const api = {
   saveMultiAgentConfig: (config: MultiAgentConfig & { sidecarPort?: number }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, config),
 
-  getMultiAgentRun: (chatId: string): Promise<MultiAgentRunRecord | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_RUN, chatId),
+  getMultiAgentRun: (chatId: string, runId?: string): Promise<MultiAgentRunRecord | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_RUN, chatId, runId),
 
   getMultiAgentCatalogue: (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE),

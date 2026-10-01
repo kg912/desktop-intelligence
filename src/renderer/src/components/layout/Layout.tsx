@@ -558,6 +558,8 @@ export function Layout() {
                     onSelectAgent={selectAgent}
                     onClose={closeDock}
                     hidePlanColumn={tinyWindow}
+                    runIds={shownRun.runIds}
+                    onShowRun={(runId) => { if (activeChatId) void reviewRun(activeChatId, activeTitle, runId) }}
                   />
                 ) : null
               }

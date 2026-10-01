@@ -84,10 +84,10 @@ export interface CoordinatorDeps {
   /** Push to the renderer (MULTI_AGENT_EVENT). */
   sendEvent(event: AgentEvent): void
   db: {
-    begin(chatId: string): void
+    begin(chatId: string, run: { runId: string; task: string; config: MultiAgentConfig }): void
     saveTrace(chatId: string, trace: AgentEvent[], status: RunStatus, steps?: AgentStep[]): void
     saveAssistantMessage(chatId: string, id: string, content: string): void
-    getRun(chatId: string): MultiAgentRunRecord | null
+    getRun(chatId: string, runId?: string): MultiAgentRunRecord | null
     /** Mode lock: refusal message when the chat is a regular chat with messages, else null. */
     claimMode(chatId: string): string | null
   }
@@ -110,8 +110,8 @@ interface RunContext {
 
 export class MultiAgentRunCoordinator {
   private readonly runs = new Map<string, RunContext>()
-  /** chatId → config for a run whose id the sidecar has not assigned yet. */
-  private readonly starting = new Map<string, MultiAgentConfig>()
+  /** chatId → config and task for a run whose id the sidecar has not assigned yet. */
+  private readonly starting = new Map<string, { config: MultiAgentConfig; task: string }>()
   private readonly flushDelayMs: number
 
   constructor(private readonly deps: CoordinatorDeps) {
@@ -119,13 +119,14 @@ export class MultiAgentRunCoordinator {
     // runStarted is emitted synchronously inside startRun, before any event
     // can stream — so a run's context always exists before its first event.
     deps.sidecar.on('runStarted', ({ runId, chatId }) => {
-      const config = this.starting.get(chatId)
-      if (!config) return
+      const pending = this.starting.get(chatId)
+      if (!pending) return
+      const { config, task } = pending
       this.starting.delete(chatId)
       this.runs.set(runId, {
         runId, chatId, config, trace: [], pendingTokens: new Map(), openPauses: 0, flushTimer: null,
       })
-      deps.db.begin(chatId)
+      deps.db.begin(chatId, { runId, task, config })
     })
     deps.sidecar.on('event', (event) => this.onEvent(event))
   }
@@ -175,7 +176,7 @@ export class MultiAgentRunCoordinator {
     }
 
     const config: MultiAgentConfig = { ...payload.config, models }
-    this.starting.set(payload.chatId, config)
+    this.starting.set(payload.chatId, { config, task: payload.task })
     try {
       const result = await this.deps.sidecar.startRun({
         chatId: payload.chatId,
@@ -192,7 +193,10 @@ export class MultiAgentRunCoordinator {
         modelSources: Object.fromEntries(MODEL_ROLES.map((role) => [role, resolved[role].source])) as Record<ModelRole, 'saved' | 'default' | 'active'>,
         catalogueChecked,
       })
-      return result.ok ? { ...result, config } : result
+      if (!result.ok) return result
+      // runStarted fired inside startRun, so this run is already in the history.
+      const runIds = this.deps.db.getRun(payload.chatId)?.runIds
+      return { ...result, config, ...(runIds ? { runIds } : {}) }
     } finally {
       this.starting.delete(payload.chatId)
     }
@@ -210,12 +214,17 @@ export class MultiAgentRunCoordinator {
     return this.deps.sidecar.abortRun(runId)
   }
 
-  getRun(chatId: string): MultiAgentRunRecord | null {
+  /** The chat's live run, else its latest saved one; `runId` picks a specific (earlier) run. */
+  getRun(chatId: string, runId?: string): MultiAgentRunRecord | null {
     const live = [...this.runs.values()].find((r) => r.chatId === chatId)
-    if (live) {
-      return { mode: 'multi-agent', runStatus: this.status(live), agentGraph: live.steps ?? [], executionTrace: this.snapshot(live) }
+    if (live && (runId === undefined || runId === live.runId)) {
+      const saved = this.deps.db.getRun(chatId, live.runId)
+      return {
+        mode: 'multi-agent', runStatus: this.status(live), agentGraph: live.steps ?? [], executionTrace: this.snapshot(live),
+        ...(saved?.runIds ? { runId: live.runId, runIds: saved.runIds } : {}),
+      }
     }
-    return this.deps.db.getRun(chatId)
+    return runId === undefined ? this.deps.db.getRun(chatId) : this.deps.db.getRun(chatId, runId)
   }
 
   /** Ids of runs still in flight — e.g. to warn before quitting. */

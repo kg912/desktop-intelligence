@@ -285,3 +285,88 @@ describe('multi-agent run persistence', () => {
     expect(getMultiAgentRun('chat-1', db)).toMatchObject({ mode: 'multi-agent', executionTrace: [] })
   })
 })
+
+// ── Run history (multi_agent_runs) ───────────────────────────────────────────
+
+import { applyMultiAgentRunsMigration } from '../DatabaseService'
+
+describe('multi-agent run history', () => {
+  const plan = (runId: string, ts: number): AgentEvent =>
+    ({ runId, seq: 1, ts, type: 'orchestrator_plan', steps: [{ id: '1.1', label: runId, stage: 'worker', role: 'R', model: 'm', phase: 1 }] })
+  const done = (runId: string, ts: number, finalOutput: string): AgentEvent =>
+    ({ runId, seq: 2, ts, type: 'task_complete', finalOutput, totalCostUsd: 0.01, totalTokens: 5 })
+
+  function migrated(): Database.Database {
+    const db = makeDb()
+    applyMultiAgentMigration(db)
+    db.prepare('INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run('chat-1', 't', 1, 1)
+    return db
+  }
+
+  it('backfills each existing multi-agent chat as exactly one run, once, and skips single chats', () => {
+    const db = makeDb()
+    applyMultiAgentMigration(db)
+    const ins = db.prepare(`INSERT INTO chats (id, title, created_at, updated_at, mode, run_status, agent_graph, execution_trace)
+      VALUES (?, 't', ?, ?, ?, ?, ?, ?)`)
+    const legacy = [plan('old-run', 5000), done('old-run', 6000, 'old answer')]
+    ins.run('ma', 100, 200, 'multi-agent', 'completed', JSON.stringify([]), JSON.stringify(legacy))
+    ins.run('ma-broken', 300, 400, 'multi-agent', 'failed', null, '{not json')
+    ins.run('single', 1, 1, 'single', 'idle', null, null)
+    applyMultiAgentRunsMigration(db)
+    applyMultiAgentRunsMigration(db) // version-gated: second call is a no-op
+
+    expect(db.pragma('user_version', { simple: true })).toBe(3)
+    expect(db.prepare('SELECT run_id, chat_id, started_at, ended_at, status, task, config_json FROM multi_agent_runs ORDER BY chat_id').all()).toEqual([
+      { run_id: 'old-run', chat_id: 'ma', started_at: 5000, ended_at: 200, status: 'completed', task: null, config_json: null },
+      { run_id: 'legacy-ma-broken', chat_id: 'ma-broken', started_at: 300, ended_at: 400, status: 'failed', task: null, config_json: null },
+    ])
+    expect(getMultiAgentRun('ma', db)).toEqual({
+      mode: 'multi-agent', runStatus: 'completed', agentGraph: [], executionTrace: legacy, runId: 'old-run', runIds: ['old-run'],
+    })
+  })
+
+  it('keeps two runs in one chat, both retrievable by id, latest by default', () => {
+    const db = migrated()
+    beginMultiAgentRun('chat-1', [], db, { runId: 'run-a', task: 'first task', config: { budgetCapUsd: 0.5 } })
+    saveMultiAgentTrace('chat-1', [plan('run-a', 10), done('run-a', 11, 'A')], 'completed', undefined, db)
+    beginMultiAgentRun('chat-1', [], db, { runId: 'run-b', task: 'second task', config: { budgetCapUsd: 0.7 } })
+    saveMultiAgentTrace('chat-1', [plan('run-b', 20), done('run-b', 21, 'B')], 'failed', undefined, db)
+
+    expect(getMultiAgentRun('chat-1', db, 'run-a')).toEqual({
+      mode: 'multi-agent', runStatus: 'completed', agentGraph: [], executionTrace: [plan('run-a', 10), done('run-a', 11, 'A')],
+      runId: 'run-a', runIds: ['run-a', 'run-b'], task: 'first task',
+    })
+    const latest = {
+      mode: 'multi-agent', runStatus: 'failed', agentGraph: [], executionTrace: [plan('run-b', 20), done('run-b', 21, 'B')],
+      runId: 'run-b', runIds: ['run-a', 'run-b'], task: 'second task',
+    }
+    expect(getMultiAgentRun('chat-1', db, 'run-b')).toEqual(latest)
+    expect(getMultiAgentRun('chat-1', db)).toEqual(latest)
+    expect(getMultiAgentRun('chat-1', db, 'no-such-run')).toBeNull()
+    expect(db.prepare('SELECT config_json FROM multi_agent_runs ORDER BY started_at, rowid').all())
+      .toEqual([{ config_json: '{"budgetCapUsd":0.5}' }, { config_json: '{"budgetCapUsd":0.7}' }])
+  })
+
+  it('chats.agent_graph / execution_trace / run_status still hold the latest run only, as before', () => {
+    const db = migrated()
+    beginMultiAgentRun('chat-1', [], db, { runId: 'run-a', task: 'a', config: {} })
+    saveMultiAgentTrace('chat-1', [plan('run-a', 10)], 'completed', undefined, db)
+    beginMultiAgentRun('chat-1', [], db, { runId: 'run-b', task: 'b', config: {} })
+    expect(db.prepare('SELECT mode, run_status, agent_graph, execution_trace FROM chats WHERE id = ?').get('chat-1'))
+      .toEqual({ mode: 'multi-agent', run_status: 'running', agent_graph: '[]', execution_trace: '[]' })
+    saveMultiAgentTrace('chat-1', [plan('run-b', 20)], 'completed', undefined, db)
+    expect(db.prepare('SELECT run_status, execution_trace FROM chats WHERE id = ?').get('chat-1'))
+      .toEqual({ run_status: 'completed', execution_trace: JSON.stringify([plan('run-b', 20)]) })
+    // ...while the first run is untouched in history.
+    expect(db.prepare('SELECT execution_trace FROM multi_agent_runs WHERE run_id = ?').get('run-a'))
+      .toEqual({ execution_trace: JSON.stringify([plan('run-a', 10)]) })
+  })
+
+  it('deleting the chat deletes its runs', () => {
+    const db = migrated()
+    db.pragma('foreign_keys = ON')
+    beginMultiAgentRun('chat-1', [], db, { runId: 'run-a', task: 'a', config: {} })
+    db.prepare('DELETE FROM chats WHERE id = ?').run('chat-1')
+    expect(db.prepare('SELECT COUNT(*) AS n FROM multi_agent_runs').get()).toEqual({ n: 0 })
+  })
+})

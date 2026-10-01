@@ -48,9 +48,10 @@ describe('DatabaseService RAG v2 migration', () => {
     db = getDB()
   })
 
-  it('reaches user_version = 2 after first getDB() (Phase 2 migration applied)', () => {
+  // 3 since multi-agent run history (user_version 2 → 3) runs after the RAG gates.
+  it('reaches user_version = 3 after first getDB() (Phase 2 migration, then run history, applied)', () => {
     const v = db.pragma('user_version', { simple: true }) as number
-    expect(v).toBe(2)
+    expect(v).toBe(3)
   })
 
   it('documents table has mode, content_hash, token_count columns', () => {
@@ -105,9 +106,9 @@ describe('DatabaseService RAG v2 migration', () => {
 
   it('migration is idempotent (calling getDB() again does not throw)', () => {
     expect(() => getDB()).not.toThrow()
-    // user_version should still be 2
+    // user_version should still be 3
     const v = db.pragma('user_version', { simple: true }) as number
-    expect(v).toBe(2)
+    expect(v).toBe(3)
   })
 
   it('Phase 2 migration: NULL-hash documents rows removed, document_chunks absent', () => {

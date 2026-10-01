@@ -618,3 +618,29 @@ describe('Output limits (Part F)', () => {
     expect(await screen.findByText("Output length is limited only by this budget and the model's context window.")).toBeTruthy()
   })
 })
+
+describe('run history in the dock header', () => {
+  const done = () => view([{ type: 'task_complete', finalOutput: 'x', totalCostUsd: 0, totalTokens: 0 }])
+
+  it('shows "Run N of M" with prev/next for a saved run and asks for the neighbouring run ids', () => {
+    const onShowRun = vi.fn()
+    render(<MultiAgentSidebarView {...dockProps} readOnly view={done()} runIds={['run-0', 'run-1', 'run-2']} onShowRun={onShowRun} />)
+    expect(screen.getByTestId('run-position').textContent).toBe('Run 2 of 3')
+    fireEvent.click(screen.getByLabelText('Previous run'))
+    fireEvent.click(screen.getByLabelText('Next run'))
+    expect(onShowRun.mock.calls).toEqual([['run-0'], ['run-2']])
+  })
+
+  it('disables the ends, hides with a single run, and locks while a live run is shown', () => {
+    const { unmount } = render(<MultiAgentSidebarView {...dockProps} readOnly view={done()} runIds={['run-0', 'run-1']} />)
+    expect(screen.getByTestId('run-position').textContent).toBe('Run 2 of 2')
+    expect((screen.getByLabelText('Next run') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByLabelText('Previous run') as HTMLButtonElement).disabled).toBe(false)
+    unmount()
+    const single = render(<MultiAgentSidebarView {...dockProps} readOnly view={done()} runIds={['run-1']} />)
+    expect(screen.queryByTestId('run-position')).toBeNull()
+    single.unmount()
+    render(<MultiAgentSidebarView {...dockProps} view={view([{ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm' }])} runIds={['run-0', 'run-1']} />)
+    expect((screen.getByLabelText('Previous run') as HTMLButtonElement).disabled).toBe(true)
+  })
+})

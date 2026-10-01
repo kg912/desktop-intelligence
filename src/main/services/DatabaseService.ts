@@ -41,6 +41,46 @@ export function applyMultiAgentMigration(db: Database.Database): void {
   try { db.exec(`ALTER TABLE chats ADD COLUMN agent_graph TEXT`) } catch { /* column already exists */ }
   // execution_trace: JSON-encoded ordered AgentEvent[] for replay. NULL until a run produces one.
   try { db.exec(`ALTER TABLE chats ADD COLUMN execution_trace TEXT`) } catch { /* column already exists */ }
+  // Every run, not just the latest: chats.agent_graph/execution_trace stay as the
+  // latest run's copy; this table keeps them all. Backfill is applyMultiAgentRunsMigration.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS multi_agent_runs (
+      run_id          TEXT    PRIMARY KEY,
+      chat_id         TEXT    NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      started_at      INTEGER NOT NULL,
+      ended_at        INTEGER,
+      status          TEXT    NOT NULL,
+      task            TEXT,
+      config_json     TEXT,
+      agent_graph     TEXT,
+      execution_trace TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_multi_agent_runs_chat ON multi_agent_runs(chat_id, started_at);
+  `)
+}
+
+/**
+ * user_version 2 → 3: each chat's pre-existing run (the chats columns) becomes
+ * one multi_agent_runs row. Runs once; must run after the RAG v2 migrations
+ * (which gate on user_version < 1 and < 2).
+ */
+export function applyMultiAgentRunsMigration(db: Database.Database): void {
+  if ((db.pragma('user_version', { simple: true }) as number) >= 3) return
+  db.transaction(() => {
+    db.exec(`
+      INSERT OR IGNORE INTO multi_agent_runs
+        (run_id, chat_id, started_at, ended_at, status, task, config_json, agent_graph, execution_trace)
+      SELECT
+        COALESCE(CASE WHEN json_valid(execution_trace) THEN json_extract(execution_trace, '$[0].runId') END, 'legacy-' || id),
+        id,
+        COALESCE(CASE WHEN json_valid(execution_trace) THEN json_extract(execution_trace, '$[0].ts') END, created_at),
+        CASE WHEN run_status IN ('completed', 'failed') THEN updated_at END,
+        run_status, NULL, NULL, agent_graph, execution_trace
+      FROM chats
+      WHERE mode = 'multi-agent' AND (agent_graph IS NOT NULL OR execution_trace IS NOT NULL)
+    `)
+    db.exec('PRAGMA user_version = 3')
+  })()
 }
 
 export function getDB(): Database.Database {
@@ -291,6 +331,9 @@ export function getDB(): Database.Database {
     console.log('[DB] RAG v2 Phase 2 migration complete (user_version → 2). All stale RAG data wiped for clean re-ingest.')
   }
 
+  // Multi-agent run history (user_version 2 → 3) — after the RAG gates above.
+  applyMultiAgentRunsMigration(_db)
+
   // Work Order E: raw source text length — denominator for correct coveragePct in chunk export.
   // Persisted at ingest time; NULL for docs ingested before 3.0.0-beta-15.
   try {
@@ -361,12 +404,26 @@ export function starChatById(chatId: string, starred: boolean): void {
 export type { MultiAgentRunRecord } from '../../shared/types'
 
 /** Persist the plan before workers start, replacing any stale replay trace. */
-export function beginMultiAgentRun(chatId: string, steps: AgentStep[] = [], db: Database.Database = getDB()): void {
-  db.prepare(`
-    UPDATE chats
-    SET mode = 'multi-agent', run_status = 'running', agent_graph = ?, execution_trace = ?, updated_at = ?
-    WHERE id = ?
-  `).run(JSON.stringify(steps), JSON.stringify([]), Date.now(), chatId)
+export function beginMultiAgentRun(
+  chatId: string,
+  steps: AgentStep[] = [],
+  db: Database.Database = getDB(),
+  run?: { runId: string; task: string; config: unknown }
+): void {
+  const now = Date.now()
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE chats
+      SET mode = 'multi-agent', run_status = 'running', agent_graph = ?, execution_trace = ?, updated_at = ?
+      WHERE id = ?
+    `).run(JSON.stringify(steps), JSON.stringify([]), now, chatId)
+    if (run) {
+      db.prepare(`
+        INSERT INTO multi_agent_runs (run_id, chat_id, started_at, status, task, config_json, agent_graph, execution_trace)
+        VALUES (?, ?, ?, 'running', ?, ?, ?, '[]')
+      `).run(run.runId, chatId, now, run.task, JSON.stringify(run.config), JSON.stringify(steps))
+    }
+  })()
 }
 
 /**
@@ -374,6 +431,7 @@ export function beginMultiAgentRun(chatId: string, steps: AgentStep[] = [], db: 
  * read-parse-append-stringify-write was O(n²) in synchronous SQLite on the
  * main thread (every streamed token rewrote the whole trace); the
  * coordinator now buffers and calls this at meaningful boundaries.
+ * Also mirrored into the chat's latest multi_agent_runs row (one live run per chat).
  */
 export function saveMultiAgentTrace(
   chatId: string,
@@ -382,26 +440,49 @@ export function saveMultiAgentTrace(
   steps?: AgentStep[],
   db: Database.Database = getDB()
 ): void {
-  db.prepare(`
-    UPDATE chats
-    SET run_status = ?, execution_trace = ?, agent_graph = COALESCE(?, agent_graph), updated_at = ?
-    WHERE id = ?
-  `).run(status, JSON.stringify(trace), steps ? JSON.stringify(steps) : null, Date.now(), chatId)
+  const now = Date.now()
+  const traceJson = JSON.stringify(trace)
+  const stepsJson = steps ? JSON.stringify(steps) : null
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE chats
+      SET run_status = ?, execution_trace = ?, agent_graph = COALESCE(?, agent_graph), updated_at = ?
+      WHERE id = ?
+    `).run(status, traceJson, stepsJson, now, chatId)
+    db.prepare(`
+      UPDATE multi_agent_runs
+      SET status = ?, execution_trace = ?, agent_graph = COALESCE(?, agent_graph),
+          ended_at = CASE WHEN ? IN ('completed', 'failed') THEN ? ELSE ended_at END
+      WHERE run_id = (SELECT run_id FROM multi_agent_runs WHERE chat_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1)
+    `).run(status, traceJson, stepsJson, status, now, chatId)
+  })()
 }
 
-export function getMultiAgentRun(chatId: string, db: Database.Database = getDB()): MultiAgentRunRecord | null {
-  const row = db.prepare('SELECT mode, run_status, agent_graph, execution_trace FROM chats WHERE id = ?').get(chatId) as {
+/** The chat's latest run, or `runId` when given. Carries the run list once the chat has run history. */
+export function getMultiAgentRun(chatId: string, db: Database.Database = getDB(), runId?: string): MultiAgentRunRecord | null {
+  const chat = db.prepare('SELECT mode, run_status, agent_graph, execution_trace FROM chats WHERE id = ?').get(chatId) as {
     mode: 'single' | 'multi-agent'; run_status: RunStatus; agent_graph?: string | null; execution_trace?: string | null
   } | undefined
-  if (!row) return null
+  if (!chat) return null
+  const runIds = (db.prepare('SELECT run_id FROM multi_agent_runs WHERE chat_id = ? ORDER BY started_at, rowid')
+    .all(chatId) as Array<{ run_id: string }>).map((r) => r.run_id)
+  if (runId !== undefined && !runIds.includes(runId)) return null
+  const target = runId ?? runIds.at(-1)
+  const run = target === undefined ? undefined : db.prepare(
+    'SELECT status, task, agent_graph, execution_trace FROM multi_agent_runs WHERE run_id = ?'
+  ).get(target) as { status: RunStatus; task: string | null; agent_graph: string | null; execution_trace: string | null }
+  // No history yet (e.g. a run begun without a run id): the chats columns, exactly as before.
+  const extra = run ? { runId: target, runIds, ...(run.task ? { task: run.task } : {}) } : {}
+  const row = run ?? { status: chat.run_status, agent_graph: chat.agent_graph, execution_trace: chat.execution_trace }
   try {
     return {
-      mode: row.mode,
-      runStatus: row.run_status,
+      mode: chat.mode,
+      runStatus: row.status,
       agentGraph: row.agent_graph ? JSON.parse(row.agent_graph) as AgentStep[] : [],
       executionTrace: row.execution_trace ? JSON.parse(row.execution_trace) as AgentEvent[] : [],
+      ...extra,
     }
-  } catch { return { mode: row.mode, runStatus: row.run_status, agentGraph: [], executionTrace: [] } }
+  } catch { return { mode: chat.mode, runStatus: row.status, agentGraph: [], executionTrace: [], ...extra } }
 }
 
 export function getChatMessages(chatId: string): StoredMessage[] {

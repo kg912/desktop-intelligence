@@ -239,10 +239,10 @@ app.whenReady().then(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_CHANNELS.MULTI_AGENT_EVENT, event)
     },
     db: {
-      begin: (chatId) => beginMultiAgentRun(chatId),
+      begin: (chatId, run) => beginMultiAgentRun(chatId, [], undefined, run),
       saveTrace: (chatId, trace, status, steps) => saveMultiAgentTrace(chatId, trace, status, steps),
       saveAssistantMessage: (chatId, id, content) => saveMessage(chatId, id, 'assistant', content),
-      getRun: (chatId) => getMultiAgentRun(chatId),
+      getRun: (chatId, runId) => getMultiAgentRun(chatId, undefined, runId),
       claimMode: (chatId) => claimChatMode(chatId, 'multi-agent'),
     },
     observe: (chatId, event) => observabilityService.emitMultiAgentEvent(chatId, event),

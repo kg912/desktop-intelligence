@@ -132,7 +132,8 @@ describe('MultiAgentRunCoordinator.start', () => {
     })
     expect(sent.openRouterApiKey).toBe('sk-or-1')
     expect(result).toEqual({ ok: true, runId: 'run-1', config: sent.config })
-    expect(db.begin).toHaveBeenCalledWith('chat-1')
+    // Run history: begin now also records the run's id, task and resolved config.
+    expect(db.begin).toHaveBeenCalledWith('chat-1', { runId: 'run-1', task: 'do it', config: sent.config })
   })
 
   it('Test C: four distinct configured role models are sent and returned as resolved', async () => {
@@ -323,5 +324,28 @@ describe('MultiAgentRunCoordinator events', () => {
     expect(live.executionTrace.map((e) => e.type)).toEqual(['orchestrator_plan', 'agent_token'])
     h.coordinator.getRun('other-chat')
     expect(h.db.getRun).toHaveBeenCalledWith('other-chat')
+  })
+})
+
+describe('MultiAgentRunCoordinator run history', () => {
+  it('serves an earlier run from the DB by id while a live run exists, and tags the live run with the run list', async () => {
+    const h = setup()
+    await h.coordinator.start({ chatId: 'chat-1', task: 'do it', config: config() })
+    const earlier = { mode: 'multi-agent' as const, runStatus: 'completed' as const, agentGraph: [], executionTrace: [], runId: 'run-0', runIds: ['run-0', 'run-1'] }
+    h.db.getRun.mockImplementation(((_chatId: string, runId?: string) => (runId === 'run-0' ? earlier : { ...earlier, runId: 'run-1' })) as never)
+    expect(h.coordinator.getRun('chat-1', 'run-0')).toBe(earlier)
+    expect(h.db.getRun).toHaveBeenLastCalledWith('chat-1', 'run-0')
+    expect(h.coordinator.getRun('chat-1')).toEqual({
+      mode: 'multi-agent', runStatus: 'running', agentGraph: [], executionTrace: [], runId: 'run-1', runIds: ['run-0', 'run-1'],
+    })
+  })
+})
+
+describe('MultiAgentRunCoordinator start returns the run list', () => {
+  it('passes the saved run ids back so the dock can show "Run N of M"', async () => {
+    const h = setup()
+    h.db.getRun.mockReturnValue({ mode: 'multi-agent', runStatus: 'running', agentGraph: [], executionTrace: [], runId: 'run-1', runIds: ['run-0', 'run-1'] } as never)
+    const result = await h.coordinator.start({ chatId: 'chat-1', task: 'do it', config: config() })
+    expect(result).toMatchObject({ ok: true, runId: 'run-1', runIds: ['run-0', 'run-1'] })
   })
 })

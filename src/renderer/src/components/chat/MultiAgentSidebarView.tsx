@@ -4,7 +4,7 @@
 // only — no motion.* here (M1 Pro scroll-jank issue).
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Network } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
@@ -66,6 +66,9 @@ interface Props {
   onClose: () => void
   /** Very narrow window: the plan/timeline column hides first. */
   hidePlanColumn?: boolean
+  /** The chat's runs, oldest first; "Run N of M" shows when there is more than one. */
+  runIds?: string[]
+  onShowRun?: (runId: string) => void
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -98,6 +101,7 @@ export function MultiAgentSidebarView(props: Props) {
             )}
             {readOnly && <span className="font-mono text-[11px] font-normal text-ma-mute">read-only</span>}
           </div>
+          <RunNav runIds={props.runIds} current={view.runId} locked={live} onShowRun={props.onShowRun} />
           <p className="mt-0.5 truncate text-[12px] text-ma-mute" title={task}>{task || 'Multi-agent run'}</p>
           <div className="mt-2 flex flex-wrap gap-1" aria-label="Run models">
             {(['orchestrator', 'reflection', 'synthesizer'] as const).map((role) => (
@@ -177,6 +181,21 @@ function useEscape(onClose: () => void): void {
 const formatTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
 /** "Tools: brave_web_search, +2" / "No tools" — names without their server namespace. */
+/** "Run N of M" with prev/next. Locked while a live run is shown — it cannot be swapped out. */
+function RunNav({ runIds, current, locked, onShowRun }: { runIds?: string[]; current: string; locked: boolean; onShowRun?: (runId: string) => void }) {
+  const index = runIds?.indexOf(current) ?? -1
+  if (!runIds || runIds.length < 2 || index < 0) return null
+  const go = (i: number) => onShowRun?.(runIds[i])
+  const btn = 'flex h-5 w-5 items-center justify-center rounded-[5px] text-ma-mute hover:bg-ma-bg3 hover:text-ma-text disabled:pointer-events-none disabled:opacity-35'
+  return (
+    <div className="mt-1 flex items-center gap-1 font-mono text-[11px] text-ma-mute" aria-label="Run history">
+      <button aria-label="Previous run" className={btn} disabled={locked || index === 0} onClick={() => go(index - 1)}><ChevronLeft size={13} /></button>
+      <span data-testid="run-position">Run {index + 1} of {runIds.length}</span>
+      <button aria-label="Next run" className={btn} disabled={locked || index === runIds.length - 1} onClick={() => go(index + 1)}><ChevronRight size={13} /></button>
+    </div>
+  )
+}
+
 export function toolsLabel(tools: string[]): string {
   const names = tools.map((t) => t.split('__').slice(1).join('__') || t)
   return names.length ? `Tools: ${names[0]}${names.length > 1 ? `, +${names.length - 1}` : ''}` : 'No tools'
