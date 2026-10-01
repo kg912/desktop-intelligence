@@ -676,6 +676,47 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     }
   }, 60_000)
 
+  // ── Repetition guard: a looping worker stream is aborted and retried ─────────
+
+  const SKELETON = 'I hope this helps! Final Answer: Your final answer here\n'
+  const scoutAnswer = (body: Body): boolean => systemOf(body).includes('Scout agent') && body.messages.some((m) => m.role === 'tool')
+  const scoutAttempt = (body: Body): number => (userOf(body).includes('stuck repeating') ? 1 : 0)
+
+  it('a content loop aborts the request, fails that attempt as "repetition loop", and the retry answers', async () => {
+    const events = await tracedRun({
+      reply: (body) => (scoutAnswer(body) && scoutAttempt(body) === 0 ? { content: 'Trains run hourly.\n' + SKELETON.repeat(400) } : undefined),
+    })
+    expect(events.find((e) => e.type === 'retry')).toMatchObject({ agentId: '1.1', attempt: 1, reason: 'repetition loop' })
+    // What it produced before the loop was caught stays in the trace, under attempt 0.
+    const attempt0 = events.filter((e) => e.type === 'agent_token' && e.attempt === 0).map((e) => (e as { token: string }).token).join('')
+    expect(attempt0.startsWith('Trains run hourly.\n' + SKELETON.repeat(3))).toBe(true)
+    expect(attempt0.length).toBeLessThan(('Trains run hourly.\n' + SKELETON.repeat(400)).length)
+    // The looping attempt is never reviewed or completed; the retry is.
+    expect(events.filter((e) => e.type === 'agent_complete').map((e) => (e as { attempt: number }).attempt)).toEqual([1])
+    expect(events.filter((e) => e.type === 'tool_start').map((e) => (e as { attempt: number }).attempt)).toEqual([0, 0, 1, 1])
+    expect(events.at(-1)?.type).toBe('task_complete')
+  }, 60_000)
+
+  it('a reasoning loop is caught the same way; with no retries left the agent fails with "repetition loop"', async () => {
+    const events = await tracedRun({
+      config: baseConfig({ maxRetriesPerAgent: 0 }),
+      reply: (body) => (scoutAnswer(body) ? { reasoning: 'Let me double-check the buses. '.repeat(200), content: 'never reached' } : undefined),
+    })
+    expect(events.some((e) => e.type === 'retry')).toBe(false)
+    expect(events.find((e) => e.type === 'agent_failed')).toMatchObject({ agentId: '1.1', reason: 'repetition loop', attempt: 0 })
+    expect(events.some((e) => e.type === 'agent_token' && (e as { token: string }).token.includes('never reached'))).toBe(false)
+  }, 60_000)
+
+  it('a long markdown table with repeated rows and cells streams to the end without tripping the guard', async () => {
+    const table = '| Day | City | Breakfast | Parking |\n|---|---|---|---|\n'
+      + Array.from({ length: 80 }, (_, d) => `| ${d + 1} | Vienna | Yes | Yes |\n`).join('')
+      + '| TBD | TBD | TBD | TBD |\n'.repeat(40)
+      + '\nTrains run hourly on 24 December until 18:00 [unverified for buses].'
+    const events = await tracedRun({ reply: (body) => (scoutAnswer(body) ? { content: table } : undefined) })
+    expect(events.some((e) => e.type === 'retry')).toBe(false)
+    expect(events.find((e) => e.type === 'agent_complete')).toMatchObject({ attempt: 0, output: table })
+  }, 60_000)
+
   // ── Part D: built-in web search for workers, through the real coordinator ───
 
   /** One Scout that searches with builtin__brave_web_search (native call or DSML text), then answers. */

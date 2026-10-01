@@ -280,6 +280,65 @@ def estimate_tokens(text: str) -> int:
     return math.ceil(len(text) / 4)
 
 
+# ── Repetition guard ──────────────────────────────────────────────────────────
+# Same idea as ChatService's detector (identical lines in a row), plus a word
+# n-gram rule for loops that never emit a newline. Table rows and rules are
+# skipped: they repeat by design.
+
+LOOP_LINE_REPEATS = 3        # identical lines in a row (ChatService uses 3)
+LOOP_LINE_MAX_CHARS = 200    # longer lines are prose, not a stuck skeleton
+LOOP_NGRAM_REPEATS = 4       # the same run of words, back to back
+LOOP_NGRAM_SIZES = range(3, 61)
+LOOP_TAIL_CHARS = 4_000      # bound the work on a never-ending single line
+WORD_RE = re.compile(r"\w+")
+
+
+def is_structure_line(line: str) -> bool:
+    """Markdown table rows and rules/fences — legitimately repetitive."""
+    s = line.strip()
+    return s.startswith("|") or s.count("|") >= 2 or not re.search(r"\w", s)
+
+
+class RepetitionDetector:
+    """Feed streamed text; feed() returns True once the stream is looping.
+    One instance per stream (content or reasoning) per request."""
+
+    def __init__(self) -> None:
+        self.partial = ""
+        self.last_line = ""
+        self.line_repeats = 0
+        self.words: list[str] = []  # words of completed non-structure lines (tail only)
+
+    def feed(self, text: str) -> bool:
+        *lines, self.partial = (self.partial + text).split("\n")
+        for line in lines:
+            if self._complete_line(line.strip()):
+                return True
+        tail = [] if is_structure_line(self.partial) else WORD_RE.findall(self.partial[-LOOP_TAIL_CHARS:])
+        return self._ngram_loop(self.words + tail)
+
+    def _complete_line(self, line: str) -> bool:
+        if not line or is_structure_line(line):
+            return False
+        self.words = (self.words + WORD_RE.findall(line))[-LOOP_NGRAM_SIZES[-1] * LOOP_NGRAM_REPEATS:]
+        if len(line) <= LOOP_LINE_MAX_CHARS and line == self.last_line:
+            self.line_repeats += 1
+            return self.line_repeats >= LOOP_LINE_REPEATS
+        self.last_line, self.line_repeats = line, 1
+        return False
+
+    @staticmethod
+    def _ngram_loop(words: list[str]) -> bool:
+        end = len(words)
+        for n in LOOP_NGRAM_SIZES:
+            if n * LOOP_NGRAM_REPEATS > end:
+                return False
+            unit = words[end - n:]
+            if all(words[end - (k + 1) * n:end - k * n] == unit for k in range(1, LOOP_NGRAM_REPEATS)):
+                return True
+        return False
+
+
 # ── OpenRouter streaming client (runs in a worker thread) ─────────────────────
 
 def _stream_openrouter(
@@ -291,9 +350,12 @@ def _stream_openrouter(
     on_delta: Callable[[str, str], None],
     cancelled: Callable[[], bool],
     reasoning_effort: str | None = None,
+    loop_guard: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """on_delta(kind, text): kind is "content" or "reasoning". Reasoning is
-    returned only as reasoning_details (for tool round-trips), never in content."""
+    returned only as reasoning_details (for tool round-trips), never in content.
+    loop_guard: abort the request when either stream starts looping; the message
+    then carries "looped" (which stream) and keeps what was produced."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -324,6 +386,10 @@ def _stream_openrouter(
     tool_calls: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
     finish_reason = ""
+    # Fresh per request, so state never carries across tool rounds or attempts.
+    guards = {"content": RepetitionDetector(), "reasoning": RepetitionDetector()} if loop_guard else {}
+    looped = ""
+    reasoning_chars = 0
     try:
         with urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:  # nosec B310 — fixed URL
             for raw in response:
@@ -347,6 +413,8 @@ def _stream_openrouter(
                     if text:
                         content.append(text)
                         on_delta("content", text)
+                        if guards and guards["content"].feed(text):
+                            looped = "content"
                     detail_text = ""
                     for detail in delta.get("reasoning_details") or []:
                         if not isinstance(detail, dict):
@@ -357,6 +425,9 @@ def _stream_openrouter(
                     thought = delta.get("reasoning") or detail_text
                     if thought:
                         on_delta("reasoning", thought)
+                        reasoning_chars += len(thought)
+                        if guards and guards["reasoning"].feed(thought):
+                            looped = looped or "reasoning"
                     for call in delta.get("tool_calls") or []:
                         slot = tool_calls.setdefault(int(call.get("index", 0)), {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                         if call.get("id"):
@@ -364,6 +435,8 @@ def _stream_openrouter(
                         fn = call.get("function") or {}
                         slot["function"]["name"] += fn.get("name") or ""
                         slot["function"]["arguments"] += fn.get("arguments") or ""
+                if looped:
+                    break  # leaving the `with` closes the connection: the request is aborted
     except HTTPError as err:
         body = err.read().decode("utf-8", "replace")
         try:
@@ -378,6 +451,12 @@ def _stream_openrouter(
         message["reasoning_details"] = details
     if finish_reason:
         message["finish_reason"] = finish_reason
+    if looped:
+        message["looped"] = looped
+        if not usage:  # aborted before the usage chunk: estimate, so the budget still counts it
+            prompt = estimate_tokens(json.dumps(messages))
+            completion = estimate_tokens(message["content"]) + math.ceil(reasoning_chars / 4)
+            usage = {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
     return message, usage
 
 
@@ -453,6 +532,7 @@ async def ask(
     on_token: Callable[[str], Awaitable[None]] | None = None,
     on_reasoning: Callable[[str], Awaitable[None]] | None = None,
     synthesis: bool = False,
+    loop_guard: bool = False,
 ) -> tuple[dict[str, Any], int, float]:
     """One paid request. Never starts once the budget is reached (spec §06)."""
     if run.cancelled:
@@ -487,7 +567,8 @@ async def ask(
 
     def work() -> tuple[dict[str, Any], dict[str, Any]]:
         try:
-            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push, lambda: run.cancelled, reasoning_effort)
+            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push, lambda: run.cancelled,
+                                      reasoning_effort, loop_guard)
         finally:
             push("done")
 
@@ -756,16 +837,21 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
         output = ""
         truncated: str | None = None
+        looped = False
         evidence: list[str] = []
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 last_round = _round == MAX_TOOL_ROUNDS - 1
                 stream = DsmlTokenFilter(on_token)
                 reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
-                                                on_token=stream, on_reasoning=on_reasoning)
+                                                on_token=stream, on_reasoning=on_reasoning, loop_guard=True)
                 await stream.flush()
                 agent_tokens += tokens
                 agent_cost += cost
+                if reply.get("looped"):
+                    # What it produced is already in the trace (streamed tokens); the attempt fails.
+                    looped = True
+                    break
                 calls = reply.get("tool_calls") or []
                 text = str(reply.get("content") or "")
                 if not calls:
@@ -810,6 +896,14 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         except BudgetReached:
             if not output:
                 raise AgentFailed("budget cap reached before this agent produced an answer") from None
+        if looped:
+            last_reason = "repetition loop"
+            if attempt < config.maxRetriesPerAgent and not run.budget_reached:
+                await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=last_reason)
+                feedback = ("\n\nYour previous attempt got stuck repeating the same text and was stopped. "
+                            "Answer once, concisely, without repeating yourself.")
+                continue
+            raise AgentFailed(last_reason)
         if not output:
             raise AgentFailed("no final answer after the maximum number of tool rounds")
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
