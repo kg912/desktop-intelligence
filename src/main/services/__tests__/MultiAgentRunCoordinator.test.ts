@@ -34,6 +34,8 @@ function setup(over: { settings?: Partial<ReturnType<CoordinatorDeps['settings']
   const mcp = {
     getToolSchemas: vi.fn(() => [{ type: 'function' as const, function: { name: 'fs__read', description: 'read', parameters: { type: 'object', properties: {}, required: [] } } }]),
     callToolForMultiAgent: vi.fn(async () => ({ text: 'tool-output', images: [], userNote: '' })),
+    // The real one runs the permission layers first; here they always approve.
+    callBuiltinForMultiAgent: vi.fn(async (_tool: string, _args: Record<string, unknown>, _ctx: unknown, run: () => Promise<string>) => ({ text: await run(), images: [], userNote: '' })),
     clearRunTrust: vi.fn(),
     cancelRunPermissions: vi.fn(),
   } satisfies Record<keyof CoordinatorDeps['mcp'], unknown>
@@ -48,9 +50,14 @@ function setup(over: { settings?: Partial<ReturnType<CoordinatorDeps['settings']
   const observed: AgentEvent[] = []
   // Includes every default role model: since Phase 3 an unlisted model stops the run.
   const catalogue = over.catalogue ?? [model('meta-llama/llama-3.3-70b-instruct'), model('active/model', 3e-6, 4e-6), model(DEFAULT_SYNTHESIZER_MODEL, 5e-6, 6e-6)]
+  const builtin = {
+    getToolSchemas: vi.fn((): ReturnType<CoordinatorDeps['builtin']['getToolSchemas']> => []),
+    call: vi.fn(async () => 'search-results'),
+  }
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,
     mcp: mcp as unknown as CoordinatorDeps['mcp'],
+    builtin,
     sendEvent: (e) => sent.push(e),
     db,
     observe: (_chat, e) => observed.push(e),
@@ -61,7 +68,7 @@ function setup(over: { settings?: Partial<ReturnType<CoordinatorDeps['settings']
     },
     flushDelayMs: 5,
   })
-  return { coordinator, sidecar, mcp, db, sent, observed }
+  return { coordinator, sidecar, mcp, builtin, db, sent, observed }
 }
 
 const config = (models: Partial<MultiAgentConfig['models']> = {}): MultiAgentConfig => ({
@@ -72,6 +79,14 @@ const config = (models: Partial<MultiAgentConfig['models']> = {}): MultiAgentCon
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms))
 
 describe('MultiAgentRunCoordinator.start', () => {
+  it('offers the built-in tools first, then the running MCP tools', async () => {
+    const { coordinator, sidecar, builtin } = setup()
+    builtin.getToolSchemas.mockReturnValue([{ type: 'function', function: { name: 'builtin__brave_web_search', description: 'search', parameters: { type: 'object', properties: {}, required: ['query'] } } }])
+    await coordinator.start({ chatId: 'c', task: 't', config: config() })
+    const tools = (sidecar.startRun.mock.calls[0][0] as unknown as { tools: Array<{ name: string }> }).tools
+    expect(tools.map((t) => t.name)).toEqual(['builtin__brave_web_search', 'fs__read'])
+  })
+
   it('mode lock: a regular chat with messages is refused before the sidecar is touched', async () => {
     const { coordinator, sidecar, db } = setup()
     db.claimMode.mockReturnValueOnce('This chat is a regular chat. Start a new chat to use agents.')
@@ -184,6 +199,33 @@ describe('MultiAgentRunCoordinator events', () => {
     h.sidecar.push({ type: 'hitl_pause', seq: 2, agentId: '1.1', role: 'R', serverName: 'fs', toolName: 'read', args: {} } as never)
     await tick()
     expect(h.sidecar.respondHitl).toHaveBeenLastCalledWith(expect.objectContaining({ approved: false, result: 'server crashed' }))
+  })
+
+  it('routes a builtin__ tool pause through the permission layers to the built-in executor', async () => {
+    h.sidecar.push({ type: 'hitl_pause', seq: 1, agentId: '1.1', role: 'Researcher', model: 'w/m', serverName: 'builtin', toolName: 'brave_web_search', args: { query: 'hotels Füssen' } } as never)
+    await tick()
+    expect(h.mcp.callBuiltinForMultiAgent).toHaveBeenCalledWith('brave_web_search', { query: 'hotels Füssen' }, {
+      chatId: 'chat-1', runId: 'run-1', agentId: '1.1', role: 'Researcher', model: 'w/m', requirePermissions: false, hitlTimeoutMs: 42_000,
+    }, expect.any(Function))
+    expect(h.builtin.call).toHaveBeenCalledWith('brave_web_search', { query: 'hotels Füssen' })
+    expect(h.mcp.callToolForMultiAgent).not.toHaveBeenCalled()
+    expect(h.sidecar.respondHitl).toHaveBeenCalledWith({ runId: 'run-1', agentId: '1.1', approved: true, result: 'search-results' })
+  })
+
+  it('a denied built-in call is reported back as not approved, with the user note', async () => {
+    h.mcp.callBuiltinForMultiAgent.mockRejectedValueOnce(new McpDeniedError('no searching'))
+    h.sidecar.push({ type: 'hitl_pause', seq: 1, agentId: '1.1', role: 'R', serverName: 'builtin', toolName: 'brave_web_search', args: { query: 'x' } } as never)
+    await tick()
+    expect(h.builtin.call).not.toHaveBeenCalled()
+    expect(h.sidecar.respondHitl).toHaveBeenCalledWith({ runId: 'run-1', agentId: '1.1', approved: false, result: 'no searching' })
+  })
+
+  it('tool results get single chat\'s EOS stripping and 50K-char truncation before reaching the sidecar', async () => {
+    h.mcp.callToolForMultiAgent.mockResolvedValueOnce({ text: 'a<|endoftext|>b<|im_end|>' + 'x'.repeat(60_000), images: [], userNote: '' })
+    h.sidecar.push({ type: 'hitl_pause', seq: 1, agentId: '1.1', role: 'R', serverName: 'fs', toolName: 'read', args: {} } as never)
+    await tick()
+    const result = (h.sidecar.respondHitl.mock.calls[0] as unknown as [{ result: string }])[0].result
+    expect(result).toBe('ab' + 'x'.repeat(49_998) + '\n\n[Result truncated at 50,000 chars to fit provider limit.]')
   })
 
   it('never proxies the plan-approval pause as a tool call', async () => {

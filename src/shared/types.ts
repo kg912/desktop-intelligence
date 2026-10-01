@@ -652,6 +652,8 @@ export interface RunConfigEvent extends AgentEventBase {
   reflectionPassThreshold: number
   maxRetriesPerAgent:      number
   reasoningEffort:         ReasoningEffort
+  /** Tool names offered to every worker (e.g. builtin__brave_web_search). Absent on older traces. */
+  tools?:                  string[]
 }
 
 /** Streamed reasoning text — never part of the agent's output. */

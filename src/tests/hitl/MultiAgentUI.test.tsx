@@ -237,6 +237,33 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     expect(dockProps.onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('a builtin__brave_web_search call renders as a tool row; the header lists the offered tools', () => {
+    const v = view([
+      { type: 'run_config', models: DEFAULT_MULTI_AGENT_CONFIG.models, sources: {}, catalogueChecked: true, maxAgents: 4, budgetCapUsd: 0.5,
+        reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium', tools: ['builtin__brave_web_search', 'fs__read_file', 'fs__list'] },
+      { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'openai/gpt-4o', attempt: 0 },
+      { type: 'tool_start', agentId: '1.1', attempt: 0, callId: 'c1', tool: 'brave_web_search', server: 'builtin', argsPreview: '{"query": "hotels Füssen"}' },
+      { type: 'tool_done', agentId: '1.1', attempt: 0, callId: 'c1', ok: true, durationMs: 1200, resultPreview: 'Hotel Müller', resultChars: 12 },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    expect(screen.getByTestId('agent-tools-1.1').textContent).toBe('Tools: brave_web_search, +2')
+    expect(screen.getByTestId('agent-tools-1.1').title).toBe('builtin__brave_web_search, fs__read_file, fs__list')
+    const trace = screen.getByTestId('agent-trace-1.1')
+    expect(within(trace).getByText('brave_web_search')).toBeTruthy()
+    expect(within(trace).getByText('{"query": "hotels Füssen"}')).toBeTruthy()
+    expect(within(trace).getByText('12 chars')).toBeTruthy()
+  })
+
+  it('says "No tools" when none were offered, and shows nothing on traces from before tools were recorded', () => {
+    const base = { type: 'run_config', models: DEFAULT_MULTI_AGENT_CONFIG.models, sources: {}, catalogueChecked: true, maxAgents: 4, budgetCapUsd: 0.5,
+      reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium' }
+    const { unmount } = render(<MultiAgentSidebarView {...dockProps} view={view([{ ...base, tools: [] }])} />)
+    expect(screen.getByTestId('agent-tools-1.1').textContent).toBe('No tools')
+    unmount()
+    render(<MultiAgentSidebarView {...dockProps} view={view([base])} />)
+    expect(screen.queryByTestId('agent-tools-1.1')).toBeNull()
+  })
+
   it('shows its run models as chips: orchestrator, reflection and synthesizer from run_config', () => {
     const v = view([{
       type: 'run_config', models: { orchestrator: 'meta-llama/llama-3.3-70b-instruct', worker: 'w', reflection: 'qwen/judge', synthesizer: 'qwen/qwen3-235b' },

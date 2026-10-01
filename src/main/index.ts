@@ -19,6 +19,7 @@ import { DEFAULT_SIDECAR_PORT, multiAgentSidecar } from './services/MultiAgentSi
 import { observabilityService } from './services/ObservabilityService'
 import { beginMultiAgentRun, claimChatMode, getMultiAgentRun, saveMessage, saveMultiAgentTrace } from './services/DatabaseService'
 import { MultiAgentRunCoordinator } from './services/MultiAgentRunCoordinator'
+import { braveWorkerTools } from './services/BraveSearchService'
 import { setMultiAgentCoordinator } from './services/multiAgentRuntime'
 import { getOpenRouterCatalogue } from './services/OpenRouterCatalogue'
 import { srtBackend } from './services/sandbox/sandboxServiceInstance'
@@ -233,6 +234,7 @@ app.whenReady().then(async () => {
   setMultiAgentCoordinator(new MultiAgentRunCoordinator({
     sidecar: multiAgentSidecar,
     mcp: mcpServerManager,
+    builtin: braveWorkerTools,
     sendEvent: (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_CHANNELS.MULTI_AGENT_EVENT, event)
     },

@@ -176,6 +176,12 @@ function useEscape(onClose: () => void): void {
 
 const formatTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
+/** "Tools: brave_web_search, +2" / "No tools" — names without their server namespace. */
+export function toolsLabel(tools: string[]): string {
+  const names = tools.map((t) => t.split('__').slice(1).join('__') || t)
+  return names.length ? `Tools: ${names[0]}${names.length > 1 ? `, +${names.length - 1}` : ''}` : 'No tools'
+}
+
 // ── Concurrency timeline: the proof that workers overlap ─────────────────────
 
 function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean; now: number }) {
@@ -297,6 +303,7 @@ function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, f
             open={isOpen}
             now={isWorking(agent.status) ? now : 0}
             maxRetries={config.maxRetriesPerAgent}
+            tools={view.runConfig?.tools}
             waitingOn={(step.dependsOn ?? []).filter((d) => view.agents[d]?.status !== 'done')}
             requests={requests}
             onToggle={toggle}
@@ -330,11 +337,13 @@ const TAG_TONE = {
   idle: 'text-ma-mute border-white/[0.09]',
 } as const
 
-const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, waitingOn, requests, onToggle, onRespondPermission }: {
+const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, waitingOn, requests, onToggle, onRespondPermission }: {
   agent: AgentView
   open: boolean
   now: number
   maxRetries: number
+  /** Tools offered to the workers (run_config); undefined on older traces. */
+  tools?: string[]
   waitingOn: string[]
   requests: McpToolPermissionRequest[]
   onToggle: (id: string, open: boolean) => void
@@ -364,6 +373,11 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, waitin
         <span className="min-w-0 flex-1">
           <b className="block truncate text-[13.5px] font-medium">{step.id} {step.label}</b>
           <span className="block truncate font-mono text-[11.5px] text-ma-mute">{meta.filter(Boolean).join(' · ')}</span>
+          {tools && (
+            <span className="block truncate font-mono text-[11px] text-ma-mute" data-testid={`agent-tools-${step.id}`} title={tools.join(', ') || undefined}>
+              {toolsLabel(tools)}
+            </span>
+          )}
         </span>
         <span className={cn('inline-flex h-5 items-center rounded-[5px] border-[0.5px] px-[7px] font-mono text-[11.5px]', TAG_TONE[tag.tone])}>{tag.label}</span>
         <ChevronDown className={cn('h-[18px] w-[18px] flex-none text-ma-mute transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.6} />

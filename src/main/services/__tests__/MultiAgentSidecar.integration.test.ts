@@ -29,6 +29,9 @@ vi.mock('electron', () => ({
 }))
 
 import { MultiAgentSidecarManager } from '../MultiAgentSidecarManager'
+import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
+import { McpServerManager } from '../McpServerManager'
+import type { McpToolPermissionRequest } from '../../../shared/types'
 import { srtBackend } from '../sandbox/sandboxServiceInstance'
 
 const ROOT = resolve(__dirname, '../../../..')
@@ -269,7 +272,10 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(toolPauses).toHaveLength(1)
     expect(toolPauses[0]).toMatchObject({ agentId: '1.1', role: 'Researcher', model: 'fake/worker', serverName: 'fs', toolName: 'read_file', args: { path: '/notes.txt' } })
     const secondResearcherRequest = fake.requests.filter((r) => systemOf(r.body).includes('Researcher agent'))[1]
-    expect(JSON.stringify(secondResearcherRequest.body.messages)).toContain("tool 'evil__exec' was not offered")
+    // Part D changed the wording to single chat's corrective error (buildUnregisteredToolMessage), asserted exactly.
+    expect(secondResearcherRequest.body.messages.find((m) => (m as { tool_call_id?: string }).tool_call_id === 'call_2')?.content).toBe(
+      'Tool request rejected: "evil__exec" is not registered in the tool schema for this session and cannot be called. '
+      + 'Do not call it again. Registered tools for this session: fs__read_file.')
 
     // D4: the Analyzer finished while the Researcher was paused.
     const analyzerPassIdx = events.findIndex((e) => e.type === 'reflection_result' && e.agentId === '1.2' && e.passed)
@@ -658,6 +664,97 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
       expect(fake.requests.some((r) => systemOf(r.body).includes('strict reviewer'))).toBe(false)
       expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ passed: false, model: 'deterministic precheck' })
     }
+  }, 60_000)
+
+  // ── Part D: built-in web search for workers, through the real coordinator ───
+
+  /** One Scout that searches with builtin__brave_web_search (native call or DSML text), then answers. */
+  async function searchRun(firstReply: Reply): Promise<{ sent: AgentEvent[]; permissions: McpToolPermissionRequest[]; search: ReturnType<typeof vi.fn> }> {
+    fake.requests.length = 0
+    planOverride = () => ({ content: JSON.stringify([{ id: '1.1', label: 'Find hotels near Neuschwanstein', role: 'Scout', dependsOn: [] }]) })
+    replyOverride = (body) => {
+      if (!systemOf(body).includes('Scout agent')) return undefined
+      const tool = body.messages.find((m) => m.role === 'tool')
+      return tool ? { content: `Hotel Müller is 300 m from the castle, per the search results. ${tool.content.length} chars read.` } : firstReply
+    }
+    const mcp = new McpServerManager() // real permission layers and dialog events; no MCP server runs
+    const permissions: McpToolPermissionRequest[] = []
+    mcp.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      permissions.push(r)
+      mcp.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: '' })
+    })
+    const search = vi.fn(async () => 'Hotel Müller<|endoftext|> — 300 m from the castle<|im_end|>')
+    const sent: AgentEvent[] = []
+    let coordinator!: MultiAgentRunCoordinator
+    const done = new Promise<void>((resolveDone) => {
+      coordinator = new MultiAgentRunCoordinator({
+        sidecar: mgr,
+        mcp,
+        builtin: {
+          getToolSchemas: () => [{ type: 'function', function: { name: 'builtin__brave_web_search', description: 'Search the web', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } }],
+          call: search,
+        },
+        sendEvent: (e) => {
+          sent.push(e)
+          if (e.type === 'hitl_pause' && e.serverName === 'multi-agent') void coordinator.respondToPlan(e.runId, true)
+          if (e.type === 'task_complete' || e.type === 'task_failed') resolveDone()
+        },
+        db: { begin: () => {}, saveTrace: () => {}, saveAssistantMessage: () => {}, getRun: () => null, claimMode: () => null },
+        observe: () => {},
+        settings: () => ({ backendProvider: 'openrouter', openRouterApiKey: 'sk-or-test', openRouterModel: 'fake/worker' }),
+        catalogue: async () => [],
+      })
+    })
+    try {
+      const started = await coordinator.start({ chatId: 'chat-search', task: 'Plan a night near Neuschwanstein', config: baseConfig() })
+      expect(started.ok).toBe(true)
+      await done
+      return { sent, permissions, search }
+    } finally {
+      planOverride = null
+      replyOverride = null
+    }
+  }
+
+  function expectSearchedAndAnswered({ sent, permissions, search }: Awaited<ReturnType<typeof searchRun>>): void {
+    expect(sent.at(-1)?.type).toBe('task_complete')
+    // Offered and stated: run_config records the tools; the worker prompt names them.
+    expect(sent.find((e) => e.type === 'run_config')).toMatchObject({ tools: ['builtin__brave_web_search'] })
+    const workerPrompts = fake.requests.filter((r) => systemOf(r.body).includes('Scout agent'))
+    expect(systemOf(workerPrompts[0].body)).toContain('Your tools: builtin__brave_web_search.')
+    expect(workerPrompts[0].body.tools?.map((t) => t.function.name)).toEqual(['builtin__brave_web_search'])
+    // Event order for the worker: start → tool_start → approval pause → resume → tool_done → answer.
+    const order = sent.filter((e) => 'agentId' in e && e.agentId === '1.1' && e.type !== 'agent_token' && e.type !== 'agent_reasoning').map((e) => e.type)
+    expect(order.slice(0, 6)).toEqual(['agent_start', 'tool_start', 'hitl_pause', 'hitl_resume', 'tool_done', 'agent_complete'])
+    expect(sent.find((e) => e.type === 'tool_start')).toMatchObject({ tool: 'brave_web_search', server: 'builtin', argsPreview: '{"query": "hotels near Neuschwanstein"}' })
+    expect(sent.find((e) => e.type === 'hitl_pause' && e.agentId === '1.1')).toMatchObject({ serverName: 'builtin', toolName: 'brave_web_search', args: { query: 'hotels near Neuschwanstein' } })
+    // Approval path: the permission dialog carried the agent's identity; then Electron ran the search.
+    expect(permissions).toHaveLength(1)
+    expect(permissions[0]).toMatchObject({ serverName: 'builtin', toolName: 'brave_web_search', agent: { agentId: '1.1', role: 'Scout', model: 'fake/worker' } })
+    expect(search).toHaveBeenCalledWith('brave_web_search', { query: 'hotels near Neuschwanstein' })
+    // Sanitised like single chat: no EOS tokens reach the model or the trace.
+    const toolMessage = workerPrompts[1].body.messages.find((m) => m.role === 'tool')
+    expect(toolMessage?.content).toBe('Hotel Müller — 300 m from the castle')
+    expect(sent.find((e) => e.type === 'tool_done')).toMatchObject({ ok: true, resultPreview: 'Hotel Müller — 300 m from the castle', resultChars: 36 })
+    // The card row: the renderer pairs tool_done with tool_start by callId and attempt (MultiAgentUI.test renders it).
+    const start = sent.find((e) => e.type === 'tool_start') as Extract<AgentEvent, { type: 'tool_start' }>
+    expect(sent.find((e) => e.type === 'tool_done')).toMatchObject({ callId: start.callId, attempt: start.attempt, agentId: '1.1' })
+  }
+
+  it('Part D: a worker calls builtin__brave_web_search natively — approval, Electron execution, sanitised result, card row', async () => {
+    const run = await searchRun({ toolCalls: [{ id: 'call_s', name: 'builtin__brave_web_search', args: '{"query": "hotels near Neuschwanstein"}' }] })
+    expectSearchedAndAnswered(run)
+  }, 60_000)
+
+  it('Part D: DeepSeek DSML tool calls in content run the same way and raw DSML never reaches the card or the answer', async () => {
+    const dsml = 'Let me search.<｜DSML｜tool_calls>\n<｜DSML｜invoke name="builtin__brave_web_search">\n'
+      + '<｜DSML｜parameter name="query" string="true">hotels near Neuschwanstein</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>'
+    const run = await searchRun({ content: dsml })
+    expectSearchedAndAnswered(run)
+    const streamed = run.sent.filter((e) => e.type === 'agent_token').map((e) => (e as { token: string }).token).join('')
+    expect(streamed).not.toMatch(/DSML/)
+    expect(streamed).toContain('Let me search.')
+    expect(run.sent.find((e) => e.type === 'agent_complete')).toMatchObject({ output: expect.stringMatching(/^Hotel Müller is 300 m/) })
   }, 60_000)
 
   it('requires the per-launch token on every endpoint', async () => {

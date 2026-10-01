@@ -1,5 +1,6 @@
 import { net } from 'electron'
 import { readSettings } from './SettingsStore'
+import type { LMStudioTool } from './McpServerManager'
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 
@@ -193,4 +194,44 @@ export async function augmentAndFormatResults(
       return `[${i + 1}] ${sanitise(r.title)}\n${r.url}\n${body}`
     })
     .join('\n\n')
+}
+
+// ── Multi-agent workers ─────────────────────────────────────────────────────
+// Workers get web search as a native function-calling tool, namespaced like an
+// MCP tool (builtin__brave_web_search) so the sidecar can route it; Electron runs
+// it here, after the multi-agent permission layers. Description as in ChatService.
+
+const BRAVE_WORKER_TOOL: LMStudioTool = {
+  type: 'function',
+  function: {
+    name: 'builtin__brave_web_search',
+    description:
+      'Search the web for CURRENT or REAL-TIME information only. ' +
+      'Use ONLY for: live data (prices, weather, scores), recent news/events, ' +
+      'or when the user explicitly asks to search. ' +
+      'Do NOT use for general knowledge, concepts, history, coding, math, or creative tasks.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Specific, concise search query for current/real-time information.' },
+      },
+      required: ['query'],
+    },
+  },
+}
+
+export const braveWorkerTools = {
+  /** Offered only when web search is enabled and has a key (Settings → Web Search). */
+  getToolSchemas(): LMStudioTool[] {
+    return readSettings().braveSearchEnabled && resolveBraveApiKey() ? [BRAVE_WORKER_TOOL] : []
+  },
+  /** Same search + page augmentation as the single-chat brave_web_search path. */
+  async call(toolName: string, args: Record<string, unknown>): Promise<string> {
+    if (toolName !== 'brave_web_search') throw new Error(`Unknown built-in tool: ${toolName}`)
+    const key = resolveBraveApiKey()
+    if (!key) throw new Error('Brave Search is not configured')
+    const query = String(args.query ?? '').trim()
+    if (!query) throw new Error('brave_web_search needs a non-empty query')
+    return augmentAndFormatResults(await braveSearch(query, key, 5))
+  },
 }

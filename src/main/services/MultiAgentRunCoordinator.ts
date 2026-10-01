@@ -3,8 +3,8 @@
  *
  *  - start: resolves role models against the live OpenRouter catalogue
  *    (empty → the active OpenRouter model; unknown → the run does not start), supplies per-token
- *    pricing so the sidecar can enforce the budget cap, and passes only the
- *    currently running MCP tool schemas.
+ *    pricing so the sidecar can enforce the budget cap, and passes the built-in
+ *    tools (web search, when configured) plus the currently running MCP tool schemas.
  *  - events: forwarded to the renderer; worker tool pauses are executed here
  *    through McpServerManager (→ SandboxService) with the agent's identity and
  *    the run's HITL settings — the sidecar never touches a tool.
@@ -29,13 +29,26 @@ import { isTerminalAgentEvent } from '../../shared/agentEvents'
 import { MODEL_ROLES, resolveRoleModels } from '../../shared/multiAgentModels'
 import type { ModelPricing, ModelRole, OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import type { RunStartRequest } from './MultiAgentSidecarManager'
-import { McpDeniedError, buildApprovedToolResult } from './McpServerManager'
+import { BUILTIN_SERVER, McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext } from './McpServerManager'
 
 type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'agent_reasoning' | 'synthesis_token' }>
 
 /** Stored token/reasoning events are coalesced per agent and attempt into one per window. */
 export const COALESCE_WINDOW_MS = 250
+
+/** ChatService's OpenRouter tool-result limit; workers always run on OpenRouter. */
+export const TOOL_RESULT_MAX_CHARS = 50_000
+// Same set ChatService strips: fetched pages can contain literal EOS tokens that end a generation early.
+const EOS_TOKENS_RE = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi
+
+/** A tool result as single chat would send it: EOS tokens removed, then capped at 50K chars. */
+export function sanitizeToolResult(text: string): string {
+  const clean = text.replace(EOS_TOKENS_RE, '')
+  return clean.length > TOOL_RESULT_MAX_CHARS
+    ? clean.slice(0, TOOL_RESULT_MAX_CHARS) + `\n\n[Result truncated at ${TOOL_RESULT_MAX_CHARS.toLocaleString('en-US')} chars to fit provider limit.]`
+    : clean
+}
 
 export interface CoordinatorDeps {
   sidecar: {
@@ -54,8 +67,19 @@ export interface CoordinatorDeps {
       args: Record<string, unknown>,
       ctx: MultiAgentToolContext
     ): Promise<McpToolResult>
+    callBuiltinForMultiAgent(
+      toolName: string,
+      args: Record<string, unknown>,
+      ctx: MultiAgentToolContext,
+      run: () => Promise<string>
+    ): Promise<McpToolResult>
     clearRunTrust(runId: string): void
     cancelRunPermissions(runId: string): void
+  }
+  /** Electron-side tools workers may call (server "builtin"), e.g. Brave web search when configured. */
+  builtin: {
+    getToolSchemas(): LMStudioTool[]
+    call(toolName: string, args: Record<string, unknown>): Promise<string>
   }
   /** Push to the renderer (MULTI_AGENT_EVENT). */
   sendEvent(event: AgentEvent): void
@@ -157,7 +181,7 @@ export class MultiAgentRunCoordinator {
         chatId: payload.chatId,
         task: payload.task,
         config,
-        tools: this.deps.mcp.getToolSchemas().map((tool) => ({
+        tools: [...this.deps.builtin.getToolSchemas(), ...this.deps.mcp.getToolSchemas()].map((tool) => ({
           name: tool.function.name,
           description: tool.function.description,
           parameters: tool.function.parameters as unknown as Record<string, unknown>,
@@ -282,17 +306,20 @@ export class MultiAgentRunCoordinator {
       this.deps.sidecar
         .respondHitl({ runId: run.runId, agentId: pause.agentId, approved, result })
         .catch((err) => console.warn(`[MultiAgent] ${pause.agentId} moved on before its tool result arrived:`, err))
+    const ctx: MultiAgentToolContext = {
+      chatId: run.chatId,
+      runId: run.runId,
+      agentId: pause.agentId,
+      role: pause.role,
+      model: pause.model ?? '',
+      requirePermissions: run.config.requirePermissions,
+      hitlTimeoutMs: run.config.hitlTimeoutMs,
+    }
     try {
-      const result = await this.deps.mcp.callToolForMultiAgent(pause.serverName, pause.toolName, pause.args, {
-        chatId: run.chatId,
-        runId: run.runId,
-        agentId: pause.agentId,
-        role: pause.role,
-        model: pause.model ?? '',
-        requirePermissions: run.config.requirePermissions,
-        hitlTimeoutMs: run.config.hitlTimeoutMs,
-      })
-      await reply(true, buildApprovedToolResult(result.text, result.userNote))
+      const result = pause.serverName === BUILTIN_SERVER
+        ? await this.deps.mcp.callBuiltinForMultiAgent(pause.toolName, pause.args, ctx, () => this.deps.builtin.call(pause.toolName, pause.args))
+        : await this.deps.mcp.callToolForMultiAgent(pause.serverName, pause.toolName, pause.args, ctx)
+      await reply(true, sanitizeToolResult(buildApprovedToolResult(result.text, result.userNote)))
     } catch (err) {
       const reason =
         err instanceof McpDeniedError

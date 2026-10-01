@@ -160,6 +160,8 @@ export interface MultiAgentToolContext {
 }
 
 const PERMISSION_TIMEOUT_MS = 60_000
+/** Server namespace of Electron's built-in worker tools (`builtin__brave_web_search`). */
+export const BUILTIN_SERVER = 'builtin'
 const agentKey = (runId: string, agentId: string): string => `${runId}\u0000${agentId}`
 
 // ── McpServerManager ─────────────────────────────────────────────
@@ -370,22 +372,7 @@ export class McpServerManager extends EventEmitter {
     if (!isHttpMcpConfig(entry.config) && (!entry.config.sandboxProfile || entry.config.sandboxProfile.bypassSandbox)) {
       throw new Error(`MCP server "${serverName}" has no active SandboxService profile for multi-agent execution`)
     }
-
-    const key   = agentKey(ctx.runId, ctx.agentId)
-    const trust = this.agentTrust.get(key)
-    let perm: { approved: boolean; userNote: string }
-    if (this.bypassAllPermissions) perm = { approved: true, userNote: '' }
-    else if (trust === 'block') perm = { approved: false, userNote: `${ctx.role} is blocked for this run` }
-    else if (trust === 'trust') perm = { approved: true, userNote: '' }
-    else if (this.sessionAllowList.has(`${ctx.chatId}__${serverName}__${toolName}`)) perm = { approved: true, userNote: '' }
-    else if (!ctx.requirePermissions && !entry.requiresApproval) perm = { approved: true, userNote: '' }
-    else {
-      perm = await this._awaitPermissionDialog(serverName, toolName, args, ctx.chatId, {
-        agent: { runId: ctx.runId, agentId: ctx.agentId, role: ctx.role, model: ctx.model },
-        timeoutMs: ctx.hitlTimeoutMs,
-      })
-    }
-    if (!perm.approved) throw new McpDeniedError(perm.userNote)
+    const perm = await this._authorizeForMultiAgent(serverName, toolName, args, ctx, !!entry.requiresApproval)
 
     const inFlight = this.activeMultiAgentWorkers.get(serverName) ?? new Map<string, number>()
     inFlight.set(ctx.agentId, (inFlight.get(ctx.agentId) ?? 0) + 1)
@@ -398,6 +385,46 @@ export class McpServerManager extends EventEmitter {
       else inFlight.delete(ctx.agentId)
       if (inFlight.size === 0) this.activeMultiAgentWorkers.delete(serverName)
     }
+  }
+
+  /**
+   * A built-in (Electron-side, non-MCP) tool requested by a worker: the same
+   * permission layers as an MCP call, then `run` executes it. Built-ins need no
+   * per-server approval, so only the multi-agent requirePermissions default prompts.
+   */
+  async callBuiltinForMultiAgent(
+    toolName: string,
+    args:     Record<string, unknown>,
+    ctx:      MultiAgentToolContext,
+    run:      () => Promise<string>,
+  ): Promise<McpToolResult> {
+    const perm = await this._authorizeForMultiAgent(BUILTIN_SERVER, toolName, args, ctx, false)
+    return { text: await run(), images: [], userNote: perm.userNote }
+  }
+
+  /** Throws McpDeniedError unless a layer approves (order in callToolForMultiAgent's doc). */
+  private async _authorizeForMultiAgent(
+    serverName:       string,
+    toolName:         string,
+    args:             Record<string, unknown>,
+    ctx:              MultiAgentToolContext,
+    requiresApproval: boolean,
+  ): Promise<{ approved: boolean; userNote: string }> {
+    const trust = this.agentTrust.get(agentKey(ctx.runId, ctx.agentId))
+    let perm: { approved: boolean; userNote: string }
+    if (this.bypassAllPermissions) perm = { approved: true, userNote: '' }
+    else if (trust === 'block') perm = { approved: false, userNote: `${ctx.role} is blocked for this run` }
+    else if (trust === 'trust') perm = { approved: true, userNote: '' }
+    else if (this.sessionAllowList.has(`${ctx.chatId}__${serverName}__${toolName}`)) perm = { approved: true, userNote: '' }
+    else if (!ctx.requirePermissions && !requiresApproval) perm = { approved: true, userNote: '' }
+    else {
+      perm = await this._awaitPermissionDialog(serverName, toolName, args, ctx.chatId, {
+        agent: { runId: ctx.runId, agentId: ctx.agentId, role: ctx.role, model: ctx.model },
+        timeoutMs: ctx.hitlTimeoutMs,
+      })
+    }
+    if (!perm.approved) throw new McpDeniedError(perm.userNote)
+    return perm
   }
 
   /** Drop a finished run's agent trust decisions (they are run-scoped). */

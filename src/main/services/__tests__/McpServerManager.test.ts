@@ -827,6 +827,37 @@ describe('McpServerManager multi-agent tool proxy (spec §07 HITL expansion)', (
     expect(onRequest).toHaveBeenCalledTimes(1)
   })
 
+  it('built-in tools (builtin__brave_web_search) go through the same layers: prompt, trust, block, no MCP server needed', async () => {
+    const mgr = newMgr() // no MCP server is configured or running
+    const search = vi.fn(async () => 'results')
+    const requests: McpToolPermissionRequest[] = []
+    let answer: Partial<{ approved: boolean; agentTrust: 'trust' | 'block'; userNote: string }> = { approved: true }
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      requests.push(r)
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: '', ...answer })
+    })
+    // requirePermissions on: prompted with the agent identity, then executed.
+    expect(await mgr.callBuiltinForMultiAgent('brave_web_search', { query: 'q' }, ctx(), search)).toEqual({ text: 'results', images: [], userNote: '' })
+    expect(requests[0]).toMatchObject({ serverName: 'builtin', toolName: 'brave_web_search', args: { query: 'q' }, agent: { agentId: '1.2', role: 'Analyzer' } })
+    // requirePermissions off: built-ins have no per-server approval, so no prompt.
+    await mgr.callBuiltinForMultiAgent('brave_web_search', { query: 'q' }, ctx({ requirePermissions: false }), search)
+    expect(requests).toHaveLength(1)
+    // Denied: the search never runs.
+    answer = { approved: false, userNote: 'not now' }
+    await expect(mgr.callBuiltinForMultiAgent('brave_web_search', {}, ctx(), search)).rejects.toMatchObject({ userNote: 'not now' })
+    expect(search).toHaveBeenCalledTimes(2)
+    // Trust this agent: later calls run unprompted; block another: denied unprompted next time.
+    answer = { approved: true, agentTrust: 'trust' }
+    await mgr.callBuiltinForMultiAgent('brave_web_search', {}, ctx(), search)
+    await mgr.callBuiltinForMultiAgent('brave_web_search', {}, ctx(), search)
+    expect(requests).toHaveLength(3)
+    answer = { approved: false, agentTrust: 'block' }
+    await expect(mgr.callBuiltinForMultiAgent('brave_web_search', {}, ctx({ agentId: '1.3' }), search)).rejects.toBeInstanceOf(McpDeniedError)
+    await expect(mgr.callBuiltinForMultiAgent('brave_web_search', {}, ctx({ agentId: '1.3' }), search)).rejects.toMatchObject({ userNote: 'Analyzer is blocked for this run' })
+    expect(requests).toHaveLength(4)
+    expect(search).toHaveBeenCalledTimes(4)
+  })
+
   it('auto-denies after the run timeout and tells the renderer to drop the dialog', async () => {
     vi.useFakeTimers()
     try {

@@ -61,6 +61,15 @@ MIN_REQUEST_TOKENS = 16
 # Trace previews (spec refinement Phase 2); full tool results stay in message history.
 ARGS_PREVIEW_CHARS = 400
 RESULT_PREVIEW_CHARS = 1_200
+# Literal end-of-sequence tokens some models leak (same set ChatService strips): never in output.
+EOS_RE = re.compile(r"<\|(?:endoftext|im_end|eot_id|end)\|>", re.I)
+# DeepSeek may emit tool calls as DSML text in delta.content instead of delta.tool_calls.
+DSML_MARK = "<|DSML|"
+_BAR = r"\s*[|\uff5c]\s*"
+# Matched on the raw text, so the rest of the answer keeps its own pipes and spacing.
+DSML_BLOCK_RE = re.compile(rf"<{_BAR}DSML{_BAR}tool_calls>.*?(?:</{_BAR}DSML{_BAR}tool_calls>|$)", re.S | re.I)
+DSML_INVOKE_RE = re.compile(r'<\|DSML\|invoke\s+name="([^"]+)">(.*?)</\|DSML\|invoke>', re.S | re.I)
+DSML_PARAM_RE = re.compile(r'<\|DSML\|parameter\s+name="([^"]+)"[^>]*>(.*?)</\|DSML\|parameter>', re.S | re.I)
 REFLECTION_RUBRIC = [
     "Answers the subtask it was given",
     "Claims are backed by tool evidence or explicitly marked as unverified",
@@ -314,7 +323,7 @@ def _stream_openrouter(
                     usage = chunk["usage"]
                 for choice in chunk.get("choices") or []:
                     delta = choice.get("delta") or {}
-                    text = delta.get("content")
+                    text = EOS_RE.sub("", delta.get("content") or "")
                     if text:
                         content.append(text)
                         on_delta("content", text)
@@ -342,7 +351,7 @@ def _stream_openrouter(
         except (ValueError, AttributeError):
             detail = body
         raise RuntimeError(f"OpenRouter HTTP {err.code}: {detail[:300]}") from None
-    message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+    message: dict[str, Any] = {"role": "assistant", "content": EOS_RE.sub("", "".join(content))}
     if tool_calls:
         message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
     if details:
@@ -362,6 +371,55 @@ def merge_reasoning_detail(details: list[dict[str, Any]], chunk: dict[str, Any])
                 last[key] = value
     else:
         details.append(dict(chunk))
+
+
+def normalise_dsml(text: str) -> str:
+    """Fullwidth bars (U+FF5C) and spaced pipes → the plain `<|DSML|` form ChatService also matches."""
+    return re.sub(r"\s*\|\s*", "|", text.replace("\uff5c", "|"))
+
+
+def extract_dsml(content: str) -> tuple[list[dict[str, Any]], str]:
+    """(tool calls parsed from DSML text, content without the DSML block).
+    Mirrors ChatService.parseDsmlToolCalls; an unfinished block is stripped too."""
+    norm = normalise_dsml(content)
+    if DSML_MARK.lower() not in norm.lower():
+        return [], content
+    calls = []
+    for index, (name, inner) in enumerate(DSML_INVOKE_RE.findall(norm)):
+        args = {k.strip(): v.strip() for k, v in DSML_PARAM_RE.findall(inner)}
+        calls.append({"id": f"call_dsml_{index}", "type": "function", "function": {"name": name.strip(), "arguments": json.dumps(args)}})
+    return calls, DSML_BLOCK_RE.sub("", content).strip()
+
+
+class DsmlTokenFilter:
+    """Streams tokens until a DSML block starts, so raw DSML never reaches the card.
+    Holds back a tail that could be the start of the marker."""
+
+    def __init__(self, emit: Callable[[str], Awaitable[None]]) -> None:
+        self.emit, self.pending, self.suppressed = emit, "", False
+
+    async def __call__(self, text: str) -> None:
+        if self.suppressed:
+            return
+        self.pending += text
+        for i, ch in enumerate(self.pending):
+            if ch != "<":
+                continue
+            rest = normalise_dsml(self.pending[i:])
+            if rest.startswith(DSML_MARK) or DSML_MARK.startswith(rest):
+                head, self.pending = self.pending[:i], self.pending[i:]
+                if rest.startswith(DSML_MARK):
+                    self.suppressed, self.pending = True, ""
+                if head:
+                    await self.emit(head)
+                return
+        out, self.pending = self.pending, ""
+        await self.emit(out)
+
+    async def flush(self) -> None:
+        if self.pending and not self.suppressed:
+            await self.emit(self.pending)
+        self.pending = ""
 
 
 async def ask(
@@ -560,7 +618,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
                    catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,
                    reflectionPassThreshold=config.reflectionPassThreshold, maxRetriesPerAgent=config.maxRetriesPerAgent,
-                   reasoningEffort=config.reasoningEffort)
+                   reasoningEffort=config.reasoningEffort, tools=[str(t.get("name")) for t in run.request.tools])
     return {**state, "steps": steps}
 
 
@@ -580,8 +638,9 @@ async def approve_node(state: dict[str, Any]) -> dict[str, Any]:
 # ── Workers + reflection ─────────────────────────────────────────────────────
 
 def split_tool_name(name: str, allowed: set[str]) -> tuple[str, str]:
-    if name not in allowed:
-        raise ValueError(f"tool '{name}' was not offered to this agent")
+    if name not in allowed:  # same corrective wording as ChatService.buildUnregisteredToolMessage
+        raise ValueError(f'"{name}" is not registered in the tool schema for this session and cannot be called. '
+                         f"Do not call it again. Registered tools for this session: {', '.join(sorted(allowed)) or '(none)'}.")
     server, _, local = name.partition("__")
     if not local:
         raise ValueError(f"tool '{name}' is not an Electron MCP namespaced tool")
@@ -652,11 +711,14 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         context = "\n\nResults from the steps this one depends on (cite them by marker if you rely on them):\n" + "\n\n".join(f"[{k}] {v}" for k, v in prior.items())
     feedback = ""
     last_reason = ""
+    # Say exactly what is available, so the agent never guesses at tools it does not have.
+    tools_line = (f"Your tools: {', '.join(sorted(allowed_tools))}. Call them by these exact names, only when you need evidence."
+                  if allowed_tools else "You have no tools in this run. Do not attempt tool calls; work from what you know.")
     for attempt in range(config.maxRetriesPerAgent + 1):
         run.attempts[agent_id] = attempt
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
-                                          "Use the supplied tools only when you need evidence. Never claim to have executed anything you did not. "
+                                          f"{tools_line} Never claim to have executed anything you did not. "
                                           "Mark any claim you could not verify with a tool as unverified."},
             {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}{feedback}"},
         ]
@@ -672,15 +734,23 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 last_round = _round == MAX_TOOL_ROUNDS - 1
+                stream = DsmlTokenFilter(on_token)
                 reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
-                                                on_token=on_token, on_reasoning=on_reasoning)
+                                                on_token=stream, on_reasoning=on_reasoning)
+                await stream.flush()
                 agent_tokens += tokens
                 agent_cost += cost
                 calls = reply.get("tool_calls") or []
+                text = str(reply.get("content") or "")
                 if not calls:
-                    output = str(reply.get("content") or "")
+                    # DSML tool calls in content: run them like native ones; never keep raw DSML as text.
+                    dsml_calls, text = extract_dsml(text)
+                    if dsml_calls and not last_round and run.request.tools:
+                        calls = dsml_calls
+                if not calls:
+                    output = text
                     break
-                assistant: dict[str, Any] = {"role": "assistant", "content": reply.get("content") or "", "tool_calls": calls}
+                assistant: dict[str, Any] = {"role": "assistant", "content": text, "tool_calls": calls}
                 if reply.get("reasoning_details"):  # OpenRouter requires these back for tool-using reasoning models
                     assistant["reasoning_details"] = reply["reasoning_details"]
                 messages.append(assistant)
