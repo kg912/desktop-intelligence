@@ -305,6 +305,26 @@ describe('Sidebar — multi-agent rail button and dock width', () => {
     expect(base.onToggleAgents).not.toHaveBeenCalled()
   })
 
+  it('navigation lock: chats, favourites, settings, New, the chat list and search are greyed and inert with a tooltip', () => {
+    const LOCK = 'Agents are running. Abort the run to leave.'
+    const chats = [{ id: 'c1', title: 'Old trip', createdAt: 1, updatedAt: Date.now(), systemInstructions: null, starred: false }]
+    render(<Sidebar {...base} chats={chats} sidebarMode="chat" navLocked agentRail={rail('live', 1)} />)
+    expect(screen.getAllByTitle(LOCK).filter((el) => el.getAttribute('role') === 'button')).toHaveLength(3)
+    const newButton = screen.getByText('New').closest('button')!
+    expect(newButton.getAttribute('aria-disabled')).toBe('true')
+    expect(newButton.title).toBe(LOCK)
+    fireEvent.click(newButton)
+    expect(base.onNewChat).not.toHaveBeenCalled()
+    const list = screen.getByTestId('chat-list')
+    expect(list.title).toBe(LOCK)
+    expect(list.getAttribute('aria-disabled')).toBe('true')
+    expect((list.firstElementChild as HTMLElement).style.pointerEvents).toBe('none')
+    expect((screen.getByPlaceholderText('Search…') as HTMLInputElement).disabled).toBe(true)
+    fireEvent.click(screen.getAllByTitle(LOCK)[0])
+    expect(base.onToggleChat).not.toHaveBeenCalled()
+    expect(base.onOpenSettings).not.toHaveBeenCalled()
+  })
+
   it('one panel, two widths: 264 px for chats and favourites, 760 px for the dock, 0 when closed; overlay below 1280 px', () => {
     const { rerender } = render(<Sidebar {...base} sidebarMode="chat" agentRail={rail('live', 1)} />)
     const panel = (): HTMLElement => screen.getByTestId('sidebar-panel')

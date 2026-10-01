@@ -154,9 +154,12 @@ export function Layout() {
   const shownRun = multiAgent.run && multiAgent.run.chatId === activeChatId ? multiAgent.run : null
   const shownRunActive = !!shownRun && !shownRun.review && isRunActive(shownRun.view)
 
+  // Navigation lock: while a run is live (planning, plan approval, running, tool
+  // approvals, synthesis) the user cannot leave its chat; any terminal event unlocks.
+  const navLocked = !!multiAgent.run && !multiAgent.run.review && isRunActive(multiAgent.run.view)
   useEffect(() => {
-    setIsMultiAgentRunning(!!multiAgent.run && !multiAgent.run.review && isRunActive(multiAgent.run.view))
-  }, [multiAgent.run, setIsMultiAgentRunning])
+    setIsMultiAgentRunning(navLocked)
+  }, [navLocked, setIsMultiAgentRunning])
 
   // Warm the sidecar as soon as the mode is switched on.
   useEffect(() => {
@@ -169,7 +172,9 @@ export function Layout() {
   }, [shownRun, multiAgent.pricing])
 
   const dockOpen = sidebarMode === 'agents'
-  const closeDock = useCallback(() => setSidebarMode((m) => (m === 'agents' ? 'chat' : m)), [])
+  // Locked, leaving the dock collapses it rather than switching to the chat list.
+  const leaveDock: SidebarMode | null = navLocked ? null : 'chat'
+  const closeDock = useCallback(() => setSidebarMode((m) => (m === 'agents' ? leaveDock : m)), [leaveDock])
   const selectAgent = useCallback((agentId: string) => {
     setSidebarMode('agents')
     setFocusAgentId(null)
@@ -206,7 +211,7 @@ export function Layout() {
 
   // ── Sidebar: select an existing chat ─────────────────────────
   const handleSelectChat = useCallback(async (chatId: string) => {
-    if (isStreaming) return
+    if (isStreaming || navLocked) return
 
     // Set the active ID immediately so useChat's ref is updated on the
     // next render before any messages are loaded.
@@ -216,7 +221,7 @@ export function Layout() {
       multiAgent.dismiss()
     }
     await loadChatMessages(chatId)
-  }, [isStreaming, loadChatMessages, multiAgent])
+  }, [isStreaming, navLocked, loadChatMessages, multiAgent])
 
   // Offer "View agent run" for chats that hold a persisted multi-agent trace.
   useEffect(() => {
@@ -233,10 +238,11 @@ export function Layout() {
 
   // ── Sidebar: new chat ─────────────────────────────────────────
   const handleNewChat = useCallback(() => {
+    if (navLocked) return
     clearMessages()
     setActiveChatId(null)
     if (multiAgent.run && (multiAgent.run.review || !isRunActive(multiAgent.run.view))) multiAgent.dismiss()
-  }, [clearMessages, multiAgent])
+  }, [clearMessages, multiAgent, navLocked])
 
   // ── Sidebar: rename a chat ────────────────────────────────────
   const handleRenameChat = useCallback(async (chatId: string, title: string) => {
@@ -529,9 +535,10 @@ export function Layout() {
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
               sidebarMode={sidebarMode}
-              onToggleChat={() => setSidebarMode(sidebarMode === 'chat' ? null : 'chat')}
-              onToggleStarred={() => setSidebarMode(sidebarMode === 'starred' ? null : 'starred')}
-              onToggleAgents={() => setSidebarMode(dockOpen ? 'chat' : 'agents')}
+              navLocked={navLocked}
+              onToggleChat={() => { if (!navLocked) setSidebarMode(sidebarMode === 'chat' ? null : 'chat') }}
+              onToggleStarred={() => { if (!navLocked) setSidebarMode(sidebarMode === 'starred' ? null : 'starred') }}
+              onToggleAgents={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
               agentRail={agentRail}
               overlayDock={narrowWindow}
               agentsPanel={
@@ -561,7 +568,7 @@ export function Layout() {
               onDeleteChat={handleDeleteChat}
               onRenameChat={handleRenameChat}
               onStarChat={handleStarChat}
-              onOpenSettings={() => { if (!isStreaming) setSettingsOpen(true) }}
+              onOpenSettings={() => { if (!isStreaming && !navLocked) setSettingsOpen(true) }}
             />
             {/* Streaming lock — blocks the sidebar while a single-chat response is in
                 flight; never the dock, which needs Abort and Approve during a run. */}
@@ -611,7 +618,7 @@ export function Layout() {
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
               sidebarCollapsed={sidebarMode === null}
-              onSidebarToggle={() => setSidebarMode(sidebarMode !== null ? null : lastSidebarMode.current)}
+              onSidebarToggle={() => setSidebarMode(sidebarMode !== null ? null : navLocked ? 'agents' : lastSidebarMode.current)}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
@@ -621,7 +628,7 @@ export function Layout() {
               <div className="flex justify-center pt-3">
                 <button
                   data-testid="agent-run-pill"
-                  onClick={() => setSidebarMode(dockOpen ? 'chat' : 'agents')}
+                  onClick={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
                   className="inline-flex h-[30px] items-center gap-2 rounded-[15px] border-[0.5px] border-ma-red/35 bg-ma-red/[0.08] px-3.5 text-[12.5px] text-ma-redtext hover:bg-ma-red/[0.14]"
                 >
                   {dockOpen && shownRunActive && <span className="ma-pill-dot" />}

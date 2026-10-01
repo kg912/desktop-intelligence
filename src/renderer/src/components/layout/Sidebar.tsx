@@ -662,8 +662,12 @@ export interface AgentRailState {
   disabled?: boolean
 }
 
+export const NAV_LOCK_TOOLTIP = 'Agents are running. Abort the run to leave.'
+
 interface SidebarProps {
   sidebarMode:     SidebarMode | null
+  /** A multi-agent run is live: no way out of the chat (chats, favourites, new chat, settings). */
+  navLocked?:      boolean
   onToggleChat:    () => void
   onToggleStarred: () => void
   onToggleAgents:  () => void
@@ -687,6 +691,7 @@ export const PANEL_WIDTH: Record<SidebarMode, number> = { chat: 264, starred: 26
 
 export function Sidebar({
   sidebarMode,
+  navLocked = false,
   onToggleChat,
   onToggleStarred,
   onToggleAgents,
@@ -737,8 +742,9 @@ export function Sidebar({
         {/* Chat panel toggle */}
         <RailButton
           active={sidebarMode === 'chat'}
+          disabled={navLocked}
           onClick={onToggleChat}
-          title="Chats"
+          title={navLocked ? NAV_LOCK_TOOLTIP : 'Chats'}
         >
           <MessageSquare style={{ width: 15, height: 15 }} />
         </RailButton>
@@ -748,8 +754,9 @@ export function Sidebar({
         {/* Starred chats panel toggle */}
         <RailButton
           active={sidebarMode === 'starred'}
+          disabled={navLocked}
           onClick={onToggleStarred}
-          title="Starred chats"
+          title={navLocked ? NAV_LOCK_TOOLTIP : 'Starred chats'}
         >
           <Star style={{ width: 15, height: 15 }} />
         </RailButton>
@@ -776,7 +783,7 @@ export function Sidebar({
 
         {/* Settings gear — pushed to bottom */}
         <div className="flex-1" />
-        <RailButton onClick={onOpenSettings} title="Settings">
+        <RailButton onClick={onOpenSettings} disabled={navLocked} title={navLocked ? NAV_LOCK_TOOLTIP : 'Settings'}>
           <Settings style={{ width: 15, height: 15 }} />
         </RailButton>
         <div style={{ height: 12 }} />
@@ -831,7 +838,9 @@ export function Sidebar({
             </span>
 
             {sidebarMode !== 'agents' && <button
-              onClick={onNewChat}
+              onClick={navLocked ? undefined : onNewChat}
+              aria-disabled={navLocked}
+              title={navLocked ? NAV_LOCK_TOOLTIP : undefined}
               className="no-drag flex items-center"
               style={{
                 gap:          5,
@@ -841,7 +850,8 @@ export function Sidebar({
                 color:        'rgba(229,57,53,0.7)',
                 borderRadius: 5,
                 padding:      '4px 10px',
-                cursor:       'pointer',
+                cursor:       navLocked ? 'not-allowed' : 'pointer',
+                opacity:      navLocked ? 0.35 : 1,
                 lineHeight:   1,
                 fontWeight:   500,
               }}
@@ -855,8 +865,15 @@ export function Sidebar({
             <div className="flex-1 min-h-0 no-drag">{agentsPanel}</div>
           ) : (<>
 
-          {/* ── List (scrollable) ── */}
-          <div className="flex-1 overflow-y-auto no-drag" style={{ paddingTop: 4, paddingBottom: 4 }}>
+          {/* ── List (scrollable) ── locked: greyed, rows inert, the tooltip says why */}
+          <div
+            className="flex-1 overflow-y-auto no-drag"
+            title={navLocked ? NAV_LOCK_TOOLTIP : undefined}
+            aria-disabled={navLocked || undefined}
+            data-testid="chat-list"
+            style={{ paddingTop: 4, paddingBottom: 4, ...(navLocked && { opacity: 0.4, cursor: 'not-allowed' }) }}
+          >
+           <div style={navLocked ? { pointerEvents: 'none' } : undefined}>
             {sidebarMode === 'starred' ? (
               starredGroups.length > 0
                 ? starredGroups.map((g) => (
@@ -902,6 +919,7 @@ export function Sidebar({
                   </p>
                 )
             )}
+           </div>
           </div>
 
           {/* ── Panel footer: search ── */}
@@ -925,6 +943,8 @@ export function Sidebar({
               <input
                 type="text"
                 placeholder="Search…"
+                disabled={navLocked}
+                title={navLocked ? NAV_LOCK_TOOLTIP : undefined}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full selectable focus:outline-none"
