@@ -18,6 +18,7 @@ import re
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.error import HTTPError
@@ -55,6 +56,8 @@ SYNTHESIS_MAX_COMPLETION_TOKENS = 2_000
 # Budget alone can imply millions of tokens on cheap models; providers 400 when
 # max_tokens exceeds the context window. Hard ceiling when context is unknown.
 MAX_COMPLETION_TOKENS = 32_768
+# Below this a request is not worth sending; it waits for budget or the cap is reached.
+MIN_REQUEST_TOKENS = 16
 
 
 class Pricing(BaseModel):
@@ -122,6 +125,10 @@ class Run:
     reserved: float = 0.0
     budget_changed: asyncio.Condition = field(default_factory=asyncio.Condition)
     approvals: dict[str, asyncio.Future[tuple[bool, str]]] = field(default_factory=dict)
+    # Worker tasks currently running; parallel requests split the free allowance between them.
+    active_workers: int = 0
+    executor: ThreadPoolExecutor | None = None
+    started: float = field(default_factory=time.monotonic)
 
     @property
     def config(self) -> Config:
@@ -134,7 +141,8 @@ class Run:
         if self.finished:
             return  # exactly one terminal event, always last
         self.seq += 1
-        event = {"runId": self.run_id, "seq": self.seq, "ts": int(time.time() * 1000), "type": event_type, **payload}
+        event = {"runId": self.run_id, "seq": self.seq, "ts": int(time.time() * 1000),
+                 "elapsedMs": int((time.monotonic() - self.started) * 1000), "type": event_type, **payload}
         if self.total_tokens or self.total_cost:
             event["runTotals"] = self.totals()
         self.events.append(event)
@@ -190,13 +198,19 @@ class Run:
             self.reserved = 0.0
         self.budget_changed.notify_all()
 
-    def plan_request(self, model: str, messages: list[dict[str, Any]], *, synthesis: bool) -> tuple[int | None, float]:
-        """(max_tokens, worst-case cost) keeping total spend — including other
-        in-flight requests' reservations — within the cap. None = unbounded (unpriced)."""
+    def plan_request(self, model: str, messages: list[dict[str, Any]], *, synthesis: bool) -> tuple[int | None, float, float]:
+        """(max_tokens, worst-case cost, shortfall) keeping total spend — including
+        other in-flight requests' reservations — within the cap. None = unbounded
+        (unpriced). Workers running in parallel each get at most an equal share of
+        the uncommitted allowance, so one request cannot reserve the whole cap and
+        serialise the others. shortfall > 0 means even MIN_REQUEST_TOKENS do not fit."""
         p = self.price(model)
         if not p or p.completion == 0:
-            return (SYNTHESIS_MAX_COMPLETION_TOKENS if synthesis else None), 0.0
-        allowance = self.config.budgetCapUsd - self.total_cost - self.reserved - (0.0 if synthesis else self.synthesis_reserve())
+            return (SYNTHESIS_MAX_COMPLETION_TOKENS if synthesis else None), 0.0, 0.0
+        uncommitted = self.config.budgetCapUsd - self.total_cost - (0.0 if synthesis else self.synthesis_reserve())
+        allowance = uncommitted - self.reserved
+        if not synthesis:
+            allowance = min(allowance, uncommitted / max(1, self.active_workers))
         prompt_tokens = estimate_tokens(json.dumps(messages))
         prompt_cost = prompt_tokens * p.prompt
         tokens = math.floor((allowance - prompt_cost) / p.completion)
@@ -205,7 +219,10 @@ class Run:
             tokens = min(tokens, p.contextLength - math.ceil(prompt_tokens * 1.25))
         if synthesis:
             tokens = min(tokens, SYNTHESIS_MAX_COMPLETION_TOKENS)
-        return tokens, prompt_cost + max(tokens, 0) * p.completion
+        shortfall = max(0.0, prompt_cost + MIN_REQUEST_TOKENS * p.completion - (uncommitted - self.reserved))
+        if not shortfall:  # the equal share may be tiny, but a minimal request still fits
+            tokens = max(tokens, MIN_REQUEST_TOKENS)
+        return tokens, prompt_cost + max(tokens, 0) * p.completion, shortfall
 
 
 RUNS: dict[str, Run] = {}
@@ -311,11 +328,13 @@ async def ask(
         raise BudgetReached()
     async with run.budget_changed:
         while True:
-            max_tokens, worst_case = run.plan_request(model, messages, synthesis=synthesis)
-            if max_tokens is None or max_tokens >= 16:
+            max_tokens, worst_case, shortfall = run.plan_request(model, messages, synthesis=synthesis)
+            if max_tokens is None or max_tokens >= MIN_REQUEST_TOKENS:
                 run.reserved += worst_case
                 break
-            if not run.reserved:  # nothing in flight can free budget: the cap is reached
+            # Wait only if requests in flight hold enough that their release could
+            # plausibly cover the gap; otherwise the cap is effectively reached.
+            if run.reserved < shortfall / 2:
                 run.budget_reached = True
                 raise BudgetReached()
             await run.budget_changed.wait()  # a parallel request may finish under its reservation
@@ -336,7 +355,7 @@ async def ask(
             push(done)
 
     try:
-        future = loop.run_in_executor(None, work)
+        future = loop.run_in_executor(run.executor, work)
         while (item := await queue.get()) is not done:
             if on_token:
                 await on_token(item)
@@ -354,46 +373,82 @@ async def ask(
 # ── Planning ─────────────────────────────────────────────────────────────────
 
 PLANNER_SYSTEM = (
-    "You are the orchestrator of a team of AI agents. Decompose the user's task into independent worker steps. "
-    "Return ONLY a JSON array. Each element: {\"id\": \"<phase>.<n>\", \"label\": short imperative subtask, "
-    "\"role\": short agent role name, \"phase\": integer >= 1}. Steps in the same phase run in parallel; "
-    "later phases receive earlier phases' results. You may spawn a maximum of {max_agents} agents."
+    "You are the orchestrator of a team of AI agents that run in parallel. Split the user's task into the largest set of "
+    "steps that can run at the same time. A step may depend on another step only if it needs that step's output, and "
+    "then it must list that step's id in dependsOn. Research, comparison, and per-region or per-source work is parallel "
+    "by default. A final assembly step may depend on the others. You may spawn a maximum of {max_agents} agents (steps). "
+    "Return ONLY a JSON array. Each element: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
+    "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs]}."
+)
+
+CHAIN_CORRECTION = (
+    "In that plan every step waits for the previous one, so no two agents can work at the same time. Either split the "
+    "work so independent steps have no dependency on each other, or, if the chain is truly required, reply with the same "
+    "JSON array and add a one-line \"chainReason\" field to the first step explaining why. Reply with ONLY the JSON array."
 )
 
 
 def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
+    """Steps with explicit dependsOn and a derived display phase (dependency depth).
+    The legacy phase-only shape is converted: a step depends on every step in an
+    earlier phase, which is exactly what the old phase-by-phase loop gave it."""
     match = re.search(r"\[.*\]", text, re.S)
     if not match:
         raise ValueError("no JSON array in planner output")
     raw = json.loads(match.group(0))
     if not isinstance(raw, list) or not raw:
         raise ValueError("plan is not a non-empty list")
+    legacy = not any(isinstance(item, dict) and "dependsOn" in item for item in raw)
     steps: list[dict[str, Any]] = []
     seen: set[str] = set()
-    counters: dict[int, int] = {}
-    for item in raw:
+    for index, item in enumerate(raw):
         if not isinstance(item, dict) or not str(item.get("label", "")).strip():
             raise ValueError("every step needs a label")
-        phase = max(1, int(item.get("phase", 1)))
-        counters[phase] = counters.get(phase, 0) + 1
-        step_id = str(item.get("id") or f"{phase}.{counters[phase]}")
+        step_id = str(item.get("id") or "").strip()[:20] or f"s{index + 1}"
         if step_id in seen:
-            step_id = f"{phase}.{counters[phase]}"
+            step_id = f"{step_id}#{index + 1}"
         seen.add(step_id)
+        deps = item.get("dependsOn") if isinstance(item.get("dependsOn"), list) else []
         steps.append({
             "id": step_id,
             "label": str(item["label"]).strip()[:200],
             "stage": "worker",
             "role": str(item.get("role") or "Analyst").strip()[:60],
             "model": config.models.get("worker", ""),
-            "phase": phase,
+            "dependsOn": [str(d) for d in deps],
+            "phase": max(1, int(item.get("phase", 1) or 1)) if legacy else 0,
+            "chainReason": str(item.get("chainReason") or "").strip()[:200],
         })
+    ids = {s["id"] for s in steps}
+    if legacy:
+        for s in steps:
+            s["dependsOn"] = [o["id"] for o in steps if o["phase"] < s["phase"]]
+    for s in steps:  # unknown ids and self-references cannot be waited on
+        s["dependsOn"] = list(dict.fromkeys(d for d in s["dependsOn"] if d in ids and d != s["id"]))
+    by_id = {s["id"]: s for s in steps}
+    depth: dict[str, int] = {}
+
+    def depth_of(step_id: str, trail: tuple[str, ...] = ()) -> int:
+        if step_id in trail:
+            raise ValueError(f"dependency cycle through {step_id}")
+        if step_id not in depth:
+            depth[step_id] = 1 + max((depth_of(d, trail + (step_id,)) for d in by_id[step_id]["dependsOn"]), default=0)
+        return depth[step_id]
+
+    for s in steps:
+        s["phase"] = depth_of(s["id"])
     return steps
+
+
+def is_pure_chain(steps: list[dict[str, Any]]) -> bool:
+    """Two or more steps and no two of them can ever run at the same time."""
+    return len(steps) >= 2 and len({s["phase"] for s in steps}) == len(steps)
 
 
 def fallback_plan(config: Config) -> list[dict[str, Any]]:
     labels = ["Analyze the task", "Research supporting evidence", "Review risks and recommendations"]
-    return [{"id": f"1.{i + 1}", "label": labels[i], "stage": "worker", "role": "Analyst", "model": config.models.get("worker", ""), "phase": 1}
+    return [{"id": f"1.{i + 1}", "label": labels[i], "stage": "worker", "role": "Analyst", "model": config.models.get("worker", ""),
+             "dependsOn": [], "phase": 1}
             for i in range(min(config.maxAgents, len(labels)))]
 
 
@@ -406,24 +461,42 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
         {"role": "user", "content": run.request.task},
     ]
     steps: list[dict[str, Any]] | None = None
-    for attempt in range(3):
+    chain_checked = False
+    for attempt in range(4):
         reply, _, _ = await ask(run, model, messages)
         text = str(reply.get("content") or "")
         try:
             candidate = parse_plan(text, config)
         except (ValueError, TypeError):
-            messages += [{"role": "assistant", "content": text}, {"role": "user", "content": "That was not a valid JSON array of steps. Reply with ONLY the JSON array."}]
+            messages += [{"role": "assistant", "content": text}, {"role": "user", "content": "That was not a valid JSON array of steps with acyclic dependsOn. Reply with ONLY the JSON array."}]
             continue
-        if len(candidate) <= config.maxAgents:
-            steps = candidate
-            break
-        # Spec §06: the sidecar rejects an over-cap plan and re-plans.
-        messages += [{"role": "assistant", "content": text},
-                     {"role": "user", "content": f"Your plan has {len(candidate)} steps but the maximum is {config.maxAgents}. Merge steps and reply with at most {config.maxAgents}."}]
-        if attempt == 2:
-            steps = candidate[: config.maxAgents]
-    await run.emit("orchestrator_plan", steps=steps or fallback_plan(config))
-    return {**state, "steps": steps or fallback_plan(config)}
+        if len(candidate) > config.maxAgents:
+            # Spec §06: the sidecar rejects an over-cap plan and re-plans.
+            messages += [{"role": "assistant", "content": text},
+                         {"role": "user", "content": f"Your plan has {len(candidate)} steps but the maximum is {config.maxAgents}. Merge steps and reply with at most {config.maxAgents}."}]
+            if attempt == 3:
+                steps = candidate[: config.maxAgents]
+                kept = {s["id"] for s in steps}
+                for s in steps:
+                    s["dependsOn"] = [d for d in s["dependsOn"] if d in kept]
+            continue
+        if is_pure_chain(candidate) and not chain_checked:
+            # One correction only; the second answer is accepted either way.
+            chain_checked = True
+            print(f"[plan] run {run.run_id}: pure chain of {len(candidate)} steps — asking once for a parallel split", file=sys.stderr, flush=True)
+            messages += [{"role": "assistant", "content": text}, {"role": "user", "content": CHAIN_CORRECTION}]
+            continue
+        if chain_checked:
+            reason = next((s["chainReason"] for s in candidate if s.get("chainReason")), "")
+            outcome = f"kept the chain ({reason or 'no reason given'})" if is_pure_chain(candidate) else "parallelised"
+            print(f"[plan] run {run.run_id}: chain correction → {outcome}", file=sys.stderr, flush=True)
+        steps = candidate
+        break
+    steps = steps or fallback_plan(config)
+    for s in steps:
+        s.pop("chainReason", None)
+    await run.emit("orchestrator_plan", steps=steps)
+    return {**state, "steps": steps}
 
 
 async def approve_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -460,7 +533,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
     context = ""
     if prior:
-        context = "\n\nResults from earlier phases (cite them by marker if you rely on them):\n" + "\n\n".join(f"[{k}] {v}" for k, v in prior.items())
+        context = "\n\nResults from the steps this one depends on (cite them by marker if you rely on them):\n" + "\n\n".join(f"[{k}] {v}" for k, v in prior.items())
     feedback = ""
     last_reason = ""
     for attempt in range(config.maxRetriesPerAgent + 1):
@@ -535,28 +608,60 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
 
 async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Ready-queue scheduler: a step starts as soon as every step it depends on
+    has passed, up to maxAgents at once — never waiting for a whole phase."""
     run: Run = state["run"]
     steps: list[dict[str, Any]] = state["steps"]
     outputs: dict[str, str] = {}
     failures: dict[str, str] = {}
-    for phase in sorted({s["phase"] for s in steps}):
-        phase_steps = [s for s in steps if s["phase"] == phase]
-        if run.budget_reached:
-            for s in phase_steps:
-                failures[s["id"]] = "not started — budget cap reached"
-                await run.emit("agent_failed", agentId=s["id"], reason=failures[s["id"]])
-            continue
-        prior = dict(outputs)
-        results = await asyncio.gather(*(run_worker(run, s, prior) for s in phase_steps), return_exceptions=True)
-        for step, result in zip(phase_steps, results):
-            if isinstance(result, str):
-                outputs[step["id"]] = result
-            elif isinstance(result, asyncio.CancelledError):
-                raise result
-            else:
-                reason = str(result) or type(result).__name__
-                failures[step["id"]] = reason
-                await run.emit("agent_failed", agentId=step["id"], reason=reason)
+    pending = {s["id"]: s for s in steps}
+    running: dict[asyncio.Task[str], dict[str, Any]] = {}
+
+    async def fail(step_id: str, reason: str) -> None:
+        pending.pop(step_id, None)
+        failures[step_id] = reason
+        await run.emit("agent_failed", agentId=step_id, reason=reason)
+
+    try:
+        while pending or running:
+            changed = True
+            while changed:  # dependency failures cascade down the graph
+                changed = False
+                for step_id, step in list(pending.items()):
+                    failed_dep = next((d for d in step["dependsOn"] if d in failures), None)
+                    if failed_dep:
+                        await fail(step_id, f"dependency {failed_dep} failed")
+                        changed = True
+                    elif run.budget_reached:
+                        await fail(step_id, "not started — budget cap reached")
+                        changed = True
+            ready = [s for s in pending.values() if all(d in outputs for d in s["dependsOn"])]
+            for step in ready[: max(0, run.config.maxAgents - len(running))]:
+                del pending[step["id"]]
+                prior = {d: outputs[d] for d in step["dependsOn"]}
+                running[asyncio.create_task(run_worker(run, step, prior))] = step
+                run.active_workers = len(running)
+            if not running:
+                for step_id in list(pending):  # unreachable for a validated acyclic plan
+                    await fail(step_id, "dependencies can never be satisfied")
+                break
+            done, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                step = running.pop(task)
+                run.active_workers = len(running)
+                if task.cancelled():
+                    raise asyncio.CancelledError()
+                error = task.exception()
+                if error is None:
+                    outputs[step["id"]] = task.result()
+                else:
+                    await fail(step["id"], str(error) or type(error).__name__)
+    finally:
+        for task in running:  # abort: no agent outlives the run
+            task.cancel()
+        if running:
+            await asyncio.gather(*running, return_exceptions=True)
+        run.active_workers = 0
     return {**state, "outputs": outputs, "failures": failures}
 
 
@@ -614,6 +719,8 @@ GRAPH = build_graph()
 
 
 async def orchestrate(run: Run) -> None:
+    # One pool per run, sized so workers, reflection and synthesis can all overlap.
+    run.executor = ThreadPoolExecutor(max_workers=run.config.maxAgents * 2 + 4, thread_name_prefix=f"run-{run.run_id[:8]}")
     try:
         await GRAPH.ainvoke({"run": run})
     except asyncio.CancelledError:
@@ -625,6 +732,8 @@ async def orchestrate(run: Run) -> None:
     finally:
         if not run.finished:
             await run.emit("task_failed", reason="Run ended without a result", partialOutputs={})
+        run.cancelled = True  # streaming threads stop at their next chunk
+        run.executor.shutdown(wait=False, cancel_futures=True)
         asyncio.get_running_loop().call_later(RUN_RETENTION_S, RUNS.pop, run.run_id, None)
 
 
@@ -632,7 +741,7 @@ async def orchestrate(run: Run) -> None:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "runs": sum(1 for r in RUNS.values() if not r.finished)}
+    return {"ok": True, "runs": sum(1 for r in RUNS.values() if not r.finished), "threads": threading.active_count()}
 
 
 @app.post("/run")

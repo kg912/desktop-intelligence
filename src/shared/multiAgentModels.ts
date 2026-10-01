@@ -108,48 +108,44 @@ export function estimateRunCost(input: {
   }
 
   const taskTokens = estimateTokens(task)
-  const phases = [...new Set(steps.map((s) => s.phase))].sort((a, b) => a - b)
+  // A step's prompt carries its dependencies' outputs. Pre-graph traces have no
+  // dependsOn; there a step saw every earlier phase's output.
+  const priorCount = (step: AgentStep): number =>
+    step.dependsOn ? step.dependsOn.length : steps.filter((s) => s.phase < step.phase).length
   let min = 0
   let max = 0
-  let priorOutMin = 0
-  let priorOutMax = 0
-  let allOutMin = 0
-  let allOutMax = 0
   const attemptsMax = config.maxRetriesPerAgent + 1
 
-  for (const phase of phases) {
-    const phaseSteps = steps.filter((s) => s.phase === phase)
-    for (const step of phaseSteps) {
-      const base = ESTIMATE.workerSystemTokens + taskTokens + estimateTokens(step.label)
+  for (const step of steps) {
+    const base = ESTIMATE.workerSystemTokens + taskTokens + estimateTokens(step.label)
+    const priorOutMin = priorCount(step) * ESTIMATE.workerOutMin
+    const priorOutMax = priorCount(step) * ESTIMATE.workerOutMax
 
-      // Best case: one attempt, one round, short answer, one reflection.
-      min += cost(step.model, base + priorOutMin, ESTIMATE.workerOutMin)
-      min += cost(
+    // Best case: one attempt, one round, short answer, one reflection.
+    min += cost(step.model, base + priorOutMin, ESTIMATE.workerOutMin)
+    min += cost(
+      config.models.reflection,
+      ESTIMATE.reflectionPromptOverhead + taskTokens + ESTIMATE.workerOutMin,
+      ESTIMATE.reflectionOut
+    )
+
+    // Worst case: every attempt runs every tool round with growing context.
+    for (let attempt = 0; attempt < attemptsMax; attempt++) {
+      for (let round = 0; round < ESTIMATE.toolRoundsMax; round++) {
+        const prompt =
+          base + priorOutMax + round * (ESTIMATE.toolCallOutTokens + ESTIMATE.toolResultTokens)
+        const last = round === ESTIMATE.toolRoundsMax - 1
+        max += cost(step.model, prompt, last ? ESTIMATE.workerOutMax : ESTIMATE.toolCallOutTokens)
+      }
+      max += cost(
         config.models.reflection,
-        ESTIMATE.reflectionPromptOverhead + taskTokens + ESTIMATE.workerOutMin,
+        ESTIMATE.reflectionPromptOverhead + taskTokens + ESTIMATE.workerOutMax,
         ESTIMATE.reflectionOut
       )
-
-      // Worst case: every attempt runs every tool round with growing context.
-      for (let attempt = 0; attempt < attemptsMax; attempt++) {
-        for (let round = 0; round < ESTIMATE.toolRoundsMax; round++) {
-          const prompt =
-            base + priorOutMax + round * (ESTIMATE.toolCallOutTokens + ESTIMATE.toolResultTokens)
-          const last = round === ESTIMATE.toolRoundsMax - 1
-          max += cost(step.model, prompt, last ? ESTIMATE.workerOutMax : ESTIMATE.toolCallOutTokens)
-        }
-        max += cost(
-          config.models.reflection,
-          ESTIMATE.reflectionPromptOverhead + taskTokens + ESTIMATE.workerOutMax,
-          ESTIMATE.reflectionOut
-        )
-      }
     }
-    priorOutMin += phaseSteps.length * ESTIMATE.workerOutMin
-    priorOutMax += phaseSteps.length * ESTIMATE.workerOutMax
-    allOutMin = priorOutMin
-    allOutMax = priorOutMax
   }
+  const allOutMin = steps.length * ESTIMATE.workerOutMin
+  const allOutMax = steps.length * ESTIMATE.workerOutMax
 
   min += cost(config.models.synthesizer, ESTIMATE.synthesisPromptOverhead + allOutMin, ESTIMATE.synthesisOutMin)
   max += cost(config.models.synthesizer, ESTIMATE.synthesisPromptOverhead + allOutMax, ESTIMATE.synthesisOutMax)

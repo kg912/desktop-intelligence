@@ -6,7 +6,7 @@ import multi_agent_sidecar as s
 
 def plan(pricing, synthesis=False):
     run = SimpleNamespace(
-        config=SimpleNamespace(budgetCapUsd=0.5, models={}), total_cost=0.0, reserved=0.0,
+        config=SimpleNamespace(budgetCapUsd=0.5, models={}), total_cost=0.0, reserved=0.0, active_workers=0,
         request=SimpleNamespace(pricing={"m": pricing}),
     )
     run.price = lambda m: s.Run.price(run, m)

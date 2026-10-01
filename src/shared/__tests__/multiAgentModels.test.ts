@@ -73,6 +73,15 @@ describe('estimateRunCost (pre-flight range)', () => {
     expect(fewerAgents.maxUsd).toBeLessThan(base.maxUsd)
   })
 
+  it('sizes a dependant\'s prompt from its dependencies only; pre-graph steps keep the phase rule', () => {
+    const legacy = estimateRunCost({ task: 't', steps, config, pricing })
+    const sameAsLegacy = estimateRunCost({ task: 't', steps: steps.map((s) => ({ ...s, dependsOn: s.phase === 2 ? ['1.1', '1.2'] : [] })), config, pricing })
+    const narrower = estimateRunCost({ task: 't', steps: steps.map((s) => ({ ...s, dependsOn: s.phase === 2 ? ['1.1'] : [] })), config, pricing })
+    expect(sameAsLegacy).toEqual(legacy)
+    expect(narrower.minUsd).toBeLessThan(legacy.minUsd)
+    expect(narrower.maxUsd).toBeLessThan(legacy.maxUsd)
+  })
+
   it('lists models without a price instead of silently pricing them', () => {
     const est = estimateRunCost({ task: 't', steps, config, pricing: { w: pricing.w } })
     expect(est.unpricedModels).toEqual(['r', 's'])

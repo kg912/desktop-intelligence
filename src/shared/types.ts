@@ -493,7 +493,10 @@ export interface AgentStep {
   stage: AgentStageType
   role:  string          // display role for workers; same as stage for fixed roles
   model: string          // OpenRouter model id
-  phase: number          // steps sharing a phase run in parallel; phases run in sequence
+  /** Ids this step needs the output of; it starts once all have passed. Absent on pre-graph traces. */
+  dependsOn?: string[]
+  /** Display only: longest dependency depth + 1 (steps with no dependencies are phase 1). */
+  phase: number
 }
 
 export interface MultiAgentConfig {
@@ -556,6 +559,8 @@ export interface AgentEventBase {
   runId: string
   seq:   number   // monotonically increasing per run, assigned by the sidecar
   ts:    number   // epoch ms
+  /** Monotonic ms since the run started (sidecar clock); absent on older traces. */
+  elapsedMs?: number
   /** Attached by the sidecar to every event after its first paid request. */
   runTotals?: RunTotals
 }

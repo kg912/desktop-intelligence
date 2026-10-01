@@ -381,13 +381,22 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
 
   // ── Phase 0 measurements (specs/multi-agent-refinement.md) ─────────────────
 
-  /** Plan the given steps; every Scout request is held open for `holdMs`. */
-  async function timedRun(plan: Array<Record<string, unknown>>, opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }> } = {}): Promise<{ events: AgentEvent[]; windows: Array<{ start: number; end: number; label: string }> }> {
+  const subtaskOf = (body: Body): string => userOf(body).match(/Your subtask \(([\d.]+)\)/)?.[1] ?? ''
+  /** Plan the given steps; every Scout request is held open (300 ms unless `holdMs` says otherwise). */
+  async function timedRun(
+    plan: Array<Record<string, unknown>>,
+    opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }>; holdMs?: (stepId: string) => number; onEvent?: (e: AgentEvent) => void; reply?: (body: Body) => Reply | undefined } = {}
+  ): Promise<{ events: AgentEvent[]; windows: Array<{ start: number; end: number; label: string }> }> {
     fake.requests.length = 0
+    plannerCalls = 0
     planOverride = () => ({ content: JSON.stringify(plan) })
-    replyOverride = (body) => (systemOf(body).includes('Scout agent') ? { content: `Findings for ${userOf(body).match(/Your subtask \(([\d.]+)\)/)?.[1]}: detailed results.`, delayMs: 300 } : undefined)
+    replyOverride = (body) =>
+      opts.reply?.(body) ??
+      (systemOf(body).includes('Scout agent')
+        ? { content: `Findings for ${subtaskOf(body)}: detailed results.`, delayMs: opts.holdMs?.(subtaskOf(body)) ?? 300 }
+        : undefined)
     try {
-      const events = await runToEnd(mgr, { config: opts.config, pricing: opts.pricing, onEvent: approvePlan(mgr) })
+      const events = await runToEnd(mgr, { config: opts.config, pricing: opts.pricing, onEvent: (e) => { approvePlan(mgr)(e); opts.onEvent?.(e) } })
       const windows = fake.requests
         .filter((r) => systemOf(r.body).includes('Scout agent'))
         .map((r) => ({ start: r.start, end: r.end, label: userOf(r.body).match(/Your subtask \(([\d.]+)\)/)?.[1] ?? '' }))
@@ -412,16 +421,20 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     for (let i = 1; i < windows.length; i++) expect(windows[i].start).toBeGreaterThanOrEqual(windows[i - 1].end)
   }, 60_000)
 
-  it('Test B: a cap just above one worst-case reservation — measured baseline', async () => {
+  it('Test B: a cap just above one worst-case reservation still lets three agents overlap, within the cap', async () => {
     // 32,768-token clamp × 1e-6 ≈ $0.033 worst case per request; cap $0.04.
     const price = { prompt: 1e-7, completion: 1e-6 }
     const pricing = { 'fake/planner': price, 'fake/worker': price, 'fake/reviewer': price, 'fake/synth': price }
     Object.assign(fake.pricing, pricing)
     try {
-      const { windows } = await timedRun([1, 2, 3].map((n) => ({ id: `1.${n}`, label: `Look up source ${n}`, role: 'Scout', phase: 1 })), { config: baseConfig({ budgetCapUsd: 0.04 }), pricing })
+      const { events, windows } = await timedRun([1, 2, 3].map((n) => ({ id: `1.${n}`, label: `Look up source ${n}`, role: 'Scout', phase: 1 })), { config: baseConfig({ budgetCapUsd: 0.04 }), pricing })
       expect(windows).toHaveLength(3)
-      // Baseline: the first request reserves nearly the whole allowance, so the third waits.
-      expect(allOverlap(windows)).toBe(false)
+      // Phase 0 baseline was false (the first request reserved nearly the whole
+      // allowance and the third waited); parallel workers now split it.
+      expect(allOverlap(windows)).toBe(true)
+      const terminal = events.at(-1)!
+      expect(terminal.type).toBe('task_complete')
+      if (terminal.type === 'task_complete') expect(terminal.totalCostUsd).toBeLessThanOrEqual(0.04)
     } finally {
       for (const key of Object.keys(fake.pricing)) delete fake.pricing[key]
     }
@@ -435,6 +448,85 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(modelsFor('Scout agent')).toEqual(['fake/worker'])
     expect(modelsFor('strict reviewer')).toEqual(['fake/reviewer'])
     expect(modelsFor('synthesize')).toEqual(['fake/synth'])
+  }, 60_000)
+
+  // ── Phase 1: dependency scheduling ─────────────────────────────────────────
+
+  it('fan-out of three plus a dependent fourth: the fourth starts when its last dependency passes, not at a phase boundary', async () => {
+    const plan = [
+      { id: '1.1', label: 'Look up source 1', role: 'Scout', dependsOn: [] },
+      { id: '1.2', label: 'Look up source 2', role: 'Scout', dependsOn: [] },
+      { id: '1.3', label: 'Look up source 3', role: 'Scout', dependsOn: [] },
+      { id: '2.1', label: 'Combine sources 1 and 2', role: 'Scout', dependsOn: ['1.1', '1.2'] },
+    ]
+    const { events, windows } = await timedRun(plan, { holdMs: (id) => (id === '1.3' ? 2_000 : 300) })
+    expect(events.at(-1)?.type).toBe('task_complete')
+    const w = Object.fromEntries(windows.map((x) => [x.label, x]))
+    expect(allOverlap([w['1.1'], w['1.2'], w['1.3']])).toBe(true)
+    expect(w['2.1'].start).toBeGreaterThanOrEqual(Math.max(w['1.1'].end, w['1.2'].end))
+    expect(w['2.1'].start).toBeLessThan(w['1.3'].end) // did not wait for the slow sibling
+    // The plan event carries the graph and the derived display phase.
+    const planEvent = events.find((e): e is Extract<AgentEvent, { type: 'orchestrator_plan' }> => e.type === 'orchestrator_plan')!
+    expect(planEvent.steps.map((s) => [s.id, s.dependsOn, s.phase])).toEqual([['1.1', [], 1], ['1.2', [], 1], ['1.3', [], 1], ['2.1', ['1.1', '1.2'], 2]])
+    // Dependants only see their dependencies' outputs.
+    const fourth = fake.requests.find((r) => subtaskOf(r.body) === '2.1')!
+    expect(userOf(fourth.body)).toContain('Findings for 1.1')
+    expect(userOf(fourth.body)).not.toContain('Findings for 1.3')
+    // Every event carries a monotonic elapsedMs for the timeline.
+    events.forEach((e, i) => i && expect(e.elapsedMs!).toBeGreaterThanOrEqual(events[i - 1].elapsedMs!))
+  }, 60_000)
+
+  it('a failed dependency fails its dependants and the rest of the run continues', async () => {
+    const plan = [
+      { id: '1.1', label: 'Look up source 1', role: 'Scout', dependsOn: [] },
+      { id: '1.2', label: 'Look up source 2', role: 'Scout', dependsOn: [] },
+      { id: '2.1', label: 'Use source 1', role: 'Scout', dependsOn: ['1.1'] },
+      { id: '3.1', label: 'Use step 2.1', role: 'Scout', dependsOn: ['2.1'] },
+    ]
+    const { events } = await timedRun(plan, {
+      config: baseConfig({ maxRetriesPerAgent: 0 }),
+      holdMs: () => 50,
+      reply: (body) => (systemOf(body).includes('strict reviewer') && userOf(body).includes('Findings for 1.1') ? { content: '{"score": 1, "reason": "wrong"}' } : undefined),
+    })
+    const failed = Object.fromEntries(events.filter((e): e is Extract<AgentEvent, { type: 'agent_failed' }> => e.type === 'agent_failed').map((e) => [e.agentId, e.reason]))
+    expect(failed['2.1']).toBe('dependency 1.1 failed')
+    expect(failed['3.1']).toBe('dependency 2.1 failed')
+    expect(events.some((e) => e.type === 'agent_start' && (e.agentId === '2.1' || e.agentId === '3.1'))).toBe(false)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'reflection_result', agentId: '1.2', passed: true }))
+    expect(events.at(-1)?.type).toBe('task_complete')
+  }, 60_000)
+
+  it('a pure-chain plan triggers exactly one correction request, then is accepted', async () => {
+    const { events } = await timedRun([1, 2].map((n) => ({ id: `${n}.1`, label: `Step ${n}`, role: 'Scout', dependsOn: n === 2 ? ['1.1'] : [] })))
+    expect(plannerCalls).toBe(2)
+    const planner = fake.requests.filter((r) => systemOf(r.body).includes('orchestrator of a team'))
+    expect(JSON.stringify(planner[1].body.messages)).toContain('chainReason')
+    expect(events.at(-1)?.type).toBe('task_complete')
+  }, 60_000)
+
+  it('abort cancels every running agent and the run\'s threads shut down', async () => {
+    const port = (mgr as unknown as { port: number }).port
+    const token = (mgr as unknown as { token: string }).token
+    const health = async (): Promise<{ runs: number; threads: number }> =>
+      (await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-di-token': token } })).json() as Promise<{ runs: number; threads: number }>
+    const before = (await health()).threads
+    let started = 0
+    const { events } = await timedRun([1, 2, 3].map((n) => ({ id: `1.${n}`, label: `Look up source ${n}`, role: 'Scout', dependsOn: [] })), {
+      holdMs: () => 1_500,
+      onEvent: (e) => {
+        if (e.type === 'agent_start' && ++started === 3) setTimeout(() => void mgr.abortRun(e.runId), 100)
+      },
+    })
+    expect(events.at(-1)).toMatchObject({ type: 'task_failed', reason: 'Run aborted by user' })
+    expect(events.some((e) => e.type === 'agent_complete')).toBe(false)
+    const deadline = Date.now() + 5_000
+    let now = await health()
+    while ((now.runs > 0 || now.threads > before) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100))
+      now = await health()
+    }
+    expect(now.runs).toBe(0)
+    expect(now.threads).toBeLessThanOrEqual(before)
   }, 60_000)
 
   it('requires the per-launch token on every endpoint', async () => {

@@ -51,6 +51,10 @@ function validateVariant(obj: Record<string, unknown>): string | null {
           ['role', 'string'], ['model', 'string'], ['phase', 'number'],
         ])
         if (err) return `"steps[${i}]": ${err}`
+        const deps = (step as Record<string, unknown>).dependsOn
+        if (deps !== undefined && !(Array.isArray(deps) && deps.every((d) => typeof d === 'string'))) {
+          return `"steps[${i}].dependsOn" must be an array of strings`
+        }
       }
       return null
     }

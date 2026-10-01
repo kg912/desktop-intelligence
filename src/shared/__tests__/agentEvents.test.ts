@@ -156,6 +156,12 @@ describe('rejects missing variant fields', () => {
     expect(() => parseAgentEvent(bad)).toThrow('"steps"')
   })
 
+  it('orchestrator_plan accepts string dependsOn and rejects anything else', () => {
+    const step = { id: '2.1', label: 'Combine', stage: 'worker', role: 'r', model: 'm', phase: 2 }
+    expect(isAgentEvent({ ...BASE, type: 'orchestrator_plan', steps: [{ ...step, dependsOn: ['1.1'] }] })).toBe(true)
+    expect(() => parseAgentEvent({ ...BASE, type: 'orchestrator_plan', steps: [{ ...step, dependsOn: [1] }] })).toThrow('dependsOn')
+  })
+
   it('agent_complete missing tokenCount', () => {
     const bad = { ...BASE, type: 'agent_complete', agentId: 'a1', output: 'x', costUsd: 0.01 }
     expect(isAgentEvent(bad)).toBe(false)
