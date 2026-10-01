@@ -516,3 +516,67 @@ describe('RunModelsSummary (refinement Phase 3)', () => {
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
   })
 })
+
+describe('Reasoning view and card fixes (Part E)', () => {
+  const reasoningView = (text: string, extra: Array<Record<string, unknown>> = []) => view([
+    { type: 'agent_start', agentId: '1.1', role: 'TransAgent', model: 'deepseek/flash', attempt: 0 },
+    { type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: text },
+    ...extra,
+  ])
+
+  it('collapsed: 3 lines; expanded: capped at 18 lines by CSS and scrolls inside; never clipped at the card edge', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={reasoningView('In this leg the Railjet takes two hours.')} />)
+    const block = screen.getByTitle('Expand reasoning')
+    expect(block.className).toContain('line-clamp-3')
+    expect(block.className).toContain('min-w-0')
+    expect(block.className).toContain('[overflow-wrap:anywhere]')
+    fireEvent.click(block)
+    const open = screen.getByTitle('Collapse reasoning')
+    expect(open.dataset.expanded).toBe('true')
+    expect(open.className).not.toContain('line-clamp-3')
+    expect(open.className).toContain('ma-reasoning')
+    const css = require('fs').readFileSync(require('path').resolve(__dirname, '../../renderer/src/styles/globals.css'), 'utf8') as string
+    expect(css).toContain('.ma-reasoning[data-expanded="true"] { max-height: 18lh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; }')
+  })
+
+  it('while streaming, follows the end unless the user scrolled up', () => {
+    const { rerender } = render(<MultiAgentSidebarView {...dockProps} view={reasoningView('step one')} />)
+    fireEvent.click(screen.getByTitle('Expand reasoning'))
+    const block = screen.getByTitle('Collapse reasoning')
+    let height = 800
+    Object.defineProperty(block, 'scrollHeight', { configurable: true, get: () => height })
+    Object.defineProperty(block, 'clientHeight', { configurable: true, get: () => 380 })
+    height = 900
+    rerender(<MultiAgentSidebarView {...dockProps} view={reasoningView('step one', [{ type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: ' two' }])} />)
+    expect(block.scrollTop).toBe(900)
+    block.scrollTop = 100
+    fireEvent.scroll(block)
+    height = 1000
+    rerender(<MultiAgentSidebarView {...dockProps} view={reasoningView('step one', [
+      { type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: ' two' },
+      { type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: ' three' },
+    ])} />)
+    expect(block.scrollTop).toBe(100)
+  })
+
+  it('a just-started agent never shows a negative elapsed time', () => {
+    seq = 0
+    const v = reduceRunEvents('run-1', [
+      ev({ type: 'orchestrator_plan', steps }),
+      { ...ev({ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 }), ts: Date.now() + 5_000 },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    const header = within(screen.getByTestId('agent-card-1.1')).getByRole('button', { expanded: true })
+    expect(header.textContent).toContain('0s')
+    expect(header.textContent).not.toMatch(/-\d+s/)
+  })
+
+  it('a live card with no content shows plain "Working…" (no timeline marker) and the same chevron as other cards', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={view([{ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 }])} />)
+    const trace = screen.getByTestId('agent-trace-1.1')
+    expect(screen.getByTestId('agent-empty-1.1').textContent).toBe('Working…')
+    expect(trace.querySelector('.ma-ev')).toBeNull()
+    const chevron = (id: string): string => screen.getByTestId(`agent-card-${id}`).querySelector('button > svg')!.getAttribute('class')!.replace(' rotate-180', '')
+    expect(chevron('1.1')).toBe(chevron('1.2'))
+  })
+})

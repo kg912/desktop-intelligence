@@ -229,7 +229,8 @@ export function inputLockMessage(view: RunView): string | null {
 
 export function elapsedMs(agent: AgentView, now: number): number | null {
   if (!agent.startedAt) return null
-  return (agent.endedAt ?? now) - agent.startedAt
+  // Both ends are event timestamps except `now` (a 1 s tick that can lag the first event): never negative.
+  return Math.max(0, (agent.endedAt ?? now) - agent.startedAt)
 }
 
 export function formatElapsed(ms: number): string {

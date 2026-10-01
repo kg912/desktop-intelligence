@@ -3,12 +3,12 @@
 // Right column: one accordion card per agent with its trace. CSS transitions
 // only — no motion.* here (M1 Pro scroll-jank issue).
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
-import { formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
+import { elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
@@ -351,7 +351,7 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
 }) {
   const { step } = agent
   const tag = stateTag(agent, maxRetries, requests.length > 0)
-  const elapsed = agent.startedAt ? (agent.endedAt ?? (now || agent.startedAt)) - agent.startedAt : null
+  const elapsed = elapsedMs(agent, now || agent.startedAt || 0)
   const meta = agent.status === 'queued'
     ? [step.role, waitingOn.length ? `starts when ${waitingOn.join(', ')} pass` : 'queued']
     : agent.status === 'paused' && requests.length
@@ -385,8 +385,9 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
       {/* Collapsed cards do not render their timelines. */}
       {open && (
         <div className="border-t-[0.5px] border-white/5 px-3.5 pb-3.5 pt-1" data-testid={`agent-trace-${step.id}`}>
+          {/* Plain text, not a timeline node: there is no event to mark yet. */}
           {agent.timeline.length === 0 && !agent.output && requests.length === 0 && !agent.failure && (
-            <div className="ma-ev"><i className="ma-k" /><p className="text-[12px] text-ma-mute">{agent.status === 'queued' ? 'Nothing to show yet' : 'Working…'}</p></div>
+            <p className="pt-2.5 text-[12px] text-ma-mute" data-testid={`agent-empty-${step.id}`}>{agent.status === 'queued' ? 'Nothing to show yet' : 'Working…'}</p>
           )}
           {agent.timeline.map((item, i) => (
             <TraceItem key={i} item={item} attemptLabel={multiAttempt ? ` · attempt ${item.attempt + 1}` : ''} streaming={i === agent.timeline.length - 1 && agent.status === 'running'} />
@@ -405,21 +406,54 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
   )
 })
 
+/**
+ * Reasoning: 3 lines collapsed; expanded, at most 18 lines (3 paragraphs of ~6)
+ * then it scrolls inside. While streaming it follows the end unless scrolled up.
+ */
+function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const pinned = useRef(true)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (el && expanded && streaming && pinned.current) el.scrollTop = el.scrollHeight
+  }, [text, expanded, streaming])
+  const toggle = (): void => {
+    pinned.current = true
+    setExpanded((x) => !x)
+  }
+  return (
+    <div
+      ref={ref}
+      role="button"
+      tabIndex={0}
+      onClick={toggle}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}
+      onScroll={(e) => {
+        const el = e.currentTarget
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4
+      }}
+      title={expanded ? 'Collapse reasoning' : 'Expand reasoning'}
+      data-expanded={expanded}
+      className={cn(
+        'ma-reasoning mt-1.5 block min-w-0 cursor-pointer whitespace-pre-wrap border-l-[0.5px] border-white/[0.09] pl-3 text-left text-[13px] italic leading-relaxed text-[#9a9a9a] [overflow-wrap:anywhere]',
+        !expanded && 'line-clamp-3'
+      )}
+    >
+      {text}
+    </div>
+  )
+}
+
 function TraceItem({ item, attemptLabel, streaming }: { item: TimelineItem; attemptLabel: string; streaming: boolean }) {
   const [expanded, setExpanded] = useState(false)
   switch (item.kind) {
     case 'reasoning':
       return (
-        <div className="ma-ev" data-k="reasoning">
+        <div className="ma-ev min-w-0" data-k="reasoning">
           <i className="ma-k" />
           <div className="flex gap-2 text-[12px] text-ma-mute">Reasoning{attemptLabel}<span className="font-mono">· {Math.max(1, Math.round((item.endedAt - item.startedAt) / 1000))}s</span></div>
-          <button
-            onClick={() => setExpanded((x) => !x)}
-            title={expanded ? 'Collapse reasoning' : 'Expand reasoning'}
-            className={cn('mt-1.5 block whitespace-pre-wrap border-l-[0.5px] border-white/[0.09] pl-3 text-left text-[13px] italic leading-relaxed text-[#9a9a9a]', !expanded && 'line-clamp-3')}
-          >
-            {item.text}
-          </button>
+          <ReasoningBlock text={item.text} streaming={streaming} />
         </div>
       )
     case 'tool': {

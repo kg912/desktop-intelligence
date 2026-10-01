@@ -439,6 +439,8 @@
 .ma-ev:last-child::before { bottom: auto; height: 18px; }
 .ma-ev > .ma-k { position: absolute; left: 0; top: 14px; width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(255,255,255,.09); background: #0e0e0e; }
 .ma-ev[data-k="reasoning"] > .ma-k { border-color: rgba(255,255,255,.25); }
+/* Expanded reasoning: 18 lines (3 paragraphs of ~6), then it scrolls inside; thin dark scrollbar. */
+.ma-reasoning[data-expanded="true"] { max-height: 18lh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; }
 .ma-ev[data-k="tool"] > .ma-k { border-color: rgba(229,57,53,.35); background: rgba(229,57,53,.08); }
 .ma-ev[data-k="output"] > .ma-k { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.12); }
 .ma-ev[data-k="gate"] > .ma-k { border-color: rgba(67,207,143,.5); background: rgba(67,207,143,.10); }
