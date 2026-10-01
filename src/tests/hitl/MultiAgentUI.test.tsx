@@ -393,7 +393,9 @@ describe('InputBar — multi-agent states', () => {
 })
 
 describe('MultiAgentSettingsPanel', () => {
-  it('filters the OpenRouter catalogue, shows prices per 1M, and saves clamped settings', async () => {
+  // Phase 5 rebuilt the model pickers as a ModelSelect listbox (was a native <select>);
+  // the same behaviours are asserted through it.
+  it('filters the OpenRouter catalogue, shows prices per 1M, and saves the chosen models and reasoning effort', async () => {
     const save = vi.fn().mockResolvedValue(undefined)
     ;(window as any).api = {
       ...(window as any).api,
@@ -412,18 +414,20 @@ describe('MultiAgentSettingsPanel', () => {
     render(<MultiAgentSettingsPanel />)
     await screen.findByText('1 of 2 models')
     expect(screen.getByTestId('sidecar-status').textContent).toBe('running')
-    const worker = screen.getByText('Worker agents model').querySelector('select')!
-    expect(within(worker).getByText('meta-llama/llama-3.3-70b-instruct — $0.130 / $0.400 per 1M · 131k ctx')).toBeTruthy()
-    expect(within(worker).queryByText(/tiny\/no-tools/)).toBeNull()
+    const openWorker = (): void => fireEvent.click(screen.getByRole('combobox', { name: 'Worker agents model' }))
+    openWorker()
+    expect(screen.getByRole('option', { name: /meta-llama\/llama-3\.3-70b-instruct\$0\.130 \/ \$0\.400131k/ })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /tiny\/no-tools/ })).toBeNull()
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Worker agents model' }), { key: 'Escape' })
 
     fireEvent.click(screen.getByText('Requires tool-call support'))
-    fireEvent.change(screen.getByText('Min context').querySelector('select')!, { target: { value: '0' } })
-    expect(within(worker).getByText(/tiny\/no-tools/)).toBeTruthy()
-
-    fireEvent.change(worker, { target: { value: 'tiny/no-tools' } })
+    fireEvent.change(screen.getByLabelText('Min context'), { target: { value: '0' } })
+    openWorker()
+    fireEvent.mouseDown(screen.getByRole('option', { name: /tiny\/no-tools/ }))
+    fireEvent.click(screen.getByRole('radio', { name: 'High' }))
     fireEvent.click(screen.getByText('Save multi-agent defaults'))
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
-      models: expect.objectContaining({ worker: 'tiny/no-tools' }), maxAgents: 4, sidecarPort: 7823,
+      models: expect.objectContaining({ worker: 'tiny/no-tools' }), maxAgents: 4, sidecarPort: 7823, reasoningEffort: 'high',
     })))
   })
 })
@@ -457,7 +461,8 @@ describe('RunModelsSummary (refinement Phase 3)', () => {
     await screen.findByText('Active OpenRouter model: deepseek/flash')
     await waitFor(() => expect(screen.getByTestId('run-model-synthesizer').textContent).toMatch(/not in catalogue/))
     expect(screen.queryByText('Unsaved changes')).toBeNull()
-    fireEvent.change(screen.getByText('Worker agents model').querySelector('select')!, { target: { value: 'meta-llama/llama-3.3-70b-instruct' } })
+    fireEvent.click(screen.getByRole('combobox', { name: 'Worker agents model' }))
+    fireEvent.mouseDown(screen.getByRole('option', { name: /meta-llama/ }))
     expect(screen.getByTestId('run-model-worker').textContent).toBe('Worker agentsmeta-llama/llama-3.3-70b-instructsaved')
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
   })

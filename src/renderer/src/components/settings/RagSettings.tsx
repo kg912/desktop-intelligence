@@ -22,7 +22,7 @@ function Toggle({
       } ${checked ? 'bg-red-700' : 'bg-surface-border'}`}
     >
       <span
-        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${
+        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-ma-text shadow transition-transform duration-200 ${
           checked ? 'translate-x-5' : 'translate-x-1'
         }`}
       />

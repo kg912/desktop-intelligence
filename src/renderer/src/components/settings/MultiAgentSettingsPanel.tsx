@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
-import { DEFAULT_MULTI_AGENT_CONFIG, type MultiAgentConfig, type SidecarStatus } from '../../../../shared/types'
+import { DEFAULT_MULTI_AGENT_CONFIG, type MultiAgentConfig, type ReasoningEffort, type SidecarStatus } from '../../../../shared/types'
 import {
   DEFAULT_CATALOGUE_FILTER,
   filterModelCatalogue,
-  formatPricePerMillion,
   type CatalogueFilter,
   type OpenRouterModelInfo,
 } from '../../../../shared/multiAgentModels'
 import { RunModelsSummary } from './RunModelsSummary'
+import { Checkbox, Field, NumberInput, RangeSlider, Segmented, Select } from '../ui/controls'
+import { ModelSelect } from '../ui/ModelSelect'
 
 const ROLES: Array<{ key: keyof MultiAgentConfig['models']; label: string; hint: string }> = [
-  { key: 'orchestrator', label: 'Orchestrator', hint: 'Plans the run — needs reliable JSON output.' },
-  { key: 'worker', label: 'Worker agents', hint: 'Used by every worker in a run — drives most of the cost.' },
-  { key: 'reflection', label: 'Reflection', hint: 'Scores each worker output 1–5.' },
-  { key: 'synthesizer', label: 'Synthesizer', hint: 'Writes the final answer — needs long context.' },
+  { key: 'orchestrator', label: 'Orchestrator', hint: 'Plans the run. Needs reliable JSON output.' },
+  { key: 'worker', label: 'Worker agents', hint: 'Every worker in a run uses this. It drives most of the cost.' },
+  { key: 'reflection', label: 'Reflection', hint: 'Scores each worker output from 1 to 5.' },
+  { key: 'synthesizer', label: 'Synthesizer', hint: 'Writes the final answer. Needs long context.' },
 ]
 
 const MIN_CONTEXT_OPTIONS = [0, 8_000, 32_000, 64_000, 128_000, 200_000]
+const EFFORTS: Array<{ value: ReasoningEffort; label: string }> = [
+  { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
+]
 
 type Config = MultiAgentConfig & { sidecarPort: number }
 
@@ -36,7 +40,7 @@ export function MultiAgentSettingsPanel() {
       setConfig(c)
       setSavedConfig(c)
     })
-    void window.api.getBackendSettings().then((s) => setActiveModel(s.openrouterModel ?? '')).catch(() => {})
+    void window.api.getBackendSettings().then((s) => setActiveModel(s?.openrouterModel ?? '')).catch(() => {})
     void window.api.getMultiAgentSidecarStatus().then(setStatus).catch(() => {})
     void window.api
       .getMultiAgentCatalogue()
@@ -48,7 +52,6 @@ export function MultiAgentSettingsPanel() {
   }, [])
 
   const filtered = useMemo(() => filterModelCatalogue(catalogue, filter), [catalogue, filter])
-  const byId = useMemo(() => new Map(catalogue.map((m) => [m.id, m])), [catalogue])
   const catalogueIds = useMemo(() => (catalogue.length ? new Set(catalogue.map((m) => m.id)) : null), [catalogue])
   const unsaved = savedConfig !== null && JSON.stringify(savedConfig) !== JSON.stringify(config)
 
@@ -58,7 +61,7 @@ export function MultiAgentSettingsPanel() {
     try {
       await window.api.saveMultiAgentConfig(config)
       setSavedConfig(config)
-      setNotice('Saved — applies to the next multi-agent run.')
+      setNotice('Saved. Applies to the next run.')
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -67,132 +70,75 @@ export function MultiAgentSettingsPanel() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-base font-semibold text-content-primary">Multi-Agent Orchestration</h2>
-        <p className="mt-1 text-xs text-content-muted">
-          OpenRouter only. Role models, guardrails and approval defaults for multi-agent runs.
-          Sidecar: <span data-testid="sidecar-status" className="text-content-secondary">{status}</span>
+    <div className="grid grid-cols-2 gap-x-7 gap-y-[22px] text-ma-text" data-testid="multi-agent-settings">
+      <div className="col-span-2">
+        <h2 className="text-[20px] font-semibold">Multi-Agent Orchestration</h2>
+        <p className="mt-1 text-[13px] text-ma-mute">
+          OpenRouter only. Defaults for every multi-agent run. Sidecar{' '}
+          <b data-testid="sidecar-status" className={status === 'running' ? 'font-medium text-ma-ok' : 'font-medium text-ma-soft'}>{status}</b>
         </p>
       </div>
 
-      <RunModelsSummary models={config.models} activeModel={activeModel} catalogueIds={catalogueIds} />
+      <div className="col-span-2">
+        <RunModelsSummary models={config.models} activeModel={activeModel} catalogueIds={catalogueIds} />
+      </div>
 
-      <section className="grid grid-cols-2 gap-x-6 gap-y-4">
-        <Slider label="Max agents" value={config.maxAgents} min={1} max={8} onChange={(v) => update('maxAgents', v)} />
-        <label className="text-xs text-content-secondary">
-          Per-run budget cap (USD)
-          <input
-            type="number" min={0} step="0.05" value={config.budgetCapUsd}
-            onChange={(e) => update('budgetCapUsd', Math.max(0, Number(e.target.value) || 0))}
-            className="mt-1 block w-full rounded border border-surface-border bg-surface-elevated px-2 py-1.5 text-content-primary"
-          />
+      <Field label="Max agents" value={config.maxAgents}>
+        <RangeSlider aria-label="Max agents" value={config.maxAgents} min={1} max={8} onChange={(v) => update('maxAgents', v)} />
+      </Field>
+      <Field label="Per-run budget cap (USD)" htmlFor="ma-budget">
+        <NumberInput id="ma-budget" min={0} step="0.05" value={config.budgetCapUsd}
+          onChange={(e) => update('budgetCapUsd', Math.max(0, Number(e.target.value) || 0))} />
+      </Field>
+      <Field label="Reflection pass threshold" value={config.reflectionPassThreshold}>
+        <RangeSlider aria-label="Reflection pass threshold" value={config.reflectionPassThreshold} min={1} max={5} onChange={(v) => update('reflectionPassThreshold', v)} />
+      </Field>
+      <Field label="Max retries per agent" value={config.maxRetriesPerAgent}>
+        <RangeSlider aria-label="Max retries per agent" value={config.maxRetriesPerAgent} min={0} max={5} onChange={(v) => update('maxRetriesPerAgent', v)} />
+      </Field>
+      <Field label="Approval timeout (minutes)" htmlFor="ma-timeout" help="Unanswered tool approvals are auto-denied after this.">
+        <NumberInput id="ma-timeout" min={1} max={60} value={Math.round(config.hitlTimeoutMs / 60_000)}
+          onChange={(e) => update('hitlTimeoutMs', Math.min(60, Math.max(1, Number(e.target.value) || 5)) * 60_000)} />
+      </Field>
+      <Field label="Sidecar port" htmlFor="ma-port" help="Loopback only. A busy port falls back to a free one.">
+        <NumberInput id="ma-port" min={1024} max={65535} value={config.sidecarPort} onChange={(e) => update('sidecarPort', Number(e.target.value))} />
+      </Field>
+      <Field className="col-span-2" label="Worker reasoning" help="Requested from models that support it. Shown in each agent's trace; costs tokens.">
+        <Segmented label="Worker reasoning" value={config.reasoningEffort} options={EFFORTS} onChange={(v) => update('reasoningEffort', v)} />
+      </Field>
+
+      <div className="col-span-2 border-t-[0.5px] border-white/5 pt-2.5 text-[13px] text-ma-mute">Models</div>
+      <div className="col-span-2 flex flex-wrap items-center gap-[18px]">
+        <Checkbox label="Requires tool-call support" checked={filter.requireTools} onChange={(e) => setFilter((f) => ({ ...f, requireTools: e.target.checked }))} />
+        <Checkbox label="Sort by price" checked={filter.sortByPrice} onChange={(e) => setFilter((f) => ({ ...f, sortByPrice: e.target.checked }))} />
+        <label className="flex items-center gap-2 text-[13px] text-ma-soft">
+          Min context
+          <Select aria-label="Min context" value={filter.minContext} className="!h-[30px] !w-[92px] font-mono text-[12.5px]"
+            onChange={(e) => setFilter((f) => ({ ...f, minContext: Number(e.target.value) }))}>
+            {MIN_CONTEXT_OPTIONS.map((n) => <option key={n} value={n}>{n === 0 ? 'any' : `${n / 1000}k`}</option>)}
+          </Select>
         </label>
-        <Slider label="Reflection pass threshold" value={config.reflectionPassThreshold} min={1} max={5} onChange={(v) => update('reflectionPassThreshold', v)} />
-        <Slider label="Max retries per agent" value={config.maxRetriesPerAgent} min={1} max={5} onChange={(v) => update('maxRetriesPerAgent', v)} />
-        <label className="text-xs text-content-secondary">
-          Approval timeout (minutes)
-          <input
-            type="number" min={1} max={60} value={Math.round(config.hitlTimeoutMs / 60_000)}
-            onChange={(e) => update('hitlTimeoutMs', Math.min(60, Math.max(1, Number(e.target.value) || 5)) * 60_000)}
-            className="mt-1 block w-full rounded border border-surface-border bg-surface-elevated px-2 py-1.5 text-content-primary"
-          />
-          <span className="mt-1 block text-[10px] text-content-muted">Unanswered tool approvals are auto-denied after this.</span>
-        </label>
-        <label className="text-xs text-content-secondary">
-          Sidecar port
-          <input
-            type="number" min={1024} max={65535} value={config.sidecarPort}
-            onChange={(e) => update('sidecarPort', Number(e.target.value))}
-            className="mt-1 block w-full rounded border border-surface-border bg-surface-elevated px-2 py-1.5 text-content-primary"
-          />
-          <span className="mt-1 block text-[10px] text-content-muted">Loopback only. A busy port falls back to a free one.</span>
-        </label>
-      </section>
+        <span className="ml-auto text-[12.5px] text-ma-mute">{filtered.length} of {catalogue.length} models</span>
+      </div>
+      {catalogueError && <p className="col-span-2 text-[12.5px] text-ma-amber">{catalogueError}</p>}
 
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center gap-4 text-xs text-content-secondary">
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={filter.requireTools} onChange={(e) => setFilter((f) => ({ ...f, requireTools: e.target.checked }))} />
-            Requires tool-call support
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={filter.sortByPrice} onChange={(e) => setFilter((f) => ({ ...f, sortByPrice: e.target.checked }))} />
-            Sort by price
-          </label>
-          <label className="flex items-center gap-1.5">
-            Min context
-            <select
-              value={filter.minContext}
-              onChange={(e) => setFilter((f) => ({ ...f, minContext: Number(e.target.value) }))}
-              className="rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-content-primary"
-            >
-              {MIN_CONTEXT_OPTIONS.map((n) => <option key={n} value={n}>{n === 0 ? 'any' : `${n / 1000}k`}</option>)}
-            </select>
-          </label>
-          <span className="text-content-muted">{filtered.length} of {catalogue.length} models</span>
-        </div>
-        {catalogueError && <p className="text-xs text-amber-400">{catalogueError}</p>}
+      {ROLES.map(({ key, label, hint }) => (
+        <Field key={key} label={label} help={hint}>
+          <ModelSelect label={`${label} model`} value={config.models[key]} models={filtered}
+            onChange={(id) => update('models', { ...config.models, [key]: id })} />
+        </Field>
+      ))}
 
-        {ROLES.map(({ key, label, hint }) => {
-          const selected = config.models[key]
-          const inList = !selected || filtered.some((m) => m.id === selected)
-          return (
-            <label key={key} className="block text-xs text-content-secondary">
-              {label} model
-              <select
-                value={selected}
-                onChange={(e) => update('models', { ...config.models, [key]: e.target.value })}
-                className="mt-1 block w-full rounded border border-surface-border bg-surface-elevated px-2 py-1.5 text-content-primary"
-              >
-                <option value="">Use active OpenRouter model</option>
-                {!inList && (
-                  <option value={selected}>
-                    {selected}{byId.get(selected) ? ` — ${formatPricePerMillion(byId.get(selected)!)}` : ' (not in catalogue)'}
-                  </option>
-                )}
-                {filtered.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id} — {formatPricePerMillion(m)} · {Math.round(m.contextLength / 1000)}k ctx
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-[10px] text-content-muted">{hint}</span>
-            </label>
-          )
-        })}
-      </section>
+      <Checkbox className="col-span-2" label="Ask before every worker tool call, unless the agent is trusted for the run"
+        checked={config.requirePermissions} onChange={(e) => update('requirePermissions', e.target.checked)} />
 
-      <label className="flex items-center gap-2 text-xs text-content-secondary">
-        <input type="checkbox" checked={config.requirePermissions} onChange={(e) => update('requirePermissions', e.target.checked)} />
-        Ask before every worker tool call (unless the agent is trusted for the run)
-      </label>
-
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => void save()}
-          disabled={saving}
-          className="rounded bg-accent-700 px-3 py-1.5 text-xs text-white hover:bg-accent-600 disabled:opacity-50"
-        >
+      <div className="col-span-2 flex items-center gap-3.5">
+        <button onClick={() => void save()} disabled={saving}
+          className="h-[34px] rounded-[7px] bg-ma-red px-4 text-[12.5px] font-medium text-white hover:bg-[#d8322e] disabled:opacity-50">
           {saving ? 'Saving…' : 'Save multi-agent defaults'}
         </button>
-        {unsaved ? <span className="text-xs text-ma-mute">Unsaved changes</span> : notice && <span className="text-xs text-content-muted">{notice}</span>}
+        {unsaved ? <span className="text-[12px] text-ma-mute">Unsaved changes</span> : notice && <span className="text-[12px] text-ma-mute">{notice}</span>}
       </div>
     </div>
-  )
-}
-
-function Slider({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
-  return (
-    <label className="text-xs text-content-secondary">
-      <span className="flex justify-between">
-        {label} <span className="tabular-nums text-content-primary">{value}</span>
-      </span>
-      <input
-        type="range" min={min} max={max} step={1} value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-2 block w-full accent-red-700"
-      />
-    </label>
   )
 }

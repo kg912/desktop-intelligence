@@ -497,7 +497,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
                   }`}
                 >
                   <span
-                    className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform duration-150 ${
+                    className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-ma-text shadow transition-transform duration-150 ${
                       draftGpuOffload ? 'translate-x-3.5' : 'translate-x-0.5'
                     }`}
                   />
@@ -605,7 +605,7 @@ export function ModelSettingsPanel({ onReloadingChange }: ModelSettingsPanelProp
                   }`}
                 >
                   <span
-                    className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-white shadow transition-transform duration-150 ${
+                    className={`inline-block w-3 h-3 mt-0.5 rounded-full bg-ma-text shadow transition-transform duration-150 ${
                       draftUnlimitedOutput ? 'translate-x-3.5' : 'translate-x-0.5'
                     }`}
                   />

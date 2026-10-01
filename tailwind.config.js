@@ -34,7 +34,10 @@ module.exports = {
           DEFAULT: '#1c1c1c',
           hover: '#242424',
           active: '#2a2a2a',
-          border: '#2d2d2d'
+          border: '#2d2d2d',
+          // Was missing: bg-surface-elevated generated no CSS, so settings inputs
+          // fell back to the browser's white field background.
+          elevated: '#1a1a1a'
         },
         // Multi-agent dock / settings (designs/index.html tokens)
         ma: {

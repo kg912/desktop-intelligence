@@ -28,7 +28,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       }`}
     >
       <span
-        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${
+        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-ma-text shadow transition-transform duration-200 ${
           checked ? 'translate-x-5' : 'translate-x-1'
         }`}
       />
@@ -326,7 +326,7 @@ function ServerCard({ info, config, onRestart, onRemove, onToggleTool, onToggleA
           >
             <span
               className={cn(
-                'inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform duration-200',
+                'inline-block h-3 w-3 transform rounded-full bg-ma-text shadow transition-transform duration-200',
                 info.requiresApproval ? 'translate-x-0.5' : 'translate-x-3.5'
               )}
             />
