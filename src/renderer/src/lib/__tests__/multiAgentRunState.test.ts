@@ -178,3 +178,16 @@ describe('per-agent timeline (refinement Phase 2)', () => {
     ])
   })
 })
+
+describe('run_config (refinement Phase 3)', () => {
+  it('keeps the snapshot of what the run used', () => {
+    seq = 0
+    const config = {
+      type: 'run_config', models: { orchestrator: 'o', worker: 'w', reflection: 'r', synthesizer: 's' },
+      sources: { orchestrator: 'saved', worker: 'active', reflection: 'default', synthesizer: 'saved' }, catalogueChecked: true,
+      maxAgents: 4, budgetCapUsd: 0.5, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium',
+    }
+    const v = reduceRunEvents('r', [ev({ type: 'orchestrator_plan', steps }), ev(config)])
+    expect(v.runConfig).toMatchObject(config)
+  })
+})

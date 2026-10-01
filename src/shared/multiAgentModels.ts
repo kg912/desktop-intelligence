@@ -55,6 +55,34 @@ export function formatPricePerMillion(m: OpenRouterModelInfo): string {
   return `${fmt(m.promptPrice)} / ${fmt(m.completionPrice)} per 1M`
 }
 
+// ── Role model resolution ─────────────────────────────────────────────────────
+// One rule for what a run will use, shared by the run start (main) and the
+// settings summary (renderer) so the two can never disagree.
+
+export const MODEL_ROLES = ['orchestrator', 'worker', 'reflection', 'synthesizer'] as const
+export type ModelRole = (typeof MODEL_ROLES)[number]
+/** saved = user's choice; default = shipped default; active = blank, follows the active OpenRouter model; missing = not in the catalogue (the run will not start). */
+export type ModelSource = 'saved' | 'default' | 'active' | 'missing'
+export interface ResolvedRoleModel {
+  model: string
+  source: ModelSource
+}
+
+/** `catalogue` null = could not be fetched: configured ids are used as-is. */
+export function resolveRoleModels(
+  models: MultiAgentConfig['models'],
+  activeModel: string,
+  catalogue: ReadonlySet<string> | null
+): Record<ModelRole, ResolvedRoleModel> {
+  const resolve = (role: ModelRole): ResolvedRoleModel => {
+    const configured = models[role].trim()
+    if (!configured) return { model: activeModel, source: 'active' }
+    if (catalogue && !catalogue.has(configured)) return { model: configured, source: 'missing' }
+    return { model: configured, source: configured === DEFAULT_MULTI_AGENT_CONFIG.models[role] ? 'default' : 'saved' }
+  }
+  return Object.fromEntries(MODEL_ROLES.map((role) => [role, resolve(role)])) as Record<ModelRole, ResolvedRoleModel>
+}
+
 // ── Pre-flight cost estimate ──────────────────────────────────────────────────
 // Rough by design (spec §06: "token counts for tool calls are unknown
 // pre-execution"). The range spans a best case (one attempt, no tool calls,

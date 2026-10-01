@@ -2,7 +2,7 @@
 // §08 Frontend). applyAgentEvent() touches only what an event changes, so a
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
-import type { AgentEvent, AgentStep, HitlPauseEvent, RunTotals } from '../../../shared/types'
+import type { AgentEvent, AgentStep, HitlPauseEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled'
 
@@ -53,6 +53,8 @@ export interface RunView {
   steps: AgentStep[]
   agents: Record<string, AgentView>
   planPause?: HitlPauseEvent
+  /** What the run actually used (models per role and their source). */
+  runConfig?: RunConfigEvent
   synthesis: string
   finalOutput?: string
   failureReason?: string
@@ -98,6 +100,8 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
       }
       return { ...next, steps: event.steps, agents }
     }
+    case 'run_config':
+      return { ...next, runConfig: event }
     case 'hitl_pause':
       if (event.serverName === 'multi-agent') return { ...next, phase: 'preflight', planPause: event }
       return updateAgent(next, event.agentId, () => ({ status: 'paused', pause: event }))

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  resolveRoleModels,
   estimateRunCost,
   filterModelCatalogue,
   formatPricePerMillion,
@@ -111,5 +112,20 @@ describe('sanitizeMultiAgentConfig', () => {
     expect(c.maxAgents).toBe(4)
     expect(c.requirePermissions).toBe(true)
     expect(c.models).toEqual({ orchestrator: 'x/y', worker: '', reflection: '', synthesizer: 's' })
+  })
+})
+
+describe('resolveRoleModels', () => {
+  const models = { orchestrator: DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, worker: '', reflection: 'my/judge', synthesizer: 'gone/model' }
+  it('labels default, saved, active (blank) and missing slots', () => {
+    expect(resolveRoleModels(models, 'active/m', new Set([DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, 'my/judge']))).toEqual({
+      orchestrator: { model: DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, source: 'default' },
+      worker: { model: 'active/m', source: 'active' },
+      reflection: { model: 'my/judge', source: 'saved' },
+      synthesizer: { model: 'gone/model', source: 'missing' },
+    })
+  })
+  it('uses configured ids unverified when the catalogue is unavailable', () => {
+    expect(resolveRoleModels(models, 'active/m', null).synthesizer).toEqual({ model: 'gone/model', source: 'saved' })
   })
 })

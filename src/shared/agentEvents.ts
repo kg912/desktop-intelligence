@@ -10,6 +10,7 @@ type Prim = 'string' | 'number' | 'boolean'
 
 const KNOWN_TYPES = new Set<string>([
   'orchestrator_plan',
+  'run_config',
   'agent_start',
   'agent_token',
   'agent_reasoning',
@@ -60,6 +61,16 @@ function validateVariant(obj: Record<string, unknown>): string | null {
         }
       }
       return null
+    }
+
+    case 'run_config': {
+      for (const key of ['models', 'sources'] as const) {
+        if (typeof obj[key] !== 'object' || obj[key] === null) return `"${key}" must be an object`
+      }
+      return checkFields(obj, [
+        ['catalogueChecked', 'boolean'], ['maxAgents', 'number'], ['budgetCapUsd', 'number'],
+        ['reflectionPassThreshold', 'number'], ['maxRetriesPerAgent', 'number'], ['reasoningEffort', 'string'],
+      ])
     }
 
     case 'agent_start':
@@ -197,6 +208,7 @@ export type AgentTraceStepType = 'orchestrator' | 'worker' | 'reflection' | 'syn
 export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
   switch (event.type) {
     case 'orchestrator_plan':
+    case 'run_config':
       return 'orchestrator'
     case 'reflection_start':
     case 'reflection_result':

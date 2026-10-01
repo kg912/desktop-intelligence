@@ -29,6 +29,7 @@ import { MultiAgentPlanPane } from '../../renderer/src/components/chat/MultiAgen
 import { MultiAgentExecutionArea } from '../../renderer/src/components/chat/MultiAgentExecutionArea'
 import { McpPermissionDialog } from '../../renderer/src/components/chat/McpPermissionDialog'
 import { MultiAgentSettingsPanel } from '../../renderer/src/components/settings/MultiAgentSettingsPanel'
+import { RunModelsSummary } from '../../renderer/src/components/settings/RunModelsSummary'
 import { InputBar } from '../../renderer/src/components/layout/InputBar'
 import { ModelStoreProvider, useModelStore } from '../../renderer/src/store/ModelStore'
 import { reduceRunEvents } from '../../renderer/src/lib/multiAgentRunState'
@@ -279,6 +280,7 @@ describe('MultiAgentSettingsPanel', () => {
         ],
       }),
       saveMultiAgentConfig: save,
+      getBackendSettings: vi.fn().mockResolvedValue({ openrouterModel: 'deepseek/deepseek-v4.1-flash' }),
     }
     render(<MultiAgentSettingsPanel />)
     await screen.findByText('1 of 2 models')
@@ -296,5 +298,40 @@ describe('MultiAgentSettingsPanel', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
       models: expect.objectContaining({ worker: 'tiny/no-tools' }), maxAgents: 4, sidecarPort: 7823,
     })))
+  })
+})
+
+describe('RunModelsSummary (refinement Phase 3)', () => {
+  it('shows each role\'s model with its source: default, saved, follows active, not in catalogue', () => {
+    const models = { orchestrator: DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, worker: '', reflection: 'my/judge', synthesizer: 'gone/model' }
+    const catalogue = new Set([DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, 'my/judge', 'deepseek/flash'])
+    render(<RunModelsSummary models={models} activeModel="deepseek/flash" catalogueIds={catalogue} />)
+    const row = (role: string): string => screen.getByTestId(`run-model-${role}`).textContent ?? ''
+    expect(row('orchestrator')).toBe(`Orchestrator${DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator}default`)
+    expect(row('worker')).toBe('Worker agentsdeepseek/flashfollows active model')
+    expect(row('reflection')).toBe('Reflectionmy/judgesaved')
+    expect(row('synthesizer')).toBe('Synthesizergone/modelnot in catalogue · run will not start')
+    expect(screen.getByText('Active OpenRouter model: deepseek/flash')).toBeTruthy()
+  })
+
+  it('updates live from the settings dropdowns before saving, with an unsaved-changes marker', async () => {
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentSidecarStatus: vi.fn().mockResolvedValue('running'),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({
+        error: null,
+        models: [{ id: 'meta-llama/llama-3.3-70b-instruct', name: 'L', contextLength: 131_072, promptPrice: 1.3e-7, completionPrice: 4e-7, supportsTools: true }],
+      }),
+      getBackendSettings: vi.fn().mockResolvedValue({ openrouterModel: 'deepseek/flash' }),
+      saveMultiAgentConfig: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<MultiAgentSettingsPanel />)
+    await screen.findByText('Active OpenRouter model: deepseek/flash')
+    await waitFor(() => expect(screen.getByTestId('run-model-synthesizer').textContent).toMatch(/not in catalogue/))
+    expect(screen.queryByText('Unsaved changes')).toBeNull()
+    fireEvent.change(screen.getByText('Worker agents model').querySelector('select')!, { target: { value: 'meta-llama/llama-3.3-70b-instruct' } })
+    expect(screen.getByTestId('run-model-worker').textContent).toBe('Worker agentsmeta-llama/llama-3.3-70b-instructsaved')
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
   })
 })

@@ -455,6 +455,14 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(modelsFor('Scout agent')).toEqual(['fake/worker'])
     expect(modelsFor('strict reviewer')).toEqual(['fake/reviewer'])
     expect(modelsFor('synthesize')).toEqual(['fake/synth'])
+    // Phase 3: what the run used is emitted right after the plan and kept in the trace.
+    const planIdx = events.findIndex((e) => e.type === 'orchestrator_plan')
+    expect(events[planIdx + 1]).toMatchObject({
+      type: 'run_config',
+      models: { orchestrator: 'fake/planner', worker: 'fake/worker', reflection: 'fake/reviewer', synthesizer: 'fake/synth' },
+      sources: { orchestrator: 'saved', worker: 'saved', reflection: 'saved', synthesizer: 'saved' },
+      catalogueChecked: true, maxAgents: 4, budgetCapUsd: 10, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium',
+    })
   }, 60_000)
 
   // ── Phase 1: dependency scheduling ─────────────────────────────────────────

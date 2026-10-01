@@ -632,6 +632,24 @@ export interface ReflectionResultEvent extends AgentEventBase, AgentAttempt {
   issues?: string[]
 }
 
+/**
+ * What the run actually used, emitted once right after orchestrator_plan and
+ * stored with the trace. `sources` per role: saved | default | active (blank
+ * slot follows the active model). catalogueChecked=false: the catalogue could
+ * not be fetched and configured ids were used unverified.
+ */
+export interface RunConfigEvent extends AgentEventBase {
+  type:                    'run_config'
+  models:                  MultiAgentConfig['models']
+  sources:                 Record<keyof MultiAgentConfig['models'], 'saved' | 'default' | 'active'>
+  catalogueChecked:        boolean
+  maxAgents:               number
+  budgetCapUsd:            number
+  reflectionPassThreshold: number
+  maxRetriesPerAgent:      number
+  reasoningEffort:         ReasoningEffort
+}
+
 /** Streamed reasoning text — never part of the agent's output. */
 export interface AgentReasoningEvent extends AgentEventBase {
   type:    'agent_reasoning'
@@ -717,6 +735,7 @@ export interface TaskFailedEvent extends AgentEventBase {
 
 export type AgentEvent =
   | OrchestratorPlanEvent
+  | RunConfigEvent
   | AgentStartEvent
   | AgentTokenEvent
   | AgentReasoningEvent

@@ -36,6 +36,21 @@ module.exports = {
           active: '#2a2a2a',
           border: '#2d2d2d'
         },
+        // Multi-agent dock / settings (designs/index.html tokens)
+        ma: {
+          bg: '#0a0a0a',
+          bg1: '#0e0e0e',
+          bg2: '#131313',
+          bg3: '#191919',
+          text: '#ebebeb',
+          soft: '#cfcfcf',
+          mute: '#8b8b8b',
+          dim: '#5a5a5a',
+          red: '#e53935',
+          redtext: '#ff7571',
+          ok: '#43cf8f',
+          amber: '#e2a93b',
+        },
         // Text hierarchy
         content: {
           primary: '#f5f5f5',

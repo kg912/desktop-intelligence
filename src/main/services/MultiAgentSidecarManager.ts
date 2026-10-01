@@ -68,6 +68,9 @@ export interface RunStartRequest extends MultiAgentStartPayload {
   pricing?: Record<string, ModelPricing>
   /** Models the catalogue says take no `reasoning` parameter. */
   noReasoning?: string[]
+  /** Where each role's model came from; echoed back in run_config. */
+  modelSources?: Record<string, 'saved' | 'default' | 'active'>
+  catalogueChecked?: boolean
 }
 
 type FetchFn = typeof fetch

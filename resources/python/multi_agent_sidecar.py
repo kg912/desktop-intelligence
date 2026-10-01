@@ -97,6 +97,9 @@ class RunRequest(BaseModel):
     pricing: dict[str, Pricing] = Field(default_factory=dict)
     # Catalogue says these models take no `reasoning` parameter.
     noReasoning: list[str] = Field(default_factory=list)
+    # Where each role's model came from (saved | default | active); echoed in run_config.
+    modelSources: dict[str, str] = Field(default_factory=dict)
+    catalogueChecked: bool = True
 
 
 class HitlResponse(BaseModel):
@@ -553,6 +556,11 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     for s in steps:
         s.pop("chainReason", None)
     await run.emit("orchestrator_plan", steps=steps)
+    await run.emit("run_config", models=config.models,
+                   sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
+                   catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,
+                   reflectionPassThreshold=config.reflectionPassThreshold, maxRetriesPerAgent=config.maxRetriesPerAgent,
+                   reasoningEffort=config.reasoningEffort)
     return {**state, "steps": steps}
 
 

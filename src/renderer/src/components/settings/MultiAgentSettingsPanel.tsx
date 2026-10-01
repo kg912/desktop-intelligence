@@ -7,6 +7,7 @@ import {
   type CatalogueFilter,
   type OpenRouterModelInfo,
 } from '../../../../shared/multiAgentModels'
+import { RunModelsSummary } from './RunModelsSummary'
 
 const ROLES: Array<{ key: keyof MultiAgentConfig['models']; label: string; hint: string }> = [
   { key: 'orchestrator', label: 'Orchestrator', hint: 'Plans the run — needs reliable JSON output.' },
@@ -21,6 +22,8 @@ type Config = MultiAgentConfig & { sidecarPort: number }
 
 export function MultiAgentSettingsPanel() {
   const [config, setConfig] = useState<Config>({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 })
+  const [savedConfig, setSavedConfig] = useState<Config | null>(null)
+  const [activeModel, setActiveModel] = useState('')
   const [catalogue, setCatalogue] = useState<OpenRouterModelInfo[]>([])
   const [catalogueError, setCatalogueError] = useState<string | null>(null)
   const [filter, setFilter] = useState<CatalogueFilter>(DEFAULT_CATALOGUE_FILTER)
@@ -29,7 +32,11 @@ export function MultiAgentSettingsPanel() {
   const [notice, setNotice] = useState('')
 
   useEffect(() => {
-    void window.api.getMultiAgentConfig().then(setConfig)
+    void window.api.getMultiAgentConfig().then((c) => {
+      setConfig(c)
+      setSavedConfig(c)
+    })
+    void window.api.getBackendSettings().then((s) => setActiveModel(s.openrouterModel ?? '')).catch(() => {})
     void window.api.getMultiAgentSidecarStatus().then(setStatus).catch(() => {})
     void window.api
       .getMultiAgentCatalogue()
@@ -42,12 +49,15 @@ export function MultiAgentSettingsPanel() {
 
   const filtered = useMemo(() => filterModelCatalogue(catalogue, filter), [catalogue, filter])
   const byId = useMemo(() => new Map(catalogue.map((m) => [m.id, m])), [catalogue])
+  const catalogueIds = useMemo(() => (catalogue.length ? new Set(catalogue.map((m) => m.id)) : null), [catalogue])
+  const unsaved = savedConfig !== null && JSON.stringify(savedConfig) !== JSON.stringify(config)
 
   const update = <K extends keyof Config>(key: K, value: Config[K]) => setConfig((c) => ({ ...c, [key]: value }))
   const save = async () => {
     setSaving(true)
     try {
       await window.api.saveMultiAgentConfig(config)
+      setSavedConfig(config)
       setNotice('Saved — applies to the next multi-agent run.')
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Save failed')
@@ -65,6 +75,8 @@ export function MultiAgentSettingsPanel() {
           Sidecar: <span data-testid="sidecar-status" className="text-content-secondary">{status}</span>
         </p>
       </div>
+
+      <RunModelsSummary models={config.models} activeModel={activeModel} catalogueIds={catalogueIds} />
 
       <section className="grid grid-cols-2 gap-x-6 gap-y-4">
         <Slider label="Max agents" value={config.maxAgents} min={1} max={8} onChange={(v) => update('maxAgents', v)} />
@@ -164,7 +176,7 @@ export function MultiAgentSettingsPanel() {
         >
           {saving ? 'Saving…' : 'Save multi-agent defaults'}
         </button>
-        {notice && <span className="text-xs text-content-muted">{notice}</span>}
+        {unsaved ? <span className="text-xs text-ma-mute">Unsaved changes</span> : notice && <span className="text-xs text-content-muted">{notice}</span>}
       </div>
     </div>
   )

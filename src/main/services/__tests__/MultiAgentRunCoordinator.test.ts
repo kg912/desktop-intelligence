@@ -6,7 +6,7 @@ vi.mock('electron', () => ({ app: { getPath: () => '/tmp/di-coordinator-test' } 
 import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
 import type { CoordinatorDeps } from '../MultiAgentRunCoordinator'
 import { McpDeniedError } from '../McpServerManager'
-import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
+import { DEFAULT_MULTI_AGENT_CONFIG, DEFAULT_SYNTHESIZER_MODEL } from '../../../shared/types'
 import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
 import type { OpenRouterModelInfo } from '../../../shared/multiAgentModels'
 
@@ -45,7 +45,8 @@ function setup(over: { settings?: Partial<ReturnType<CoordinatorDeps['settings']
   }
   const sent: AgentEvent[] = []
   const observed: AgentEvent[] = []
-  const catalogue = over.catalogue ?? [model('meta-llama/llama-3.3-70b-instruct'), model('active/model', 3e-6, 4e-6)]
+  // Includes every default role model: since Phase 3 an unlisted model stops the run.
+  const catalogue = over.catalogue ?? [model('meta-llama/llama-3.3-70b-instruct'), model('active/model', 3e-6, 4e-6), model(DEFAULT_SYNTHESIZER_MODEL, 5e-6, 6e-6)]
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,
     mcp: mcp as unknown as CoordinatorDeps['mcp'],
@@ -78,9 +79,12 @@ describe('MultiAgentRunCoordinator.start', () => {
     expect(lm.sidecar.startRun).not.toHaveBeenCalled()
   })
 
-  it('resolves empty and unknown role models to the active model, supplies pricing and tools, returns the resolved config', async () => {
+  // Phase 3 changed this test: an unknown model (synthesizer 'retired/model') used to be
+  // swapped silently for the active model; it now stops the run (see Test D). The
+  // synthesizer here is blank instead, which still follows the active model.
+  it('resolves empty role models to the active model, supplies pricing, tools and sources, returns the resolved config', async () => {
     const { coordinator, sidecar, db } = setup()
-    const result = await coordinator.start({ chatId: 'chat-1', task: 'do it', config: config({ worker: '', synthesizer: 'retired/model' }) })
+    const result = await coordinator.start({ chatId: 'chat-1', task: 'do it', config: config({ worker: '', synthesizer: '' }) })
     const sent = sidecar.startRun.mock.calls[0][0] as unknown as {
       config: MultiAgentConfig; pricing: Record<string, unknown>; tools: Array<{ name: string }>; openRouterApiKey: string
     }
@@ -95,6 +99,10 @@ describe('MultiAgentRunCoordinator.start', () => {
       'active/model': { prompt: 3e-6, completion: 4e-6, contextLength: 128000 },
     })
     expect(sent.tools).toEqual([expect.objectContaining({ name: 'fs__read' })])
+    expect(sidecar.startRun.mock.calls[0][0]).toMatchObject({
+      catalogueChecked: true,
+      modelSources: { orchestrator: 'default', worker: 'active', reflection: 'default', synthesizer: 'active' },
+    })
     expect(sent.openRouterApiKey).toBe('sk-or-1')
     expect(result).toEqual({ ok: true, runId: 'run-1', config: sent.config })
     expect(db.begin).toHaveBeenCalledWith('chat-1')
@@ -109,10 +117,12 @@ describe('MultiAgentRunCoordinator.start', () => {
     expect(result).toMatchObject({ ok: true, config: { models } })
   })
 
-  it('Test D: a configured model missing from the catalogue silently falls back to the active model (baseline)', async () => {
-    const { coordinator } = setup()
+  // Phase 3 flipped Test D: the Phase 0 baseline asserted a silent swap to the active model.
+  it('Test D: a configured model missing from the catalogue is reported by role and the run does not start', async () => {
+    const { coordinator, sidecar } = setup()
     const result = await coordinator.start({ chatId: 'c', task: 't', config: config({ orchestrator: 'gone/model' }) })
-    expect(result).toMatchObject({ ok: true, config: { models: { orchestrator: 'active/model' } } })
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('orchestrator model "gone/model"') })
+    expect(sidecar.startRun).not.toHaveBeenCalled()
   })
 
   it('still starts (ids as configured, no pricing) when the catalogue is unreachable', async () => {
@@ -121,6 +131,7 @@ describe('MultiAgentRunCoordinator.start', () => {
     const sent = sidecar.startRun.mock.calls[0][0] as unknown as { config: MultiAgentConfig; pricing: object }
     expect(sent.config.models.worker).toBe('x/y')
     expect(sent.pricing).toEqual({})
+    expect(sidecar.startRun.mock.calls[0][0]).toMatchObject({ catalogueChecked: false, modelSources: { worker: 'saved' } })
   })
 
   it('rejects a second concurrent run in the same chat', async () => {

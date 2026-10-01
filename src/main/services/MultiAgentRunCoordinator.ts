@@ -2,7 +2,7 @@
  * Electron-side owner of multi-agent runs (MULTI_AGENT_SPEC.html §03, §07, §08).
  *
  *  - start: resolves role models against the live OpenRouter catalogue
- *    (empty/unknown → the active OpenRouter model), supplies per-token
+ *    (empty → the active OpenRouter model; unknown → the run does not start), supplies per-token
  *    pricing so the sidecar can enforce the budget cap, and passes only the
  *    currently running MCP tool schemas.
  *  - events: forwarded to the renderer; worker tool pauses are executed here
@@ -26,7 +26,8 @@ import type {
   StartRunResult,
 } from '../../shared/types'
 import { isTerminalAgentEvent } from '../../shared/agentEvents'
-import type { ModelPricing, OpenRouterModelInfo } from '../../shared/multiAgentModels'
+import { MODEL_ROLES, resolveRoleModels } from '../../shared/multiAgentModels'
+import type { ModelPricing, ModelRole, OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import type { RunStartRequest } from './MultiAgentSidecarManager'
 import { McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext } from './McpServerManager'
@@ -122,24 +123,20 @@ export class MultiAgentRunCoordinator {
       console.warn('[MultiAgent] catalogue unavailable — using configured model ids as-is:', err)
     }
     const known = new Map(catalogue.map((m) => [m.id, m]))
-    const resolveModel = (model: string): string => {
-      if (!model) return openRouterModel
-      if (known.size > 0 && !known.has(model)) {
-        console.warn(`[MultiAgent] model "${model}" is not in the OpenRouter catalogue — using "${openRouterModel}"`)
-        return openRouterModel
-      }
-      return model
+    const catalogueChecked = known.size > 0
+    const resolved = resolveRoleModels(payload.config.models, openRouterModel, catalogueChecked ? new Set(known.keys()) : null)
+    // No silent swap: a configured model the catalogue does not list stops the run.
+    const notListed = MODEL_ROLES.filter((role) => resolved[role].source === 'missing')
+    if (notListed.length) {
+      const which = notListed.map((role) => `${role} model "${resolved[role].model}"`).join(', ')
+      return { ok: false, reason: `Not in the OpenRouter catalogue: ${which} — choose another in Settings → Multi-Agent` }
     }
-    const models = {
-      orchestrator: resolveModel(payload.config.models.orchestrator),
-      worker: resolveModel(payload.config.models.worker),
-      reflection: resolveModel(payload.config.models.reflection),
-      synthesizer: resolveModel(payload.config.models.synthesizer),
-    }
-    const missing = Object.entries(models).filter(([, m]) => !m).map(([role]) => role)
+    const models = Object.fromEntries(MODEL_ROLES.map((role) => [role, resolved[role].model])) as MultiAgentConfig['models']
+    const missing = MODEL_ROLES.filter((role) => !models[role])
     if (missing.length) {
       return { ok: false, reason: `No OpenRouter model for: ${missing.join(', ')} — choose one in Settings` }
     }
+    if (!catalogueChecked) console.warn('[MultiAgent] catalogue unavailable — configured model ids are used unverified')
 
     const pricing: Record<string, ModelPricing> = {}
     for (const model of new Set(Object.values(models))) {
@@ -164,6 +161,8 @@ export class MultiAgentRunCoordinator {
         openRouterApiKey,
         pricing,
         noReasoning: [...new Set(Object.values(models))].filter((m) => known.get(m)?.supportsReasoning === false),
+        modelSources: Object.fromEntries(MODEL_ROLES.map((role) => [role, resolved[role].source])) as Record<ModelRole, 'saved' | 'default' | 'active'>,
+        catalogueChecked,
       })
       return result.ok ? { ...result, config } : result
     } finally {
