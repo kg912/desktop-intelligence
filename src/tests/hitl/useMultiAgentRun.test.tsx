@@ -81,6 +81,12 @@ describe('useMultiAgentRun', () => {
       mode: 'multi-agent', runStatus: 'completed', agentGraph: [],
       executionTrace: [e(1, { type: 'task_complete', finalOutput: 'old', totalCostUsd: 0, totalTokens: 0 })],
     })
+    // Phase 4: a saved run never replaces a live one (its events would be lost),
+    // so this test now ends the live run before opening the saved one.
+    await act(async () => { expect(await result.current.review('chat-9', 'old task')).toBe(false) })
+    expect(result.current.run?.review).toBe(false)
+    emit(e(1, { type: 'task_failed', reason: 'aborted' }))
+    await frame()
     await act(async () => { expect(await result.current.review('chat-9', 'old task')).toBe(true) })
     expect(result.current.run).toMatchObject({ chatId: 'chat-9', review: true })
     expect(result.current.run?.view.phase).toBe('complete')

@@ -3,7 +3,7 @@ import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
 import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
 import { isTerminalAgentEvent } from '../../../shared/agentEvents'
 import type { ModelPricing } from '../../../shared/multiAgentModels'
-import { applyAgentEvent, emptyRunView, reduceRunEvents } from '../lib/multiAgentRunState'
+import { applyAgentEvent, emptyRunView, isRunActive, reduceRunEvents } from '../lib/multiAgentRunState'
 import type { RunView } from '../lib/multiAgentRunState'
 
 export interface ActiveRun {
@@ -96,6 +96,9 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
   }, [])
 
   const review = useCallback(async (chatId: string, task = ''): Promise<boolean> => {
+    // A live run is never replaced by a saved one; its events would be lost.
+    const current = runRef.current
+    if (current && !current.review && isRunActive(current.view)) return false
     const record = await window.api.getMultiAgentRun(chatId).catch(() => null)
     if (!record || record.mode !== 'multi-agent' || record.executionTrace.length === 0) return false
     const runId = record.executionTrace[0].runId

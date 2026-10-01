@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
+import type { AgentRailState, SidebarMode } from './Sidebar'
 import { SettingsPage } from '../settings/SettingsPage'
 import { TopBar } from './TopBar'
 import { ChatArea } from './ChatArea'
@@ -13,10 +14,9 @@ import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
-import { MultiAgentPlanPane } from '../chat/MultiAgentPlanPane'
-import { MultiAgentExecutionArea } from '../chat/MultiAgentExecutionArea'
+import { AgentDockEmpty, FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
 import { useMultiAgentRun } from '../../hooks/useMultiAgentRun'
-import { inputLockMessage, isRunActive } from '../../lib/multiAgentRunState'
+import { inputLockMessage, isRunActive, pausedAgents } from '../../lib/multiAgentRunState'
 import { estimateRunCost } from '../../../../shared/multiAgentModels'
 import type { Chat, McpToolPermissionResponse, ProcessedAttachment, StoredMessage, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
@@ -24,22 +24,30 @@ import type { Message } from '../chat/MessageBubble'
 export function Layout() {
   const { setThinkingMode, setIsMultiAgentRunning, multiAgentMode } = useModelConfig()
   const { setContextUsage, isReloading } = useModelRuntime()
-  const [sidebarMode,          setSidebarMode]          = useState<'chat' | 'starred' | null>('chat')
+  const [sidebarMode,          setSidebarMode]          = useState<SidebarMode | null>('chat')
   const [settingsOpen,         setSettingsOpen]         = useState(false)
   const [mcpPermissionRequests, setMcpPermissionRequests] = useState<McpToolPermissionRequest[]>([])
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
-  // Multi-agent layout state machine (spec §08): the chat sidebar and the
-  // plan pane are mutually exclusive; both collapse to a rail, never to zero.
-  const [planCollapsed,  setPlanCollapsed]  = useState(false)
+  // The multi-agent run lives in the sidebar, widened ('agents' mode) — no separate pane.
   const [focusAgentId,   setFocusAgentId]   = useState<string | null>(null)
   const [reviewableChat, setReviewableChat] = useState<string | null>(null)
+  const [isOpenRouter,   setIsOpenRouter]   = useState(false)
+  // Below 1280 px the dock overlays the chat; below 1024 px its plan column hides too.
+  const narrowWindow    = useMediaQuery('(max-width: 1279px)')
+  const tinyWindow      = useMediaQuery('(max-width: 1023px)')
   const chatAreaRef     = useRef<ChatAreaHandle>(null)
-  const lastSidebarMode = useRef<'chat' | 'starred'>('chat')
+  const lastSidebarMode = useRef<SidebarMode>('chat')
 
   // Track last non-null mode so the TopBar toggle can reopen the right panel
   useEffect(() => {
     if (sidebarMode !== null) lastSidebarMode.current = sidebarMode
   }, [sidebarMode])
+
+  useEffect(() => {
+    window.api.getBackendSettings?.()
+      .then((s) => setIsOpenRouter(s.provider === 'openrouter'))
+      .catch(() => { /* rail button stays hidden */ })
+  }, [])
 
   // ── Chat history list (sidebar) ───────────────────────────────
   const [chats,        setChats]        = useState<Chat[]>([])
@@ -151,22 +159,35 @@ export function Layout() {
     return estimateRunCost({ task: shownRun.task, steps: shownRun.view.steps, config: shownRun.config, pricing: multiAgent.pricing })
   }, [shownRun, multiAgent.pricing])
 
-  // Mutual exclusion: opening the chat sidebar collapses the plan pane…
-  const openSidebar = useCallback((mode: 'chat' | 'starred' | null) => {
-    setSidebarMode(mode)
-    if (mode !== null) setPlanCollapsed(true)
-  }, [])
-  // …and expanding the plan pane collapses the chat sidebar.
-  const togglePlan = useCallback(() => {
-    setPlanCollapsed((collapsed) => {
-      if (collapsed) setSidebarMode(null)
-      return !collapsed
-    })
-  }, [])
+  const dockOpen = sidebarMode === 'agents'
+  const closeDock = useCallback(() => setSidebarMode((m) => (m === 'agents' ? 'chat' : m)), [])
   const selectAgent = useCallback((agentId: string) => {
+    setSidebarMode('agents')
     setFocusAgentId(null)
     requestAnimationFrame(() => setFocusAgentId(agentId))
   }, [])
+
+  // With the dock open, the active chat's saved run is loaded into it (read-only).
+  const { review: reviewRun } = multiAgent
+  const runChatId = multiAgent.run?.chatId
+  const activeTitle = chats.find((c) => c.id === activeChatId)?.title ?? ''
+  useEffect(() => {
+    if (dockOpen && activeChatId && reviewableChat === activeChatId && runChatId !== activeChatId) {
+      void reviewRun(activeChatId, activeTitle)
+    }
+  }, [dockOpen, activeChatId, reviewableChat, runChatId, reviewRun, activeTitle])
+
+  const agentRail = useMemo((): AgentRailState => {
+    const run = shownRun && !shownRun.review ? shownRun.view : null
+    const waiting = run ? pausedAgents(run).length : 0
+    const working = run ? Object.values(run.agents).filter((a) => ['running', 'reflecting', 'retrying', 'paused'].includes(a.status)).length : 0
+    const hasRun = !!shownRun || reviewableChat === activeChatId
+    return {
+      visible: isOpenRouter && (hasRun || multiAgentMode || dockOpen),
+      state: run && isRunActive(run) ? (waiting ? 'approval' : 'live') : run ? 'done' : 'idle',
+      count: waiting || working,
+    }
+  }, [shownRun, reviewableChat, activeChatId, isOpenRouter, multiAgentMode, dockOpen])
 
   // ── Sidebar: select an existing chat ─────────────────────────
   const handleSelectChat = useCallback(async (chatId: string) => {
@@ -446,11 +467,8 @@ export function Layout() {
     if (multiAgentMode && effectiveChatId) {
       await window.api.saveMessage(effectiveChatId, uuid(), 'user', text)
       await loadChatMessages(effectiveChatId)
-      if (await multiAgent.start(effectiveChatId, text)) {
-        // Composing → Pre-flight: sidebar collapses as the plan pane slides in.
-        setSidebarMode(null)
-        setPlanCollapsed(false)
-      }
+      // Sending a multi-agent task opens the dock; it stays open after the run ends.
+      if (await multiAgent.start(effectiveChatId, text)) setSidebarMode('agents')
       return
     }
 
@@ -469,8 +487,9 @@ export function Layout() {
     finally { setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== response.requestId)) }
   }, [])
   const modalPermissionRequests = useMemo(
-    () => mcpPermissionRequests.filter((r) => !(r.agent && shownRun && !shownRun.review && r.agent.runId === shownRun.view.runId)),
-    [mcpPermissionRequests, shownRun]
+    // Inline in the agent's card while the dock shows the run; modal otherwise, so it cannot be missed.
+    () => mcpPermissionRequests.filter((r) => !(dockOpen && r.agent && shownRun && !shownRun.review && r.agent.runId === shownRun.view.runId)),
+    [mcpPermissionRequests, shownRun, dockOpen]
   )
 
   // After compaction: only reset the context bar.
@@ -494,8 +513,31 @@ export function Layout() {
           <div className="relative flex-shrink-0 h-full">
             <Sidebar
               sidebarMode={sidebarMode}
-              onToggleChat={() => openSidebar(sidebarMode === 'chat' ? null : 'chat')}
-              onToggleStarred={() => openSidebar(sidebarMode === 'starred' ? null : 'starred')}
+              onToggleChat={() => setSidebarMode(sidebarMode === 'chat' ? null : 'chat')}
+              onToggleStarred={() => setSidebarMode(sidebarMode === 'starred' ? null : 'starred')}
+              onToggleAgents={() => setSidebarMode(dockOpen ? 'chat' : 'agents')}
+              agentRail={agentRail}
+              overlayDock={narrowWindow}
+              agentsPanel={
+                shownRun ? (
+                  <MultiAgentSidebarView
+                    view={shownRun.view}
+                    task={shownRun.task}
+                    config={shownRun.config}
+                    readOnly={shownRun.review}
+                    estimate={estimate}
+                    permissionRequests={mcpPermissionRequests}
+                    onRespondPermission={respondToPermission}
+                    onApprove={() => multiAgent.approvePlan(true)}
+                    onCancel={() => multiAgent.approvePlan(false)}
+                    onAbort={multiAgent.abort}
+                    focusAgentId={focusAgentId}
+                    onSelectAgent={selectAgent}
+                    onClose={closeDock}
+                    hidePlanColumn={tinyWindow}
+                  />
+                ) : dockOpen ? <AgentDockEmpty onClose={closeDock} /> : null
+              }
               chats={chats}
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
@@ -505,30 +547,15 @@ export function Layout() {
               onStarChat={handleStarChat}
               onOpenSettings={() => { if (!isStreaming) setSettingsOpen(true) }}
             />
-            {/* Streaming lock — blocks all sidebar interactions while a response is in flight */}
-            {isStreaming && (
+            {/* Streaming lock — blocks the sidebar while a single-chat response is in
+                flight; never the dock, which needs Abort and Approve during a run. */}
+            {isStreaming && !dockOpen && (
               <div
                 className="absolute inset-0 z-40 cursor-not-allowed"
                 title="Cannot switch chats while a response is streaming"
               />
             )}
           </div>
-
-          {shownRun && (
-            <MultiAgentPlanPane
-              view={shownRun.view}
-              task={shownRun.task}
-              collapsed={planCollapsed}
-              onToggleCollapsed={togglePlan}
-              estimate={estimate}
-              budgetCapUsd={shownRun.config.budgetCapUsd}
-              readOnly={shownRun.review}
-              onApprove={() => multiAgent.approvePlan(true)}
-              onCancel={() => multiAgent.approvePlan(false)}
-              onAbort={multiAgent.abort}
-              onSelectAgent={selectAgent}
-            />
-          )}
 
           {/* ── Main execution canvas ── */}
           <div
@@ -568,41 +595,33 @@ export function Layout() {
               activeChatId={activeChatId}
               onCompactComplete={handleCompactComplete}
               sidebarCollapsed={sidebarMode === null}
-              onSidebarToggle={() => openSidebar(sidebarMode !== null ? null : lastSidebarMode.current)}
+              onSidebarToggle={() => setSidebarMode(sidebarMode !== null ? null : lastSidebarMode.current)}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
             />
 
-            {shownRun ? (
-              <MultiAgentExecutionArea
-                view={shownRun.view}
-                readOnly={shownRun.review}
-                permissionRequests={mcpPermissionRequests}
-                onRespondPermission={respondToPermission}
-                focusAgentId={focusAgentId}
-                onSelectAgent={selectAgent}
-                onBack={multiAgent.dismiss}
-              />
-            ) : (
-              <>
-                {reviewableChat === activeChatId && activeChatId && (
-                  <div className="flex justify-center pt-2">
-                    <button
-                      onClick={() => { void multiAgent.review(activeChatId, chats.find((c) => c.id === activeChatId)?.title ?? '') }}
-                      className="rounded-full border border-accent-900/60 bg-accent-950/30 px-3 py-1 text-[11px] text-accent-300 hover:bg-accent-950/60"
-                    >
-                      View agent run
-                    </button>
-                  </div>
-                )}
-                <ChatArea
-                  ref={chatAreaRef}
-                  activeChatId={activeChatId}
-                  onSuggest={handleSuggest}
-                  chatSystemInstructions={chatSystemInstructions}
-                />
-              </>
+            {/* The main area stays a chat: a pill to the dock and, while a run is live, the synthesis. */}
+            {(shownRun || (reviewableChat === activeChatId && activeChatId)) && (
+              <div className="flex justify-center pt-3">
+                <button
+                  data-testid="agent-run-pill"
+                  onClick={() => setSidebarMode(dockOpen ? 'chat' : 'agents')}
+                  className="inline-flex h-[30px] items-center gap-2 rounded-[15px] border-[0.5px] border-ma-red/35 bg-ma-red/[0.08] px-3.5 text-[12.5px] text-ma-redtext hover:bg-ma-red/[0.14]"
+                >
+                  {dockOpen && shownRunActive && <span className="ma-pill-dot" />}
+                  {dockOpen ? 'Viewing agent run · close' : 'View agent run'}
+                </button>
+              </div>
             )}
+            <ChatArea
+              ref={chatAreaRef}
+              activeChatId={activeChatId}
+              onSuggest={handleSuggest}
+              chatSystemInstructions={chatSystemInstructions}
+              footer={shownRun && shownRunActive && shownRun.view.phase !== 'planning' && shownRun.view.phase !== 'preflight'
+                ? <FinalSynthesis view={shownRun.view} onSelectAgent={selectAgent} />
+                : null}
+            />
 
             {multiAgent.startError && (
               <div className="mx-4 mb-1 flex items-start gap-2 rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300" role="alert">
@@ -625,4 +644,17 @@ export function Layout() {
       )}
     </div>
   )
+}
+
+function useMediaQuery(query: string): boolean {
+  const get = (): boolean => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches
+  const [matches, setMatches] = useState(get)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const list = window.matchMedia(query)
+    const onChange = (): void => setMatches(list.matches)
+    list.addEventListener('change', onChange)
+    return () => list.removeEventListener('change', onChange)
+  }, [query])
+  return matches
 }

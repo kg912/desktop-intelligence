@@ -393,3 +393,58 @@
   background: rgba(185, 28, 28, 0.35);
   box-shadow: 0 0 12px rgba(220, 38, 38, 0.3);
 }
+
+/* ── Multi-agent dock (designs/01-dock-live.html, 02-states.html) ─────────────
+   CSS transitions/animations only: no motion.* in the dock (M1 Pro jank). */
+@keyframes ma-glow { 0%, 100% { opacity: .55 } 50% { opacity: 1 } }
+@keyframes ma-blink { 50% { opacity: 0 } }
+
+.ma-rail-btn { position: relative; }
+.ma-rail-btn::after { content: ""; position: absolute; inset: -1px; border-radius: 8px; pointer-events: none; opacity: 0; }
+.ma-rail-btn[data-state="live"] { color: #e53935 !important; }
+.ma-rail-btn[data-state="live"]::after {
+  opacity: 1; box-shadow: 0 0 0 .5px rgba(229,57,53,.35), 0 0 14px 1px rgba(229,57,53,.28); animation: ma-glow 2.4s ease-in-out infinite;
+}
+.ma-rail-btn[data-state="approval"] { color: #e2a93b !important; }
+.ma-rail-btn[data-state="approval"]::after {
+  opacity: 1; box-shadow: 0 0 0 .5px rgba(226,169,59,.4), 0 0 14px 1px rgba(226,169,59,.25); animation: ma-glow 1.6s ease-in-out infinite;
+}
+.ma-rail-btn[data-state="done"] { color: #43cf8f !important; }
+.ma-rail-badge {
+  position: absolute; right: -4px; top: -4px; min-width: 14px; height: 14px; padding: 0 4px; border-radius: 7px;
+  background: #e53935; color: #fff; font: 600 9px/14px ui-monospace, Menlo, monospace; text-align: center;
+}
+.ma-rail-btn[data-state="approval"] .ma-rail-badge { background: #e2a93b; color: #111; }
+
+.ma-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #5a5a5a; }
+.ma-dot[data-s="ok"] { background: #43cf8f; }
+.ma-dot[data-s="run"] { background: #e53935; box-shadow: 0 0 0 3px rgba(229,57,53,.14); animation: ma-glow 1.4s ease-in-out infinite; }
+.ma-dot[data-s="wait"] { background: #e2a93b; box-shadow: 0 0 0 3px rgba(226,169,59,.10); }
+.ma-dot[data-s="fail"] { background: transparent; border: 1.5px solid #e53935; }
+
+.ma-lane-bar { position: absolute; top: 3px; height: 10px; border-radius: 5px; background: #191919; }
+.ma-lane-bar[data-s="ok"] { background: rgba(67,207,143,.55); }
+.ma-lane-bar[data-s="run"] { background: linear-gradient(90deg, rgba(229,57,53,.75), rgba(229,57,53,.35)); box-shadow: 0 0 10px rgba(229,57,53,.25); }
+.ma-lane-bar[data-s="wait"] { background: rgba(226,169,59,.55); }
+.ma-lane-bar[data-s="fail"] { background: rgba(229,57,53,.25); }
+.ma-lane-bar[data-s="q"] { background: transparent; border: .5px dashed rgba(255,255,255,.18); }
+
+/* trace items hang off a thin vertical rail */
+.ma-ev { position: relative; padding: 10px 0 2px 22px; }
+.ma-ev::before { content: ""; position: absolute; left: 5px; top: 0; bottom: -10px; width: .5px; background: rgba(255,255,255,.09); }
+.ma-ev:last-child::before { bottom: auto; height: 18px; }
+.ma-ev > .ma-k { position: absolute; left: 0; top: 14px; width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(255,255,255,.09); background: #0e0e0e; }
+.ma-ev[data-k="reasoning"] > .ma-k { border-color: rgba(255,255,255,.25); }
+.ma-ev[data-k="tool"] > .ma-k { border-color: rgba(229,57,53,.35); background: rgba(229,57,53,.08); }
+.ma-ev[data-k="output"] > .ma-k { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.12); }
+.ma-ev[data-k="gate"] > .ma-k { border-color: rgba(67,207,143,.5); background: rgba(67,207,143,.10); }
+.ma-ev[data-k="gate-bad"] > .ma-k, .ma-ev[data-k="fail"] > .ma-k { border-color: #e53935; background: rgba(229,57,53,.08); }
+.ma-ev[data-k="approval"] > .ma-k { border-color: rgba(226,169,59,.5); background: rgba(226,169,59,.10); }
+
+.ma-cursor { display: inline-block; width: 6px; height: 13px; background: #e53935; vertical-align: -2px; margin-left: 2px; animation: ma-blink 1s steps(2) infinite; }
+.ma-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: #e53935; animation: ma-glow 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ma-rail-btn::after, .ma-dot, .ma-cursor, .ma-pill-dot { animation: none !important; }
+  .ma-dock-panel, .ma-dock-panel * { transition: none !important; }
+}

@@ -6,6 +6,7 @@
 
 import type { ElectronAPI } from '../../../preload/index'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
+import { multiAgentDemoApi } from './multiAgentDemo'
 import type {
   ConnectionState,
   DaemonState,
@@ -240,9 +241,7 @@ export const mockApi: ElectronAPI = {
   mcpGetServerStatus:         async () => [],
   mcpRestartServer:           async () => {},
   mcpRemoveServer:            async () => {},
-  mcpRespondToPermission:     async () => {},
   onMcpServerStatusChanged:   () => () => {},
-  onMcpToolPermissionRequest: () => () => {},
 
   // ── Sandbox violations stub (Phase 2) ──────────────────────────
   onSandboxViolationAlert: () => () => {},
@@ -258,10 +257,8 @@ export const mockApi: ElectronAPI = {
   obsListMultiAgentEvents: async () => [],
   obsClearMultiAgentEvents: async () => {},
   obsOpenMultiAgentEventsFile: async () => {},
-  getMultiAgentRun: async () => null,
   warmUpMultiAgent: async () => 'stopped' as const,
   getMultiAgentCatalogue: async () => ({ models: [], error: null }),
-  respondMultiAgentPlan: async () => {},
   onMcpToolPermissionExpired: () => () => {},
   getMultiAgentConfig: async () => ({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
   saveMultiAgentConfig: async () => {},
@@ -311,6 +308,9 @@ export const mockApi: ElectronAPI = {
     const chat = mockChats.find((c) => c.id === chatId)
     if (chat) chat.updatedAt = Date.now()
   },
+
+  // ── Multi-agent: a scripted run so the dock works in browser preview ──
+  ...multiAgentDemoApi((chatId, text) => mockApi.saveMessage(chatId, `final-${Date.now()}`, 'assistant', text)),
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

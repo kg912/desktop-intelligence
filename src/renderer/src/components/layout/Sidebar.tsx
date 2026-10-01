@@ -54,14 +54,18 @@ function RailButton({
   onClick,
   title,
   style: extraStyle,
+  className,
+  dataState,
   children,
 }: {
-  active?:   boolean
-  disabled?: boolean
-  onClick?:  () => void
-  title?:    string
-  style?:    React.CSSProperties
-  children:  React.ReactNode
+  active?:    boolean
+  disabled?:  boolean
+  onClick?:   () => void
+  title?:     string
+  style?:     React.CSSProperties
+  className?: string
+  dataState?: string
+  children:   React.ReactNode
 }) {
   const [hovered, setHovered] = useState(false)
 
@@ -80,7 +84,9 @@ function RailButton({
     <button
       onClick={onClick}
       title={title}
-      className="no-drag flex items-center justify-center rounded-[6px]"
+      aria-pressed={active}
+      data-state={dataState}
+      className={cn('no-drag flex items-center justify-center rounded-[6px]', className)}
       style={{
         width:      28,
         height:     28,
@@ -638,10 +644,27 @@ function ChatGroup({
 // ----------------------------------------------------------------
 // Sidebar component
 // ----------------------------------------------------------------
+export type SidebarMode = 'chat' | 'starred' | 'agents'
+
+/** Multi-agent rail button state (designs/02-states.html). */
+export interface AgentRailState {
+  visible: boolean
+  /** live = agents working (red glow), approval = one needs the user (amber), done = last run finished (green). */
+  state:   'idle' | 'live' | 'approval' | 'done'
+  /** Badge: working agents (live) or agents awaiting approval. */
+  count:   number
+}
+
 interface SidebarProps {
-  sidebarMode:     'chat' | 'starred' | null
+  sidebarMode:     SidebarMode | null
   onToggleChat:    () => void
   onToggleStarred: () => void
+  onToggleAgents:  () => void
+  agentRail:       AgentRailState
+  /** Content of the widened panel in 'agents' mode. */
+  agentsPanel:     React.ReactNode
+  /** Narrow window (< 1280 px): the dock overlays the chat instead of pushing it. */
+  overlayDock:     boolean
   chats:           Chat[]
   activeChatId:    string | null
   onSelectChat:    (chatId: string) => void
@@ -652,12 +675,17 @@ interface SidebarProps {
   onOpenSettings:  () => void
 }
 
-const PANEL_WIDTH = 264
+/** Panel width per mode; the dock is the same panel, widened. */
+export const PANEL_WIDTH: Record<SidebarMode, number> = { chat: 264, starred: 264, agents: 760 }
 
 export function Sidebar({
   sidebarMode,
   onToggleChat,
   onToggleStarred,
+  onToggleAgents,
+  agentRail,
+  agentsPanel,
+  overlayDock,
   chats,
   activeChatId,
   onSelectChat,
@@ -719,12 +747,24 @@ export function Sidebar({
           <Star style={{ width: 15, height: 15 }} />
         </RailButton>
 
-        {/* Multi-agent rail button — hidden until orchestration is implemented
-        <div style={{ height: 4 }} />
-        <RailButton disabled title="Multi-agent (coming soon)">
-          <Network style={{ width: 15, height: 15 }} />
-        </RailButton>
-        */}
+        {/* Multi-agent: the run's state lives on this button (designs/02-states.html) */}
+        {agentRail.visible && (
+          <>
+            <div style={{ height: 6 }} />
+            <RailButton
+              active={sidebarMode === 'agents'}
+              onClick={onToggleAgents}
+              title="Agent run"
+              className="ma-rail-btn"
+              dataState={sidebarMode === 'agents' ? 'open' : agentRail.state}
+            >
+              <Network style={{ width: 15, height: 15 }} />
+              {sidebarMode !== 'agents' && (agentRail.state === 'live' || agentRail.state === 'approval') && agentRail.count > 0 && (
+                <span className="ma-rail-badge" data-testid="agent-rail-badge">{agentRail.count}</span>
+              )}
+            </RailButton>
+          </>
+        )}
 
         {/* Settings gear — pushed to bottom */}
         <div className="flex-1" />
@@ -734,21 +774,27 @@ export function Sidebar({
         <div style={{ height: 12 }} />
       </div>
 
-      {/* ── Expandable Panel (single instance — mode switches content) ── */}
+      {/* ── Expandable Panel (single instance — mode switches content and width) ── */}
       <div
-        className="flex-shrink-0 h-full overflow-hidden"
+        data-testid="sidebar-panel"
+        data-mode={sidebarMode ?? 'closed'}
+        className="ma-dock-panel flex-shrink-0 h-full overflow-hidden"
         style={{
-          width:       sidebarMode ? PANEL_WIDTH : 0,
+          width:       sidebarMode ? PANEL_WIDTH[sidebarMode] : 0,
           transition:  'width 220ms cubic-bezier(0.4, 0, 0.2, 1)',
-          background:  '#141414',
+          background:  sidebarMode === 'agents' ? '#0e0e0e' : '#141414',
           borderRight: '0.5px solid rgba(255,255,255,0.05)',
+          ...(overlayDock && sidebarMode === 'agents' && {
+            position: 'absolute', left: 44, top: 0, bottom: 0, zIndex: 45, maxWidth: 'calc(100vw - 44px)',
+            boxShadow: '18px 0 40px rgba(0,0,0,0.55)',
+          }),
         }}
       >
-        {/* Inner container — fixed width so content doesn't reflow during animation */}
+        {/* Inner container — fixed width per mode so content doesn't reflow during animation */}
         <div
           className="flex flex-col h-full"
           style={{
-            width:      PANEL_WIDTH,
+            width:      PANEL_WIDTH[sidebarMode ?? 'chat'],
             opacity:    sidebarMode ? 1 : 0,
             transition: 'opacity 180ms ease',
           }}
@@ -773,10 +819,10 @@ export function Sidebar({
                 letterSpacing: '0.01em',
               }}
             >
-              {sidebarMode === 'starred' ? 'Starred' : 'Chats'}
+              {sidebarMode === 'starred' ? 'Starred' : sidebarMode === 'agents' ? 'Multi-agent' : 'Chats'}
             </span>
 
-            <button
+            {sidebarMode !== 'agents' && <button
               onClick={onNewChat}
               className="no-drag flex items-center"
               style={{
@@ -794,8 +840,12 @@ export function Sidebar({
             >
               <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
               <span>New</span>
-            </button>
+            </button>}
           </div>
+
+          {sidebarMode === 'agents' ? (
+            <div className="flex-1 min-h-0 no-drag">{agentsPanel}</div>
+          ) : (<>
 
           {/* ── List (scrollable) ── */}
           <div className="flex-1 overflow-y-auto no-drag" style={{ paddingTop: 4, paddingBottom: 4 }}>
@@ -886,6 +936,7 @@ export function Sidebar({
               />
             </div>
           </div>
+          </>)}
         </div>
       </div>
 

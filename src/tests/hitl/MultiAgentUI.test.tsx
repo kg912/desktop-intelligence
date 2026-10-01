@@ -25,8 +25,9 @@ vi.mock('@preact/signals-react/runtime', () => {
   }
 })
 
-import { MultiAgentPlanPane } from '../../renderer/src/components/chat/MultiAgentPlanPane'
-import { MultiAgentExecutionArea } from '../../renderer/src/components/chat/MultiAgentExecutionArea'
+import { AgentDockEmpty, FinalSynthesis, MultiAgentSidebarView } from '../../renderer/src/components/chat/MultiAgentSidebarView'
+import { Sidebar } from '../../renderer/src/components/layout/Sidebar'
+import type { AgentRailState } from '../../renderer/src/components/layout/Sidebar'
 import { McpPermissionDialog } from '../../renderer/src/components/chat/McpPermissionDialog'
 import { MultiAgentSettingsPanel } from '../../renderer/src/components/settings/MultiAgentSettingsPanel'
 import { RunModelsSummary } from '../../renderer/src/components/settings/RunModelsSummary'
@@ -47,150 +48,276 @@ function view(extra: Array<Record<string, unknown>> = []) {
   return reduceRunEvents('run-1', [ev({ type: 'orchestrator_plan', steps }), ...extra.map(ev)])
 }
 
-const paneProps = {
-  task: 'Analyze MU stock',
-  collapsed: false,
-  onToggleCollapsed: vi.fn(),
-  estimate: { minUsd: 0.04, maxUsd: 0.18, unpricedModels: [] },
-  budgetCapUsd: 0.5,
+const dockProps = {
+  task: 'Plan a 12-day Alps itinerary',
+  config: { ...DEFAULT_MULTI_AGENT_CONFIG, budgetCapUsd: 0.5 },
   readOnly: false,
+  estimate: { minUsd: 0.04, maxUsd: 0.18, unpricedModels: [] },
+  permissionRequests: [] as McpToolPermissionRequest[],
+  onRespondPermission: vi.fn(),
   onApprove: vi.fn(),
   onCancel: vi.fn(),
   onAbort: vi.fn(),
+  focusAgentId: null as string | null,
   onSelectAgent: vi.fn(),
+  onClose: vi.fn(),
 }
+const planPause = { type: 'hitl_pause', agentId: 'orchestrator', role: 'O', serverName: 'multi-agent', toolName: 'approve_plan', args: {} }
+const agentRequest = (agentId: string, role: string): McpToolPermissionRequest => ({
+  serverName: 'brave', toolName: 'brave__web_search', args: { q: 'hotels Füssen' }, requestId: `q-${agentId}`, chatId: 'c',
+  agent: { runId: 'run-1', agentId, role, model: 'deepseek/flash' }, timeoutMs: 300_000,
+})
 
 beforeEach(() => vi.clearAllMocks())
 
-describe('MultiAgentPlanPane', () => {
-  it('pre-flight: shows the plan tree, the cost range with worst case prominent, and approve/cancel', () => {
-    const v = view([{ type: 'hitl_pause', agentId: 'orchestrator', role: 'O', serverName: 'multi-agent', toolName: 'approve_plan', args: {} }])
-    render(<MultiAgentPlanPane {...paneProps} view={v} />)
-    expect(screen.getByText('Orchestrator Plan')).toBeTruthy()
-    expect(screen.getByText('1.1 · Research the market')).toBeTruthy()
+describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
+  it('pre-flight replaces the card column: plan with dependencies, cost range, worst case, approve/cancel, no Abort', () => {
+    seq = 0
+    const v = reduceRunEvents('run-1', [
+      ev({ type: 'orchestrator_plan', steps: [...steps, { id: '2.1', label: 'Draft the itinerary', stage: 'worker', role: 'Planner', model: 'w', phase: 2, dependsOn: ['1.1', '1.2'] }] }),
+      ev(planPause),
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
     const preflight = screen.getByTestId('preflight')
+    expect(within(preflight).getByText('Planner · after 1.1, 1.2')).toBeTruthy()
     expect(within(preflight).getByText('$0.04 – $0.18')).toBeTruthy()
     expect(within(preflight).getByText(/Worst case \$0\.18/)).toBeTruthy()
     fireEvent.click(within(preflight).getByText('Approve & run'))
     fireEvent.click(within(preflight).getByText('Cancel'))
-    expect(paneProps.onApprove).toHaveBeenCalledTimes(1)
-    expect(paneProps.onCancel).toHaveBeenCalledTimes(1)
-    // No abort during pre-flight — Cancel is the way out.
+    expect(dockProps.onApprove).toHaveBeenCalledTimes(1)
+    expect(dockProps.onCancel).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Abort')).toBeNull()
+    expect(screen.queryByTestId('agent-card-1.1')).toBeNull()
   })
 
   it('caps the displayed worst case at the budget and names unpriced models', () => {
-    const v = view([{ type: 'hitl_pause', agentId: 'orchestrator', role: 'O', serverName: 'multi-agent', toolName: 'approve_plan', args: {} }])
-    render(<MultiAgentPlanPane {...paneProps} view={v} estimate={{ minUsd: 0.2, maxUsd: 3, unpricedModels: ['x/free'] }} />)
+    render(<MultiAgentSidebarView {...dockProps} view={view([planPause])} estimate={{ minUsd: 0.2, maxUsd: 3, unpricedModels: ['x/free'] }} />)
     expect(screen.getByText(/Worst case \$0\.50/)).toBeTruthy()
     expect(screen.getByText(/No published price for x\/free/)).toBeTruthy()
   })
 
-  it('running: per-step status (paused pulses), abort, live totals and the budget badge', () => {
+  it('running: totals against the cap, budget badge, Abort, statuses, and the parallel timeline', () => {
     const v = view([
       { type: 'hitl_resume', agentId: 'orchestrator', approved: true },
       { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm' },
-      { type: 'agent_start', agentId: '1.2', role: 'Analyzer', model: 'm' },
-      { type: 'hitl_pause', agentId: '1.2', role: 'Analyzer', serverName: 'fs', toolName: 'read', args: {}, runTotals: { costUsd: 0.51, tokens: 1234, budgetReached: true } },
+      { type: 'agent_start', agentId: '1.2', role: 'Analyzer', model: 'm', runTotals: { costUsd: 0.51, tokens: 31_200, budgetReached: true } },
     ])
-    render(<MultiAgentPlanPane {...paneProps} view={v} />)
-    expect(screen.getByTestId('plan-step-1.1').dataset.status).toBe('running')
-    expect(screen.getByTestId('plan-step-1.2').dataset.status).toBe('paused')
-    expect(screen.getByTestId('plan-step-1.2').className).toContain('animate-pulse')
-    expect(screen.getByText(/Total: \$0\.51 · 1,234 tok/)).toBeTruthy()
-    expect(screen.getByText('Budget cap reached')).toBeTruthy()
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    expect(screen.getByTestId('run-totals').textContent).toBe('$0.51 / $0.5031.2k tokBudget cap reached')
+    expect(screen.getByTestId('concurrency-caption').textContent).toBe('2 agents running in parallel')
+    expect(screen.getByTestId('lane-1.1').querySelector('i')!.dataset.s).toBe('run')
+    expect(screen.getByTestId('agent-card-1.1').dataset.status).toBe('running')
     fireEvent.click(screen.getByText('Abort'))
-    expect(paneProps.onAbort).toHaveBeenCalled()
+    expect(dockProps.onAbort).toHaveBeenCalled()
   })
 
-  it('collapses to a 40px dot rail (never zero) that can select an agent or re-expand', () => {
-    const v = view([{ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm' }])
-    render(<MultiAgentPlanPane {...paneProps} view={v} collapsed />)
-    const pane = screen.getByTestId('plan-pane')
-    expect(pane.style.width).toBe('40px')
-    fireEvent.click(screen.getByTitle(/1\.1 · Research the market — running/))
-    expect(paneProps.onSelectAgent).toHaveBeenCalledWith('1.1')
-    fireEvent.click(screen.getByTitle('Show orchestrator plan'))
-    expect(paneProps.onToggleCollapsed).toHaveBeenCalled()
+  it('a finished run reports the peak overlap; queued steps show their dependency hint', () => {
+    seq = 0
+    const graph = [...steps, { id: '2.1', label: 'Combine', stage: 'worker', role: 'Planner', model: 'w', phase: 2, dependsOn: ['1.1', '1.2'] }]
+    const live = reduceRunEvents('run-1', [
+      ev({ type: 'orchestrator_plan', steps: graph }),
+      ev({ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm' }),
+      ev({ type: 'agent_start', agentId: '1.2', role: 'A', model: 'm' }),
+      ev({ type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'ok' }),
+    ])
+    const { unmount } = render(<MultiAgentSidebarView {...dockProps} view={live} />)
+    expect(within(screen.getByTestId('step-2.1')).getByText('Waits for 1.2')).toBeTruthy()
+    expect(screen.getByTestId('lane-2.1').querySelector('i')!.dataset.s).toBe('q')
+    unmount()
+    seq = 0
+    const finished = reduceRunEvents('run-1', [
+      ev({ type: 'orchestrator_plan', steps: graph }),
+      ev({ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm' }),
+      ev({ type: 'agent_start', agentId: '1.2', role: 'A', model: 'm' }),
+      ev({ type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'ok' }),
+      ev({ type: 'reflection_result', agentId: '1.2', score: 4, passed: true, reason: 'ok' }),
+      ev({ type: 'agent_start', agentId: '2.1', role: 'P', model: 'm' }),
+      ev({ type: 'reflection_result', agentId: '2.1', score: 4, passed: true, reason: 'ok' }),
+      ev({ type: 'task_complete', finalOutput: 'x', totalCostUsd: 0, totalTokens: 0 }),
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={finished} />)
+    expect(screen.getByTestId('concurrency-caption').textContent).toBe('Peak: 2 agents in parallel')
+    expect(screen.queryByText('Abort')).toBeNull()
   })
 
-  it('expands a step to show its reflection history', () => {
+  it('accordion: the working agent is open, a passed agent collapses to its header (no trace rendered), clicks toggle', () => {
+    const v = view([
+      { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm' },
+      { type: 'agent_start', agentId: '1.2', role: 'Analyzer', model: 'm' },
+      { type: 'agent_complete', agentId: '1.1', output: 'Salzburg first.', tokenCount: 14_800, costUsd: 0.02 },
+      { type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'covers every cluster' },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    expect(screen.getByTestId('agent-card-1.2').dataset.open).toBe('true')
+    const passed = screen.getByTestId('agent-card-1.1')
+    expect(passed.dataset.open).toBe('false')
+    expect(within(passed).getByText('Pass 5/5')).toBeTruthy()
+    expect(screen.queryByTestId('agent-trace-1.1')).toBeNull()
+    fireEvent.click(within(passed).getByRole('button', { expanded: false }))
+    expect(screen.getByTestId('agent-trace-1.1')).toBeTruthy()
+    expect(within(passed).getByTestId('reflection-gate').textContent).toContain('5/5 — covers every cluster')
+  })
+
+  it('renders the trace: reasoning (clamped, expandable), tool rows, the answer, and a failed gate with its model and issues', () => {
+    const v = view([
+      { type: 'agent_start', agentId: '1.1', role: 'TransAgent', model: 'deepseek/flash', attempt: 0 },
+      { type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: 'Salzburg to Innsbruck is the long leg.' },
+      { type: 'tool_start', agentId: '1.1', attempt: 0, callId: 'c1', tool: 'brave_web_search', server: 'brave', argsPreview: '{"q":"Railjet 24 December"}' },
+      { type: 'tool_done', agentId: '1.1', attempt: 0, callId: 'c1', ok: true, durationMs: 1200, resultPreview: 'Railjet hourly', resultChars: 4200 },
+      { type: 'agent_token', agentId: '1.1', attempt: 0, token: 'Vienna → Salzburg every 30 minutes.' },
+      { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 2, passed: false, reason: 'Day 7 is impossible', model: 'meta-llama/llama-3.3-70b-instruct', issues: ['Split Hallstatt and Füssen'] },
+      { type: 'retry', agentId: '1.1', attempt: 1, reason: 'Day 7 is impossible' },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    const card = screen.getByTestId('agent-card-1.1')
+    expect(within(card).getByText('Retry 1 of 2')).toBeTruthy()
+    const reasoning = within(card).getByTitle('Expand reasoning')
+    expect(reasoning.className).toContain('line-clamp-3')
+    fireEvent.click(reasoning)
+    expect(within(card).getByTitle('Collapse reasoning').className).not.toContain('line-clamp-3')
+    expect(within(card).getByText('brave_web_search')).toBeTruthy()
+    expect(within(card).getByText('4,200 chars')).toBeTruthy()
+    fireEvent.click(within(card).getByText('brave_web_search'))
+    expect(within(card).getByText('Railjet hourly')).toBeTruthy()
+    expect(within(card).getByText('Vienna → Salzburg every 30 minutes.')).toBeTruthy()
+    const gate = within(card).getByTestId('reflection-gate')
+    expect(gate.textContent).toContain('Reflection gate · attempt 1 · llama-3.3-70b-instruct')
+    expect(gate.textContent).toContain('2/5 — Day 7 is impossible')
+    expect(gate.textContent).toContain('Split Hallstatt and Füssen')
+  })
+
+  it('approval requests render inline in the agent\'s card: Approve, Deny, Trust this agent', () => {
+    const v = view([
+      { type: 'agent_start', agentId: '1.2', role: 'StayAgent', model: 'm' },
+      { type: 'hitl_pause', agentId: '1.2', role: 'StayAgent', serverName: 'brave', toolName: 'web_search', args: {} },
+    ])
+    const requests = [agentRequest('1.2', 'StayAgent')]
+    const { rerender } = render(<MultiAgentSidebarView {...dockProps} view={v} permissionRequests={requests} />)
+    const card = screen.getByTestId('agent-card-1.2')
+    expect(within(card).getByText('Approval')).toBeTruthy()
+    expect(within(screen.getByTestId('step-1.2')).getByText('Analyzer · needs approval')).toBeTruthy()
+    fireEvent.click(within(card).getByText('Trust StayAgent for this run'))
+    expect(dockProps.onRespondPermission).toHaveBeenCalledWith({ requestId: 'q-1.2', approved: true, alwaysAllow: false, userNote: '', agentTrust: 'trust' })
+    rerender(<MultiAgentSidebarView {...dockProps} view={v} permissionRequests={[{ ...requests[0], requestId: 'q2' }]} />)
+    fireEvent.click(within(screen.getByTestId('agent-card-1.2')).getByText('Deny'))
+    expect(dockProps.onRespondPermission).toHaveBeenLastCalledWith({ requestId: 'q2', approved: false, alwaysAllow: false, userNote: '' })
+  })
+
+  it('read-only (a saved run): no Abort and no approvals', () => {
+    const v = view([
+      { type: 'agent_start', agentId: '1.2', role: 'StayAgent', model: 'm' },
+      { type: 'hitl_pause', agentId: '1.2', role: 'StayAgent', serverName: 'brave', toolName: 'web_search', args: {} },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} readOnly view={v} permissionRequests={[agentRequest('1.2', 'StayAgent')]} />)
+    expect(screen.queryByText('Abort')).toBeNull()
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.getByText('read-only')).toBeTruthy()
+  })
+
+  it('clicking a step focuses its card: it opens and scrolls into view', () => {
     const v = view([
       { type: 'agent_start', agentId: '1.1', role: 'R', model: 'm' },
-      { type: 'agent_complete', agentId: '1.1', output: 'x', tokenCount: 10, costUsd: 0.001 },
-      { type: 'reflection_result', agentId: '1.1', score: 2, passed: false, reason: 'too shallow' },
+      { type: 'agent_complete', agentId: '1.1', output: 'done', tokenCount: 1, costUsd: 0 },
+      { type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'ok' },
     ])
-    render(<MultiAgentPlanPane {...paneProps} view={v} />)
-    fireEvent.click(within(screen.getByTestId('plan-step-1.1')).getByTitle('Expand'))
-    expect(screen.getByText(/Reflection 2\/5 · failed — too shallow/)).toBeTruthy()
+    function Harness() {
+      const [focus, setFocus] = useState<string | null>(null)
+      return <MultiAgentSidebarView {...dockProps} view={v} focusAgentId={focus} onSelectAgent={setFocus} />
+    }
+    render(<Harness />)
+    expect(screen.getByTestId('agent-card-1.1').dataset.open).toBe('false')
+    fireEvent.click(screen.getByTestId('step-1.1'))
+    expect(screen.getByTestId('agent-card-1.1').dataset.open).toBe('true')
+    expect(screen.getByTestId('step-1.1').className).toContain('bg-ma-bg3')
+  })
+
+  it('Esc closes the dock', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={view()} />)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(dockProps.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows its run models as chips: orchestrator, reflection and synthesizer from run_config', () => {
+    const v = view([{
+      type: 'run_config', models: { orchestrator: 'meta-llama/llama-3.3-70b-instruct', worker: 'w', reflection: 'qwen/judge', synthesizer: 'qwen/qwen3-235b' },
+      sources: { orchestrator: 'saved', worker: 'active', reflection: 'saved', synthesizer: 'default' }, catalogueChecked: true,
+      maxAgents: 4, budgetCapUsd: 0.5, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium',
+    }])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    const chips = screen.getByLabelText('Run models').textContent
+    expect(chips).toBe('orch · llama-3.3-70b-instructreflect · judgesynth · qwen3-235b')
   })
 })
 
-describe('MultiAgentExecutionArea', () => {
-  const areaProps = { readOnly: false, permissionRequests: [], onRespondPermission: vi.fn(), focusAgentId: null, onSelectAgent: vi.fn(), onBack: vi.fn() }
-
-  it('renders one card per agent with status badge and a live token counter while streaming', () => {
-    const v = view([
-      { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm' },
-      { type: 'agent_token', agentId: '1.1', token: 'Searching ' },
-      { type: 'agent_token', agentId: '1.1', token: 'MU…' },
-    ])
-    render(<MultiAgentExecutionArea {...areaProps} view={v} />)
-    const card = screen.getByTestId('agent-card-1.1')
-    expect(within(card).getByText('Live')).toBeTruthy()
-    expect(within(card).getByText('~2 tok')).toBeTruthy()
-    expect(within(card).getByText('Searching MU…')).toBeTruthy()
-    expect(within(screen.getByTestId('agent-card-1.2')).getByText('Queued')).toBeTruthy()
-    expect(screen.queryByText('Back to chat')).toBeNull() // no leaving mid-run
+describe('Dock empty state and the main-area synthesis', () => {
+  it('says there is no run yet, and Esc closes it', () => {
+    const onClose = vi.fn()
+    render(<AgentDockEmpty onClose={onClose} />)
+    expect(screen.getByText('No agent run in this chat yet')).toBeTruthy()
+    expect(screen.getByText(/Turn on Multi-Agent in the input bar/)).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalled()
   })
 
-  it('collapses completed agents to a summary with exact usage, expandable, with the reflection gate', () => {
-    const v = view([
-      { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm' },
-      { type: 'agent_complete', agentId: '1.1', output: 'MU rose **14%** on HBM demand.', tokenCount: 1200, costUsd: 0.0042 },
-      { type: 'reflection_result', agentId: '1.1', score: 4, passed: true, reason: 'well sourced' },
+  it('before synthesis: counts passed agents; then streams with provenance chips that select the agent (D3)', () => {
+    const onSelect = vi.fn()
+    const waiting = view([
+      { type: 'agent_start', agentId: '1.1', role: 'R', model: 'm' },
+      { type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'ok' },
     ])
-    render(<MultiAgentExecutionArea {...areaProps} view={v} />)
-    const card = screen.getByTestId('agent-card-1.1')
-    expect(within(card).getByText('Pass')).toBeTruthy()
-    expect(within(card).getByText('1,200 tok · $0.0042')).toBeTruthy()
-    expect(within(card).getByText('MU rose 14% on HBM demand.')).toBeTruthy()
-    expect(within(card).getByTestId('reflection-gate').textContent).toContain('4/5 passed — well sourced')
-    fireEvent.click(within(card).getByText('MU rose 14% on HBM demand.'))
-    expect(within(card).getByText('Collapse')).toBeTruthy()
-  })
-
-  it('renders an agent\'s approval request inline in its card, with agent identity', () => {
-    const v = view([
-      { type: 'agent_start', agentId: '1.2', role: 'Analyzer', model: 'm' },
-      { type: 'hitl_pause', agentId: '1.2', role: 'Analyzer', serverName: 'fs', toolName: 'read_file', args: { path: '/x' } },
-    ])
-    const request: McpToolPermissionRequest = {
-      serverName: 'fs', toolName: 'read_file', args: { path: '/x' }, requestId: 'q1', chatId: 'c',
-      agent: { runId: 'run-1', agentId: '1.2', role: 'Analyzer', model: 'anthropic/claude-3.5-sonnet' }, timeoutMs: 300_000,
-    }
-    render(<MultiAgentExecutionArea {...areaProps} view={v} permissionRequests={[request]} />)
-    const card = screen.getByTestId('agent-card-1.2')
-    expect(within(card).getByText('Analyzer Agent needs approval')).toBeTruthy()
-    expect(within(card).getByText(/Analyzer Agent \(anthropic\/claude-3\.5-sonnet\) is requesting access to read_file/)).toBeTruthy()
-    fireEvent.click(within(card).getByText('Allow all from this agent'))
-    expect(areaProps.onRespondPermission).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'q1', approved: true, agentTrust: 'trust' }))
-  })
-
-  it('synthesis: provenance tags are clickable chips that select the source agent (D3); Back to chat when done', () => {
-    const v = view([
-      { type: 'synthesis_start' },
-      { type: 'task_complete', finalOutput: 'MU rose [1.1]; the code is ready [1.2].', totalCostUsd: 0.018, totalTokens: 12_400 },
-    ])
-    render(<MultiAgentExecutionArea {...areaProps} view={v} />)
-    const synthesis = screen.getByTestId('synthesis')
-    const chip = within(synthesis).getByText('1.1')
+    const { rerender } = render(<FinalSynthesis view={waiting} onSelectAgent={onSelect} />)
+    expect(screen.getByTestId('synthesis').textContent).toContain('Starts when every agent has passed its gate. Currently 1 of 2 passed.')
+    const streaming = view([{ type: 'synthesis_start' }, { type: 'synthesis_token', token: 'Rail first [1.1]; lodging [1.2].' }])
+    rerender(<FinalSynthesis view={streaming} onSelectAgent={onSelect} />)
+    const chip = within(screen.getByTestId('synthesis')).getByText('1.1')
     expect(chip.closest('a')?.getAttribute('href')).toBe('#agent-1.1')
     fireEvent.click(chip)
-    expect(areaProps.onSelectAgent).toHaveBeenCalledWith('1.1')
-    expect(within(synthesis).getByText(/\$0\.02 total · 12,400 tokens/)).toBeTruthy()
-    fireEvent.click(screen.getByText('Back to chat'))
-    expect(areaProps.onBack).toHaveBeenCalled()
+    expect(onSelect).toHaveBeenCalledWith('1.1')
+  })
+})
+
+describe('Sidebar — multi-agent rail button and dock width', () => {
+  const base = {
+    onToggleChat: vi.fn(), onToggleStarred: vi.fn(), onToggleAgents: vi.fn(), agentsPanel: <div>dock-content</div>, overlayDock: false,
+    chats: [], activeChatId: null, onSelectChat: vi.fn(), onNewChat: vi.fn(), onDeleteChat: vi.fn(), onRenameChat: vi.fn(),
+    onStarChat: vi.fn(), onOpenSettings: vi.fn(),
+  }
+  const rail = (state: AgentRailState['state'], count = 0, visible = true): AgentRailState => ({ visible, state, count })
+
+  it('is hidden until a run exists, then carries the run state: live (red + count), approval (amber + count), done, plain when open', () => {
+    const { rerender } = render(<Sidebar {...base} sidebarMode="chat" agentRail={rail('idle', 0, false)} />)
+    expect(screen.queryByTitle('Agent run')).toBeNull()
+    rerender(<Sidebar {...base} sidebarMode="chat" agentRail={rail('live', 3)} />)
+    expect(screen.getByTitle('Agent run').dataset.state).toBe('live')
+    expect(screen.getByTestId('agent-rail-badge').textContent).toBe('3')
+    rerender(<Sidebar {...base} sidebarMode="chat" agentRail={rail('approval', 1)} />)
+    expect(screen.getByTitle('Agent run').dataset.state).toBe('approval')
+    expect(screen.getByTestId('agent-rail-badge').textContent).toBe('1')
+    rerender(<Sidebar {...base} sidebarMode="chat" agentRail={rail('done')} />)
+    expect(screen.getByTitle('Agent run').dataset.state).toBe('done')
+    expect(screen.queryByTestId('agent-rail-badge')).toBeNull()
+    rerender(<Sidebar {...base} sidebarMode="agents" agentRail={rail('live', 3)} />)
+    expect(screen.getByTitle('Agent run').dataset.state).toBe('open')
+    expect(screen.queryByTestId('agent-rail-badge')).toBeNull()
+    fireEvent.click(screen.getByTitle('Agent run'))
+    expect(base.onToggleAgents).toHaveBeenCalled()
+  })
+
+  it('one panel, two widths: 264 px for chats and favourites, 760 px for the dock, 0 when closed; overlay below 1280 px', () => {
+    const { rerender } = render(<Sidebar {...base} sidebarMode="chat" agentRail={rail('live', 1)} />)
+    const panel = (): HTMLElement => screen.getByTestId('sidebar-panel')
+    expect(panel().style.width).toBe('264px')
+    rerender(<Sidebar {...base} sidebarMode="starred" agentRail={rail('live', 1)} />)
+    expect(panel().style.width).toBe('264px')
+    rerender(<Sidebar {...base} sidebarMode="agents" agentRail={rail('live', 1)} />)
+    expect(panel().style.width).toBe('760px')
+    expect(screen.getByText('dock-content')).toBeTruthy()
+    expect(screen.queryByText('No chats yet')).toBeNull()
+    expect(panel().style.position).toBe('')
+    rerender(<Sidebar {...base} sidebarMode="agents" overlayDock agentRail={rail('live', 1)} />)
+    expect(panel().style.position).toBe('absolute')
+    rerender(<Sidebar {...base} sidebarMode={null} agentRail={rail('live', 1)} />)
+    expect(panel().style.width).toBe('0px')
   })
 })
 

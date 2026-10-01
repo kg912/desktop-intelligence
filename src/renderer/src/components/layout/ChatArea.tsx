@@ -15,6 +15,8 @@ interface ChatAreaProps {
   activeChatId:             string | null
   onSuggest?:               (text: string) => void
   chatSystemInstructions?:  string | null
+  /** Rendered after the last message, in the same column (e.g. a live multi-agent synthesis). */
+  footer?:                  React.ReactNode
 }
 
 export const ChatIdCtx = createContext<string | null>(null)
@@ -25,7 +27,7 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
+function ChatArea({ activeChatId, onSuggest, chatSystemInstructions, footer }, ref) {
   useSignals()
   const { compactToast } = useModelRuntime()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -268,6 +270,7 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions }, ref) {
             </ChatIdCtx.Provider>
           </div>
         )}
+        {hasMessages && footer && <div className="mx-auto max-w-[55rem] px-6 pb-40">{footer}</div>}
     </div>
   )
 })
