@@ -2,7 +2,7 @@
 // §08 Frontend). applyAgentEvent() touches only what an event changes, so a
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
-import type { AgentEvent, AgentStep, HitlPauseEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
+import type { AgentEvent, AgentStep, HitlPauseEvent, OutputLimit, RunConfigEvent, RunTotals } from '../../../shared/types'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled'
 
@@ -41,6 +41,8 @@ export interface AgentView {
   timeline: TimelineItem[]
   failure?: string
   pause?: HitlPauseEvent
+  /** The answer hit an output limit. */
+  truncated?: OutputLimit
   startedAt?: number
   endedAt?: number
 }
@@ -57,6 +59,7 @@ export interface RunView {
   runConfig?: RunConfigEvent
   synthesis: string
   finalOutput?: string
+  synthesisTruncated?: OutputLimit
   failureReason?: string
   totals: RunTotals
   startedAt: number
@@ -143,7 +146,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
       }))
     case 'agent_complete':
       return updateAgent(next, event.agentId, () => ({
-        output: event.output, tokenCount: event.tokenCount, costUsd: event.costUsd, status: 'done', endedAt: event.ts,
+        output: event.output, tokenCount: event.tokenCount, costUsd: event.costUsd, status: 'done', endedAt: event.ts, truncated: event.truncated,
       }))
     case 'reflection_start':
       return updateAgent(next, event.agentId, () => ({ status: 'reflecting' }))
@@ -164,7 +167,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
     case 'retry':
       return updateAgent(next, event.agentId, (a) => ({
         // The rejected attempt's output must not linger as if it were the answer.
-        status: 'retrying', attempt: a.attempt + 1, liveText: '', streamedTokens: 0, output: undefined, endedAt: undefined,
+        status: 'retrying', attempt: a.attempt + 1, liveText: '', streamedTokens: 0, output: undefined, endedAt: undefined, truncated: undefined,
       }))
     case 'agent_failed':
       return updateAgent(next, event.agentId, () => ({ status: 'failed', failure: event.reason, pause: undefined, endedAt: event.ts }))
@@ -178,6 +181,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
         phase: 'complete',
         finalOutput: event.finalOutput,
         synthesis: event.finalOutput,
+        synthesisTruncated: event.truncated,
         totals: { ...next.totals, costUsd: event.totalCostUsd, tokens: event.totalTokens },
         endedAt: event.ts,
       }
@@ -225,6 +229,11 @@ export function inputLockMessage(view: RunView): string | null {
   if (paused.length === 1) return `${paused[0].step.role} Agent needs your approval`
   if (paused.length > 1) return `${paused.length} agents need your approval`
   return view.phase === 'synthesizing' ? 'Synthesizing the final answer…' : 'Agents running…'
+}
+
+export const CUT_OFF_LABEL: Record<OutputLimit, string> = {
+  budget:  'Cut off: budget cap',
+  context: 'Cut off: context window',
 }
 
 export function elapsedMs(agent: AgentView, now: number): number | null {

@@ -59,6 +59,10 @@ interface Reply {
   delayMs?: number
   /** Streamed before content as both `delta.reasoning` and `delta.reasoning_details` (as OpenRouter does). */
   reasoning?: string
+  /** Overrides the final chunk's finish_reason (e.g. "length"). */
+  finishReason?: string
+  /** Answer with this HTTP error instead of a stream. */
+  httpError?: { status: number; message: string }
 }
 type Body = {
   model: string
@@ -90,6 +94,12 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
       const record = { body, auth: req.headers.authorization, start: Date.now(), end: 0 }
       fake.requests.push(record)
       const reply = route(body)
+      if (reply.httpError) {
+        record.end = Date.now()
+        res.writeHead(reply.httpError.status, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: reply.httpError.message, code: reply.httpError.status } }))
+        return
+      }
       // Honour max_tokens like the real API does; cost from the fake price list.
       const completion = Math.min(body.max_tokens ?? COMPLETION_TOKENS, COMPLETION_TOKENS)
       const price = fake.pricing[body.model]
@@ -109,7 +119,7 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
           send({ choices: [{ index: 0, delta: { tool_calls: [{ index, function: { arguments: call.args.slice(half) } }] } }] })
         })
         send({
-          choices: [{ index: 0, delta: {}, finish_reason: reply.toolCalls ? 'tool_calls' : 'stop' }],
+          choices: [{ index: 0, delta: {}, finish_reason: reply.finishReason ?? (reply.toolCalls ? 'tool_calls' : 'stop') }],
           usage: { prompt_tokens: PROMPT_TOKENS, completion_tokens: completion, total_tokens: PROMPT_TOKENS + completion, cost },
         })
         record.end = Date.now()
@@ -755,6 +765,87 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(streamed).not.toMatch(/DSML/)
     expect(streamed).toContain('Let me search.')
     expect(run.sent.find((e) => e.type === 'agent_complete')).toMatchObject({ output: expect.stringMatching(/^Hotel Müller is 300 m/) })
+  }, 60_000)
+
+  // ── Part F: output limits ───────────────────────────────────────────────────
+
+  async function limitRun(opts: { pricing?: Record<string, { prompt: number; completion: number; contextLength?: number }>; scout?: (body: Body) => Reply; synth?: Reply }): Promise<AgentEvent[]> {
+    fake.requests.length = 0
+    planOverride = () => ({ content: JSON.stringify([{ id: '1.1', label: 'Draft the 12-day itinerary', role: 'Scout', dependsOn: [] }]) })
+    replyOverride = (body) => {
+      if (systemOf(body).includes('Scout agent')) return opts.scout?.(body) ?? { content: 'Day 1: Vienna. Day 2: Salzburg. A long itinerary follows here.' }
+      if (systemOf(body).includes('synthesize') && opts.synth) return opts.synth
+      return undefined
+    }
+    try {
+      return await runToEnd(mgr, { pricing: opts.pricing as never, onEvent: approvePlan(mgr) })
+    } finally {
+      planOverride = null
+      replyOverride = null
+    }
+  }
+  const scoutRequests = (): Body[] => fake.requests.filter((r) => systemOf(r.body).includes('Scout agent')).map((r) => r.body)
+  const synthRequest = (): Body => fake.requests.find((r) => systemOf(r.body).includes('synthesize'))!.body
+
+  it('Part F: no fixed caps — priced requests are bounded by the remaining context window, far above 32,768 / 2,000', async () => {
+    const price = { prompt: 1e-9, completion: 1e-9, contextLength: 200_000 }
+    const pricing = { 'fake/planner': price, 'fake/worker': price, 'fake/reviewer': price, 'fake/synth': price }
+    fake.pricing = pricing
+    try {
+      const events = await limitRun({ pricing })
+      expect(events.at(-1)?.type).toBe('task_complete')
+      // window − 1.25 × the prompt estimate (exact formula asserted in resources/python/test_plan_request.py;
+      // the sidecar measures Python's json.dumps, a few chars longer than JSON.stringify).
+      for (const body of [scoutRequests()[0], synthRequest()]) {
+        const prompt = Math.ceil(JSON.stringify(body.messages).length / 4)
+        expect(body.max_tokens!).toBeLessThanOrEqual(200_000 - Math.ceil(prompt * 1.25))
+        expect(body.max_tokens!).toBeGreaterThan(200_000 - Math.ceil(prompt * 1.25) - 50)
+      }
+    } finally {
+      fake.pricing = {}
+    }
+  }, 60_000)
+
+  it('Part F: unpriced models get no max_tokens at all', async () => {
+    const events = await limitRun({})
+    expect(events.at(-1)?.type).toBe('task_complete')
+    expect(fake.requests.length).toBeGreaterThan(3)
+    expect(fake.requests.filter((r) => 'max_tokens' in r.body)).toEqual([])
+  }, 60_000)
+
+  it('Part F: finish_reason "length" marks the agent and the synthesis as cut off, saying which limit', async () => {
+    const price = { prompt: 1e-6, completion: 1e-5, contextLength: 1_000_000 } // budget binds before the window
+    const pricing = { 'fake/worker': price, 'fake/synth': price }
+    fake.pricing = pricing
+    try {
+      const events = await limitRun({
+        pricing,
+        scout: () => ({ content: 'Day 1: Vienna. Day 2: Salzburg. Day 3: Hallst', finishReason: 'length' }),
+        synth: { content: 'Itinerary: Vienna [1.1], Salzburg [1.1], Hallst', finishReason: 'length' },
+      })
+      expect(events.find((e) => e.type === 'agent_complete')).toMatchObject({ agentId: '1.1', truncated: 'budget' })
+      expect(events.at(-1)).toMatchObject({ type: 'task_complete', truncated: 'budget' })
+      // Unpriced (no max_tokens sent): the model's own window ended it.
+      fake.pricing = {}
+      const unpriced = await limitRun({ scout: () => ({ content: 'Day 1: Vienna. Day 2: Salzburg. Day 3: Hallst', finishReason: 'length' }) })
+      expect(unpriced.find((e) => e.type === 'agent_complete')).toMatchObject({ truncated: 'context' })
+      expect(unpriced.at(-1)).not.toHaveProperty('truncated')
+    } finally {
+      fake.pricing = {}
+    }
+  }, 60_000)
+
+  it('Part F: a context-length error from the API is a clear agent failure, not a generic error', async () => {
+    const events = await limitRun({
+      scout: () => ({ httpError: { status: 400, message: "This endpoint's maximum context length is 131072 tokens. However, you requested about 140000 tokens." } }),
+    })
+    expect(events.find((e) => e.type === 'agent_failed')).toMatchObject({
+      agentId: '1.1',
+      reason: "Context window exceeded for fake/worker: This endpoint's maximum context length is 131072 tokens. However, you requested about 140000 tokens.",
+    })
+    // A non-context provider error keeps the generic HTTP wording.
+    const other = await limitRun({ scout: () => ({ httpError: { status: 502, message: 'upstream unavailable' } }) })
+    expect(other.find((e) => e.type === 'agent_failed')).toMatchObject({ reason: 'OpenRouter HTTP 502: upstream unavailable' })
   }, 60_000)
 
   it('requires the per-launch token on every endpoint', async () => {

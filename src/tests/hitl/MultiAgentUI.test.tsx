@@ -580,3 +580,41 @@ describe('Reasoning view and card fixes (Part E)', () => {
     expect(chevron('1.1')).toBe(chevron('1.2'))
   })
 })
+
+describe('Output limits (Part F)', () => {
+  it('a cut-off agent and a cut-off synthesis show which limit ended them', () => {
+    const v = view([
+      { type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 },
+      { type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'Day 1: Vienna. Day 2: Hallst', tokenCount: 9, costUsd: 0, truncated: 'budget' },
+      { type: 'agent_start', agentId: '1.2', role: 'A', model: 'm', attempt: 0 },
+      { type: 'agent_complete', agentId: '1.2', attempt: 0, output: 'Full answer', tokenCount: 9, costUsd: 0 },
+      { type: 'synthesis_start' },
+      { type: 'task_complete', finalOutput: 'Itinerary [1.1]', totalCostUsd: 0, totalTokens: 9, truncated: 'context' },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    expect(screen.getByTestId('cut-off-1.1').textContent).toBe('Cut off: budget cap')
+    expect(screen.queryByTestId('cut-off-1.2')).toBeNull()
+    render(<FinalSynthesis view={v} onSelectAgent={vi.fn()} />)
+    expect(screen.getByTestId('cut-off-synthesis').textContent).toBe('Cut off: context window')
+  })
+
+  it('a retry clears the previous attempt\'s cut-off', () => {
+    const v = view([
+      { type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 },
+      { type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'x', tokenCount: 1, costUsd: 0, truncated: 'context' },
+      { type: 'retry', agentId: '1.1', attempt: 1, reason: 'too short' },
+    ])
+    expect(v.agents['1.1'].truncated).toBeUndefined()
+  })
+
+  it('the budget cap setting explains that it is the only output limit besides the context window', async () => {
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({ models: [], error: null }),
+      getBackendSettings: vi.fn().mockResolvedValue({ provider: 'openrouter', openrouterModel: 'x/y' }),
+    }
+    render(<MultiAgentSettingsPanel />)
+    expect(await screen.findByText("Output length is limited only by this budget and the model's context window.")).toBeTruthy()
+  })
+})

@@ -293,6 +293,11 @@ describe('MultiAgentRunCoordinator events', () => {
     expect(h.sent.at(-1)?.type).toBe('task_complete')
   })
 
+  it('a cut-off synthesis is never silent in the saved chat message', () => {
+    h.sidecar.push({ type: 'task_complete', seq: 1, finalOutput: 'Day 1: Vienna', totalCostUsd: 0.01, totalTokens: 10, truncated: 'budget' } as never)
+    expect(h.db.saveAssistantMessage).toHaveBeenCalledWith('chat-1', expect.any(String), 'Day 1: Vienna\n\n_Cut off: the final answer reached the run budget cap._')
+  })
+
   it('on failure: saves the reason plus any partial agent outputs', () => {
     h.sidecar.push({ type: 'agent_complete', seq: 1, agentId: '1.1', output: 'Partial A', tokenCount: 1, costUsd: 0 } as never)
     h.sidecar.push({ type: 'task_failed', seq: 2, reason: 'Run aborted by user' } as never)

@@ -86,7 +86,7 @@ export function MultiAgentSettingsPanel() {
       <Field label="Max agents" value={config.maxAgents}>
         <RangeSlider aria-label="Max agents" value={config.maxAgents} min={1} max={8} onChange={(v) => update('maxAgents', v)} />
       </Field>
-      <Field label="Per-run budget cap (USD)" htmlFor="ma-budget">
+      <Field label="Per-run budget cap (USD)" htmlFor="ma-budget" help="Output length is limited only by this budget and the model's context window.">
         <NumberInput id="ma-budget" min={0} step="0.05" value={config.budgetCapUsd}
           onChange={(e) => update('budgetCapUsd', Math.max(0, Number(e.target.value) || 0))} />
       </Field>

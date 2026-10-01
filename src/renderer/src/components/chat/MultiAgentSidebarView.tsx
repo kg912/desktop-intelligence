@@ -8,7 +8,7 @@ import { ChevronDown, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
-import { elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
+import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
@@ -379,6 +379,7 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
             </span>
           )}
         </span>
+        {agent.truncated && <CutOffChip limit={agent.truncated} testId={`cut-off-${step.id}`} />}
         <span className={cn('inline-flex h-5 items-center rounded-[5px] border-[0.5px] px-[7px] font-mono text-[11.5px]', TAG_TONE[tag.tone])}>{tag.label}</span>
         <ChevronDown className={cn('h-[18px] w-[18px] flex-none text-ma-mute transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.6} />
       </button>
@@ -442,6 +443,18 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean 
     >
       {text}
     </div>
+  )
+}
+
+function CutOffChip({ limit, testId }: { limit: 'budget' | 'context'; testId: string }) {
+  return (
+    <span
+      data-testid={testId}
+      title={limit === 'budget' ? 'The answer reached the output the remaining budget allows.' : "The answer filled the model's context window."}
+      className="inline-flex h-5 flex-none items-center rounded-[5px] border-[0.5px] border-ma-amber/30 bg-ma-amber/10 px-[7px] font-mono text-[11.5px] text-ma-amber"
+    >
+      {CUT_OFF_LABEL[limit]}
+    </span>
   )
 }
 
@@ -540,7 +553,10 @@ export function FinalSynthesis({ view, onSelectAgent }: { view: RunView; onSelec
   const passed = view.steps.filter((s) => view.agents[s.id]?.status === 'done').length
   return (
     <div className="mt-5 rounded-[14px] border-[0.5px] border-ma-red/35 bg-gradient-to-b from-ma-red/[0.06] to-ma-red/[0.02] px-[18px] py-4" data-testid="synthesis">
-      <div className="flex items-center gap-2 text-[13px] font-medium text-ma-redtext"><Network className="h-4 w-4" strokeWidth={1.6} />Final synthesis</div>
+      <div className="flex items-center gap-2 text-[13px] font-medium text-ma-redtext">
+        <Network className="h-4 w-4" strokeWidth={1.6} />Final synthesis
+        {view.synthesisTruncated && <CutOffChip limit={view.synthesisTruncated} testId="cut-off-synthesis" />}
+      </div>
       {view.synthesis ? (
         <div
           className="provenance mt-2 text-[14px] leading-relaxed text-ma-soft"

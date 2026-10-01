@@ -342,7 +342,11 @@ export class MultiAgentRunCoordinator {
   }
 
   private finalMessage(run: RunContext, terminal: Extract<AgentEvent, { type: 'task_complete' | 'task_failed' }>): string {
-    if (terminal.type === 'task_complete') return terminal.finalOutput
+    if (terminal.type === 'task_complete') {
+      if (!terminal.truncated) return terminal.finalOutput
+      const why = terminal.truncated === 'budget' ? 'the run budget cap' : "the synthesizer model's context window"
+      return `${terminal.finalOutput}\n\n_Cut off: the final answer reached ${why}._`
+    }
     const outputs = new Map<string, string>()
     for (const e of run.trace) if (e.type === 'agent_complete') outputs.set(e.agentId, e.output)
     const partial = [...outputs].map(([id, text]) => `**[${id}]** ${text}`).join('\n\n')

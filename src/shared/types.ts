@@ -604,7 +604,12 @@ export interface AgentCompleteEvent extends AgentEventBase, AgentAttempt {
   /** This agent's cumulative OpenRouter usage across all attempts and tool rounds. */
   tokenCount: number
   costUsd:    number
+  /** finish_reason "length": the answer was cut off by this limit. */
+  truncated?: OutputLimit
 }
+
+/** Which limit ended a generation early: the run's budget cap or the model's context window. */
+export type OutputLimit = 'budget' | 'context'
 
 /**
  * One agent failed (retry limit, HITL timeout, model error, budget). The run
@@ -731,6 +736,8 @@ export interface TaskCompleteEvent extends AgentEventBase {
   finalOutput:  string
   totalCostUsd: number
   totalTokens:  number
+  /** The synthesis was cut off by this limit. */
+  truncated?:   OutputLimit
 }
 
 export interface TaskFailedEvent extends AgentEventBase {

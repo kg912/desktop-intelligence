@@ -47,15 +47,16 @@ OPENROUTER_BASE_URL = os.environ.get("DI_OPENROUTER_BASE_URL", "https://openrout
 
 # Must match ESTIMATE.toolRoundsMax in src/shared/multiAgentModels.ts.
 MAX_TOOL_ROUNDS = 6
+# urllib's timeout is per socket operation (connect, each read), not per request: a long
+# generation keeps streaming chunks (and OpenRouter sends ": PROCESSING" keep-alives while
+# the model thinks), so this only ends a stream that has gone silent for 120 s.
 REQUEST_TIMEOUT_S = 120
 RUN_RETENTION_S = 600
 # Budget held back so a partial synthesis can always run within the cap.
 SYNTHESIS_RESERVE_PROMPT_TOKENS = 6_000
 SYNTHESIS_RESERVE_COMPLETION_TOKENS = 1_500
-SYNTHESIS_MAX_COMPLETION_TOKENS = 2_000
-# Budget alone can imply millions of tokens on cheap models; providers 400 when
-# max_tokens exceeds the context window. Hard ceiling when context is unknown.
-MAX_COMPLETION_TOKENS = 32_768
+# No fixed output caps: max_tokens is bounded only by the budget allowance (which keeps the
+# per-run cap honest) and the model's remaining context window; unpriced models get none.
 # Below this a request is not worth sending; it waits for budget or the cap is reached.
 MIN_REQUEST_TOKENS = 16
 # Trace previews (spec refinement Phase 2); full tool results stay in message history.
@@ -124,6 +125,20 @@ class BudgetReached(Exception):
 
 class AgentFailed(Exception):
     pass
+
+
+# Provider wording for "the request does not fit the model's context window".
+CONTEXT_ERROR_RE = re.compile(r"context(?:[ _-]length| window)|maximum context|too many tokens|prompt is too long|tokens? exceeds?", re.I)
+
+
+class ContextExceeded(AgentFailed):
+    """The model's context window cannot hold the request: a clear agent failure, never a generic error."""
+
+
+def provider_error(model: str, detail: str, prefix: str) -> Exception:
+    if CONTEXT_ERROR_RE.search(detail):
+        return ContextExceeded(f"Context window exceeded for {model}: {detail[:300]}")
+    return RuntimeError(f"{prefix}: {detail[:300]}")
 
 
 def require_token(x_di_token: str = Header(default="")) -> None:
@@ -227,15 +242,18 @@ class Run:
             self.reserved = 0.0
         self.budget_changed.notify_all()
 
-    def plan_request(self, model: str, messages: list[dict[str, Any]], *, synthesis: bool) -> tuple[int | None, float, float]:
-        """(max_tokens, worst-case cost, shortfall) keeping total spend — including
-        other in-flight requests' reservations — within the cap. None = unbounded
-        (unpriced). Workers running in parallel each get at most an equal share of
-        the uncommitted allowance, so one request cannot reserve the whole cap and
-        serialise the others. shortfall > 0 means even MIN_REQUEST_TOKENS do not fit."""
+    def plan_request(self, model: str, messages: list[dict[str, Any]], *, synthesis: bool) -> tuple[int | None, float, float, str | None]:
+        """(max_tokens, worst-case cost, shortfall, binding limit) keeping total spend —
+        including other in-flight requests' reservations — within the cap. max_tokens is
+        the smaller of the budget allowance and the model's remaining context window;
+        there is no fixed cap. None = not sent (unpriced: no budget bound, no known
+        context). Workers running in parallel each get at most an equal share of the
+        uncommitted allowance, so one request cannot reserve the whole cap and serialise
+        the others. shortfall > 0 means even MIN_REQUEST_TOKENS do not fit. The binding
+        limit ("budget" | "context") explains a finish_reason of "length"."""
         p = self.price(model)
         if not p or p.completion == 0:
-            return (SYNTHESIS_MAX_COMPLETION_TOKENS if synthesis else None), 0.0, 0.0
+            return None, 0.0, 0.0, None
         uncommitted = self.config.budgetCapUsd - self.total_cost - (0.0 if synthesis else self.synthesis_reserve())
         allowance = uncommitted - self.reserved
         if not synthesis:
@@ -243,15 +261,15 @@ class Run:
         prompt_tokens = estimate_tokens(json.dumps(messages))
         prompt_cost = prompt_tokens * p.prompt
         tokens = math.floor((allowance - prompt_cost) / p.completion)
-        tokens = min(tokens, MAX_COMPLETION_TOKENS)
+        bound = "budget"
         if p.contextLength:  # 1.25x: estimate_tokens is len/4, real tokenisers can run denser
-            tokens = min(tokens, p.contextLength - math.ceil(prompt_tokens * 1.25))
-        if synthesis:
-            tokens = min(tokens, SYNTHESIS_MAX_COMPLETION_TOKENS)
+            room = p.contextLength - math.ceil(prompt_tokens * 1.25)
+            if room < tokens:
+                tokens, bound = room, "context"
         shortfall = max(0.0, prompt_cost + MIN_REQUEST_TOKENS * p.completion - (uncommitted - self.reserved))
         if not shortfall:  # the equal share may be tiny, but a minimal request still fits
             tokens = max(tokens, MIN_REQUEST_TOKENS)
-        return tokens, prompt_cost + max(tokens, 0) * p.completion, shortfall
+        return tokens, prompt_cost + max(tokens, 0) * p.completion, shortfall, bound
 
 
 RUNS: dict[str, Run] = {}
@@ -305,6 +323,7 @@ def _stream_openrouter(
     details: list[dict[str, Any]] = []
     tool_calls: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
+    finish_reason = ""
     try:
         with urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:  # nosec B310 — fixed URL
             for raw in response:
@@ -318,10 +337,11 @@ def _stream_openrouter(
                     break
                 chunk = json.loads(data)
                 if chunk.get("error"):
-                    raise RuntimeError(f"OpenRouter error: {chunk['error'].get('message', chunk['error'])}")
+                    raise provider_error(model, str(chunk["error"].get("message", chunk["error"])), "OpenRouter error")
                 if chunk.get("usage"):
                     usage = chunk["usage"]
                 for choice in chunk.get("choices") or []:
+                    finish_reason = choice.get("finish_reason") or finish_reason
                     delta = choice.get("delta") or {}
                     text = EOS_RE.sub("", delta.get("content") or "")
                     if text:
@@ -350,12 +370,14 @@ def _stream_openrouter(
             detail = json.loads(body).get("error", {}).get("message") or body
         except (ValueError, AttributeError):
             detail = body
-        raise RuntimeError(f"OpenRouter HTTP {err.code}: {detail[:300]}") from None
+        raise provider_error(model, str(detail), f"OpenRouter HTTP {err.code}") from None
     message: dict[str, Any] = {"role": "assistant", "content": EOS_RE.sub("", "".join(content))}
     if tool_calls:
         message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
     if details:
         message["reasoning_details"] = details
+    if finish_reason:
+        message["finish_reason"] = finish_reason
     return message, usage
 
 
@@ -439,7 +461,7 @@ async def ask(
         raise BudgetReached()
     async with run.budget_changed:
         while True:
-            max_tokens, worst_case, shortfall = run.plan_request(model, messages, synthesis=synthesis)
+            max_tokens, worst_case, shortfall, bound = run.plan_request(model, messages, synthesis=synthesis)
             if max_tokens is None or max_tokens >= MIN_REQUEST_TOKENS:
                 run.reserved += worst_case
                 break
@@ -485,6 +507,9 @@ async def ask(
     async with run.budget_changed:
         tokens, cost = run.account(model, usage)  # charge actual cost before releasing the reservation
         run.release(worst_case)
+    if message.get("finish_reason") == "length":
+        # Never silent: which limit ended it. Unpriced models had no max_tokens, so the model's own window did.
+        message["truncated"] = bound or "context"
     return message, tokens, cost
 
 
@@ -730,6 +755,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             await run.emit("agent_reasoning", agentId=agent_id, attempt=attempt, token=text)
 
         output = ""
+        truncated: str | None = None
         evidence: list[str] = []
         try:
             for _round in range(MAX_TOOL_ROUNDS):
@@ -749,6 +775,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                         calls = dsml_calls
                 if not calls:
                     output = text
+                    truncated = reply.get("truncated")
                     break
                 assistant: dict[str, Any] = {"role": "assistant", "content": text, "tool_calls": calls}
                 if reply.get("reasoning_details"):  # OpenRouter requires these back for tool-using reasoning models
@@ -785,7 +812,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 raise AgentFailed("budget cap reached before this agent produced an answer") from None
         if not output:
             raise AgentFailed("no final answer after the maximum number of tool rounds")
-        await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8))
+        await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
+                       **({"truncated": truncated} if truncated else {}))
 
         if run.budget_reached:
             return output  # no reflection spend once the cap is reached; output kept as-is
@@ -889,15 +917,18 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     async def on_token(text: str) -> None:
         await run.emit("synthesis_token", token=text)
 
+    truncated = None
     try:
         reply, _, _ = await ask(run, run.config.models.get("synthesizer", ""), prompt, on_token=on_token, synthesis=True)
         final = str(reply.get("content") or "")
+        truncated = reply.get("truncated")
     except BudgetReached:
         # Remaining budget cannot cover even a short synthesis: deliver the
         # partial outputs verbatim, provenance intact, with zero extra spend.
         final = "Budget cap reached — partial results from the agents that finished:\n\n" + "\n\n".join(f"[{k}] {v}" for k, v in outputs.items())
         await run.emit("synthesis_token", token=final)
-    await run.emit("task_complete", finalOutput=final, totalCostUsd=round(run.total_cost, 8), totalTokens=run.total_tokens)
+    await run.emit("task_complete", finalOutput=final, totalCostUsd=round(run.total_cost, 8), totalTokens=run.total_tokens,
+                   **({"truncated": truncated} if truncated else {}))
     return state
 
 
