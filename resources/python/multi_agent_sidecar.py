@@ -20,7 +20,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -58,6 +58,15 @@ SYNTHESIS_MAX_COMPLETION_TOKENS = 2_000
 MAX_COMPLETION_TOKENS = 32_768
 # Below this a request is not worth sending; it waits for budget or the cap is reached.
 MIN_REQUEST_TOKENS = 16
+# Trace previews (spec refinement Phase 2); full tool results stay in message history.
+ARGS_PREVIEW_CHARS = 400
+RESULT_PREVIEW_CHARS = 1_200
+REFLECTION_RUBRIC = [
+    "Answers the subtask it was given",
+    "Claims are backed by tool evidence or explicitly marked as unverified",
+    "No invented bookings, prices or timetables",
+    "Consistent with the outputs of the earlier agents it depends on",
+]
 
 
 class Pricing(BaseModel):
@@ -74,6 +83,7 @@ class Config(BaseModel):
     maxRetriesPerAgent: int = Field(ge=0, le=5)
     hitlTimeoutMs: int = Field(ge=1_000)
     requirePermissions: bool = True
+    reasoningEffort: Literal["off", "low", "medium", "high"] = "medium"
 
 
 class RunRequest(BaseModel):
@@ -85,6 +95,8 @@ class RunRequest(BaseModel):
     openRouterApiKey: str = Field(min_length=1)
     # USD per token, from Electron's OpenRouter catalogue. Missing = unknown.
     pricing: dict[str, Pricing] = Field(default_factory=dict)
+    # Catalogue says these models take no `reasoning` parameter.
+    noReasoning: list[str] = Field(default_factory=list)
 
 
 class HitlResponse(BaseModel):
@@ -129,6 +141,8 @@ class Run:
     active_workers: int = 0
     executor: ThreadPoolExecutor | None = None
     started: float = field(default_factory=time.monotonic)
+    # agentId → current 0-based attempt, so events emitted outside run_worker carry it too.
+    attempts: dict[str, int] = field(default_factory=dict)
 
     @property
     def config(self) -> Config:
@@ -154,15 +168,18 @@ class Run:
             for subscriber in list(self.subscribers):
                 subscriber.put_nowait(None)
 
+    def attempt_of(self, agent_id: str) -> dict[str, int]:
+        return {"attempt": self.attempts[agent_id]} if agent_id in self.attempts else {}
+
     async def wait_for_approval(self, agent_id: str, role: str, model: str, tool_name: str, server_name: str, args: dict[str, Any]) -> tuple[bool, str]:
         future: asyncio.Future[tuple[bool, str]] = asyncio.get_running_loop().create_future()
         self.approvals[agent_id] = future
-        await self.emit("hitl_pause", agentId=agent_id, role=role, model=model, toolName=tool_name, serverName=server_name, args=args)
+        await self.emit("hitl_pause", agentId=agent_id, role=role, model=model, toolName=tool_name, serverName=server_name, args=args, **self.attempt_of(agent_id))
         try:
             return await asyncio.wait_for(future, timeout=self.config.hitlTimeoutMs / 1000)
         except asyncio.TimeoutError:
             # Spec §07: auto-deny on timeout; the UI must see the pause end.
-            await self.emit("hitl_resume", agentId=agent_id, approved=False)
+            await self.emit("hitl_resume", agentId=agent_id, approved=False, **self.attempt_of(agent_id))
             raise AgentFailed(f"approval for {server_name}:{tool_name} timed out after {self.config.hitlTimeoutMs // 1000}s") from None
         finally:
             self.approvals.pop(agent_id, None)
@@ -241,9 +258,12 @@ def _stream_openrouter(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
     max_tokens: int | None,
-    on_delta: Callable[[str], None],
+    on_delta: Callable[[str, str], None],
     cancelled: Callable[[], bool],
+    reasoning_effort: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """on_delta(kind, text): kind is "content" or "reasoning". Reasoning is
+    returned only as reasoning_details (for tool round-trips), never in content."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -257,6 +277,8 @@ def _stream_openrouter(
     if tools:
         payload["tools"] = [{"type": "function", "function": tool} for tool in tools]
         payload["tool_choice"] = "auto"
+    if reasoning_effort:
+        payload["reasoning"] = {"effort": reasoning_effort}
     request = Request(
         f"{OPENROUTER_BASE_URL}/chat/completions",
         data=json.dumps(payload).encode(),
@@ -268,6 +290,7 @@ def _stream_openrouter(
         },
     )
     content: list[str] = []
+    details: list[dict[str, Any]] = []
     tool_calls: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
     try:
@@ -291,7 +314,17 @@ def _stream_openrouter(
                     text = delta.get("content")
                     if text:
                         content.append(text)
-                        on_delta(text)
+                        on_delta("content", text)
+                    detail_text = ""
+                    for detail in delta.get("reasoning_details") or []:
+                        if not isinstance(detail, dict):
+                            continue
+                        detail_text += str(detail.get("text") or detail.get("summary") or "")
+                        merge_reasoning_detail(details, detail)
+                    # OpenRouter usually mirrors the same text in both fields: forward it once.
+                    thought = delta.get("reasoning") or detail_text
+                    if thought:
+                        on_delta("reasoning", thought)
                     for call in delta.get("tool_calls") or []:
                         slot = tool_calls.setdefault(int(call.get("index", 0)), {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                         if call.get("id"):
@@ -309,7 +342,23 @@ def _stream_openrouter(
     message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
     if tool_calls:
         message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+    if details:
+        message["reasoning_details"] = details
     return message, usage
+
+
+def merge_reasoning_detail(details: list[dict[str, Any]], chunk: dict[str, Any]) -> None:
+    """Streamed reasoning_details arrive as fragments; rebuild whole entries
+    (same index → concatenate text fields) so they can be sent back verbatim."""
+    last = details[-1] if details else None
+    if last is not None and last.get("index") == chunk.get("index") and last.get("type") == chunk.get("type"):
+        for key, value in chunk.items():
+            if key in ("text", "summary", "data") and isinstance(value, str):
+                last[key] = str(last.get(key) or "") + value
+            elif value is not None:
+                last[key] = value
+    else:
+        details.append(dict(chunk))
 
 
 async def ask(
@@ -319,6 +368,7 @@ async def ask(
     *,
     tools: list[dict[str, Any]] | None = None,
     on_token: Callable[[str], Awaitable[None]] | None = None,
+    on_reasoning: Callable[[str], Awaitable[None]] | None = None,
     synthesis: bool = False,
 ) -> tuple[dict[str, Any], int, float]:
     """One paid request. Never starts once the budget is reached (spec §06)."""
@@ -342,23 +392,30 @@ async def ask(
                 raise BudgetReached()
 
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[Any] = asyncio.Queue()
-    done = object()
+    queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
-    def push(item: Any) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, item)
+    def push(kind: str, text: str = "") -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+
+    # Reasoning is requested only where a trace shows it (workers), and never
+    # for a model the catalogue says does not take the parameter.
+    effort = run.config.reasoningEffort
+    reasoning_effort = effort if on_reasoning and effort != "off" and model not in run.request.noReasoning else None
 
     def work() -> tuple[dict[str, Any], dict[str, Any]]:
         try:
-            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push, lambda: run.cancelled)
+            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push, lambda: run.cancelled, reasoning_effort)
         finally:
-            push(done)
+            push("done")
 
     try:
         future = loop.run_in_executor(run.executor, work)
-        while (item := await queue.get()) is not done:
-            if on_token:
-                await on_token(item)
+        while (item := await queue.get())[0] != "done":
+            kind, text = item
+            if kind == "content" and on_token:
+                await on_token(text)
+            elif kind == "reasoning" and on_reasoning:
+                await on_reasoning(text)
         message, usage = await future
     except BaseException:
         async with run.budget_changed:
@@ -523,13 +580,64 @@ def split_tool_name(name: str, allowed: set[str]) -> tuple[str, str]:
     return server, local
 
 
+REFUSAL = re.compile(r"^\W*(i'?m sorry|i am sorry|sorry,|i cannot|i can'?t|i am unable|i'?m unable|as an ai|i do not have access|i don'?t have access)", re.I)
+
+
+def precheck(output: str) -> str | None:
+    """Deterministic gate before any reviewer spend. Returns the failure reason."""
+    text = output.strip()
+    if not text:
+        return "empty output"
+    if len(text) < 40:
+        return f"output is only {len(text)} characters"
+    # ponytail: prefix heuristic for refusals; a longer answer that merely opens with "Sorry," goes on to the model gate.
+    if REFUSAL.match(text) and len(text) < 400:
+        return "output is only a refusal or disclaimer"
+    return None
+
+
+def preview(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], evidence: list[str]) -> tuple[int, bool, str, list[str], str]:
+    """(score, passed, reason, issues, judge model). An unusable verdict is a failure, never a pass."""
+    config = run.config
+    model = config.models.get("reflection", "")
+    failure = precheck(output)
+    if failure:
+        return 1, False, f"Precheck: {failure}", [failure], "deterministic precheck"
+    rubric = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(REFLECTION_RUBRIC))
+    tools = "\n".join(evidence) or "(no tool calls were made)"
+    earlier = "\n\n".join(f"[{k}] {v}" for k, v in prior.items()) or "(this step depends on no earlier agent)"
+    messages = [
+        {"role": "system", "content": "You are a strict reviewer of one agent's work in a multi-agent team. Judge the output against this rubric:\n"
+                                      f"{rubric}\n\nScore 1 (useless) to 5 (excellent). A claim with no tool evidence that is not marked as unverified is an issue. "
+                                      "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}"},
+        {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask ({step['id']}): {step['label']}\n\n"
+                                    f"Tool calls the agent made:\n{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}"},
+    ]
+    for _try in range(2):  # one retry on an unusable reply
+        verdict, _, _ = await ask(run, model, messages)
+        try:
+            judgement = json.loads(re.search(r"\{.*\}", str(verdict.get("content") or ""), re.S).group(0))  # type: ignore[union-attr]
+            score = max(1, min(5, int(judgement["score"])))
+            reason = str(judgement.get("reason") or "No reason supplied")
+            issues = [str(i)[:300] for i in judgement.get("issues") or [] if str(i).strip()][:8]
+        except (AttributeError, ValueError, TypeError, KeyError):
+            continue
+        return score, score >= config.reflectionPassThreshold, reason, issues, model
+    return 0, False, "gate unavailable", ["The reviewer did not return a usable verdict twice in a row"], model
+
+
 async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> str:
     config = run.config
     agent_id, role, model = step["id"], step["role"], step["model"]
     allowed_tools = {str(t.get("name")) for t in run.request.tools}
     agent_tokens = 0
     agent_cost = 0.0
-    await run.emit("agent_start", agentId=agent_id, role=role, model=model)
+    run.attempts[agent_id] = 0
+    await run.emit("agent_start", agentId=agent_id, role=role, model=model, attempt=0)
 
     context = ""
     if prior:
@@ -537,32 +645,49 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     feedback = ""
     last_reason = ""
     for attempt in range(config.maxRetriesPerAgent + 1):
+        run.attempts[agent_id] = attempt
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
-                                          "Use the supplied tools only when you need evidence. Never claim to have executed anything you did not."},
+                                          "Use the supplied tools only when you need evidence. Never claim to have executed anything you did not. "
+                                          "Mark any claim you could not verify with a tool as unverified."},
             {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}{feedback}"},
         ]
 
-        async def on_token(text: str) -> None:
-            await run.emit("agent_token", agentId=agent_id, token=text)
+        async def on_token(text: str, attempt: int = attempt) -> None:
+            await run.emit("agent_token", agentId=agent_id, attempt=attempt, token=text)
+
+        async def on_reasoning(text: str, attempt: int = attempt) -> None:
+            await run.emit("agent_reasoning", agentId=agent_id, attempt=attempt, token=text)
 
         output = ""
+        evidence: list[str] = []
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 last_round = _round == MAX_TOOL_ROUNDS - 1
-                reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None), on_token=on_token)
+                reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
+                                                on_token=on_token, on_reasoning=on_reasoning)
                 agent_tokens += tokens
                 agent_cost += cost
                 calls = reply.get("tool_calls") or []
                 if not calls:
                     output = str(reply.get("content") or "")
                     break
-                messages.append({"role": "assistant", "content": reply.get("content") or "", "tool_calls": calls})
-                for call in calls:
+                assistant: dict[str, Any] = {"role": "assistant", "content": reply.get("content") or "", "tool_calls": calls}
+                if reply.get("reasoning_details"):  # OpenRouter requires these back for tool-using reasoning models
+                    assistant["reasoning_details"] = reply["reasoning_details"]
+                messages.append(assistant)
+                for index, call in enumerate(calls):
                     fn = call.get("function") or {}
                     name = str(fn.get("name") or "")
+                    call_id = str(call.get("id") or f"{name}#{index}")
+                    raw_args = str(fn.get("arguments") or "{}")
+                    server, _, local = name.partition("__")
+                    await run.emit("tool_start", agentId=agent_id, attempt=attempt, callId=call_id, tool=local or name,
+                                   server=server if local else "", argsPreview=preview(raw_args, ARGS_PREVIEW_CHARS))
+                    began = time.monotonic()
+                    ok = False
                     try:
-                        args = json.loads(fn.get("arguments") or "{}")
+                        args = json.loads(raw_args)
                         if not isinstance(args, dict):
                             raise ValueError("tool arguments must be a JSON object")
                         server, local = split_tool_name(name, allowed_tools)
@@ -570,40 +695,37 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                         content = f"Tool request rejected: {exc}"
                     else:
                         approved, result = await run.wait_for_approval(agent_id, role, model, local, server, args)
+                        ok = approved
                         content = result if approved else f"Tool request denied: {result or 'denied by user'}"
+                    await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=ok,
+                                   durationMs=int((time.monotonic() - began) * 1000),
+                                   resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
+                    evidence.append(f"- {name}({preview(raw_args, 200)}) → {'ok' if ok else 'failed'}: {preview(content, 600)}")
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": content})
         except BudgetReached:
             if not output:
                 raise AgentFailed("budget cap reached before this agent produced an answer") from None
         if not output:
             raise AgentFailed("no final answer after the maximum number of tool rounds")
-        await run.emit("agent_complete", agentId=agent_id, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8))
+        await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8))
 
         if run.budget_reached:
             return output  # no reflection spend once the cap is reached; output kept as-is
-        await run.emit("reflection_start", agentId=agent_id)
+        await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
         try:
-            verdict, _, _ = await ask(run, config.models.get("reflection", ""), [
-                {"role": "system", "content": "You are a strict reviewer. Score how well the output accomplishes the subtask, 1 (useless) to 5 (excellent). "
-                                              "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\"}"},
-                {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask: {step['label']}\n\nOutput:\n{output}"},
-            ])
+            score, passed, reason, issues, judge = await reflect(run, step, output, prior, evidence)
         except BudgetReached:
             return output
-        try:
-            judgement = json.loads(re.search(r"\{.*\}", str(verdict.get("content") or ""), re.S).group(0))  # type: ignore[union-attr]
-            score = max(1, min(5, int(judgement.get("score", 3))))
-            reason = str(judgement.get("reason") or "No reason supplied")
-        except (AttributeError, ValueError, TypeError):
-            score, reason = 3, "Reflection reply was not valid JSON; scored neutral"
-        passed = score >= config.reflectionPassThreshold
-        await run.emit("reflection_result", agentId=agent_id, score=score, passed=passed, reason=reason)
+        await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
+                       issues=issues, model=judge, rubric=REFLECTION_RUBRIC)
         if passed:
             return output
-        last_reason = f"score {score}/5: {reason}"
+        last_reason = f"score {score}/5: {reason}" if score else reason
         if attempt < config.maxRetriesPerAgent:
             await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=reason)
-            feedback = f"\n\nYour previous attempt was rejected by the reviewer ({last_reason}). Address that and try again."
+            fixes = "".join(f"\n- {issue}" for issue in issues)
+            feedback = (f"\n\nYour previous attempt was rejected by the reviewer ({last_reason})."
+                        + (f" Issues to fix:{fixes}" if fixes else "") + "\nAddress that and try again.")
     raise AgentFailed(f"reflection retry limit exceeded ({last_reason})")
 
 
@@ -620,7 +742,7 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
     async def fail(step_id: str, reason: str) -> None:
         pending.pop(step_id, None)
         failures[step_id] = reason
-        await run.emit("agent_failed", agentId=step_id, reason=reason)
+        await run.emit("agent_failed", agentId=step_id, reason=reason, **run.attempt_of(step_id))
 
     try:
         while pending or running:
@@ -787,7 +909,7 @@ async def hitl(run_id: str, response: HitlResponse) -> dict[str, bool]:
     if not future or future.done():
         raise HTTPException(409, "agent is not waiting for approval")
     future.set_result((response.approved, response.result or ""))
-    await run.emit("hitl_resume", agentId=response.agentId, approved=response.approved)
+    await run.emit("hitl_resume", agentId=response.agentId, approved=response.approved, **run.attempt_of(response.agentId))
     return {"ok": True}
 
 

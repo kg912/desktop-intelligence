@@ -31,7 +31,10 @@ import type { RunStartRequest } from './MultiAgentSidecarManager'
 import { McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext } from './McpServerManager'
 
-type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'synthesis_token' }>
+type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'agent_reasoning' | 'synthesis_token' }>
+
+/** Stored token/reasoning events are coalesced per agent and attempt into one per window. */
+export const COALESCE_WINDOW_MS = 250
 
 export interface CoordinatorDeps {
   sidecar: {
@@ -160,6 +163,7 @@ export class MultiAgentRunCoordinator {
         })),
         openRouterApiKey,
         pricing,
+        noReasoning: [...new Set(Object.values(models))].filter((m) => known.get(m)?.supportsReasoning === false),
       })
       return result.ok ? { ...result, config } : result
     } finally {
@@ -199,10 +203,15 @@ export class MultiAgentRunCoordinator {
     if (!run) return
     this.deps.sendEvent(event)
 
-    if (event.type === 'agent_token' || event.type === 'synthesis_token') {
-      const key = event.type === 'agent_token' ? `agent:${event.agentId}` : 'synthesis'
+    if (event.type === 'agent_token' || event.type === 'agent_reasoning' || event.type === 'synthesis_token') {
+      const key = event.type === 'synthesis_token' ? 'synthesis' : `${event.type}:${event.agentId}:${event.attempt ?? 0}`
       const pending = run.pendingTokens.get(key)
-      run.pendingTokens.set(key, pending ? { ...pending, token: pending.token + event.token } : event)
+      if (pending && event.ts - pending.ts < COALESCE_WINDOW_MS) {
+        run.pendingTokens.set(key, { ...pending, token: pending.token + event.token })
+      } else {
+        if (pending) this.record(run, pending)
+        run.pendingTokens.set(key, event)
+      }
       return
     }
 

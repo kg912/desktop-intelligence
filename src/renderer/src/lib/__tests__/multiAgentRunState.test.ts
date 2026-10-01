@@ -127,3 +127,54 @@ describe('formatElapsed', () => {
     expect(formatElapsed(125_000)).toBe('2m 05s')
   })
 })
+
+describe('per-agent timeline (refinement Phase 2)', () => {
+  it('reduces reasoning, tool calls, output and gates into arrival-order items, separated by attempt', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [
+      ev({ type: 'orchestrator_plan', steps }),
+      ev({ type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'w', attempt: 0 }),
+      ev({ type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: 'Check ' }),
+      ev({ type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: 'rail.' }),
+      ev({ type: 'tool_start', agentId: '1.1', attempt: 0, callId: 'c1', tool: 'search', server: 'brave', argsPreview: '{"q":"rail"}' }),
+      ev({ type: 'agent_token', agentId: '1.2', attempt: 0, token: 'other agent' }),
+      ev({ type: 'tool_done', agentId: '1.1', attempt: 0, callId: 'c1', ok: true, durationMs: 1200, resultPreview: '8 results', resultChars: 900 }),
+      ev({ type: 'agent_token', agentId: '1.1', attempt: 0, token: 'Hourly ' }),
+      ev({ type: 'agent_token', agentId: '1.1', attempt: 0, token: 'trains.' }),
+      ev({ type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'Hourly trains.', tokenCount: 10, costUsd: 0 }),
+      ev({ type: 'reflection_start', agentId: '1.1', attempt: 0 }),
+      ev({ type: 'reflection_result', agentId: '1.1', attempt: 0, score: 2, passed: false, reason: 'unverified', model: 'judge/m', issues: ['Cite the timetable'] }),
+      ev({ type: 'retry', agentId: '1.1', attempt: 1, reason: 'unverified' }),
+      ev({ type: 'agent_reasoning', agentId: '1.1', attempt: 1, token: 'Retry.' }),
+      ev({ type: 'agent_token', agentId: '1.1', attempt: 1, token: 'Hourly [verified].' }),
+    ])
+    expect(v.agents['1.1'].timeline).toEqual([
+      { kind: 'reasoning', attempt: 0, text: 'Check rail.', startedAt: 3_000, endedAt: 4_000 },
+      {
+        kind: 'tool', attempt: 0, callId: 'c1', tool: 'search', server: 'brave', argsPreview: '{"q":"rail"}', startedAt: 5_000,
+        done: { ok: true, durationMs: 1200, resultPreview: '8 results', resultChars: 900 },
+      },
+      { kind: 'output', attempt: 0, text: 'Hourly trains.' },
+      { kind: 'gate', attempt: 0, score: 2, passed: false, reason: 'unverified', model: 'judge/m', issues: ['Cite the timetable'] },
+      { kind: 'reasoning', attempt: 1, text: 'Retry.', startedAt: 14_000, endedAt: 14_000 },
+      { kind: 'output', attempt: 1, text: 'Hourly [verified].' },
+    ])
+    expect(v.agents['1.2'].timeline).toEqual([{ kind: 'output', attempt: 0, text: 'other agent' }])
+    // Reasoning never leaks into the live answer text.
+    expect(v.agents['1.1'].liveText).toBe('Hourly [verified].')
+  })
+
+  it('replays a pre-Phase-2 trace (no attempt fields) with 0-based attempts inferred', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [
+      ev({ type: 'orchestrator_plan', steps }),
+      ev({ type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'w' }),
+      ev({ type: 'agent_token', agentId: '1.1', token: 'old' }),
+      ev({ type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'fine' }),
+    ])
+    expect(v.agents['1.1'].timeline).toEqual([
+      { kind: 'output', attempt: 0, text: 'old' },
+      { kind: 'gate', attempt: 0, score: 5, passed: true, reason: 'fine' },
+    ])
+  })
+})

@@ -12,6 +12,9 @@ const KNOWN_TYPES = new Set<string>([
   'orchestrator_plan',
   'agent_start',
   'agent_token',
+  'agent_reasoning',
+  'tool_start',
+  'tool_done',
   'agent_complete',
   'agent_failed',
   'reflection_start',
@@ -64,6 +67,21 @@ function validateVariant(obj: Record<string, unknown>): string | null {
 
     case 'agent_token':
       return checkFields(obj, [['agentId', 'string'], ['token', 'string']])
+
+    case 'agent_reasoning':
+      return checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['token', 'string']])
+
+    case 'tool_start':
+      return checkFields(obj, [
+        ['agentId', 'string'], ['attempt', 'number'], ['callId', 'string'],
+        ['tool', 'string'], ['server', 'string'], ['argsPreview', 'string'],
+      ])
+
+    case 'tool_done':
+      return checkFields(obj, [
+        ['agentId', 'string'], ['attempt', 'number'], ['callId', 'string'], ['ok', 'boolean'],
+        ['durationMs', 'number'], ['resultPreview', 'string'], ['resultChars', 'number'],
+      ])
 
     case 'agent_complete':
       return checkFields(obj, [

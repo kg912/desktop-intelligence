@@ -11,7 +11,20 @@ export interface ReflectionView {
   score: number
   passed: boolean
   reason: string
+  /** Judge model id, or "deterministic precheck". Absent on older traces. */
+  model?: string
+  issues?: string[]
 }
+
+/** One entry of an agent's trace, in arrival order. Attempts are 0-based. */
+export type TimelineItem =
+  | { kind: 'reasoning'; attempt: number; text: string; startedAt: number; endedAt: number }
+  | {
+      kind: 'tool'; attempt: number; callId: string; tool: string; server: string; argsPreview: string; startedAt: number
+      done?: { ok: boolean; durationMs: number; resultPreview: string; resultChars: number }
+    }
+  | { kind: 'output'; attempt: number; text: string }
+  | ({ kind: 'gate' } & ReflectionView)
 
 export interface AgentView {
   step: AgentStep
@@ -25,6 +38,7 @@ export interface AgentView {
   costUsd: number
   attempt: number
   reflections: ReflectionView[]
+  timeline: TimelineItem[]
   failure?: string
   pause?: HitlPauseEvent
   startedAt?: number
@@ -79,7 +93,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
       const agents: Record<string, AgentView> = {}
       for (const step of event.steps) {
         agents[step.id] = {
-          step, status: 'queued', liveText: '', streamedTokens: 0, tokenCount: 0, costUsd: 0, attempt: 0, reflections: [],
+          step, status: 'queued', liveText: '', streamedTokens: 0, tokenCount: 0, costUsd: 0, attempt: 0, reflections: [], timeline: [],
         }
       }
       return { ...next, steps: event.steps, agents }
@@ -101,6 +115,27 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
         liveText: a.liveText + event.token,
         streamedTokens: a.streamedTokens + 1,
         status: a.status === 'retrying' || a.status === 'queued' ? 'running' : a.status,
+        timeline: appendText(a.timeline, 'output', event.attempt ?? a.attempt - 1, event.token, event.ts),
+      }))
+    case 'agent_reasoning':
+      return updateAgent(next, event.agentId, (a) => ({
+        status: a.status === 'retrying' || a.status === 'queued' ? 'running' : a.status,
+        timeline: appendText(a.timeline, 'reasoning', event.attempt, event.token, event.ts),
+      }))
+    case 'tool_start':
+      return updateAgent(next, event.agentId, (a) => ({
+        timeline: [...a.timeline, {
+          kind: 'tool', attempt: event.attempt, callId: event.callId, tool: event.tool, server: event.server,
+          argsPreview: event.argsPreview, startedAt: event.ts,
+        }],
+      }))
+    case 'tool_done':
+      return updateAgent(next, event.agentId, (a) => ({
+        timeline: a.timeline.map((item) =>
+          item.kind === 'tool' && item.callId === event.callId && item.attempt === event.attempt
+            ? { ...item, done: { ok: event.ok, durationMs: event.durationMs, resultPreview: event.resultPreview, resultChars: event.resultChars } }
+            : item
+        ),
       }))
     case 'agent_complete':
       return updateAgent(next, event.agentId, () => ({
@@ -109,11 +144,19 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
     case 'reflection_start':
       return updateAgent(next, event.agentId, () => ({ status: 'reflecting' }))
     case 'reflection_result':
-      return updateAgent(next, event.agentId, (a) => ({
-        reflections: [...a.reflections, { attempt: a.attempt, score: event.score, passed: event.passed, reason: event.reason }],
-        status: event.passed ? 'done' : 'retrying',
-        endedAt: event.ts,
-      }))
+      return updateAgent(next, event.agentId, (a) => {
+        const gate: ReflectionView = {
+          attempt: a.attempt, score: event.score, passed: event.passed, reason: event.reason,
+          ...(event.model !== undefined && { model: event.model }),
+          ...(event.issues !== undefined && { issues: event.issues }),
+        }
+        return {
+          reflections: [...a.reflections, gate],
+          timeline: [...a.timeline, { kind: 'gate', ...gate, attempt: event.attempt ?? a.attempt - 1 }],
+          status: event.passed ? 'done' : 'retrying',
+          endedAt: event.ts,
+        }
+      })
     case 'retry':
       return updateAgent(next, event.agentId, (a) => ({
         // The rejected attempt's output must not linger as if it were the answer.
@@ -144,6 +187,16 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
     default:
       return next
   }
+}
+
+/** Extend the last item if it is the same kind and attempt, else start a new one. */
+function appendText(timeline: TimelineItem[], kind: 'reasoning' | 'output', attempt: number, text: string, ts: number): TimelineItem[] {
+  const last = timeline.at(-1)
+  if (last && last.kind === kind && last.attempt === attempt) {
+    const merged: TimelineItem = last.kind === 'reasoning' ? { ...last, text: last.text + text, endedAt: ts } : { ...last, text: last.text + text }
+    return [...timeline.slice(0, -1), merged]
+  }
+  return [...timeline, kind === 'reasoning' ? { kind, attempt, text, startedAt: ts, endedAt: ts } : { kind, attempt, text }]
 }
 
 export function reduceRunEvents(runId: string, events: AgentEvent[], startedAt?: number): RunView {

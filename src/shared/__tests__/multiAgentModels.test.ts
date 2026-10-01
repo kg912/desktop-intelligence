@@ -98,6 +98,11 @@ describe('sanitizeMultiAgentConfig', () => {
     } as Partial<MultiAgentConfig>)
     expect(c).toMatchObject({ maxAgents: 8, budgetCapUsd: 0.5, reflectionPassThreshold: 1, maxRetriesPerAgent: 5, hitlTimeoutMs: 10_000 })
   })
+  it('accepts the four reasoning efforts and falls back to medium otherwise', () => {
+    for (const effort of ['off', 'low', 'medium', 'high'] as const) expect(sanitizeMultiAgentConfig({ reasoningEffort: effort }).reasoningEffort).toBe(effort)
+    expect(sanitizeMultiAgentConfig({ reasoningEffort: 'max' as never }).reasoningEffort).toBe('medium')
+  })
+
   it('rejects garbage types and trims model ids', () => {
     const c = sanitizeMultiAgentConfig({
       maxAgents: 'lots' as unknown as number, requirePermissions: 'yes' as unknown as boolean,

@@ -261,6 +261,23 @@ describe('multi-agent run persistence', () => {
     expect(getMultiAgentRun('chat-1', db)).toEqual({ mode: 'multi-agent', runStatus: 'completed', agentGraph: steps, executionTrace: trace })
   })
 
+  it('persists and replays a 6,000-event trace with reasoning and tool events intact', () => {
+    const db = seeded()
+    beginMultiAgentRun('chat-1', [], db)
+    const big: AgentEvent[] = [trace[0]]
+    for (let seq = 2; seq <= 6_000; seq++) {
+      big.push(
+        seq % 3 === 0
+          ? { runId: 'r', seq, ts: seq, type: 'tool_done', agentId: '1.1', attempt: 0, callId: `c${seq}`, ok: true, durationMs: 5, resultPreview: 'x'.repeat(1_200), resultChars: 4_000 }
+          : { runId: 'r', seq, ts: seq, type: 'agent_reasoning', agentId: '1.1', attempt: 0, token: `thought ${seq} — “ünïcode” ` }
+      )
+    }
+    saveMultiAgentTrace('chat-1', big, 'completed', steps, db)
+    const replay = getMultiAgentRun('chat-1', db)!.executionTrace
+    expect(replay).toHaveLength(6_000)
+    expect(replay).toEqual(big)
+  })
+
   it('returns null for an unknown chat and survives a corrupted trace', () => {
     const db = seeded()
     expect(getMultiAgentRun('nope', db)).toBeNull()

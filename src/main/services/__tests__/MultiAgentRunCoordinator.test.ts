@@ -181,6 +181,34 @@ describe('MultiAgentRunCoordinator events', () => {
     expect(h.observed.map((e) => e.type)).toEqual(['agent_start', 'agent_token', 'agent_complete'])
   })
 
+  it('coalesces reasoning and tokens per agent and attempt, one stored event per 250 ms window', async () => {
+    h.sidecar.push({ type: 'agent_reasoning', seq: 1, ts: 1_000, agentId: '1.1', attempt: 0, token: 'Think ' } as never)
+    h.sidecar.push({ type: 'agent_reasoning', seq: 2, ts: 1_100, agentId: '1.1', attempt: 0, token: 'more' } as never)
+    h.sidecar.push({ type: 'agent_reasoning', seq: 3, ts: 1_300, agentId: '1.1', attempt: 0, token: ' later' } as never) // new window
+    h.sidecar.push({ type: 'agent_token', seq: 4, ts: 1_310, agentId: '1.1', attempt: 0, token: 'A' } as never)
+    h.sidecar.push({ type: 'agent_token', seq: 5, ts: 1_320, agentId: '1.1', attempt: 1, token: 'B' } as never) // other attempt
+    h.sidecar.push({ type: 'agent_token', seq: 6, ts: 1_330, agentId: '1.1', attempt: 0, token: 'C' } as never)
+    h.sidecar.push({ type: 'agent_complete', seq: 7, ts: 1_400, agentId: '1.1', output: 'AC', tokenCount: 2, costUsd: 0 } as never)
+    await tick(20)
+    const trace = h.db.saveTrace.mock.calls.at(-1)![1] as AgentEvent[]
+    expect(trace.map((e) => [e.type, e.seq, (e as { token?: string }).token])).toEqual([
+      ['agent_reasoning', 1, 'Think more'],
+      ['agent_reasoning', 3, ' later'],
+      ['agent_token', 4, 'AC'],
+      ['agent_token', 5, 'B'],
+      ['agent_complete', 7, undefined],
+    ])
+    expect(h.sent).toHaveLength(7) // the renderer still sees every event live
+  })
+
+  it('tells the sidecar which models the catalogue says take no reasoning parameter', async () => {
+    const plain = { ...model('plain/model'), supportsReasoning: false }
+    const thinker = { ...model('think/model'), supportsReasoning: true }
+    const { coordinator, sidecar } = setup({ catalogue: [plain, thinker, model('active/model')] })
+    await coordinator.start({ chatId: 'c', task: 't', config: config({ orchestrator: 'plain/model', worker: 'think/model', reflection: 'plain/model', synthesizer: 'think/model' }) })
+    expect((sidecar.startRun.mock.calls[0][0] as unknown as { noReasoning: string[] }).noReasoning).toEqual(['plain/model'])
+  })
+
   it('does not write the DB per token (debounced), but writes pauses immediately', async () => {
     for (let i = 1; i <= 50; i++) h.sidecar.push({ type: 'agent_token', seq: i, agentId: '1.1', token: 'x' } as never)
     expect(h.db.saveTrace).not.toHaveBeenCalled()

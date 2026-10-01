@@ -66,6 +66,8 @@ export interface SidecarLaunchConfig {
 export interface RunStartRequest extends MultiAgentStartPayload {
   openRouterApiKey: string
   pricing?: Record<string, ModelPricing>
+  /** Models the catalogue says take no `reasoning` parameter. */
+  noReasoning?: string[]
 }
 
 type FetchFn = typeof fetch

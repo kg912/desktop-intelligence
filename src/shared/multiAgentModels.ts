@@ -3,7 +3,7 @@
 // renderer (settings dropdowns, pre-flight screen) and the main process.
 
 import { DEFAULT_MULTI_AGENT_CONFIG } from './types'
-import type { AgentStep, MultiAgentConfig } from './types'
+import type { AgentStep, MultiAgentConfig, ReasoningEffort } from './types'
 
 export interface OpenRouterModelInfo {
   id: string
@@ -13,6 +13,8 @@ export interface OpenRouterModelInfo {
   promptPrice: number | null
   completionPrice: number | null
   supportsTools: boolean
+  /** Catalogue lists `reasoning` in supported_parameters. Absent = unknown. */
+  supportsReasoning?: boolean
 }
 
 export interface CatalogueFilter {
@@ -190,5 +192,8 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
     maxRetriesPerAgent: clampInt(c.maxRetriesPerAgent, 0, 5, d.maxRetriesPerAgent),
     hitlTimeoutMs: clampInt(c.hitlTimeoutMs, 10_000, 3_600_000, d.hitlTimeoutMs),
     requirePermissions: typeof c.requirePermissions === 'boolean' ? c.requirePermissions : d.requirePermissions,
+    reasoningEffort: (['off', 'low', 'medium', 'high'] as const).includes(c.reasoningEffort as ReasoningEffort)
+      ? (c.reasoningEffort as ReasoningEffort)
+      : d.reasoningEffort,
   }
 }

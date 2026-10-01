@@ -54,10 +54,13 @@ interface Reply {
   toolCalls?: Array<{ id: string; name: string; args: string }>
   /** Hold the response open this long before streaming (parallelism tests). */
   delayMs?: number
+  /** Streamed before content as both `delta.reasoning` and `delta.reasoning_details` (as OpenRouter does). */
+  reasoning?: string
 }
 type Body = {
   model: string
-  messages: Array<{ role: string; content: string; tool_calls?: unknown[] }>
+  messages: Array<{ role: string; content: string; tool_calls?: unknown[]; reasoning_details?: unknown[] }>
+  reasoning?: { effort: string }
   tools?: Array<{ function: { name: string } }>
   max_tokens?: number
   stream?: boolean
@@ -92,6 +95,9 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
       const send = (obj: unknown): boolean => res.write(`data: ${JSON.stringify(obj)}\n\n`)
       res.write(': OPENROUTER PROCESSING\n\n')
       const stream = (): void => {
+        for (const part of reply.reasoning?.match(/.{1,12}/gs) ?? []) {
+          send({ choices: [{ index: 0, delta: { reasoning: part, reasoning_details: [{ type: 'reasoning.text', text: part, index: 0, format: 'unknown' }] } }] })
+        }
         const text = reply.content ?? ''
         for (const part of text.match(/.{1,12}/gs) ?? []) send({ choices: [{ index: 0, delta: { content: part } }] })
         reply.toolCalls?.forEach((call, index) => {
@@ -148,7 +154,7 @@ function scenario(body: Body): Reply {
   if (system.includes('synthesize')) return { content: 'The topic is X [1.1] and it implies Y [1.2].' }
   if (system.includes('Researcher agent')) {
     const toolResult = body.messages.find((m) => m.role === 'tool' && m.content.includes('notes-content'))
-    if (toolResult) return { content: `Research found: ${toolResult.content}` }
+    if (toolResult) return { content: `Research found, from the notes file: ${toolResult.content}` }
     return {
       toolCalls: [
         { id: 'call_1', name: 'fs__read_file', args: '{"path": "/notes.txt"}' },
@@ -157,7 +163,7 @@ function scenario(body: Body): Reply {
     }
   }
   if (system.includes('Analyzer agent')) {
-    return { content: userOf(body).includes('rejected') ? 'Analysis v2 — thorough.' : 'Analysis v1' }
+    return { content: userOf(body).includes('rejected') ? 'Analysis v2 — thorough, covering second-order effects.' : 'Analysis v1 — only the first-order effects.' }
   }
   return { content: 'ok' }
 }
@@ -172,13 +178,14 @@ const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig
   maxRetriesPerAgent: 2,
   hitlTimeoutMs: 60_000,
   requirePermissions: true,
+  reasoningEffort: 'medium',
   ...overrides,
 })
 
 /** Start a run and collect its events until the terminal one; `onEvent` may respond to pauses. */
 function runToEnd(
   mgr: MultiAgentSidecarManager,
-  opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }>; onEvent: (e: AgentEvent, all: AgentEvent[]) => void }
+  opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }>; noReasoning?: string[]; onEvent: (e: AgentEvent, all: AgentEvent[]) => void }
 ): Promise<AgentEvent[]> {
   return new Promise((resolveRun, reject) => {
     const events: AgentEvent[] = []
@@ -198,7 +205,7 @@ function runToEnd(
     }
     mgr.on('event', listener)
     mgr
-      .startRun({ chatId: 'chat-1', task: 'Explain X', config: opts.config ?? baseConfig(), tools: TOOLS, openRouterApiKey: 'sk-or-test', pricing: opts.pricing })
+      .startRun({ chatId: 'chat-1', task: 'Explain X', config: opts.config ?? baseConfig(), tools: TOOLS, openRouterApiKey: 'sk-or-test', pricing: opts.pricing, noReasoning: opts.noReasoning })
       .then((r) => {
         if (!r.ok) reject(new Error(r.reason))
         else runId = r.runId
@@ -393,7 +400,7 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     replyOverride = (body) =>
       opts.reply?.(body) ??
       (systemOf(body).includes('Scout agent')
-        ? { content: `Findings for ${subtaskOf(body)}: detailed results.`, delayMs: opts.holdMs?.(subtaskOf(body)) ?? 300 }
+        ? { content: `Findings for ${subtaskOf(body)}: detailed results with sources.`, delayMs: opts.holdMs?.(subtaskOf(body)) ?? 300 }
         : undefined)
     try {
       const events = await runToEnd(mgr, { config: opts.config, pricing: opts.pricing, onEvent: (e) => { approvePlan(mgr)(e); opts.onEvent?.(e) } })
@@ -527,6 +534,122 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     }
     expect(now.runs).toBe(0)
     expect(now.threads).toBeLessThanOrEqual(before)
+  }, 60_000)
+
+  // ── Phase 2: trace fidelity ─────────────────────────────────────────────────
+
+  /** One Scout that reasons, makes two tool calls, then answers. */
+  async function tracedRun(opts: { config?: MultiAgentConfig; noReasoning?: string[]; reply?: (body: Body) => Reply | undefined } = {}): Promise<AgentEvent[]> {
+    fake.requests.length = 0
+    planOverride = () => ({ content: JSON.stringify([{ id: '1.1', label: 'Check the timetable', role: 'Scout', dependsOn: [] }]) })
+    replyOverride = (body) => {
+      const custom = opts.reply?.(body)
+      if (custom) return custom
+      if (!systemOf(body).includes('Scout agent')) return undefined
+      const toolResults = body.messages.filter((m) => m.role === 'tool').length
+      if (toolResults === 0) {
+        return {
+          reasoning: 'The user needs the Christmas Eve service. I should check both timetables first.',
+          toolCalls: [
+            { id: 'call_a', name: 'fs__read_file', args: '{"path": "/rail.txt"}' },
+            { id: 'call_b', name: 'fs__read_file', args: '{"path": "/bus.txt"}' },
+          ],
+        }
+      }
+      return { content: 'Trains run hourly on 24 December until 18:00 [unverified for buses].' }
+    }
+    try {
+      return await runToEnd(mgr, {
+        config: opts.config,
+        noReasoning: opts.noReasoning,
+        onEvent: (e) => {
+          approvePlan(mgr)(e)
+          if (e.type === 'hitl_pause' && e.serverName === 'fs') {
+            const approved = (e.args as { path: string }).path === '/rail.txt'
+            void mgr.respondHitl({ runId: e.runId, agentId: e.agentId, approved, result: approved ? 'Railjet hourly until 18:00' : 'not allowed' })
+          }
+        },
+      })
+    } finally {
+      planOverride = null
+      replyOverride = null
+    }
+  }
+
+  it('streams reasoning, two tool calls and the answer in order, and keeps reasoning out of output and synthesis', async () => {
+    const events = await tracedRun()
+    expect(events.at(-1)?.type).toBe('task_complete')
+    const traced = events.filter((e) => 'agentId' in e && e.agentId === '1.1' && !e.type.startsWith('hitl'))
+    const collapsed = traced.map((e) => e.type).filter((t, i, all) => !(i > 0 && all[i - 1] === t && (t === 'agent_reasoning' || t === 'agent_token')))
+    expect(collapsed).toEqual(['agent_start', 'agent_reasoning', 'tool_start', 'tool_done', 'tool_start', 'tool_done', 'agent_token', 'agent_complete', 'reflection_start', 'reflection_result'])
+    for (const e of traced) expect((e as { attempt?: number }).attempt).toBe(0)
+
+    const reasoning = events.filter((e): e is Extract<AgentEvent, { type: 'agent_reasoning' }> => e.type === 'agent_reasoning').map((e) => e.token).join('')
+    expect(reasoning).toBe('The user needs the Christmas Eve service. I should check both timetables first.') // once, not doubled
+
+    const [startA, doneA, , doneB] = traced.filter((e) => e.type === 'tool_start' || e.type === 'tool_done') as Array<Extract<AgentEvent, { type: 'tool_start' | 'tool_done' }>>
+    expect(startA).toMatchObject({ callId: 'call_a', tool: 'read_file', server: 'fs', argsPreview: '{"path": "/rail.txt"}' })
+    expect(doneA).toMatchObject({ callId: 'call_a', ok: true, resultChars: expect.any(Number) })
+    expect((doneA as Extract<AgentEvent, { type: 'tool_done' }>).resultPreview).toContain('Railjet hourly')
+    expect(doneB).toMatchObject({ callId: 'call_b', ok: false, resultPreview: expect.stringContaining('denied') })
+
+    const output = events.find((e): e is Extract<AgentEvent, { type: 'agent_complete' }> => e.type === 'agent_complete')!.output
+    expect(output).not.toContain('Christmas Eve service')
+    const scout = fake.requests.filter((r) => systemOf(r.body).includes('Scout agent'))
+    expect(scout[0].body.reasoning).toEqual({ effort: 'medium' })
+    // reasoning_details go back with the tool results, as OpenRouter requires.
+    const assistant = scout[1].body.messages.find((m) => m.role === 'assistant')!
+    expect(assistant.reasoning_details).toEqual([{ type: 'reasoning.text', text: 'The user needs the Christmas Eve service. I should check both timetables first.', index: 0, format: 'unknown' }])
+    const synthesis = fake.requests.find((r) => systemOf(r.body).includes('synthesize'))!
+    expect(JSON.stringify(synthesis.body.messages)).not.toContain('Christmas Eve service')
+    // The reviewer judged against the tool evidence and reports its rubric and model.
+    const review = fake.requests.find((r) => systemOf(r.body).includes('strict reviewer'))!
+    expect(userOf(review.body)).toContain('fs__read_file')
+    expect(userOf(review.body)).toContain('Railjet hourly')
+    expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ model: 'fake/reviewer', rubric: expect.arrayContaining([expect.stringMatching(/tool evidence/)]), attempt: 0 })
+  }, 60_000)
+
+  it('sends no reasoning parameter when the effort is off or the catalogue says the model lacks it', async () => {
+    await tracedRun({ config: baseConfig({ reasoningEffort: 'off' }) })
+    expect(fake.requests.every((r) => r.body.reasoning === undefined)).toBe(true)
+    await tracedRun({ noReasoning: ['fake/worker'] })
+    expect(fake.requests.every((r) => r.body.reasoning === undefined)).toBe(true)
+  }, 60_000)
+
+  it('a failed gate retries with its issues injected; the retry trace carries attempt 1', async () => {
+    let reviews = 0
+    const events = await tracedRun({
+      reply: (body) =>
+        systemOf(body).includes('strict reviewer')
+          ? { content: ++reviews === 1 ? '{"score": 2, "reason": "bus claim unverified", "issues": ["Verify the bus timetable"]}' : '{"score": 5, "reason": "ok", "issues": []}' }
+          : undefined,
+    })
+    expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ passed: false, issues: ['Verify the bus timetable'] })
+    const retryRequest = fake.requests.filter((r) => systemOf(r.body).includes('Scout agent')).find((r) => userOf(r.body).includes('rejected by the reviewer'))!
+    expect(userOf(retryRequest.body)).toContain('Verify the bus timetable')
+    expect(events.filter((e) => e.type === 'tool_start').map((e) => (e as { attempt: number }).attempt)).toEqual([0, 0, 1, 1])
+    expect(events.at(-1)?.type).toBe('task_complete')
+  }, 60_000)
+
+  it('an unparsable verdict is retried once, then fails as "gate unavailable" — never a pass', async () => {
+    const events = await tracedRun({
+      config: baseConfig({ maxRetriesPerAgent: 0 }),
+      reply: (body) => (systemOf(body).includes('strict reviewer') ? { content: 'Looks great to me!' } : undefined),
+    })
+    expect(fake.requests.filter((r) => systemOf(r.body).includes('strict reviewer'))).toHaveLength(2)
+    expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ passed: false, score: 0, reason: 'gate unavailable' })
+    expect(events).toContainEqual(expect.objectContaining({ type: 'agent_failed', agentId: '1.1' }))
+  }, 60_000)
+
+  it('the deterministic precheck fails an empty, short or refusal-only answer without calling the reviewer', async () => {
+    for (const content of ['Too short.', "I'm sorry, but I can't help with planning that trip."]) {
+      const events = await tracedRun({
+        config: baseConfig({ maxRetriesPerAgent: 0 }),
+        reply: (body) => (systemOf(body).includes('Scout agent') && body.messages.some((m) => m.role === 'tool') ? { content } : undefined),
+      })
+      expect(fake.requests.some((r) => systemOf(r.body).includes('strict reviewer'))).toBe(false)
+      expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ passed: false, model: 'deterministic precheck' })
+    }
   }, 60_000)
 
   it('requires the per-launch token on every endpoint', async () => {

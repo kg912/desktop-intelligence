@@ -33,6 +33,7 @@ export function parseCatalogue(raw: { data?: RawModel[] }): OpenRouterModelInfo[
       promptPrice: price(m.pricing?.prompt),
       completionPrice: price(m.pricing?.completion),
       supportsTools: (m.supported_parameters ?? []).includes('tools'),
+      supportsReasoning: (m.supported_parameters ?? []).includes('reasoning'),
     }))
 }
 

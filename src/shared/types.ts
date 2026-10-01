@@ -512,7 +512,11 @@ export interface MultiAgentConfig {
   maxRetriesPerAgent:      number
   hitlTimeoutMs:           number
   requirePermissions:      boolean  // HITL default for multi-agent runs
+  /** OpenRouter `reasoning.effort` for worker requests; 'off' sends none. */
+  reasoningEffort:         ReasoningEffort
 }
+
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high'
 
 /**
  * Multi-agent workers never create a sandbox themselves. This documents the
@@ -544,6 +548,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   maxRetriesPerAgent:      2,
   hitlTimeoutMs:           300000,
   requirePermissions:      true,
+  reasoningEffort:         'medium',
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */
@@ -565,25 +570,30 @@ export interface AgentEventBase {
   runTotals?: RunTotals
 }
 
+/** Agent-scoped events carry the 0-based attempt so a retry's trace stays separate. Absent on older traces. */
+interface AgentAttempt {
+  attempt?: number
+}
+
 export interface OrchestratorPlanEvent extends AgentEventBase {
   type:  'orchestrator_plan'
   steps: AgentStep[]
 }
 
-export interface AgentStartEvent extends AgentEventBase {
+export interface AgentStartEvent extends AgentEventBase, AgentAttempt {
   type:    'agent_start'
   agentId: string
   role:    string
   model:   string
 }
 
-export interface AgentTokenEvent extends AgentEventBase {
+export interface AgentTokenEvent extends AgentEventBase, AgentAttempt {
   type:    'agent_token'
   agentId: string
   token:   string
 }
 
-export interface AgentCompleteEvent extends AgentEventBase {
+export interface AgentCompleteEvent extends AgentEventBase, AgentAttempt {
   type:       'agent_complete'
   agentId:    string
   output:     string
@@ -597,23 +607,60 @@ export interface AgentCompleteEvent extends AgentEventBase {
  * continues with the other agents and synthesizes on partial output —
  * task_failed is reserved for the run as a whole.
  */
-export interface AgentFailedEvent extends AgentEventBase {
+export interface AgentFailedEvent extends AgentEventBase, AgentAttempt {
   type:    'agent_failed'
   agentId: string
   reason:  string
 }
 
-export interface ReflectionStartEvent extends AgentEventBase {
+export interface ReflectionStartEvent extends AgentEventBase, AgentAttempt {
   type:    'reflection_start'
   agentId: string
 }
 
-export interface ReflectionResultEvent extends AgentEventBase {
+export interface ReflectionResultEvent extends AgentEventBase, AgentAttempt {
   type:    'reflection_result'
   agentId: string
+  /** 0 = no verdict ("gate unavailable"). */
   score:   number
   passed:  boolean
   reason:  string
+  /** Judge: the reflection model id, or "deterministic precheck". */
+  model?:  string
+  rubric?: string[]
+  /** Specific problems to fix; injected into the retry. */
+  issues?: string[]
+}
+
+/** Streamed reasoning text — never part of the agent's output. */
+export interface AgentReasoningEvent extends AgentEventBase {
+  type:    'agent_reasoning'
+  agentId: string
+  attempt: number
+  token:   string
+}
+
+export interface ToolStartEvent extends AgentEventBase {
+  type:        'tool_start'
+  agentId:     string
+  attempt:     number
+  callId:      string
+  tool:        string
+  server:      string
+  /** ≤ 400 chars. */
+  argsPreview: string
+}
+
+export interface ToolDoneEvent extends AgentEventBase {
+  type:          'tool_done'
+  agentId:       string
+  attempt:       number
+  callId:        string
+  ok:            boolean
+  durationMs:    number
+  /** ≤ 1,200 chars; denied/rejected calls carry the reason. */
+  resultPreview: string
+  resultChars:   number
 }
 
 export interface RetryEvent extends AgentEventBase {
@@ -623,7 +670,7 @@ export interface RetryEvent extends AgentEventBase {
   reason:  string
 }
 
-export interface HitlPauseEvent extends AgentEventBase {
+export interface HitlPauseEvent extends AgentEventBase, AgentAttempt {
   type:       'hitl_pause'
   agentId:    string
   role:       string
@@ -640,7 +687,7 @@ export interface MultiAgentToolDefinition {
   parameters: Record<string, unknown>
 }
 
-export interface HitlResumeEvent extends AgentEventBase {
+export interface HitlResumeEvent extends AgentEventBase, AgentAttempt {
   type:     'hitl_resume'
   agentId:  string
   approved: boolean
@@ -672,6 +719,9 @@ export type AgentEvent =
   | OrchestratorPlanEvent
   | AgentStartEvent
   | AgentTokenEvent
+  | AgentReasoningEvent
+  | ToolStartEvent
+  | ToolDoneEvent
   | AgentCompleteEvent
   | AgentFailedEvent
   | ReflectionStartEvent

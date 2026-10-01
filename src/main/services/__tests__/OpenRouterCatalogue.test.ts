@@ -3,7 +3,7 @@ import { clearOpenRouterCatalogueCache, getOpenRouterCatalogue, parseCatalogue }
 
 const raw = {
   data: [
-    { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', context_length: 131072, supported_parameters: ['tools', 'temperature'], pricing: { prompt: '0.00000013', completion: '0.0000004' } },
+    { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', context_length: 131072, supported_parameters: ['tools', 'temperature', 'reasoning'], pricing: { prompt: '0.00000013', completion: '0.0000004' } },
     { id: 'x/no-tools', context_length: 8192, supported_parameters: ['temperature'], pricing: { prompt: 'free', completion: '-1' } },
     { name: 'no id' },
   ],
@@ -12,10 +12,10 @@ const raw = {
 describe('OpenRouter catalogue', () => {
   beforeEach(() => clearOpenRouterCatalogueCache())
 
-  it('parses context length, tool support and per-token prices; invalid prices become null', () => {
+  it('parses context length, tool and reasoning support and per-token prices; invalid prices become null', () => {
     expect(parseCatalogue(raw)).toEqual([
-      { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', contextLength: 131072, promptPrice: 1.3e-7, completionPrice: 4e-7, supportsTools: true },
-      { id: 'x/no-tools', name: 'x/no-tools', contextLength: 8192, promptPrice: null, completionPrice: null, supportsTools: false },
+      { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', contextLength: 131072, promptPrice: 1.3e-7, completionPrice: 4e-7, supportsTools: true, supportsReasoning: true },
+      { id: 'x/no-tools', name: 'x/no-tools', contextLength: 8192, promptPrice: null, completionPrice: null, supportsTools: false, supportsReasoning: false },
     ])
   })
 
