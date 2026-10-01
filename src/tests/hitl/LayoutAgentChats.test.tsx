@@ -146,3 +146,38 @@ describe('Part A — mode lock in the renderer', () => {
   })
 })
 
+
+describe('Part B — agents rail button', () => {
+  const rail = (): HTMLElement => document.querySelector('.ma-rail-btn') as HTMLElement
+
+  it('is always rendered on OpenRouter; disabled with a tooltip in a regular chat and a new chat; clicking does nothing', async () => {
+    await renderLayout()
+    expect(rail().getAttribute('aria-disabled')).toBe('true')
+    expect(rail().title).toBe('Only available in agent chats')
+    await openChat('regular title')
+    expect(rail().getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(rail())
+    expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('chat')
+    expect(screen.queryByText('No agent run in this chat yet')).toBeNull()
+  })
+
+  it('is enabled in an agent chat and opens the dock; leaving for a regular chat greys it and closes the dock', async () => {
+    await renderLayout()
+    await openChat('agents title')
+    expect(rail().getAttribute('aria-disabled')).toBeNull()
+    expect(rail().title).toBe('Agent run')
+    await act(async () => { fireEvent.click(rail()) })
+    expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('agents')
+    await act(async () => { fireEvent.click(screen.getByTitle('Chats')) })
+    await openChat('regular title')
+    expect(rail().getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('chat')
+  })
+
+  it('is not rendered on other backends', async () => {
+    overrides.getBackendSettings.mockResolvedValue({ provider: 'lmstudio' })
+    render(<ModelStoreProvider><Layout /></ModelStoreProvider>)
+    await screen.findByText('regular title')
+    expect(rail()).toBeNull()
+  })
+})

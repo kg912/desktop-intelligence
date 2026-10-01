@@ -25,7 +25,7 @@ vi.mock('@preact/signals-react/runtime', () => {
   }
 })
 
-import { AgentDockEmpty, FinalSynthesis, MultiAgentSidebarView } from '../../renderer/src/components/chat/MultiAgentSidebarView'
+import { FinalSynthesis, MultiAgentSidebarView } from '../../renderer/src/components/chat/MultiAgentSidebarView'
 import { Sidebar } from '../../renderer/src/components/layout/Sidebar'
 import type { AgentRailState } from '../../renderer/src/components/layout/Sidebar'
 import { McpPermissionDialog } from '../../renderer/src/components/chat/McpPermissionDialog'
@@ -249,16 +249,7 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
   })
 })
 
-describe('Dock empty state and the main-area synthesis', () => {
-  it('says there is no run yet, and Esc closes it', () => {
-    const onClose = vi.fn()
-    render(<AgentDockEmpty onClose={onClose} />)
-    expect(screen.getByText('No agent run in this chat yet')).toBeTruthy()
-    expect(screen.getByText(/Turn on Multi-Agent in the input bar/)).toBeTruthy()
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(onClose).toHaveBeenCalled()
-  })
-
+describe('The main-area synthesis', () => {
   it('before synthesis: counts passed agents; then streams with provenance chips that select the agent (D3)', () => {
     const onSelect = vi.fn()
     const waiting = view([
@@ -301,6 +292,17 @@ describe('Sidebar — multi-agent rail button and dock width', () => {
     expect(screen.queryByTestId('agent-rail-badge')).toBeNull()
     fireEvent.click(screen.getByTitle('Agent run'))
     expect(base.onToggleAgents).toHaveBeenCalled()
+  })
+
+  it('disabled outside agent chats: greyed, no badge, no glow state, no click, a tooltip that says why', () => {
+    render(<Sidebar {...base} sidebarMode="chat" agentRail={{ ...rail('live', 3), disabled: true }} />)
+    const button = screen.getByTitle('Only available in agent chats')
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.dataset.state).toBe('disabled')
+    expect(button.style.opacity).toBe('0.35')
+    expect(screen.queryByTestId('agent-rail-badge')).toBeNull()
+    fireEvent.click(button)
+    expect(base.onToggleAgents).not.toHaveBeenCalled()
   })
 
   it('one panel, two widths: 264 px for chats and favourites, 760 px for the dock, 0 when closed; overlay below 1280 px', () => {

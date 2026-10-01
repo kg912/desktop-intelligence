@@ -14,7 +14,7 @@ import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
-import { AgentDockEmpty, FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
+import { FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
 import { useMultiAgentRun } from '../../hooks/useMultiAgentRun'
 import { inputLockMessage, isRunActive, pausedAgents } from '../../lib/multiAgentRunState'
 import { estimateRunCost } from '../../../../shared/multiAgentModels'
@@ -186,17 +186,23 @@ export function Layout() {
     }
   }, [dockOpen, activeChatId, reviewableChat, runChatId, reviewRun, activeTitle])
 
+  // The agents rail button is always there on OpenRouter, but only usable in an agent chat.
+  const railEnabled = chatMode === 'multi-agent' || !!shownRun
   const agentRail = useMemo((): AgentRailState => {
     const run = shownRun && !shownRun.review ? shownRun.view : null
     const waiting = run ? pausedAgents(run).length : 0
     const working = run ? Object.values(run.agents).filter((a) => ['running', 'reflecting', 'retrying', 'paused'].includes(a.status)).length : 0
-    const hasRun = !!shownRun || reviewableChat === activeChatId
     return {
-      visible: isOpenRouter && (hasRun || multiAgentMode || dockOpen),
+      visible: isOpenRouter,
+      disabled: !railEnabled,
       state: run && isRunActive(run) ? (waiting ? 'approval' : 'live') : run ? 'done' : 'idle',
       count: waiting || working,
     }
-  }, [shownRun, reviewableChat, activeChatId, isOpenRouter, multiAgentMode, dockOpen])
+  }, [shownRun, isOpenRouter, railEnabled])
+  // Leaving an agent chat for a regular one closes the dock: it has nothing to show there.
+  useEffect(() => {
+    if (!railEnabled && dockOpen) setSidebarMode('chat')
+  }, [railEnabled, dockOpen])
 
   // ── Sidebar: select an existing chat ─────────────────────────
   const handleSelectChat = useCallback(async (chatId: string) => {
@@ -546,7 +552,7 @@ export function Layout() {
                     onClose={closeDock}
                     hidePlanColumn={tinyWindow}
                   />
-                ) : dockOpen ? <AgentDockEmpty onClose={closeDock} /> : null
+                ) : null
               }
               chats={chats}
               activeChatId={activeChatId}

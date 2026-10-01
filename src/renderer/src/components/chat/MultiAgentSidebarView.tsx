@@ -164,18 +164,6 @@ export function MultiAgentSidebarView(props: Props) {
   )
 }
 
-/** Shown in the dock when the active chat has no run. */
-export function AgentDockEmpty({ onClose }: { onClose: () => void }) {
-  useEscape(onClose)
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 px-10 text-center" style={{ width: DOCK_WIDTH }} data-testid="agent-dock-empty">
-      <Network className="h-5 w-5 text-ma-mute" />
-      <p className="text-[14px] text-ma-text">No agent run in this chat yet</p>
-      <p className="text-[12.5px] text-ma-mute">Turn on Multi-Agent in the input bar and send a task to start one.</p>
-    </div>
-  )
-}
-
 function useEscape(onClose: () => void): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {

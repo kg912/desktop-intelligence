@@ -70,10 +70,15 @@ function RailButton({
   const [hovered, setHovered] = useState(false)
 
   if (disabled) {
+    // No hover, no click; still hoverable for the tooltip that says why.
     return (
       <div
-        className="flex items-center justify-center rounded-[6px] text-content-secondary"
-        style={{ width: 28, height: 28, opacity: 0.35, cursor: 'default', pointerEvents: 'none', ...extraStyle }}
+        role="button"
+        aria-disabled="true"
+        title={title}
+        data-state={dataState}
+        className={cn('no-drag flex items-center justify-center rounded-[6px]', className)}
+        style={{ width: 28, height: 28, opacity: 0.35, cursor: 'not-allowed', color: 'rgba(255,255,255,0.25)', ...extraStyle }}
       >
         {children}
       </div>
@@ -653,6 +658,8 @@ export interface AgentRailState {
   state:   'idle' | 'live' | 'approval' | 'done'
   /** Badge: working agents (live) or agents awaiting approval. */
   count:   number
+  /** Greyed out: the active chat is not an agent chat. */
+  disabled?: boolean
 }
 
 interface SidebarProps {
@@ -753,13 +760,14 @@ export function Sidebar({
             <div style={{ height: 6 }} />
             <RailButton
               active={sidebarMode === 'agents'}
+              disabled={agentRail.disabled}
               onClick={onToggleAgents}
-              title="Agent run"
+              title={agentRail.disabled ? 'Only available in agent chats' : 'Agent run'}
               className="ma-rail-btn"
-              dataState={sidebarMode === 'agents' ? 'open' : agentRail.state}
+              dataState={agentRail.disabled ? 'disabled' : sidebarMode === 'agents' ? 'open' : agentRail.state}
             >
               <Network style={{ width: 15, height: 15 }} />
-              {sidebarMode !== 'agents' && (agentRail.state === 'live' || agentRail.state === 'approval') && agentRail.count > 0 && (
+              {!agentRail.disabled && sidebarMode !== 'agents' && (agentRail.state === 'live' || agentRail.state === 'approval') && agentRail.count > 0 && (
                 <span className="ma-rail-badge" data-testid="agent-rail-badge">{agentRail.count}</span>
               )}
             </RailButton>
