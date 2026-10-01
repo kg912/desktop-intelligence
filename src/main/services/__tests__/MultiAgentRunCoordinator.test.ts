@@ -100,6 +100,21 @@ describe('MultiAgentRunCoordinator.start', () => {
     expect(db.begin).toHaveBeenCalledWith('chat-1')
   })
 
+  it('Test C: four distinct configured role models are sent and returned as resolved', async () => {
+    const ids = ['a/orch', 'b/work', 'c/refl', 'd/synth']
+    const { coordinator, sidecar } = setup({ catalogue: ids.map((id) => model(id)) })
+    const models = { orchestrator: ids[0], worker: ids[1], reflection: ids[2], synthesizer: ids[3] }
+    const result = await coordinator.start({ chatId: 'c', task: 't', config: config(models) })
+    expect((sidecar.startRun.mock.calls[0][0] as unknown as { config: MultiAgentConfig }).config.models).toEqual(models)
+    expect(result).toMatchObject({ ok: true, config: { models } })
+  })
+
+  it('Test D: a configured model missing from the catalogue silently falls back to the active model (baseline)', async () => {
+    const { coordinator } = setup()
+    const result = await coordinator.start({ chatId: 'c', task: 't', config: config({ orchestrator: 'gone/model' }) })
+    expect(result).toMatchObject({ ok: true, config: { models: { orchestrator: 'active/model' } } })
+  })
+
   it('still starts (ids as configured, no pricing) when the catalogue is unreachable', async () => {
     const { coordinator, sidecar } = setup({ catalogue: new Error('offline') })
     await coordinator.start({ chatId: 'c', task: 't', config: config({ worker: 'x/y' }) })

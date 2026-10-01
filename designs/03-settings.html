@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DI · Multi-agent settings</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0a; --bg1:#0e0e0e; --bg2:#131313; --bg3:#191919;
+  --hair:rgba(255,255,255,.05); --line:rgba(255,255,255,.09);
+  --text:#ebebeb; --mute:#8b8b8b; --dim:#5a5a5a;
+  --red:#e53935; --red-08:rgba(229,57,53,.08); --red-14:rgba(229,57,53,.14); --red-35:rgba(229,57,53,.35);
+  --ok:#43cf8f; --ok-10:rgba(67,207,143,.10); --amber:#e2a93b; --amber-10:rgba(226,169,59,.10);
+  --sans:'Inter',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.mono{font-family:var(--mono);font-size:12px}
+:focus-visible{outline:1px solid var(--red-35);outline-offset:2px}
+
+/* app frame */
+.app{display:flex;height:100vh;min-width:1100px;overflow:hidden}
+.rail{width:56px;flex:none;border-right:.5px solid var(--hair);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;background:var(--bg)}
+.rail .sp{flex:1}
+.rbtn{position:relative;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;color:var(--mute);transition:color .15s,background .15s}
+.rbtn:hover{color:var(--text);background:var(--bg3)}
+.rbtn.on{color:var(--red);background:var(--red-08)}
+.rbtn.on::before{content:"";position:absolute;left:-9px;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--red)}
+.rbtn .badge{position:absolute;right:3px;top:3px;min-width:14px;height:14px;padding:0 4px;border-radius:7px;background:var(--red);color:#fff;font:600 9px/14px var(--mono);text-align:center}
+
+/* the multi-agent rail button glows while a run is live */
+.rbtn.ma.live{color:var(--red)}
+.rbtn.ma.live::after{content:"";position:absolute;inset:-1px;border-radius:10px;box-shadow:0 0 0 .5px var(--red-35),0 0 14px 1px rgba(229,57,53,.28);animation:glow 2.4s ease-in-out infinite;pointer-events:none}
+@keyframes glow{0%,100%{opacity:.55}50%{opacity:1}}
+
+/* sidebar / dock */
+.side{flex:none;width:320px;background:var(--bg1);border-right:.5px solid var(--hair);display:flex;flex-direction:column;overflow:hidden;
+  transition:width .32s cubic-bezier(.2,.8,.2,1)}
+.app.dock .side{width:820px}
+.side-h{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:.5px solid var(--hair);font-weight:600}
+.btn{height:28px;padding:0 12px;border-radius:7px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px}
+.btn:hover{background:var(--red-14)}
+.btn.ghost{border-color:var(--line);background:none;color:var(--mute)}
+.btn.ghost:hover{color:var(--text);background:var(--bg3)}
+.list{overflow:auto;padding:8px}
+.grp{padding:14px 10px 6px;font-size:12px;color:var(--dim)}
+.item{position:relative;padding:9px 12px;border-radius:8px;font-size:13px;color:#cfcfcf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item small{display:block;font-size:11px;color:var(--dim);margin-top:1px}
+.item.on{background:var(--bg3);color:var(--text)}
+.item.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--red);border-radius:2px}
+.chat-pane,.ma-pane{display:none;flex:1;min-height:0}
+.app:not(.dock) .chat-pane{display:flex;flex-direction:column}
+.app.dock .ma-pane{display:flex}
+
+/* main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.top{height:52px;flex:none;border-bottom:.5px solid var(--hair);display:flex;align-items:center;gap:12px;padding:0 20px;color:var(--mute)}
+.top .mono{color:#cfcfcf}
+.scroll{flex:1;overflow:auto}
+.col{max-width:760px;margin:0 auto;padding:28px 28px 120px}
+.ubub{margin-left:auto;max-width:620px;background:var(--bg3);border-radius:16px;padding:14px 18px;color:#dcdcdc;line-height:1.6}
+.prose{margin-top:26px;color:#d6d6d6;line-height:1.7}
+.prose h4{font-size:15px;margin:22px 0 8px;color:var(--text)}
+.prose li{margin:4px 0 4px 18px}
+.pill{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;border-radius:15px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px;margin:0 auto}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:glow 1.6s ease-in-out infinite}
+.composer{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;width:min(760px,calc(100% - 56px));background:var(--bg1);border:.5px solid var(--line);border-radius:16px;padding:14px 16px}
+.composer .ph{color:var(--dim);padding:4px 2px 12px}
+.chips{display:flex;gap:8px}
+.chip{height:26px;padding:0 10px;border-radius:7px;border:.5px solid var(--line);color:var(--dim);font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.chip.on{border-color:var(--red-35);background:var(--red-08);color:#ff7571}
+
+/* status */
+.sd{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dim)}
+.sd.ok{background:var(--ok)} .sd.run{background:var(--red);box-shadow:0 0 0 3px var(--red-14);animation:glow 1.4s ease-in-out infinite}
+.sd.wait{background:var(--amber);box-shadow:0 0 0 3px var(--amber-10)} .sd.fail{background:transparent;border:1.5px solid var(--red)}
+.tag{font:11.5px/1 var(--mono);height:20px;padding:0 7px;border-radius:5px;display:inline-flex;align-items:center;border:.5px solid var(--line);color:var(--mute)}
+.tag.ok{color:var(--ok);border-color:rgba(67,207,143,.3);background:var(--ok-10)}
+.tag.run{color:#ff7571;border-color:var(--red-35);background:var(--red-08)}
+.tag.wait{color:var(--amber);border-color:rgba(226,169,59,.3);background:var(--amber-10)}
+.tag.model{color:var(--mute)}
+
+/* form controls: nothing here is ever white */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;color:#cfcfcf;display:flex;justify-content:space-between}
+.field label b{font:500 12px var(--mono);color:var(--text)}
+.help{font-size:12px;color:var(--dim)}
+.in,.sel{height:38px;width:100%;background:var(--bg2);border:.5px solid var(--line);border-radius:9px;color:var(--text);font:13px var(--sans);padding:0 12px;outline:none;transition:border-color .15s,box-shadow .15s}
+.in.mono,.sel.mono{font-family:var(--mono);font-size:12.5px}
+.in:hover,.sel:hover{border-color:rgba(255,255,255,.16)}
+.in:focus,.sel:focus{border-color:var(--red-35);box-shadow:0 0 0 3px var(--red-08)}
+.in::placeholder{color:var(--dim)}
+.sel{appearance:none;-webkit-appearance:none;padding-right:34px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b8b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.sel option{background:var(--bg2);color:var(--text)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;background:none;--p:50%}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(90deg,var(--red) var(--p),var(--bg3) var(--p))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;margin-top:-5.5px;border-radius:50%;background:var(--bg);border:1.5px solid var(--red);box-shadow:0 0 0 3px var(--red-08)}
+.chk{display:flex;align-items:center;gap:10px;font-size:13px;color:#cfcfcf;cursor:pointer;user-select:none}
+.chk input{appearance:none;-webkit-appearance:none;width:16px;height:16px;border-radius:4px;border:.5px solid rgba(255,255,255,.2);background:var(--bg2);display:grid;place-items:center;flex:none}
+.chk input:checked{background:var(--red-14);border-color:var(--red)}
+.chk input:checked::after{content:"";width:8px;height:4px;border-left:1.5px solid #ff7571;border-bottom:1.5px solid #ff7571;transform:rotate(-45deg) translate(1px,-1px)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.set{display:flex;height:100vh;min-width:1100px}
+.nav{width:240px;border-right:.5px solid var(--hair);background:var(--bg1);padding:18px 10px;flex:none}
+.nav h2{font-size:15px;font-weight:600;padding:2px 12px 16px}
+.nav a{display:block;padding:9px 12px;border-radius:8px;color:var(--mute);font-size:13.5px;text-decoration:none;position:relative}
+.nav a.on{background:var(--bg3);color:var(--text)}
+.nav a.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--red);border-radius:2px}
+.pg{flex:1;overflow:auto}
+.wrap{max-width:900px;margin:0 auto;padding:44px 40px 80px;display:grid;grid-template-columns:1fr 1fr;gap:22px 28px}
+.wrap>.full{grid-column:1/-1}
+h1{font-size:20px;font-weight:600}
+.sub{color:var(--mute);font-size:13px;margin-top:4px}
+.sub b{color:var(--ok);font-weight:500}
+.sec{font-size:13px;color:var(--mute);padding-top:10px;border-top:.5px solid var(--hair)}
+.eff{border:.5px solid var(--line);border-radius:12px;background:var(--bg1);overflow:hidden}
+.eff-h{display:flex;justify-content:space-between;padding:12px 16px;border-bottom:.5px solid var(--hair);font-size:13px}
+.eff-h span:last-child{color:var(--dim)}
+.er{display:grid;grid-template-columns:130px 1fr auto;gap:12px;align-items:center;padding:10px 16px;border-bottom:.5px solid var(--hair);font-size:13px}
+.er:last-child{border:0}
+.er .r{color:var(--mute)} .er .m{font:12.5px var(--mono);color:var(--text)}
+.src{font:11.5px var(--mono);height:20px;padding:0 7px;border-radius:5px;display:inline-flex;align-items:center;border:.5px solid var(--line);color:var(--dim)}
+.src.saved{color:var(--ok);border-color:rgba(67,207,143,.3);background:var(--ok-10)}
+.src.fb{color:var(--amber);border-color:rgba(226,169,59,.3);background:var(--amber-10)}
+.fl{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.cnt{color:var(--dim);font-size:12.5px;margin-left:auto}
+.dd{position:relative}
+.menu{position:absolute;left:0;right:0;top:70px;z-index:5;background:var(--bg2);border:.5px solid var(--line);border-radius:10px;box-shadow:0 18px 40px rgba(0,0,0,.55);overflow:hidden}
+.mi{display:grid;grid-template-columns:1fr auto auto;gap:14px;padding:9px 12px;font:12.5px var(--mono);color:#cfcfcf;border-bottom:.5px solid var(--hair)}
+.mi:last-child{border:0}.mi:hover,.mi.hl{background:var(--bg3)}
+.mi.sel{color:var(--text);box-shadow:inset 2px 0 0 var(--red)}
+.mi .p,.mi .c{color:var(--dim)}
+.mi.def{font-family:var(--sans);color:var(--mute)}
+.bar{display:flex;align-items:center;gap:14px;grid-column:1/-1}
+.btn.solid{height:34px;padding:0 16px;background:var(--red);border-color:var(--red);color:#fff;font-weight:500}
+.btn.solid:hover{background:#d8322e}
+</style></head>
+<body>
+<div class="set">
+  <aside class="nav"><h2>Settings</h2>
+    <a>Model</a><a>Web Search</a><a>MCP Servers</a><a>Backend</a><a>RAG</a><a class="on">Multi-Agent</a><a>Debug</a><a>About</a></aside>
+  <div class="pg"><div class="wrap">
+    <div class="full"><h1>Multi-Agent Orchestration</h1>
+      <p class="sub">OpenRouter only. Defaults for every multi-agent run. Sidecar <b>running</b></p></div>
+
+    <div class="full eff" aria-label="Models the next run will use">
+      <div class="eff-h"><span>Models the next run will use</span><span>Active OpenRouter model: deepseek/deepseek-v4.1-flash</span></div>
+      <div class="er"><span class="r">Orchestrator</span><span class="m">meta-llama/llama-3.3-70b-instruct</span><span class="src saved">saved</span></div>
+      <div class="er"><span class="r">Worker agents</span><span class="m">deepseek/deepseek-v4.1-flash</span><span class="src">follows active model</span></div>
+      <div class="er"><span class="r">Reflection</span><span class="m">meta-llama/llama-3.3-70b-instruct</span><span class="src saved">saved</span></div>
+      <div class="er"><span class="r">Synthesizer</span><span class="m">qwen/qwen3-235b-a22b-2507</span><span class="src fb">not in catalogue · using active model</span></div>
+    </div>
+
+    <div class="field"><label>Max agents <b>4</b></label><input type="range" min="1" max="8" value="4" style="--p:43%"></div>
+    <div class="field"><label for="b">Per-run budget cap (USD)</label><input id="b" class="in mono" value="0.65"></div>
+    <div class="field"><label>Reflection pass threshold <b>3</b></label><input type="range" min="1" max="5" value="3" style="--p:50%"></div>
+    <div class="field"><label>Max retries per agent <b>2</b></label><input type="range" min="0" max="5" value="2" style="--p:40%"></div>
+    <div class="field"><label for="t">Approval timeout (minutes)</label><input id="t" class="in mono" value="5"><span class="help">Unanswered tool approvals are auto-denied after this.</span></div>
+    <div class="field"><label for="p">Sidecar port</label><input id="p" class="in mono" value="7823"><span class="help">Loopback only. A busy port falls back to a free one.</span></div>
+
+    <div class="full sec">Models</div>
+    <div class="full fl">
+      <label class="chk"><input type="checkbox" checked>Requires tool-call support</label>
+      <label class="chk"><input type="checkbox" checked>Sort by price</label>
+      <label class="chk" style="gap:8px">Min context
+        <select class="sel mono" style="width:92px;height:30px"><option>32k</option></select></label>
+      <span class="cnt">389 of 462 models</span>
+    </div>
+
+    <div class="field"><label>Orchestrator</label><select class="sel mono"><option>meta-llama/llama-3.3-70b-instruct — $0.100 / $0.320 per 1M · 131k</option></select><span class="help">Plans the run. Needs reliable JSON output.</span></div>
+    <div class="field dd"><label>Worker agents</label>
+      <select class="sel mono" style="border-color:var(--red-35);box-shadow:0 0 0 3px var(--red-08)"><option>Follow active OpenRouter model</option></select>
+      <div class="menu" role="listbox">
+        <div class="mi def sel"><span>Follow active OpenRouter model</span><span></span><span></span></div>
+        <div class="mi"><span>deepseek/deepseek-v4.1-flash</span><span class="p">$0.040 / $0.120</span><span class="c">128k</span></div>
+        <div class="mi hl"><span>meta-llama/llama-3.3-70b-instruct</span><span class="p">$0.100 / $0.320</span><span class="c">131k</span></div>
+        <div class="mi"><span>qwen/qwen3-235b-a22b-2507</span><span class="p">$0.087 / $0.350</span><span class="c">262k</span></div>
+      </div>
+      <span class="help" style="margin-top:150px">Every worker in a run uses this. It drives most of the cost.</span></div>
+    <div class="field"><label>Reflection</label><select class="sel mono"><option>meta-llama/llama-3.3-70b-instruct — $0.100 / $0.320 per 1M · 131k</option></select><span class="help">Scores each worker output from 1 to 5.</span></div>
+    <div class="field"><label>Synthesizer</label><select class="sel mono"><option>qwen/qwen3-235b-a22b-2507 — $0.087 / $0.350 per 1M · 262k</option></select><span class="help">Writes the final answer. Needs long context.</span></div>
+
+    <div class="full"><label class="chk"><input type="checkbox" checked>Ask before every worker tool call, unless the agent is trusted for the run</label></div>
+    <div class="bar"><button class="btn solid">Save multi-agent defaults</button><span class="help">Saved. Applies to the next run.</span></div>
+  </div></div>
+</div>
+</body></html>

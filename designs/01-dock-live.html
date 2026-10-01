@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DI · Multi-agent dock</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0a; --bg1:#0e0e0e; --bg2:#131313; --bg3:#191919;
+  --hair:rgba(255,255,255,.05); --line:rgba(255,255,255,.09);
+  --text:#ebebeb; --mute:#8b8b8b; --dim:#5a5a5a;
+  --red:#e53935; --red-08:rgba(229,57,53,.08); --red-14:rgba(229,57,53,.14); --red-35:rgba(229,57,53,.35);
+  --ok:#43cf8f; --ok-10:rgba(67,207,143,.10); --amber:#e2a93b; --amber-10:rgba(226,169,59,.10);
+  --sans:'Inter',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.mono{font-family:var(--mono);font-size:12px}
+:focus-visible{outline:1px solid var(--red-35);outline-offset:2px}
+
+/* app frame */
+.app{display:flex;height:100vh;min-width:1100px;overflow:hidden}
+.rail{width:56px;flex:none;border-right:.5px solid var(--hair);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;background:var(--bg)}
+.rail .sp{flex:1}
+.rbtn{position:relative;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;color:var(--mute);transition:color .15s,background .15s}
+.rbtn:hover{color:var(--text);background:var(--bg3)}
+.rbtn.on{color:var(--red);background:var(--red-08)}
+.rbtn.on::before{content:"";position:absolute;left:-9px;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--red)}
+.rbtn .badge{position:absolute;right:3px;top:3px;min-width:14px;height:14px;padding:0 4px;border-radius:7px;background:var(--red);color:#fff;font:600 9px/14px var(--mono);text-align:center}
+
+/* the multi-agent rail button glows while a run is live */
+.rbtn.ma.live{color:var(--red)}
+.rbtn.ma.live::after{content:"";position:absolute;inset:-1px;border-radius:10px;box-shadow:0 0 0 .5px var(--red-35),0 0 14px 1px rgba(229,57,53,.28);animation:glow 2.4s ease-in-out infinite;pointer-events:none}
+@keyframes glow{0%,100%{opacity:.55}50%{opacity:1}}
+
+/* sidebar / dock */
+.side{flex:none;width:320px;background:var(--bg1);border-right:.5px solid var(--hair);display:flex;flex-direction:column;overflow:hidden;
+  transition:width .32s cubic-bezier(.2,.8,.2,1)}
+.app.dock .side{width:820px}
+.side-h{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:.5px solid var(--hair);font-weight:600}
+.btn{height:28px;padding:0 12px;border-radius:7px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px}
+.btn:hover{background:var(--red-14)}
+.btn.ghost{border-color:var(--line);background:none;color:var(--mute)}
+.btn.ghost:hover{color:var(--text);background:var(--bg3)}
+.list{overflow:auto;padding:8px}
+.grp{padding:14px 10px 6px;font-size:12px;color:var(--dim)}
+.item{position:relative;padding:9px 12px;border-radius:8px;font-size:13px;color:#cfcfcf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item small{display:block;font-size:11px;color:var(--dim);margin-top:1px}
+.item.on{background:var(--bg3);color:var(--text)}
+.item.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--red);border-radius:2px}
+.chat-pane,.ma-pane{display:none;flex:1;min-height:0}
+.app:not(.dock) .chat-pane{display:flex;flex-direction:column}
+.app.dock .ma-pane{display:flex}
+
+/* main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.top{height:52px;flex:none;border-bottom:.5px solid var(--hair);display:flex;align-items:center;gap:12px;padding:0 20px;color:var(--mute)}
+.top .mono{color:#cfcfcf}
+.scroll{flex:1;overflow:auto}
+.col{max-width:760px;margin:0 auto;padding:28px 28px 120px}
+.ubub{margin-left:auto;max-width:620px;background:var(--bg3);border-radius:16px;padding:14px 18px;color:#dcdcdc;line-height:1.6}
+.prose{margin-top:26px;color:#d6d6d6;line-height:1.7}
+.prose h4{font-size:15px;margin:22px 0 8px;color:var(--text)}
+.prose li{margin:4px 0 4px 18px}
+.pill{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;border-radius:15px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px;margin:0 auto}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:glow 1.6s ease-in-out infinite}
+.composer{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;width:min(760px,calc(100% - 56px));background:var(--bg1);border:.5px solid var(--line);border-radius:16px;padding:14px 16px}
+.composer .ph{color:var(--dim);padding:4px 2px 12px}
+.chips{display:flex;gap:8px}
+.chip{height:26px;padding:0 10px;border-radius:7px;border:.5px solid var(--line);color:var(--dim);font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.chip.on{border-color:var(--red-35);background:var(--red-08);color:#ff7571}
+
+/* status */
+.sd{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dim)}
+.sd.ok{background:var(--ok)} .sd.run{background:var(--red);box-shadow:0 0 0 3px var(--red-14);animation:glow 1.4s ease-in-out infinite}
+.sd.wait{background:var(--amber);box-shadow:0 0 0 3px var(--amber-10)} .sd.fail{background:transparent;border:1.5px solid var(--red)}
+.tag{font:11.5px/1 var(--mono);height:20px;padding:0 7px;border-radius:5px;display:inline-flex;align-items:center;border:.5px solid var(--line);color:var(--mute)}
+.tag.ok{color:var(--ok);border-color:rgba(67,207,143,.3);background:var(--ok-10)}
+.tag.run{color:#ff7571;border-color:var(--red-35);background:var(--red-08)}
+.tag.wait{color:var(--amber);border-color:rgba(226,169,59,.3);background:var(--amber-10)}
+.tag.model{color:var(--mute)}
+
+/* form controls: nothing here is ever white */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;color:#cfcfcf;display:flex;justify-content:space-between}
+.field label b{font:500 12px var(--mono);color:var(--text)}
+.help{font-size:12px;color:var(--dim)}
+.in,.sel{height:38px;width:100%;background:var(--bg2);border:.5px solid var(--line);border-radius:9px;color:var(--text);font:13px var(--sans);padding:0 12px;outline:none;transition:border-color .15s,box-shadow .15s}
+.in.mono,.sel.mono{font-family:var(--mono);font-size:12.5px}
+.in:hover,.sel:hover{border-color:rgba(255,255,255,.16)}
+.in:focus,.sel:focus{border-color:var(--red-35);box-shadow:0 0 0 3px var(--red-08)}
+.in::placeholder{color:var(--dim)}
+.sel{appearance:none;-webkit-appearance:none;padding-right:34px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b8b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.sel option{background:var(--bg2);color:var(--text)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;background:none;--p:50%}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(90deg,var(--red) var(--p),var(--bg3) var(--p))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;margin-top:-5.5px;border-radius:50%;background:var(--bg);border:1.5px solid var(--red);box-shadow:0 0 0 3px var(--red-08)}
+.chk{display:flex;align-items:center;gap:10px;font-size:13px;color:#cfcfcf;cursor:pointer;user-select:none}
+.chk input{appearance:none;-webkit-appearance:none;width:16px;height:16px;border-radius:4px;border:.5px solid rgba(255,255,255,.2);background:var(--bg2);display:grid;place-items:center;flex:none}
+.chk input:checked{background:var(--red-14);border-color:var(--red)}
+.chk input:checked::after{content:"";width:8px;height:4px;border-left:1.5px solid #ff7571;border-bottom:1.5px solid #ff7571;transform:rotate(-45deg) translate(1px,-1px)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ── dock-specific ───────────────────────────────────────────── */
+.app{min-width:1280px}
+.app.dock .side{width:760px}
+.ma-pane{flex-direction:row}
+.plan{width:248px;flex:none;border-right:.5px solid var(--hair);display:flex;flex-direction:column;min-height:0}
+.plan-h{padding:14px 16px 12px;border-bottom:.5px solid var(--hair)}
+.plan-h .t{display:flex;align-items:center;justify-content:space-between;font-weight:600}
+.plan-h p{color:var(--dim);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plan-h .x{display:flex;gap:6px}
+.sum{display:flex;gap:14px;padding:10px 16px;font:12px var(--mono);color:var(--mute);border-bottom:.5px solid var(--hair)}
+.sum b{color:var(--text);font-weight:500}
+
+/* concurrency strip: the proof that workers overlap */
+.gantt{padding:12px 16px 14px;border-bottom:.5px solid var(--hair)}
+.gantt .cap{display:flex;justify-content:space-between;font-size:12px;color:var(--mute);margin-bottom:9px}
+.gantt .cap b{color:#ff7571;font-weight:500}
+.lane{position:relative;height:16px;margin:5px 0}
+.lane i{position:absolute;top:3px;height:10px;border-radius:5px;background:var(--bg3)}
+.lane i.ok{background:rgba(67,207,143,.55)}
+.lane i.run{background:linear-gradient(90deg,rgba(229,57,53,.75),rgba(229,57,53,.35));box-shadow:0 0 10px rgba(229,57,53,.25)}
+.lane i.q{background:transparent;border:.5px dashed rgba(255,255,255,.18)}
+.lane span{position:absolute;left:-1px;top:-1px;font:10.5px var(--mono);color:var(--dim);transform:translateX(-100%);padding-right:6px}
+.lanes{margin-left:26px;position:relative}
+.now{position:absolute;top:-4px;bottom:-4px;left:58%;width:1px;background:rgba(255,255,255,.35)}
+
+.steps{overflow:auto;padding:8px;flex:1}
+.step{display:flex;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;position:relative}
+.step:hover{background:var(--bg2)}
+.step.on{background:var(--bg3)}
+.step.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--red);border-radius:2px}
+.step .sd{margin-top:6px}
+.step .n{font-size:13px;line-height:1.35}
+.step .m{font:11.5px var(--mono);color:var(--dim);margin-top:2px}
+.step.after .n{color:var(--mute)}
+.dep{font-size:11.5px;color:var(--dim);margin-top:2px}
+.foot{padding:10px 16px;border-top:.5px solid var(--hair);font:12px var(--mono);color:var(--dim);display:flex;justify-content:space-between}
+.foot b{color:var(--mute);font-weight:400}
+
+/* trace column */
+.trace{flex:1;min-width:0;overflow:auto;padding:14px}
+.card{border:.5px solid var(--line);border-radius:12px;background:var(--bg1);margin-bottom:12px;overflow:hidden}
+.card.live{border-color:var(--red-35)}
+.card-h{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer}
+.card-h .ti{flex:1;min-width:0}
+.card-h .ti b{font-weight:500;font-size:13.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-h .ti span{font:11.5px var(--mono);color:var(--dim)}
+.card-h .chev{transition:transform .2s;color:var(--dim)}
+.card.open .chev{transform:rotate(180deg)}
+.card-b{display:none;border-top:.5px solid var(--hair);padding:4px 14px 14px}
+.card.open .card-b{display:block}
+.ev{position:relative;padding:10px 0 2px 22px}
+.ev::before{content:"";position:absolute;left:5px;top:0;bottom:-10px;width:.5px;background:var(--line)}
+.ev:last-child::before{bottom:auto;height:18px}
+.ev .k{position:absolute;left:0;top:14px;width:11px;height:11px;border-radius:50%;border:1px solid var(--line);background:var(--bg1)}
+.ev.think .k{border-color:rgba(255,255,255,.25)}
+.ev.tool .k{border-color:var(--red-35);background:var(--red-08)}
+.ev.out .k{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.12)}
+.ev.gate .k{border-color:rgba(67,207,143,.5);background:var(--ok-10)}
+.lbl{font-size:12px;color:var(--mute);display:flex;gap:8px;align-items:center}
+.lbl .mono{color:var(--dim)}
+.think-t{margin-top:6px;color:#9a9a9a;font-style:italic;font-size:13px;line-height:1.6;max-height:66px;overflow:hidden;position:relative;border-left:.5px solid var(--line);padding-left:12px}
+.think-t::after{content:"";position:absolute;inset:auto 0 0 0;height:26px;background:linear-gradient(transparent,var(--bg1))}
+.toolrow{margin-top:6px;border:.5px solid var(--line);border-radius:8px;background:var(--bg2);padding:8px 10px;display:flex;gap:10px;align-items:center;font:12px var(--mono)}
+.toolrow .nm{color:#ff9a97}
+.toolrow .ar{color:var(--mute);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toolrow .rs{color:var(--dim)}
+.approve{margin-top:6px;border:.5px solid rgba(226,169,59,.35);border-radius:9px;background:var(--amber-10);padding:10px 12px}
+.approve p{font-size:12.5px;color:#e8c77f}
+.approve .row{display:flex;gap:8px;margin-top:9px}
+.out-t{margin-top:6px;font-size:13px;color:#d0d0d0;line-height:1.65}
+.cur{display:inline-block;width:6px;height:13px;background:var(--red);vertical-align:-2px;margin-left:2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.gate-t{margin-top:4px;font-size:12.5px;color:#7fdcb0}
+
+/* main chat (right) */
+.main .col{max-width:620px}
+.synth{margin-top:22px;border:.5px solid var(--red-35);border-radius:14px;background:linear-gradient(180deg,rgba(229,57,53,.06),rgba(229,57,53,.02));padding:16px 18px}
+.synth .h{display:flex;align-items:center;gap:8px;color:#ff7571;font-size:13px;font-weight:500}
+.synth p{margin-top:8px;color:#bdbdbd;font-size:13px}
+.vr{display:flex;justify-content:center;margin-top:22px}
+.stub{position:absolute;right:20px;top:14px}
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="star" viewBox="0 0 24 24"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></symbol>
+<symbol id="net" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7.5l3 8M16 7.5l-3 8M8.5 6h7"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+</defs></svg>
+
+<div class="app dock" id="app">
+  <nav class="rail" aria-label="Sidebar">
+    <div style="height:40px"></div>
+    <button class="rbtn" id="rb-chat" title="Chats"><svg class="i"><use href="#chat"/></svg></button>
+    <button class="rbtn" title="Favourites"><svg class="i"><use href="#star"/></svg></button>
+    <button class="rbtn ma live on" id="rb-ma" title="Multi-agent chats"><svg class="i"><use href="#net"/></svg><span class="badge">3</span></button>
+    <div class="sp"></div>
+    <button class="rbtn" title="Settings"><svg class="i"><use href="#gear"/></svg></button>
+  </nav>
+
+  <aside class="side">
+    <!-- default sidebar content -->
+    <div class="chat-pane">
+      <div class="side-h"><span>Chats</span><button class="btn">+ New</button></div>
+      <div class="list">
+        <div class="grp">Today</div>
+        <div class="item on">I need you to properly research an…<small>5m ago · multi-agent</small></div>
+        <div class="item">I need you to properly research and…<small>9h ago · multi-agent</small></div>
+        <div class="grp">Yesterday</div>
+        <div class="item">can you concisely explain this code…<small>1d ago</small></div>
+        <div class="grp">Earlier</div>
+        <div class="item">SQLite &amp; Indexes + Advice on next…<small>10d ago</small></div>
+        <div class="item">what is closed form solution<small>11d ago</small></div>
+        <div class="item">Mom's question<small>17d ago</small></div>
+      </div>
+    </div>
+
+    <!-- the same panel, widened, now hosting the run -->
+    <div class="ma-pane">
+      <section class="plan" aria-label="Run plan">
+        <div class="plan-h">
+          <div class="t"><span>Agent run</span><span class="x"><button class="btn ghost" style="height:24px;padding:0 9px">Abort</button></span></div>
+          <p>12-day Bavarian/Austrian Alps itinerary</p>
+        </div>
+        <div class="sum"><span><b>$0.03</b> / $0.65</span><span><b>31.2k</b> tok</span></div>
+
+        <div class="gantt" aria-label="Agent timeline">
+          <div class="cap"><span><b>3 agents running in parallel</b></span><span class="mono">0:48</span></div>
+          <div class="lanes">
+            <div class="lane"><span>1.1</span><i class="ok" style="left:0;width:46%"></i></div>
+            <div class="lane"><span>1.2</span><i class="run" style="left:2%;width:56%"></i></div>
+            <div class="lane"><span>1.3</span><i class="run" style="left:2%;width:56%"></i></div>
+            <div class="lane"><span>2.1</span><i class="q" style="left:60%;width:36%"></i></div>
+            <div class="now"></div>
+          </div>
+        </div>
+
+        <div class="steps" id="steps">
+          <div class="step" data-c="c1"><span class="sd ok"></span><div><div class="n">Research destinations</div><div class="m">GeoAgent · deepseek-v4.1-flash</div></div></div>
+          <div class="step on" data-c="c2"><span class="sd run"></span><div><div class="n">Research rail and bus links</div><div class="m">TransAgent · deepseek-v4.1-flash</div></div></div>
+          <div class="step" data-c="c3"><span class="sd wait"></span><div><div class="n">Find lodging by base town</div><div class="m">StayAgent · needs approval</div></div></div>
+          <div class="step after" data-c="c4"><span class="sd"></span><div><div class="n">Draft day-by-day itinerary</div><div class="dep">Waits for 1.1, 1.2, 1.3</div></div></div>
+        </div>
+        <div class="foot"><b>orchestrator · llama-3.3-70b</b><b>reflect · llama-3.3-70b</b></div>
+      </section>
+
+      <section class="trace" id="trace" aria-label="Agent traces">
+        <article class="card" id="c1">
+          <div class="card-h"><span class="sd ok"></span><div class="ti"><b>1.1 Research destinations</b><span>GeoAgent · 14.8k tok · $0.02 · 41s</span></div><span class="tag ok">Pass 5/5</span><svg class="i chev"><use href="#chev"/></svg></div>
+          <div class="card-b"><div class="ev think"><i class="k"></i><div class="lbl">Reasoning <span class="mono">· 9s</span></div></div>
+            <div class="ev out"><i class="k"></i><div class="lbl">Answer</div><div class="out-t">Base towns ranked by rail access: Salzburg, Innsbruck, Füssen (via Reutte), Hallstatt by train + ferry…</div></div>
+            <div class="ev gate"><i class="k"></i><div class="lbl">Reflection gate · attempt 1</div><div class="gate-t">5/5 — covers every cluster and cites rail access for each.</div></div></div>
+        </article>
+
+        <article class="card live open" id="c2">
+          <div class="card-h"><span class="sd run"></span><div class="ti"><b>1.2 Research rail and bus links</b><span>TransAgent · deepseek-v4.1-flash · 6.1k tok · 48s</span></div><span class="tag run">Live</span><svg class="i chev"><use href="#chev"/></svg></div>
+          <div class="card-b">
+            <div class="ev think"><i class="k"></i><div class="lbl">Reasoning <span class="mono">· 14s</span></div>
+              <div class="think-t">Salzburg to Innsbruck is the long leg. The direct Railjet takes about two hours, so a base change on Dec 15 works. I should confirm Christmas Eve service before suggesting a late return to Vienna…</div></div>
+            <div class="ev tool"><i class="k"></i><div class="lbl">Tool call <span class="mono">· 1.2s</span></div>
+              <div class="toolrow"><span class="nm">brave_web_search</span><span class="ar">"ÖBB Salzburg Innsbruck Railjet 24 December timetable"</span><span class="rs">8 results</span></div></div>
+            <div class="ev tool"><i class="k"></i><div class="lbl">Tool call <span class="mono">· 0.9s</span></div>
+              <div class="toolrow"><span class="nm">fetch</span><span class="ar">oebb.at/en/…/christmas-eve-service</span><span class="rs">4.2k chars</span></div></div>
+            <div class="ev out"><i class="k"></i><div class="lbl">Answer <span class="mono">· streaming</span></div>
+              <div class="out-t">Vienna → Salzburg Hbf runs every 30 minutes on the Railjet, about 2h22. Salzburg → Innsbruck takes 1h50 via Kufstein<span class="cur"></span></div></div>
+          </div>
+        </article>
+
+        <article class="card" id="c3">
+          <div class="card-h"><span class="sd wait"></span><div class="ti"><b>1.3 Find lodging by base town</b><span>StayAgent · waiting on you</span></div><span class="tag wait">Approval</span><svg class="i chev"><use href="#chev"/></svg></div>
+          <div class="card-b"><div class="ev tool"><i class="k"></i><div class="lbl">Wants to run a tool</div>
+            <div class="approve"><p><b>StayAgent</b> wants to call <span class="mono">brave_web_search</span> with “family-run hotels Füssen near Hbf”.</p>
+              <div class="row"><button class="btn">Approve</button><button class="btn ghost">Deny</button><button class="btn ghost">Trust StayAgent for this run</button></div></div></div></div>
+        </article>
+
+        <article class="card" id="c4">
+          <div class="card-h"><span class="sd"></span><div class="ti"><b>2.1 Draft day-by-day itinerary</b><span>ItinAgent · starts when 1.1, 1.2, 1.3 pass</span></div><span class="tag">Queued</span><svg class="i chev"><use href="#chev"/></svg></div>
+          <div class="card-b"><div class="ev"><i class="k"></i><div class="lbl">Nothing to show yet</div></div></div>
+        </article>
+      </section>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="top"><span class="mono">deepseek/deepseek-v4.1-flash</span></div>
+    <div class="scroll"><div class="col">
+      <div class="vr" style="margin:0 0 22px"><button class="pill" id="viewrun"><span class="dot"></span>Viewing agent run · close</button></div>
+      <div class="ubub">I need you to properly research and build a 12 day itinerary for visiting the Bavarian/Austrian alps from Sat Dec 12 to Thu Dec 24, 2026, flying in and out of Vienna, by train, bus and on foot. Not a skier.</div>
+      <div class="synth"><div class="h"><svg class="i" style="width:16px;height:16px"><use href="#net"/></svg>Final synthesis</div><p>Starts when every agent has passed its gate. Currently 1 of 4 passed.</p></div>
+    </div></div>
+    <div class="composer"><div class="ph">Agents are running…</div><div class="chips"><span class="chip on">Thinking</span><span class="chip">Require Permissions</span><span class="chip on">Multi-Agent</span></div></div>
+  </main>
+</div>
+
+<script>
+const app=document.getElementById('app'),rb=document.getElementById('rb-ma'),rc=document.getElementById('rb-chat');
+const setDock=on=>{app.classList.toggle('dock',on);rb.classList.toggle('on',on);rc.classList.toggle('on',!on);
+  document.getElementById('viewrun').innerHTML=on?'<span class="dot"></span>Viewing agent run · close':'View agent run'};
+rb.onclick=()=>setDock(true); rc.onclick=()=>setDock(false);
+document.getElementById('viewrun').onclick=()=>setDock(!app.classList.contains('dock'));
+document.querySelectorAll('.step').forEach(s=>s.onclick=()=>{
+  document.querySelectorAll('.step').forEach(x=>x.classList.toggle('on',x===s));
+  document.querySelectorAll('.card').forEach(c=>c.classList.toggle('open',c.id===s.dataset.c));
+  document.getElementById(s.dataset.c).scrollIntoView({block:'nearest',behavior:'smooth'})});
+document.querySelectorAll('.card-h').forEach(h=>h.onclick=()=>h.parentElement.classList.toggle('open'));
+</script>
+</body></html>

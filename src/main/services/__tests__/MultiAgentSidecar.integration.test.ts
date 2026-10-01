@@ -52,6 +52,8 @@ const ENABLED = canRun()
 interface Reply {
   content?: string
   toolCalls?: Array<{ id: string; name: string; args: string }>
+  /** Hold the response open this long before streaming (parallelism tests). */
+  delayMs?: number
 }
 type Body = {
   model: string
@@ -63,7 +65,8 @@ type Body = {
 }
 interface FakeOpenRouter {
   url: string
-  requests: Array<{ body: Body; auth: string | undefined }>
+  /** start/end: ms timestamps when the request body arrived and the response ended. */
+  requests: Array<{ body: Body; auth: string | undefined; start: number; end: number }>
   pricing: Record<string, { prompt: number; completion: number }>
   close(): Promise<void>
 }
@@ -78,7 +81,8 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
     req.on('data', (c) => (raw += c))
     req.on('end', () => {
       const body = JSON.parse(raw) as Body
-      fake.requests.push({ body, auth: req.headers.authorization })
+      const record = { body, auth: req.headers.authorization, start: Date.now(), end: 0 }
+      fake.requests.push(record)
       const reply = route(body)
       // Honour max_tokens like the real API does; cost from the fake price list.
       const completion = Math.min(body.max_tokens ?? COMPLETION_TOKENS, COMPLETION_TOKENS)
@@ -87,18 +91,22 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       const send = (obj: unknown): boolean => res.write(`data: ${JSON.stringify(obj)}\n\n`)
       res.write(': OPENROUTER PROCESSING\n\n')
-      const text = reply.content ?? ''
-      for (const part of text.match(/.{1,12}/gs) ?? []) send({ choices: [{ index: 0, delta: { content: part } }] })
-      reply.toolCalls?.forEach((call, index) => {
-        const half = Math.ceil(call.args.length / 2)
-        send({ choices: [{ index: 0, delta: { tool_calls: [{ index, id: call.id, type: 'function', function: { name: call.name, arguments: call.args.slice(0, half) } }] } }] })
-        send({ choices: [{ index: 0, delta: { tool_calls: [{ index, function: { arguments: call.args.slice(half) } }] } }] })
-      })
-      send({
-        choices: [{ index: 0, delta: {}, finish_reason: reply.toolCalls ? 'tool_calls' : 'stop' }],
-        usage: { prompt_tokens: PROMPT_TOKENS, completion_tokens: completion, total_tokens: PROMPT_TOKENS + completion, cost },
-      })
-      res.end('data: [DONE]\n\n')
+      const stream = (): void => {
+        const text = reply.content ?? ''
+        for (const part of text.match(/.{1,12}/gs) ?? []) send({ choices: [{ index: 0, delta: { content: part } }] })
+        reply.toolCalls?.forEach((call, index) => {
+          const half = Math.ceil(call.args.length / 2)
+          send({ choices: [{ index: 0, delta: { tool_calls: [{ index, id: call.id, type: 'function', function: { name: call.name, arguments: call.args.slice(0, half) } }] } }] })
+          send({ choices: [{ index: 0, delta: { tool_calls: [{ index, function: { arguments: call.args.slice(half) } }] } }] })
+        })
+        send({
+          choices: [{ index: 0, delta: {}, finish_reason: reply.toolCalls ? 'tool_calls' : 'stop' }],
+          usage: { prompt_tokens: PROMPT_TOKENS, completion_tokens: completion, total_tokens: PROMPT_TOKENS + completion, cost },
+        })
+        record.end = Date.now()
+        res.end('data: [DONE]\n\n')
+      }
+      setTimeout(stream, reply.delayMs ?? 0)
     })
   })
   return new Promise((resolveStart) => {
@@ -119,9 +127,13 @@ const userOf = (body: Body): string => body.messages.find((m) => m.role === 'use
 
 /** Default scenario: Researcher uses a tool, Analyzer is rejected once, synthesis cites both. */
 let planOverride: ((body: Body, attempt: number) => Reply) | null = null
+/** Consulted first for every non-planner request; undefined falls through to the default scenario. */
+let replyOverride: ((body: Body) => Reply | undefined) | null = null
 let plannerCalls = 0
 function scenario(body: Body): Reply {
   const system = systemOf(body)
+  const overridden = !system.includes('orchestrator of a team') ? replyOverride?.(body) : undefined
+  if (overridden) return overridden
   if (system.includes('orchestrator of a team')) {
     plannerCalls++
     if (planOverride) return planOverride(body, plannerCalls)
@@ -365,6 +377,64 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     })
     expect(events.at(-1)).toMatchObject({ type: 'task_failed', reason: 'Run aborted by user' })
     expect(mgr.getStatus()).toBe('running')
+  }, 60_000)
+
+  // ── Phase 0 measurements (specs/multi-agent-refinement.md) ─────────────────
+
+  /** Plan the given steps; every Scout request is held open for `holdMs`. */
+  async function timedRun(plan: Array<Record<string, unknown>>, opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }> } = {}): Promise<{ events: AgentEvent[]; windows: Array<{ start: number; end: number; label: string }> }> {
+    fake.requests.length = 0
+    planOverride = () => ({ content: JSON.stringify(plan) })
+    replyOverride = (body) => (systemOf(body).includes('Scout agent') ? { content: `Findings for ${userOf(body).match(/Your subtask \(([\d.]+)\)/)?.[1]}: detailed results.`, delayMs: 300 } : undefined)
+    try {
+      const events = await runToEnd(mgr, { config: opts.config, pricing: opts.pricing, onEvent: approvePlan(mgr) })
+      const windows = fake.requests
+        .filter((r) => systemOf(r.body).includes('Scout agent'))
+        .map((r) => ({ start: r.start, end: r.end, label: userOf(r.body).match(/Your subtask \(([\d.]+)\)/)?.[1] ?? '' }))
+      return { events, windows }
+    } finally {
+      planOverride = null
+      replyOverride = null
+    }
+  }
+  const allOverlap = (w: Array<{ start: number; end: number }>): boolean => Math.max(...w.map((x) => x.start)) < Math.min(...w.map((x) => x.end))
+
+  it('Test A: three independent steps in one phase run with overlapping request windows', async () => {
+    const { events, windows } = await timedRun([1, 2, 3].map((n) => ({ id: `1.${n}`, label: `Look up source ${n}`, role: 'Scout', phase: 1 })))
+    expect(events.at(-1)?.type).toBe('task_complete')
+    expect(windows).toHaveLength(3)
+    expect(allOverlap(windows)).toBe(true)
+  }, 60_000)
+
+  it('Test A (chain): a plan with one step per phase serialises — measured baseline', async () => {
+    const { windows } = await timedRun([1, 2, 3].map((n) => ({ id: `${n}.1`, label: `Look up source ${n}`, role: 'Scout', phase: n })))
+    expect(windows).toHaveLength(3)
+    for (let i = 1; i < windows.length; i++) expect(windows[i].start).toBeGreaterThanOrEqual(windows[i - 1].end)
+  }, 60_000)
+
+  it('Test B: a cap just above one worst-case reservation — measured baseline', async () => {
+    // 32,768-token clamp × 1e-6 ≈ $0.033 worst case per request; cap $0.04.
+    const price = { prompt: 1e-7, completion: 1e-6 }
+    const pricing = { 'fake/planner': price, 'fake/worker': price, 'fake/reviewer': price, 'fake/synth': price }
+    Object.assign(fake.pricing, pricing)
+    try {
+      const { windows } = await timedRun([1, 2, 3].map((n) => ({ id: `1.${n}`, label: `Look up source ${n}`, role: 'Scout', phase: 1 })), { config: baseConfig({ budgetCapUsd: 0.04 }), pricing })
+      expect(windows).toHaveLength(3)
+      // Baseline: the first request reserves nearly the whole allowance, so the third waits.
+      expect(allOverlap(windows)).toBe(false)
+    } finally {
+      for (const key of Object.keys(fake.pricing)) delete fake.pricing[key]
+    }
+  }, 60_000)
+
+  it('Test C: each role\'s configured model reaches the wire', async () => {
+    const { events } = await timedRun([{ id: '1.1', label: 'Look up source 1', role: 'Scout', phase: 1 }])
+    expect(events.at(-1)?.type).toBe('task_complete')
+    const modelsFor = (needle: string): string[] => [...new Set(fake.requests.filter((r) => systemOf(r.body).includes(needle)).map((r) => r.body.model))]
+    expect(modelsFor('orchestrator of a team')).toEqual(['fake/planner'])
+    expect(modelsFor('Scout agent')).toEqual(['fake/worker'])
+    expect(modelsFor('strict reviewer')).toEqual(['fake/reviewer'])
+    expect(modelsFor('synthesize')).toEqual(['fake/synth'])
   }, 60_000)
 
   it('requires the per-launch token on every endpoint', async () => {
