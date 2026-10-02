@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'http'
 import type { IncomingMessage, Server } from 'http'
 import { execFileSync } from 'child_process'
-import { existsSync, mkdtempSync } from 'fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
@@ -31,6 +31,8 @@ vi.mock('electron', () => ({
 import { MultiAgentSidecarManager } from '../MultiAgentSidecarManager'
 import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
 import { McpServerManager } from '../McpServerManager'
+import { MultiAgentRunLogger, readRun } from '../MultiAgentRunLogger'
+import type { CallRecord } from '../MultiAgentRunLogger'
 import type { McpToolPermissionRequest } from '../../../shared/types'
 import { srtBackend } from '../sandbox/sandboxServiceInstance'
 
@@ -1023,6 +1025,57 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
     const events = await defaultRun(false)
     expect(events.at(-1)?.type).toBe('task_complete')
     expect(records).toEqual([])
+  }, 90_000)
+
+  it('Phase 2: real sidecar → real coordinator → real run logger produces the section 4 tree with every call', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'di-runlog-it-'))
+    const logger = new MultiAgentRunLogger(root, { secrets: () => ['sk-or-test'] })
+    let coordinator!: MultiAgentRunCoordinator
+    fake.requests.length = 0
+    plannerCalls = 0
+    const done = new Promise<void>((resolveDone) => {
+      coordinator = new MultiAgentRunCoordinator({
+        sidecar: mgr,
+        mcp: {
+          getToolSchemas: () => [{ type: 'function', function: { name: 'fs__read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } }],
+          callToolForMultiAgent: async () => ({ text: 'notes-content', images: [], userNote: '' }),
+          callBuiltinForMultiAgent: async () => ({ text: '', images: [], userNote: '' }),
+          clearRunTrust: () => {},
+          cancelRunPermissions: () => {},
+        } as unknown as ConstructorParameters<typeof MultiAgentRunCoordinator>[0]['mcp'],
+        builtin: { getToolSchemas: () => [], call: async () => '' },
+        sendEvent: (e) => {
+          if (e.type === 'hitl_pause' && e.serverName === 'multi-agent') void coordinator.respondToPlan(e.runId, true)
+          if (e.type === 'task_complete' || e.type === 'task_failed') resolveDone()
+        },
+        db: { begin: () => {}, saveTrace: () => {}, saveAssistantMessage: () => {}, getRun: () => null, claimMode: () => null },
+        observe: (_chat, e) => logger.event(e),
+        runLog: { enabled: () => true, begin: (run) => logger.begin({ ...run, chatTitle: 'IT chat' }), record: (runId, r) => logger.record(runId, r as CallRecord) },
+        settings: () => ({ backendProvider: 'openrouter', openRouterApiKey: 'sk-or-test', openRouterModel: 'fake/worker' }),
+        catalogue: async () => [],
+      })
+    })
+    const started = await coordinator.start({ chatId: 'chat-obs', task: 'Explain X', config: baseConfig() })
+    expect(started.ok).toBe(true)
+    await done
+    const runId = started.ok ? started.runId : ''
+    const dir = logger.runDir('chat-obs', runId)
+    const end = Date.now() + 10_000
+    while (!existsSync(join(dir, 'run.md')) && Date.now() < end) await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(readdirSync(dir).sort()).toEqual([
+      'agent-1.1.jsonl', 'agent-1.1.md', 'agent-1.2.jsonl', 'agent-1.2.md', 'events.jsonl',
+      'planner.jsonl', 'planner.md', 'run.md', 'run.meta.json', 'synthesis.jsonl', 'synthesis.md',
+    ])
+    const { meta, records } = await readRun(dir)
+    expect(meta.status).toBe('completed')
+    expect(records.filter((r) => r.kind === 'model')).toHaveLength(fake.requests.length)
+    expect(records.filter((r) => r.kind === 'tool').map((r) => r.result)).toContain('notes-content')
+    for (const name of readdirSync(dir)) expect(readFileSync(join(dir, name), 'utf8'), name).not.toContain('sk-or-test')
+    const synthesis = readFileSync(join(dir, 'synthesis.md'), 'utf8')
+    expect(synthesis).toContain('The topic is X [1.1] and it implies Y [1.2].') // raw answer
+    expect(synthesis).toContain('Analysis v2') // the prompt carries every agent output as received
+    rmSync(root, { recursive: true, force: true })
   }, 90_000)
 
   it('an HTTP error is recorded with its status and finish reason "error"', async () => {

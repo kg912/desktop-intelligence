@@ -5,6 +5,7 @@ import { readSettings, writeSettings } from './SettingsStore'
 import type { AgentEvent, SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
 import { shouldAlertForViolation } from './sandbox/isCredentialPath'
 import { agentEventStepType } from '../../shared/agentEvents'
+import { DEFAULT_KEEP_RUNS, MultiAgentRunLogger } from './MultiAgentRunLogger'
 import type { AgentTraceStepType } from '../../shared/agentEvents'
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -111,6 +112,10 @@ export class ObservabilityService {
   private activeSessionId = ''
   private _enabled      = false
   private _includeImages = false
+  /** Per-run multi-agent call logs under <logsDir>/multi-agent (spec: multi-agent-observability §4). */
+  readonly multiAgentRuns: MultiAgentRunLogger
+  /** Extra credentials to scrub from run logs (index.ts adds MCP server env values). */
+  extraSecrets: () => Promise<string[]> = async () => []
 
   constructor() {
     // Guard: app.getPath is unavailable in vitest (node environment with no
@@ -130,6 +135,16 @@ export class ObservabilityService {
       this._enabled       = false
       this._includeImages = false
     }
+    this.multiAgentRuns = new MultiAgentRunLogger(path.join(this.logsDir, 'multi-agent'), {
+      secrets: async () => {
+        const s = readSettings()
+        return [
+          s.openrouterApiKey, s.braveSearchApiKey, s.nvidiaApiKey, s.ollamaApiKey, process.env.BRAVE_SEARCH_API_KEY,
+          ...(await this.extraSecrets()),
+        ].filter((v): v is string => !!v)
+      },
+      keep: () => readSettings().multiAgentRunLogsKept ?? DEFAULT_KEEP_RUNS,
+    })
   }
 
   isEnabled(): boolean {
@@ -778,25 +793,17 @@ export class ObservabilityService {
     await fs.mkdir(this.logsDir, { recursive: true })
   }
 
-  async getTotalSizeBytes(): Promise<number> {
+  async getTotalSizeBytes(dir = this.logsDir): Promise<number> {
     try {
-      const entries = await fs.readdir(this.logsDir, { withFileTypes: true })
+      const entries = await fs.readdir(dir, { withFileTypes: true })
       let total = 0
       for (const entry of entries) {
-        const entryPath = path.join(this.logsDir, entry.name)
+        const entryPath = path.join(dir, entry.name)
         if (entry.isFile()) {
           const stat = await fs.stat(entryPath)
           total += stat.size
         } else if (entry.isDirectory()) {
-          try {
-            const subEntries = await fs.readdir(entryPath, { withFileTypes: true })
-            for (const sub of subEntries) {
-              if (sub.isFile()) {
-                const stat = await fs.stat(path.join(entryPath, sub.name))
-                total += stat.size
-              }
-            }
-          } catch { /* skip */ }
+          total += await this.getTotalSizeBytes(entryPath) // per-run logs are nested (multi-agent/<chat>/<run>/)
         }
       }
       return total

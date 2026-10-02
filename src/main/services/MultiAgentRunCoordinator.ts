@@ -54,6 +54,7 @@ export interface CoordinatorDeps {
   sidecar: {
     on(event: 'event', listener: (event: AgentEvent) => void): unknown
     on(event: 'runStarted', listener: (info: { runId: string; chatId: string }) => void): unknown
+    on(event: 'obsRecord', listener: (info: { runId: string; chatId: string; record: unknown }) => void): unknown
     startRun(request: RunStartRequest): Promise<StartRunResult>
     respondHitl(response: { runId: string; agentId: string; approved: boolean; result?: string }): Promise<void>
     abortRun(runId: string): Promise<void>
@@ -92,6 +93,12 @@ export interface CoordinatorDeps {
     claimMode(chatId: string): string | null
   }
   observe(chatId: string, event: AgentEvent): void
+  /** Per-run call logs (observability spec). Decided once per run at start; a failure here never reaches the run. */
+  runLog?: {
+    enabled(): boolean
+    begin(run: { runId: string; chatId: string; task: string; config: MultiAgentConfig }): void
+    record(runId: string, record: unknown): void
+  }
   settings(): { backendProvider: string; openRouterApiKey: string; openRouterModel: string }
   catalogue(apiKey: string): Promise<OpenRouterModelInfo[]>
   flushDelayMs?: number
@@ -111,7 +118,7 @@ interface RunContext {
 export class MultiAgentRunCoordinator {
   private readonly runs = new Map<string, RunContext>()
   /** chatId → config and task for a run whose id the sidecar has not assigned yet. */
-  private readonly starting = new Map<string, { config: MultiAgentConfig; task: string }>()
+  private readonly starting = new Map<string, { config: MultiAgentConfig; task: string; observe: boolean }>()
   private readonly flushDelayMs: number
 
   constructor(private readonly deps: CoordinatorDeps) {
@@ -121,14 +128,16 @@ export class MultiAgentRunCoordinator {
     deps.sidecar.on('runStarted', ({ runId, chatId }) => {
       const pending = this.starting.get(chatId)
       if (!pending) return
-      const { config, task } = pending
+      const { config, task, observe } = pending
       this.starting.delete(chatId)
       this.runs.set(runId, {
         runId, chatId, config, trace: [], pendingTokens: new Map(), openPauses: 0, flushTimer: null,
       })
       deps.db.begin(chatId, { runId, task, config })
+      if (observe) this.guard(() => deps.runLog?.begin({ runId, chatId, task, config }))
     })
     deps.sidecar.on('event', (event) => this.onEvent(event))
+    deps.sidecar.on('obsRecord', ({ runId, record }) => this.guard(() => deps.runLog?.record(runId, record)))
   }
 
   async start(payload: MultiAgentStartPayload): Promise<StartRunResult> {
@@ -176,7 +185,8 @@ export class MultiAgentRunCoordinator {
     }
 
     const config: MultiAgentConfig = { ...payload.config, models }
-    this.starting.set(payload.chatId, { config, task: payload.task })
+    const observe = this.guard(() => this.deps.runLog?.enabled()) ?? false
+    this.starting.set(payload.chatId, { config, task: payload.task, observe })
     try {
       const result = await this.deps.sidecar.startRun({
         chatId: payload.chatId,
@@ -192,6 +202,7 @@ export class MultiAgentRunCoordinator {
         noReasoning: [...new Set(Object.values(models))].filter((m) => known.get(m)?.supportsReasoning === false),
         modelSources: Object.fromEntries(MODEL_ROLES.map((role) => [role, resolved[role].source])) as Record<ModelRole, 'saved' | 'default' | 'active'>,
         catalogueChecked,
+        observe,
       })
       if (!result.ok) return result
       // runStarted fired inside startRun, so this run is already in the history.
@@ -272,11 +283,16 @@ export class MultiAgentRunCoordinator {
 
   private record(run: RunContext, event: AgentEvent): void {
     run.trace.push(event)
+    this.guard(() => this.deps.observe(run.chatId, event))
+  }
+
+  /** Observability calls: a logger failure must never fail a run. */
+  private guard<T>(fn: () => T): T | undefined {
     try {
-      this.deps.observe(run.chatId, event)
+      return fn()
     } catch (err) {
-      // A logger failure must never fail a run.
-      console.warn('[MultiAgent] observability write failed:', err)
+      console.warn('[MultiAgent] observability failed:', err)
+      return undefined
     }
   }
 

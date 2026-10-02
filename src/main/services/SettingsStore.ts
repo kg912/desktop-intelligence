@@ -70,6 +70,8 @@ export interface AppSettings {
   observabilityEnabled?: boolean
   /** When true, rendered charts/images are embedded in log folders. Default: false */
   includeImages?: boolean
+  /** Multi-agent run log directories kept; the oldest beyond this are deleted. Default: 50 */
+  multiAgentRunLogsKept?: number
   /** User-customised suggestion cards shown on the empty-chat welcome screen (1–4 strings). */
   suggestionCards?: string[]
   /**

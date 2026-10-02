@@ -17,7 +17,8 @@ import { pythonWorker } from './services/PythonWorkerService'
 import { mcpServerManager } from './services/McpServerManager'
 import { DEFAULT_SIDECAR_PORT, multiAgentSidecar } from './services/MultiAgentSidecarManager'
 import { observabilityService } from './services/ObservabilityService'
-import { beginMultiAgentRun, claimChatMode, getMultiAgentRun, saveMessage, saveMultiAgentTrace } from './services/DatabaseService'
+import type { CallRecord } from './services/MultiAgentRunLogger'
+import { beginMultiAgentRun, claimChatMode, getAllChats, getMultiAgentRun, saveMessage, saveMultiAgentTrace } from './services/DatabaseService'
 import { MultiAgentRunCoordinator } from './services/MultiAgentRunCoordinator'
 import { braveWorkerTools } from './services/BraveSearchService'
 import { setMultiAgentCoordinator } from './services/multiAgentRuntime'
@@ -231,6 +232,12 @@ app.whenReady().then(async () => {
     openRouterBaseUrl: app.isPackaged ? undefined : process.env.DI_OPENROUTER_BASE_URL,
   })
   multiAgentSidecar.on('status', (status) => console.log(`[Sidecar] status: ${status}`))
+  // MCP env values and HTTP headers are credentials too: never in a run log.
+  observabilityService.extraSecrets = async () =>
+    Object.values(await mcpServerManager.readConfig()).flatMap((server) => [
+      ...Object.values('env' in server ? server.env ?? {} : {}),
+      ...Object.values('headers' in server ? server.headers ?? {} : {}),
+    ])
   setMultiAgentCoordinator(new MultiAgentRunCoordinator({
     sidecar: multiAgentSidecar,
     mcp: mcpServerManager,
@@ -245,7 +252,16 @@ app.whenReady().then(async () => {
       getRun: (chatId, runId) => getMultiAgentRun(chatId, undefined, runId),
       claimMode: (chatId) => claimChatMode(chatId, 'multi-agent'),
     },
-    observe: (chatId, event) => observabilityService.emitMultiAgentEvent(chatId, event),
+    // Per-run logs (observability spec §4): events.jsonl in the run directory replaces the global file.
+    observe: (_chatId, event) => observabilityService.multiAgentRuns.event(event),
+    runLog: {
+      enabled: () => observabilityService.isEnabled(),
+      begin: (run) => observabilityService.multiAgentRuns.begin({
+        ...run,
+        chatTitle: getAllChats().find((c) => c.id === run.chatId)?.title ?? '',
+      }),
+      record: (runId, record) => observabilityService.multiAgentRuns.record(runId, record as CallRecord),
+    },
     settings: () => {
       const current = readSettings()
       return {
