@@ -690,3 +690,60 @@ export async function runEvents(dir: string, offset: number, limit: number): Pro
   const events = parseJsonl<AgentEvent>(await fs.readFile(path.join(dir, 'events.jsonl'), 'utf8').catch(() => '')).reverse()
   return { total: events.length, events: events.slice(offset, offset + limit) }
 }
+
+// ── Verification (observability spec Phase 5) ────────────────────────────────
+
+/**
+ * Re-reads a finished run directory and lists every problem: a timeline row
+ * without a record, a model call with an empty request or response, a markdown
+ * link to a missing file or anchor, totals that do not reconcile, or a secret
+ * anywhere in the tree. Empty = the log is complete and consistent.
+ */
+export async function verifyRunDir(dir: string, secrets: string[] = []): Promise<string[]> {
+  const problems: string[] = []
+  const { events, records } = await readRun(dir)
+  const bySeq = new Map(records.map((r) => [r.seq, r]))
+  const names = await fs.readdir(dir)
+  const text = new Map<string, string>()
+  for (const name of names) text.set(name, await fs.readFile(path.join(dir, name), 'utf8'))
+  const runMd = text.get('run.md') ?? ''
+  if (!runMd) problems.push('run.md is missing')
+
+  const timeline = runMd.split('## Timeline')[1]?.split('\n## ')[0] ?? ''
+  const rows = [...timeline.matchAll(/^\| (\d+) \|.*\[([^\]]+)\]\(([^)]+)\) \|$/gm)]
+  if (!rows.length && records.length) problems.push('the timeline lists no calls')
+  for (const [, seq] of rows) {
+    const r = bySeq.get(Number(seq))
+    if (!r) { problems.push(`timeline call ${seq}: no record`); continue }
+    if (r.kind === 'model') {
+      if (!r.request?.messages?.length) problems.push(`call ${seq}: empty request`)
+      const said = r.response && (r.response.content || r.response.reasoning || r.response.toolCalls.length)
+      if (!said && !r.error) problems.push(`call ${seq}: empty response and no error`)
+    } else if (r.result == null && !r.error && !r.denied) problems.push(`tool call ${seq}: no result`)
+  }
+  if (rows.length !== records.length) problems.push(`timeline lists ${rows.length} calls, records hold ${records.length}`)
+
+  for (const [name, body] of text) {
+    if (!name.endsWith('.md')) continue
+    for (const [, file, anchorId] of body.matchAll(/\]\(([^)\s#]+\.md)(?:#([^)\s]+))?\)/g)) {
+      const linked = text.get(file)
+      if (linked === undefined) problems.push(`${name}: link to missing ${file}`)
+      else if (anchorId && !linked.includes(`<a id="${anchorId}"></a>`)) problems.push(`${name}: link to missing anchor ${file}#${anchorId}`)
+    }
+  }
+
+  const done = events.find((e): e is Ev<'task_complete'> => e.type === 'task_complete')
+  if (done) {
+    const model = records.filter((r) => r.kind === 'model')
+    const cost = model.reduce((s, r) => s + (r.usage?.costUsd ?? 0), 0)
+    const tokens = model.reduce((s, r) => s + tokensOf(r), 0)
+    if (Math.abs(cost - done.totalCostUsd) > RECONCILE_USD || tokens !== done.totalTokens) {
+      problems.push(`totals do not reconcile: records ${tokens} tokens / ${cost}, run ${done.totalTokens} / ${done.totalCostUsd}`)
+    }
+  }
+
+  for (const secret of secrets) {
+    for (const [name, body] of text) if (secret && body.includes(secret)) problems.push(`${name}: contains a credential`)
+  }
+  return problems
+}

@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'http'
 import type { IncomingMessage, Server } from 'http'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
@@ -31,7 +31,7 @@ vi.mock('electron', () => ({
 import { MultiAgentSidecarManager } from '../MultiAgentSidecarManager'
 import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
 import { McpDeniedError, McpServerManager } from '../McpServerManager'
-import { MultiAgentRunLogger, readRun } from '../MultiAgentRunLogger'
+import { MultiAgentRunLogger, readRun, verifyRunDir } from '../MultiAgentRunLogger'
 import type { CallRecord, RunLogMeta } from '../MultiAgentRunLogger'
 import type { McpToolPermissionRequest } from '../../../shared/types'
 import { srtBackend } from '../sandbox/sandboxServiceInstance'
@@ -1030,9 +1030,9 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
   }, 90_000)
 
   /** One run through the real sidecar, the real coordinator and a real run logger; returns the run directory. */
-  async function loggedRun(opts: { denyTools?: boolean } = {}): Promise<{ dir: string; runMd: string; root: string }> {
+  async function loggedRun(opts: { denyTools?: boolean; toolText?: string; secrets?: string[] } = {}): Promise<{ dir: string; runMd: string; root: string }> {
     const root = mkdtempSync(join(tmpdir(), 'di-runlog-it-'))
-    const logger = new MultiAgentRunLogger(root, { secrets: () => ['sk-or-test'] })
+    const logger = new MultiAgentRunLogger(root, { secrets: () => ['sk-or-test', ...(opts.secrets ?? [])] })
     let coordinator!: MultiAgentRunCoordinator
     fake.requests.length = 0
     plannerCalls = 0
@@ -1043,7 +1043,7 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
           getToolSchemas: () => [{ type: 'function', function: { name: 'fs__read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } }],
           callToolForMultiAgent: async () => {
             if (opts.denyTools) throw new McpDeniedError('not now')
-            return { text: 'notes-content', images: [], userNote: '' }
+            return { text: opts.toolText ?? 'notes-content', images: [], userNote: '' }
           },
           callBuiltinForMultiAgent: async () => ({ text: '', images: [], userNote: '' }),
           clearRunTrust: () => {},
@@ -1148,6 +1148,18 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
     } finally {
       replyOverride = null
     }
+  }, 90_000)
+
+  // ── Phase 5: the audit repeated end to end ──
+
+  it('Phase 5: a scripted run passes the checker — every timeline call has a full record, links resolve, totals reconcile, no key anywhere', async () => {
+    const braveKey = 'BSA-test-brave-key-0123456789'
+    const { dir, root } = await loggedRun({ toolText: `notes-content (fetched with ${braveKey})`, secrets: [braveKey] })
+    expect(await verifyRunDir(dir, ['sk-or-test', braveKey])).toEqual([])
+    // The whole log tree, not just this run's files.
+    const grep = spawnSync('grep', ['-rl', '-e', 'sk-or-test', '-e', braveKey, root], { encoding: 'utf8' })
+    expect([grep.status, grep.stdout]).toEqual([1, '']) // grep: 1 = searched everything, no match
+    rmSync(root, { recursive: true, force: true })
   }, 90_000)
 
   it('an HTTP error is recorded with its status and finish reason "error"', async () => {

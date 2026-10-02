@@ -11,7 +11,7 @@ import { describe, it, expect, vi, afterAll } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp/di-runlog-test' } }))
 
-import { MultiAgentRunLogger, parseJsonl, peakConcurrency, readRun, renderRun, safeId } from '../MultiAgentRunLogger'
+import { MultiAgentRunLogger, parseJsonl, peakConcurrency, readRun, renderRun, safeId, verifyRunDir } from '../MultiAgentRunLogger'
 import type { CallRecord, RunLogMeta } from '../MultiAgentRunLogger'
 import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
 import type { CoordinatorDeps } from '../MultiAgentRunCoordinator'
@@ -217,6 +217,22 @@ describe('MultiAgentRunLogger (observability spec Phase 2)', () => {
     expect(runMd).toContain('**Mismatch** between call records')
     expect(runMd).toMatch(/- \*\*reconciliation\*\*: call records sum to 1200 tokens \/ \$0\.008000; the run reported 1350 tokens \/ \$0\.009000/)
     expect(readMeta(dir)?.summary?.anomalies.map((a) => a.kind)).toContain('reconciliation')
+  })
+
+  it('Phase 5: the checker catches a broken anchor, a missing record, unreconciled totals and a leaked key', async () => {
+    const { dir } = await fullRun(freshRoot())
+    // fullRun's totals deliberately do not reconcile (see the Phase 3 test).
+    expect(await verifyRunDir(dir)).toEqual([expect.stringContaining('totals do not reconcile')])
+    writeFileSync(join(dir, 'agent-1.1.md'), readFileSync(join(dir, 'agent-1.1.md'), 'utf8').replace('<a id="call-3"></a>', ''))
+    const planner = join(dir, 'planner.jsonl')
+    writeFileSync(planner, '')
+    writeFileSync(join(dir, 'notes.md'), `leaked ${SECRET}`)
+    const problems = await verifyRunDir(dir, [SECRET])
+    expect(problems).toEqual(expect.arrayContaining([
+      'run.md: link to missing anchor agent-1.1.md#call-3',
+      'timeline call 1: no record',
+      'notes.md: contains a credential',
+    ]))
   })
 
   it('ids from model output cannot escape the run directory', () => {
