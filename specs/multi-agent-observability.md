@@ -155,3 +155,17 @@ Cloud log shipping, live streaming of raw prompts into the main chat, single-cha
 - With observability off, nothing is written or captured, and the UI says so.
 - Phase 0 tests exist for every claim the old logger made.
 - No credentials in any log file; verified by test.
+
+## 10. Addendum: as implemented
+
+Phases 0 to 6 are done. Where the build departs from the text above, the reason is recorded here. Usage is described in `docs/observability.md`, and the Phase 0 findings are in `docs/observability-audit.md`.
+
+- **"Fallback" (§4 item 7, Phase 3).** The code has no model fallback: refinement Phase 3 made a model missing from the catalogue stop the run. As agreed during implementation, a "fallback" anomaly now means one of two things: (a) OpenRouter served a different model than the one requested (`served_model_differs`; a dated variant of the same id does not count), or (b) the planner never produced a usable plan and the built-in plan ran (`fallback_plan`, from the new optional `orchestrator_plan.fallback`).
+- **Model sources (§4 item 2).** `run.md` shows the sources the code actually records: `saved`, `default` and `active`. It does not use the names "follows active" or "fallback".
+- **`truncated` vs `capped`.** `truncated` keeps its one existing meaning: the limit (`budget` or `context`) that ended a `length` finish. It appears on `response.truncated` in records and on the UI events. A field cut in the log is listed in a separate `capped` array, with its path and original length, so the two meanings cannot be confused.
+- **`attempt` is 0-based**, as it is in the UI events. Planner and reviewer re-asks are separate records, with `attempt` and `retry` respectively.
+- **Recording covers a whole run or none of it.** The toggle is read once, when the run starts, and that decision applies to the whole run. A run started while observability was off is listed as "not recorded" (rows come from the run history table).
+- **`failureKind`** is not added here. It belongs to `specs/multi-agent-evals-and-memory.md`, and that spec should define it once. Until then, the agent summary shows the human-readable failure reason.
+- **`events.jsonl`** holds the events as they are persisted, so token events are coalesced. The old global `multi-agent-events.jsonl` is no longer written for new runs but is left in place.
+- **Headers** are recorded with `Authorization` replaced by `[redacted]`. In addition, Electron removes every known credential from every line before writing: provider keys, the Brave key, and MCP env values and headers.
+- **Audit defects fixed in Phase 0:** event lines were written out of order (concurrent appends), and a logger exception could fail a run.

@@ -4,6 +4,18 @@ All notable changes to Desktop Intelligence are documented here.
 
 ---
 
+## [3.0.0-beta-81] — 2026-10-03
+
+### Multi-agent observability (specs/multi-agent-observability.md)
+
+- **Per-run call logs.** With Observability on, every multi-agent run gets its own folder. It holds the exact request and the raw response for every planner, worker, reflection and synthesis call (model requested and served, finish reason, tokens, cost, timing), plus every tool call with its full arguments and result. `run.md` gives the config, plan, timeline, per-agent summary, totals and anomalies. How to read it: `docs/observability.md`.
+- **Anomalies and reconciliation.** `run.md` flags token-limit stops, repetition loops, a model served other than the one requested, the fallback plan, retries, errors, and denied or rejected tools. It also checks that the summed cost and tokens match the run's own totals.
+- **Debug panel.** Settings → Debug lists multi-agent runs, including runs that were not recorded. Each row has open, reveal, copy-id and delete actions. A detail view shows the plan, a timeline (click a bar to open the file holding that call) and the anomalies, with the run's raw events paged below.
+- **Fixes in the old logger.** Events were sometimes written out of order, and a logging failure could end a run. Both are fixed.
+- **Privacy.** Off by default. When it is off, nothing is captured or written. Keys and MCP credentials are removed before anything is written, and a test checks this.
+
+---
+
 ## [3.0.0-beta-76] — 2026-10-01
 
 ### Multi-agent refinement (specs/multi-agent-refinement.md)
