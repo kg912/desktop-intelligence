@@ -62,6 +62,8 @@ MIN_REQUEST_TOKENS = 16
 # Trace previews (spec refinement Phase 2); full tool results stay in message history.
 ARGS_PREVIEW_CHARS = 400
 RESULT_PREVIEW_CHARS = 1_200
+# Call records (observability spec §3.1): any longer string field is cut, and the record says so.
+RECORD_FIELD_CAP_CHARS = 2_000_000
 # Literal end-of-sequence tokens some models leak (same set ChatService strips): never in output.
 EOS_RE = re.compile(r"<\|(?:endoftext|im_end|eot_id|end)\|>", re.I)
 # DeepSeek may emit tool calls as DSML text in delta.content instead of delta.tool_calls.
@@ -110,6 +112,8 @@ class RunRequest(BaseModel):
     # Where each role's model came from (saved | default | active); echoed in run_config.
     modelSources: dict[str, str] = Field(default_factory=dict)
     catalogueChecked: bool = True
+    # Electron's observabilityEnabled. Off: no call records, nothing copied.
+    observe: bool = False
 
 
 class HitlResponse(BaseModel):
@@ -170,6 +174,7 @@ class Run:
     started: float = field(default_factory=time.monotonic)
     # agentId → current 0-based attempt, so events emitted outside run_worker carry it too.
     attempts: dict[str, int] = field(default_factory=dict)
+    record_seq: int = 0
 
     @property
     def config(self) -> Config:
@@ -194,6 +199,23 @@ class Run:
         if self.finished:
             for subscriber in list(self.subscribers):
                 subscriber.put_nowait(None)
+
+    def record(self, record: dict[str, Any]) -> None:
+        """Publish one call record (observability spec §3.1) as an `obs_record` stream event.
+        Not an AgentEvent: no seq, never shown in the UI. A logger failure never fails the run."""
+        if not self.request.observe or self.finished:
+            return
+        try:
+            self.record_seq += 1
+            capped: list[dict[str, Any]] = []
+            body = cap_fields({"schema": 1, "runId": self.run_id, "chatId": self.request.chatId, "seq": self.record_seq, **record}, "", capped)
+            body["capped"] = capped or None
+            event = {"runId": self.run_id, "type": "obs_record", "record": body}
+            self.events.append(event)
+            for subscriber in list(self.subscribers):
+                subscriber.put_nowait(event)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[obs] record dropped: {exc!r}", file=sys.stderr, flush=True)
 
     def attempt_of(self, agent_id: str) -> dict[str, int]:
         return {"attempt": self.attempts[agent_id]} if agent_id in self.attempts else {}
@@ -280,6 +302,24 @@ def estimate_tokens(text: str) -> int:
     return math.ceil(len(text) / 4)
 
 
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def cap_fields(value: Any, path: str, capped: list[dict[str, Any]]) -> Any:
+    """Copy with every string over RECORD_FIELD_CAP_CHARS cut and listed in `capped` (path, original length)."""
+    if isinstance(value, str):
+        if len(value) <= RECORD_FIELD_CAP_CHARS:
+            return value
+        capped.append({"field": path, "originalChars": len(value)})
+        return value[:RECORD_FIELD_CAP_CHARS] + f"\n[cut at {RECORD_FIELD_CAP_CHARS} of {len(value)} chars]"
+    if isinstance(value, dict):
+        return {k: cap_fields(v, f"{path}.{k}" if path else k, capped) for k, v in value.items()}
+    if isinstance(value, list):
+        return [cap_fields(v, f"{path}[{i}]", capped) for i, v in enumerate(value)]
+    return value
+
+
 # ── Repetition guard ──────────────────────────────────────────────────────────
 # Same idea as ChatService's detector (identical lines in a row), plus a word
 # n-gram rule for loops that never emit a newline. Table rows and rules are
@@ -351,11 +391,14 @@ def _stream_openrouter(
     cancelled: Callable[[], bool],
     reasoning_effort: str | None = None,
     loop_guard: bool = False,
+    capture: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """on_delta(kind, text): kind is "content" or "reasoning". Reasoning is
     returned only as reasoning_details (for tool round-trips), never in content.
     loop_guard: abort the request when either stream starts looping; the message
-    then carries "looped" (which stream) and keeps what was produced."""
+    then carries "looped" (which stream) and keeps what was produced.
+    capture: filled in place with what was really sent and received (observability),
+    readable even if the request fails or is cancelled midway."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -371,16 +414,19 @@ def _stream_openrouter(
         payload["tool_choice"] = "auto"
     if reasoning_effort:
         payload["reasoning"] = {"effort": reasoning_effort}
-    request = Request(
-        f"{OPENROUTER_BASE_URL}/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://desktop-intelligence.local",
-            "X-Title": "Desktop Intelligence",
-        },
-    )
+    body = json.dumps(payload).encode()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://desktop-intelligence.local",
+        "X-Title": "Desktop Intelligence",
+    }
+    request = Request(f"{OPENROUTER_BASE_URL}/chat/completions", data=body, headers=headers)
+    if capture is not None:  # decoded from the exact bytes sent, never rebuilt
+        sent = json.loads(body)
+        capture.update(request={"messages": sent.pop("messages"), "params": sent,
+                                "headers": {k: "[redacted]" if k == "Authorization" else v for k, v in headers.items()}},
+                       content=[], reasoning=[], startedAt=now_ms())
     content: list[str] = []
     details: list[dict[str, Any]] = []
     tool_calls: dict[int, dict[str, Any]] = {}
@@ -390,6 +436,8 @@ def _stream_openrouter(
     guards = {"content": RepetitionDetector(), "reasoning": RepetitionDetector()} if loop_guard else {}
     looped = ""
     reasoning_chars = 0
+    if capture is not None:
+        capture.update(toolCalls=tool_calls, usage=usage)
     try:
         with urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:  # nosec B310 — fixed URL
             for raw in response:
@@ -406,9 +454,18 @@ def _stream_openrouter(
                     raise provider_error(model, str(chunk["error"].get("message", chunk["error"])), "OpenRouter error")
                 if chunk.get("usage"):
                     usage = chunk["usage"]
+                if capture is not None:
+                    capture["usage"] = usage
+                    capture.setdefault("modelServed", chunk.get("model"))
+                    capture.setdefault("generationId", chunk.get("id"))
                 for choice in chunk.get("choices") or []:
                     finish_reason = choice.get("finish_reason") or finish_reason
                     delta = choice.get("delta") or {}
+                    if capture is not None:
+                        capture["finishReason"] = finish_reason
+                        if delta.get("content") or delta.get("reasoning") or delta.get("reasoning_details") or delta.get("tool_calls"):
+                            capture.setdefault("firstTokenAt", now_ms())
+                        capture["content"].append(delta.get("content") or "")  # raw: before EOS stripping
                     text = EOS_RE.sub("", delta.get("content") or "")
                     if text:
                         content.append(text)
@@ -424,6 +481,8 @@ def _stream_openrouter(
                     # OpenRouter usually mirrors the same text in both fields: forward it once.
                     thought = delta.get("reasoning") or detail_text
                     if thought:
+                        if capture is not None:
+                            capture["reasoning"].append(thought)
                         on_delta("reasoning", thought)
                         reasoning_chars += len(thought)
                         if guards and guards["reasoning"].feed(thought):
@@ -438,12 +497,17 @@ def _stream_openrouter(
                 if looped:
                     break  # leaving the `with` closes the connection: the request is aborted
     except HTTPError as err:
-        body = err.read().decode("utf-8", "replace")
+        error_body = err.read().decode("utf-8", "replace")
         try:
-            detail = json.loads(body).get("error", {}).get("message") or body
+            detail = json.loads(error_body).get("error", {}).get("message") or error_body
         except (ValueError, AttributeError):
-            detail = body
+            detail = error_body
+        if capture is not None:
+            capture["httpStatus"] = err.code
         raise provider_error(model, str(detail), f"OpenRouter HTTP {err.code}") from None
+    finally:
+        if capture is not None:
+            capture["endedAt"] = now_ms()
     message: dict[str, Any] = {"role": "assistant", "content": EOS_RE.sub("", "".join(content))}
     if tool_calls:
         message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
@@ -453,6 +517,8 @@ def _stream_openrouter(
         message["finish_reason"] = finish_reason
     if looped:
         message["looped"] = looped
+        if capture is not None:
+            capture["looped"] = looped
         if not usage:  # aborted before the usage chunk: estimate, so the budget still counts it
             prompt = estimate_tokens(json.dumps(messages))
             completion = estimate_tokens(message["content"]) + math.ceil(reasoning_chars / 4)
@@ -533,8 +599,10 @@ async def ask(
     on_reasoning: Callable[[str], Awaitable[None]] | None = None,
     synthesis: bool = False,
     loop_guard: bool = False,
+    obs: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], int, float]:
-    """One paid request. Never starts once the budget is reached (spec §06)."""
+    """One paid request. Never starts once the budget is reached (spec §06).
+    obs: who is calling (role, agentId, attempt, toolRound, retry), for the call record."""
     if run.cancelled:
         raise asyncio.CancelledError()
     if run.budget_reached and not synthesis:
@@ -565,10 +633,12 @@ async def ask(
     effort = run.config.reasoningEffort
     reasoning_effort = effort if on_reasoning and effort != "off" and model not in run.request.noReasoning else None
 
+    capture: dict[str, Any] | None = {} if run.request.observe else None
+
     def work() -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push, lambda: run.cancelled,
-                                      reasoning_effort, loop_guard)
+                                      reasoning_effort, loop_guard, capture)
         finally:
             push("done")
 
@@ -581,7 +651,9 @@ async def ask(
             elif kind == "reasoning" and on_reasoning:
                 await on_reasoning(text)
         message, usage = await future
-    except BaseException:
+    except BaseException as exc:
+        if capture is not None:
+            run.record(call_record(model, obs, capture, error=exc))
         async with run.budget_changed:
             run.release(worst_case)
         raise
@@ -591,7 +663,46 @@ async def ask(
     if message.get("finish_reason") == "length":
         # Never silent: which limit ended it. Unpriced models had no max_tokens, so the model's own window did.
         message["truncated"] = bound or "context"
+    if capture is not None:
+        run.record(call_record(model, obs, {**capture, "usage": usage}, cost=cost, truncated=message.get("truncated")))
     return message, tokens, cost
+
+
+def call_record(model: str, obs: dict[str, Any] | None, capture: dict[str, Any], *, cost: float | None = None,
+                truncated: str | None = None, error: BaseException | None = None) -> dict[str, Any]:
+    """One model call as sent and received (observability spec §3.1). `capture` was filled by
+    _stream_openrouter; a call that failed before sending has no request."""
+    usage = capture.get("usage") or {}
+    cancelled = isinstance(error, asyncio.CancelledError)
+    started, ended = capture.get("startedAt"), capture.get("endedAt") or now_ms()
+    return {
+        "kind": "model",
+        "role": "worker", "agentId": None, "attempt": 0, "toolRound": 0, **(obs or {}),
+        "model": model,
+        "modelServed": capture.get("modelServed"),
+        "request": capture.get("request"),
+        "response": {
+            "content": "".join(capture.get("content") or []),
+            "reasoning": "".join(capture.get("reasoning") or []),
+            "toolCalls": [{"id": c.get("id"), "name": c["function"]["name"], "arguments": c["function"]["arguments"]}
+                          for _, c in sorted((capture.get("toolCalls") or {}).items())],
+            "finishReason": "cancelled" if cancelled else "error" if error else capture.get("finishReason") or None,
+            "looped": capture.get("looped"),
+            # Same meaning as agent_complete/task_complete.truncated: which limit ended a "length" finish.
+            "truncated": truncated,
+        },
+        "usage": {
+            "promptTokens": usage.get("prompt_tokens"),
+            "completionTokens": usage.get("completion_tokens"),
+            "reasoningTokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            "costUsd": cost if cost is not None else usage.get("cost"),
+            "generationId": capture.get("generationId"),
+        },
+        "timing": {"startedAt": started, "firstTokenAt": capture.get("firstTokenAt"), "endedAt": ended,
+                   "ms": ended - started if started else None},
+        "error": None if error is None else {"kind": "cancelled" if cancelled else type(error).__name__,
+                                             "message": str(error), "httpStatus": capture.get("httpStatus")},
+    }
 
 
 # ── Planning ─────────────────────────────────────────────────────────────────
@@ -687,7 +798,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     steps: list[dict[str, Any]] | None = None
     chain_checked = False
     for attempt in range(4):
-        reply, _, _ = await ask(run, model, messages)
+        reply, _, _ = await ask(run, model, messages, obs={"role": "planner", "attempt": attempt})
         text = str(reply.get("content") or "")
         try:
             candidate = parse_plan(text, config)
@@ -791,7 +902,8 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
                                     f"Tool calls the agent made:\n{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}"},
     ]
     for _try in range(2):  # one retry on an unusable reply
-        verdict, _, _ = await ask(run, model, messages)
+        verdict, _, _ = await ask(run, model, messages, obs={"role": "reflection", "agentId": step["id"],
+                                                             "attempt": run.attempts.get(step["id"], 0), "retry": _try})
         try:
             judgement = json.loads(re.search(r"\{.*\}", str(verdict.get("content") or ""), re.S).group(0))  # type: ignore[union-attr]
             score = max(1, min(5, int(judgement["score"])))
@@ -844,7 +956,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 last_round = _round == MAX_TOOL_ROUNDS - 1
                 stream = DsmlTokenFilter(on_token)
                 reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
-                                                on_token=stream, on_reasoning=on_reasoning, loop_guard=True)
+                                                on_token=stream, on_reasoning=on_reasoning, loop_guard=True,
+                                                obs={"role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round})
                 await stream.flush()
                 agent_tokens += tokens
                 agent_cost += cost
@@ -876,7 +989,15 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     await run.emit("tool_start", agentId=agent_id, attempt=attempt, callId=call_id, tool=local or name,
                                    server=server if local else "", argsPreview=preview(raw_args, ARGS_PREVIEW_CHARS))
                     began = time.monotonic()
+                    started_at = now_ms()
                     ok = False
+
+                    def record_tool(result: str | None, approved: bool, denied: bool, error: str | None) -> None:
+                        run.record({"kind": "tool", "role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
+                                    "callId": call_id, "name": name, "args": raw_args, "result": result,
+                                    "approved": approved, "denied": denied, "error": error,
+                                    "timing": {"startedAt": started_at, "endedAt": now_ms(), "ms": int((time.monotonic() - began) * 1000)}})
+
                     try:
                         args = json.loads(raw_args)
                         if not isinstance(args, dict):
@@ -884,10 +1005,16 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                         server, local = split_tool_name(name, allowed_tools)
                     except (ValueError, TypeError) as exc:
                         content = f"Tool request rejected: {exc}"
+                        record_tool(content, False, False, str(exc))
                     else:
-                        approved, result = await run.wait_for_approval(agent_id, role, model, local, server, args)
+                        try:
+                            approved, result = await run.wait_for_approval(agent_id, role, model, local, server, args)
+                        except AgentFailed as exc:  # approval timed out: auto-denied, the agent fails
+                            record_tool(None, False, True, str(exc))
+                            raise
                         ok = approved
                         content = result if approved else f"Tool request denied: {result or 'denied by user'}"
+                        record_tool(content, approved, not approved, None)
                     await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=ok,
                                    durationMs=int((time.monotonic() - began) * 1000),
                                    resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
@@ -1013,7 +1140,8 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
 
     truncated = None
     try:
-        reply, _, _ = await ask(run, run.config.models.get("synthesizer", ""), prompt, on_token=on_token, synthesis=True)
+        reply, _, _ = await ask(run, run.config.models.get("synthesizer", ""), prompt, on_token=on_token, synthesis=True,
+                                obs={"role": "synthesis"})
         final = str(reply.get("content") or "")
         truncated = reply.get("truncated")
     except BudgetReached:

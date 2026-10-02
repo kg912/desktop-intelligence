@@ -76,7 +76,7 @@ type Body = {
 interface FakeOpenRouter {
   url: string
   /** start/end: ms timestamps when the request body arrived and the response ended. */
-  requests: Array<{ body: Body; auth: string | undefined; start: number; end: number }>
+  requests: Array<{ body: Body; auth: string | undefined; start: number; end: number; reply?: Reply }>
   pricing: Record<string, { prompt: number; completion: number }>
   close(): Promise<void>
 }
@@ -94,6 +94,7 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
       const record = { body, auth: req.headers.authorization, start: Date.now(), end: 0 }
       fake.requests.push(record)
       const reply = route(body)
+      Object.assign(record, { reply })
       if (reply.httpError) {
         record.end = Date.now()
         res.writeHead(reply.httpError.status, { 'content-type': 'application/json' })
@@ -198,7 +199,7 @@ const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig
 /** Start a run and collect its events until the terminal one; `onEvent` may respond to pauses. */
 function runToEnd(
   mgr: MultiAgentSidecarManager,
-  opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }>; noReasoning?: string[]; onEvent: (e: AgentEvent, all: AgentEvent[]) => void }
+  opts: { config?: MultiAgentConfig; pricing?: Record<string, { prompt: number; completion: number }>; noReasoning?: string[]; observe?: boolean; onEvent: (e: AgentEvent, all: AgentEvent[]) => void }
 ): Promise<AgentEvent[]> {
   return new Promise((resolveRun, reject) => {
     const events: AgentEvent[] = []
@@ -218,7 +219,7 @@ function runToEnd(
     }
     mgr.on('event', listener)
     mgr
-      .startRun({ chatId: 'chat-1', task: 'Explain X', config: opts.config ?? baseConfig(), tools: TOOLS, openRouterApiKey: 'sk-or-test', pricing: opts.pricing, noReasoning: opts.noReasoning })
+      .startRun({ chatId: 'chat-1', task: 'Explain X', config: opts.config ?? baseConfig(), tools: TOOLS, openRouterApiKey: 'sk-or-test', pricing: opts.pricing, noReasoning: opts.noReasoning, observe: opts.observe })
       .then((r) => {
         if (!r.ok) reject(new Error(r.reason))
         else runId = r.runId
@@ -920,5 +921,122 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     const pid = (mgr as unknown as { process: { pid: number } }).process.pid
     await mgr.stop()
     expect(() => process.kill(pid, 0)).toThrow()
+  }, 90_000)
+})
+
+// ── Observability spec Phase 1: call records ────────────────────────────────
+
+interface ObsRecord {
+  kind: 'model' | 'tool'
+  seq: number
+  role: string
+  agentId: string | null
+  attempt: number
+  toolRound: number
+  model?: string
+  request?: { messages: unknown[]; params: Record<string, unknown>; headers: Record<string, string> }
+  response?: { content: string; reasoning: string; toolCalls: Array<{ id: string; name: string; arguments: string }>; finishReason: string | null }
+  usage?: { promptTokens: number; completionTokens: number; costUsd: number }
+  timing: { startedAt: number; endedAt: number; ms: number }
+  callId?: string
+  name?: string
+  args?: string
+  result?: string | null
+  approved?: boolean
+  denied?: boolean
+  error?: unknown
+}
+
+describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', () => {
+  let fake: FakeOpenRouter
+  let mgr: MultiAgentSidecarManager
+  const records: ObsRecord[] = []
+
+  beforeAll(async () => {
+    fake = await startFakeOpenRouter(scenario)
+    mgr = new MultiAgentSidecarManager({ healthIntervalMs: 60_000 })
+    mgr.configure({ scriptPath: SCRIPT, workspaceDir: mkdtempSync(join(tmpdir(), 'di-sidecar-obs-')), pythonPath: PYTHON, openRouterBaseUrl: fake.url })
+    mgr.on('obsRecord', ({ record }: { record: ObsRecord }) => records.push(record))
+    await mgr.start()
+  }, 60_000)
+
+  afterAll(async () => {
+    await mgr?.stop()
+    await fake?.close()
+  })
+
+  /** The default scenario: planner, Researcher with a tool round (one allowed, one unregistered tool), Analyzer rejected once, synthesis. */
+  const defaultRun = (observe: boolean): Promise<AgentEvent[]> =>
+    runToEnd(mgr, {
+      observe,
+      onEvent: (e) => {
+        approvePlan(mgr)(e)
+        if (e.type === 'hitl_pause' && e.serverName === 'fs') void mgr.respondHitl({ runId: e.runId, agentId: e.agentId, approved: true, result: 'notes-content' })
+      },
+    })
+
+  it('records every model call with the exact request the server received and the content it streamed', async () => {
+    fake.requests.length = 0
+    records.length = 0
+    plannerCalls = 0
+    const events = await defaultRun(true)
+    expect(events.at(-1)?.type).toBe('task_complete')
+    const calls = records.filter((r) => r.kind === 'model')
+    expect(calls).toHaveLength(fake.requests.length)
+
+    for (const sent of fake.requests) {
+      const { messages, ...params } = sent.body as unknown as Record<string, unknown>
+      // Byte-equal: same JSON text for messages and for the remaining parameters.
+      const match = calls.find((c) => JSON.stringify(c.request!.messages) === JSON.stringify(messages) && JSON.stringify(c.request!.params) === JSON.stringify(params))
+      expect(match, `no record for a ${String(params.model)} request`).toBeDefined()
+      expect(match!.response!.content).toBe(sent.reply?.content ?? '')
+      expect(match!.response!.toolCalls.map((t) => ({ id: t.id, name: t.name, args: t.arguments }))).toEqual(sent.reply?.toolCalls ?? [])
+      expect(match!.response!.finishReason).toBe(sent.reply?.toolCalls ? 'tool_calls' : 'stop')
+      expect(match!.usage).toMatchObject({ promptTokens: PROMPT_TOKENS, completionTokens: COMPLETION_TOKENS, costUsd: 0.001 })
+      expect(match!.request!.headers.Authorization).toBe('[redacted]')
+      expect(match!.timing.endedAt).toBeGreaterThanOrEqual(match!.timing.startedAt)
+    }
+
+    // Roles and identities, one record per call (reflection retries and the Analyzer's second attempt are separate).
+    const roles = calls.map((c) => c.role)
+    expect(roles.filter((r) => r === 'planner')).toHaveLength(1)
+    expect(roles.filter((r) => r === 'synthesis')).toHaveLength(1)
+    expect(calls.filter((c) => c.role === 'worker' && c.agentId === '1.1').map((c) => c.toolRound).sort()).toEqual([0, 1])
+    expect(calls.filter((c) => c.role === 'worker' && c.agentId === '1.2').map((c) => c.attempt).sort()).toEqual([0, 1])
+    expect(calls.filter((c) => c.role === 'reflection' && c.agentId === '1.2').map((c) => c.attempt).sort()).toEqual([0, 1])
+    expect(records.map((r) => r.seq)).toEqual(records.map((_, i) => i + 1))
+
+    // Tool records: full args and result; the unregistered tool is a rejection, not a denial.
+    const tools = records.filter((r) => r.kind === 'tool')
+    expect(tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId: '1.1', callId: 'call_1', name: 'fs__read_file', args: '{"path": "/notes.txt"}', result: 'notes-content', approved: true, denied: false, error: null }),
+      expect.objectContaining({ agentId: '1.1', callId: 'call_2', name: 'evil__exec', args: '{"cmd": "rm -rf /"}', approved: false, denied: false, error: expect.stringContaining('not registered') }),
+    ]))
+
+    // No credential anywhere in what was recorded.
+    expect(JSON.stringify(records)).not.toContain('sk-or-test')
+  }, 90_000)
+
+  it('with observe off (the default), the sidecar records nothing', async () => {
+    records.length = 0
+    plannerCalls = 0
+    const events = await defaultRun(false)
+    expect(events.at(-1)?.type).toBe('task_complete')
+    expect(records).toEqual([])
+  }, 90_000)
+
+  it('an HTTP error is recorded with its status and finish reason "error"', async () => {
+    records.length = 0
+    replyOverride = (body) => (systemOf(body).includes('synthesize') ? { httpError: { status: 500, message: 'upstream down' } } : undefined)
+    try {
+      plannerCalls = 0
+      await defaultRun(true)
+    } finally {
+      replyOverride = null
+    }
+    const synth = records.find((r) => r.kind === 'model' && r.role === 'synthesis')!
+    expect(synth.response!.finishReason).toBe('error')
+    expect(synth.error).toMatchObject({ httpStatus: 500, message: expect.stringContaining('upstream down') })
+    expect(synth.request!.messages.length).toBeGreaterThan(0)
   }, 90_000)
 })

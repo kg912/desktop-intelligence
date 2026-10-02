@@ -71,6 +71,8 @@ export interface RunStartRequest extends MultiAgentStartPayload {
   /** Where each role's model came from; echoed back in run_config. */
   modelSources?: Record<string, 'saved' | 'default' | 'active'>
   catalogueChecked?: boolean
+  /** observabilityEnabled: the sidecar records every model and tool call (obs_record frames). Off: nothing is captured. */
+  observe?: boolean
 }
 
 type FetchFn = typeof fetch
@@ -507,7 +509,14 @@ export class MultiAgentSidecarManager extends EventEmitter {
     if (!data) return
     let event: AgentEvent
     try {
-      event = parseAgentEvent(JSON.parse(data))
+      const raw = JSON.parse(data)
+      // Call records ride the same stream but are not AgentEvents: never to the renderer, no seq.
+      if (raw?.type === 'obs_record') {
+        const run = this.runs.get(runId)
+        if (run && !run.terminal && raw.runId === runId) this.emit('obsRecord', { runId, chatId: run.chatId, record: raw.record })
+        return
+      }
+      event = parseAgentEvent(raw)
     } catch (err) {
       console.warn('[Sidecar] dropped invalid SSE AgentEvent:', err)
       return
