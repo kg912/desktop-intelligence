@@ -466,6 +466,12 @@ export const IPC_CHANNELS = {
   OBS_LIST_MULTI_AGENT_EVENTS: 'obs:listMultiAgentEvents',
   OBS_CLEAR_MULTI_AGENT_EVENTS: 'obs:clearMultiAgentEvents',
   OBS_OPEN_MULTI_AGENT_EVENTS_FILE: 'obs:openMultiAgentEventsFile',
+  OBS_LIST_MULTI_AGENT_RUNS:   'obs:listMultiAgentRuns',
+  OBS_GET_MULTI_AGENT_RUN:     'obs:getMultiAgentRun',
+  OBS_LIST_MULTI_AGENT_RUN_EVENTS: 'obs:listMultiAgentRunEvents',
+  OBS_OPEN_MULTI_AGENT_RUN_FILE: 'obs:openMultiAgentRunFile',
+  OBS_REVEAL_MULTI_AGENT_RUN:  'obs:revealMultiAgentRun',
+  OBS_DELETE_MULTI_AGENT_RUN:  'obs:deleteMultiAgentRun',
 
   // ── Multi-Agent Orchestration ──────────────────────────────────────────────
   MULTI_AGENT_START:          'multi-agent:start',

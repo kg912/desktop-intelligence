@@ -606,3 +606,87 @@ export async function renderRun(dir: string, secrets: string[] = []): Promise<Ru
   for (const [name, text] of out) await fs.writeFile(path.join(dir, name), scrub(text, secrets), 'utf8')
   return updated
 }
+
+// ── Debug panel views (read-only, built from the files) ──────────────────────
+
+export type RunRowStatus = RunLogStatus | 'running' | 'not_recorded'
+
+export interface RunListRow {
+  runId: string
+  chatId: string
+  chatTitle: string
+  startedAt: number
+  status: RunRowStatus
+  models: Record<string, string>
+  costUsd: number | null
+  durationMs: number | null
+  anomalyCount: number | null
+}
+
+export interface TimelineCall {
+  seq: number
+  kind: 'model' | 'tool'
+  role: CallRecord['role']
+  agentId: string | null
+  attempt: number
+  label: string
+  /** ms from the run's first recorded call. */
+  start: number
+  ms: number
+  finish: string
+  /** File (in the run directory) that holds this call, and its anchor. */
+  file: string
+  anchor: string
+  anomalous: boolean
+}
+
+export interface RunDetail {
+  meta: RunLogMeta
+  plan: Array<{ id: string; role: string; label: string; dependsOn: string[] }>
+  calls: TimelineCall[]
+  anomalies: Anomaly[]
+  peak: number
+  files: string[]
+}
+
+export function rowFromMeta(meta: RunLogMeta, active: boolean): RunListRow {
+  return {
+    runId: meta.runId, chatId: meta.chatId, chatTitle: meta.chatTitle, startedAt: meta.startedAt,
+    status: active ? 'running' : meta.status,
+    models: meta.config?.models ?? {},
+    costUsd: meta.summary?.costUsd ?? null,
+    durationMs: meta.summary?.durationMs ?? null,
+    anomalyCount: meta.summary ? meta.summary.anomalies.length : null,
+  }
+}
+
+export async function runDetail(dir: string): Promise<RunDetail> {
+  const { meta, events, records } = await readRun(dir)
+  const summary = meta.summary ?? summarise(meta, events, records)
+  const t0 = Math.min(...records.map((r) => r.timing.startedAt ?? r.timing.endedAt), Infinity)
+  const flagged = new Set(summary.anomalies.map((a) => a.ref))
+  const plan = eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []
+  return {
+    meta,
+    plan: plan.map((s) => ({ id: s.id, role: s.role, label: s.label, dependsOn: s.dependsOn ?? [] })),
+    calls: records.map((r) => {
+      const start = r.timing.startedAt ?? r.timing.endedAt
+      return {
+        seq: r.seq, kind: r.kind, role: r.role, agentId: r.agentId, attempt: r.attempt,
+        label: r.kind === 'tool' ? `tool ${r.name}` : r.model ?? '',
+        start: start - t0, ms: r.timing.ms ?? Math.max(0, r.timing.endedAt - start),
+        finish: r.kind === 'tool' ? (r.error ? 'rejected' : r.approved ? 'ok' : 'denied') : r.response?.finishReason ?? '',
+        file: `${recordFile(r)}.md`, anchor: anchor(r), anomalous: flagged.has(callRef(r)),
+      }
+    }),
+    anomalies: summary.anomalies,
+    peak: peakConcurrency(records),
+    files: (await fs.readdir(dir)).filter((f) => f.endsWith('.md')).sort((a, b) => (a === 'run.md' ? -1 : b === 'run.md' ? 1 : a.localeCompare(b))),
+  }
+}
+
+/** The run's UI events, newest first, one page at a time. */
+export async function runEvents(dir: string, offset: number, limit: number): Promise<{ total: number; events: AgentEvent[] }> {
+  const events = parseJsonl<AgentEvent>(await fs.readFile(path.join(dir, 'events.jsonl'), 'utf8').catch(() => '')).reverse()
+  return { total: events.length, events: events.slice(offset, offset + limit) }
+}

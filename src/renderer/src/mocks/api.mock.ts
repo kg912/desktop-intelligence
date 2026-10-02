@@ -7,6 +7,7 @@
 import type { ElectronAPI } from '../../../preload/index'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
 import { multiAgentDemoApi } from './multiAgentDemo'
+import { observabilityMock } from './observabilityDemo'
 import type {
   ConnectionState,
   DaemonState,
@@ -257,6 +258,7 @@ export const mockApi: ElectronAPI = {
   obsListMultiAgentEvents: async () => [],
   obsClearMultiAgentEvents: async () => {},
   obsOpenMultiAgentEventsFile: async () => {},
+  ...observabilityMock,
   warmUpMultiAgent: async () => 'stopped' as const,
   getMultiAgentCatalogue: async () => ({ models: [], error: null }),
   onMcpToolPermissionExpired: () => () => {},

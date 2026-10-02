@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DI · Observability: multi-agent runs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0a; --bg1:#0e0e0e; --bg2:#131313; --bg3:#191919;
+  --hair:rgba(255,255,255,.05); --line:rgba(255,255,255,.09);
+  --text:#ebebeb; --mute:#8b8b8b; --dim:#5a5a5a;
+  --red:#e53935; --red-08:rgba(229,57,53,.08); --red-14:rgba(229,57,53,.14); --red-35:rgba(229,57,53,.35);
+  --ok:#43cf8f; --ok-10:rgba(67,207,143,.10); --amber:#e2a93b; --amber-10:rgba(226,169,59,.10);
+  --sans:'Inter',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+svg.i{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.mono{font-family:var(--mono);font-size:12px}
+:focus-visible{outline:1px solid var(--red-35);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.set{display:flex;min-height:100vh;min-width:1100px}
+.nav{width:240px;border-right:.5px solid var(--hair);background:var(--bg1);padding:18px 10px;flex:none}
+.nav h2{font-size:15px;font-weight:600;padding:2px 12px 16px}
+.nav a{display:block;padding:9px 12px;border-radius:8px;color:var(--mute);font-size:13.5px;text-decoration:none;position:relative}
+.nav a.on{background:var(--bg3);color:var(--text)}
+.nav a.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--red);border-radius:2px}
+.pg{flex:1;overflow:auto}
+.wrap{max-width:980px;margin:0 auto;padding:44px 40px 80px}
+h1{font-size:20px;font-weight:600}
+.sub{color:var(--mute);font-size:13px;margin-top:4px}
+.state{display:flex;gap:8px;margin:22px 0 6px}
+.state button{height:28px;padding:0 12px;border-radius:7px;border:.5px solid var(--line);color:var(--mute);font-size:12.5px}
+.state button.on{border-color:var(--red-35);background:var(--red-08);color:#ff7571}
+
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:16px 0;border-bottom:.5px solid var(--hair)}
+.row p{font-size:13px;color:#cfcfcf;font-weight:500}.row small{display:block;color:var(--dim);font-size:12px;margin-top:2px;max-width:620px}
+.tg{width:34px;height:20px;border-radius:10px;background:var(--bg3);border:.5px solid var(--line);position:relative;flex:none}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:13px;height:13px;border-radius:50%;background:var(--mute);transition:transform .15s}
+.tg.on{background:var(--red-14);border-color:var(--red-35)}.tg.on::after{transform:translateX(14px);background:#ff7571}
+
+.sec{display:flex;align-items:center;justify-content:space-between;margin:34px 0 10px}
+.sec h3{font:600 10.5px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.sec span{color:var(--dim);font-size:12px}
+.box{border:.5px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden}
+
+.run{display:grid;grid-template-columns:96px minmax(0,1.3fr) 92px minmax(0,1fr) 62px 50px 38px 112px;align-items:center;gap:12px;padding:11px 16px;border-bottom:.5px solid var(--hair);font-size:12.5px;cursor:pointer}
+.run:last-child{border:0}.run:hover{background:var(--bg2)}.run.sel{background:var(--bg2);box-shadow:inset 2px 0 0 var(--red)}
+.run .t{color:var(--mute);font:12px var(--mono)}
+.run .c{color:#dcdcdc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.run .m{font:11.5px var(--mono);color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.run .n{font:12px var(--mono);color:#cfcfcf;text-align:right}
+.run.nr{cursor:default;opacity:.55}.run.nr:hover{background:none}
+.acts{display:flex;gap:2px;justify-content:flex-end;opacity:0;transition:opacity .12s}
+.run:hover .acts,.run.sel .acts{opacity:1}
+.ab{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;color:var(--mute)}
+.ab:hover{background:var(--bg3);color:var(--text)}.ab.del:hover{color:#ff7571}
+.tag{font:11px/1 var(--mono);height:20px;padding:0 7px;white-space:nowrap;border-radius:5px;display:inline-flex;align-items:center;border:.5px solid var(--line);color:var(--mute);justify-self:start}
+.tag.ok{color:var(--ok);border-color:rgba(67,207,143,.3);background:var(--ok-10)}
+.tag.fail{color:#ff7571;border-color:var(--red-35);background:var(--red-08)}
+.tag.inc{color:var(--amber);border-color:rgba(226,169,59,.3);background:var(--amber-10)}
+.an{font:11px var(--mono);color:var(--amber);text-align:right}.an.z{color:var(--dim)}
+
+.detail{border-top:.5px solid var(--hair);background:var(--bg1);padding:18px 16px 20px;display:grid;grid-template-columns:300px minmax(0,1fr);gap:26px}
+.detail h4{font:600 10.5px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:12px}
+.dag{display:flex;gap:8px;align-items:center}
+.col{display:flex;flex-direction:column;gap:8px}
+.nd{font:11.5px var(--mono);padding:6px 9px;border-radius:7px;border:.5px solid var(--line);background:var(--bg2);color:#cfcfcf;white-space:nowrap}
+.nd.f{border-color:var(--red-35);color:#ff7571}.nd.s{border-style:dashed;color:var(--mute)}
+.arrow{color:var(--dim);font-size:13px}
+.tl{display:flex;flex-direction:column;gap:5px}
+.tr{display:grid;grid-template-columns:132px 1fr 70px;gap:10px;align-items:center;font:11.5px var(--mono);color:var(--mute)}
+.track{position:relative;height:14px;background:var(--bg2);border-radius:3px}
+.bar{position:absolute;top:2px;height:10px;border-radius:2px;background:rgba(255,255,255,.18);cursor:pointer}
+.bar:hover{outline:1px solid var(--red-35)}
+.bar.p{background:rgba(139,139,139,.45)}.bar.w{background:rgba(229,57,53,.55)}.bar.r{background:rgba(226,169,59,.55)}.bar.s{background:rgba(67,207,143,.55)}.bar.tool{background:none;border:.5px dashed var(--mute)}
+.bar.bad{box-shadow:0 0 0 1px var(--amber)}
+.tr .ms{text-align:right;color:var(--dim)}
+.legend{display:flex;gap:14px;margin-top:10px;font-size:11.5px;color:var(--dim)}
+.legend i{display:inline-block;width:10px;height:6px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.anom{margin-top:16px;display:flex;flex-direction:column;gap:6px}
+.anom div{font-size:12.5px;color:#cfcfcf;display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:10px}
+.anom b{font:500 11px var(--mono);color:var(--amber);overflow-wrap:anywhere}
+.anom a{color:var(--mute);font:11.5px var(--mono);text-decoration:none;white-space:nowrap}.anom a:hover{color:var(--text)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12.5px}
+.kv span:nth-child(odd){color:var(--dim)}.kv span:nth-child(even){font:12px var(--mono);color:#cfcfcf}
+.files{margin-top:16px;display:flex;flex-wrap:wrap;gap:6px}
+.files button{font:11.5px var(--mono);height:24px;padding:0 9px;border-radius:6px;border:.5px solid var(--line);color:var(--mute)}
+.files button:hover{color:var(--text);background:var(--bg3)}
+
+.ev{display:grid;grid-template-columns:60px 110px 160px 1fr;gap:12px;padding:7px 16px;border-bottom:.5px solid var(--hair);font:11.5px var(--mono);color:var(--mute)}
+.ev .ty{color:#ff7571}.ev .d{color:#a8a8a8;font-family:var(--sans);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pager{display:flex;align-items:center;justify-content:space-between;padding:9px 16px;font-size:12px;color:var(--dim)}
+.pager button{height:26px;padding:0 10px;border-radius:6px;border:.5px solid var(--line);color:var(--mute);font-size:12px}
+.pager button:disabled{opacity:.35;cursor:default}
+
+.off{padding:26px 20px;text-align:center}
+.off p{color:#cfcfcf;font-size:13.5px}.off small{display:block;color:var(--dim);font-size:12.5px;margin:6px auto 14px;max-width:520px}
+.btn{height:30px;padding:0 14px;border-radius:7px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px}
+.btn:hover{background:var(--red-14)}
+[data-when]{display:none}
+body[data-state="on"] [data-when~="on"],body[data-state="off"] [data-when~="off"]{display:revert}
+body[data-state="on"] .run[data-when~="on"],body[data-state="off"] .run[data-when~="off"]{display:grid}
+body[data-state="on"] .detail[data-when~="on"]{display:grid}
+body[data-state="on"] .sec[data-when~="on"]{display:flex}
+</style></head>
+<body data-state="on">
+<svg width="0" height="0" style="position:absolute"><defs>
+  <symbol id="doc" viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="fold" viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+  <symbol id="del" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+</defs></svg>
+<div class="set">
+  <aside class="nav"><h2>Settings</h2>
+    <a>Model</a><a>Web Search</a><a>MCP Servers</a><a>Backend</a><a>RAG</a><a>Multi-Agent</a><a class="on">Debug</a><a>About</a></aside>
+  <div class="pg"><div class="wrap">
+    <h1>Debug</h1>
+    <p class="sub">Logs stay on this device. Mockup states:</p>
+    <div class="state" role="tablist">
+      <button class="on" onclick="setState('on',this)">Observability on: list + detail</button>
+      <button onclick="setState('off',this)">Observability off</button>
+    </div>
+
+    <div class="row"><div><p>Observability</p><small>Capture full logs: prompts, tool calls and results, raw model output, timing and cost. For multi-agent runs, every model and tool call.</small></div><span class="tg" id="tgOn"></span></div>
+
+    <div class="sec"><h3>Multi-agent runs</h3><span data-when="on">3 recorded · 1 not recorded · keeps the newest 50</span><span data-when="off">Recording is off</span></div>
+    <div class="box">
+      <div class="off" data-when="off">
+        <p>Observability is off, so multi-agent runs are not being recorded.</p>
+        <small>Turn it on to record the next run's prompts, raw outputs, tool calls, timing and cost. Runs that already happened while it was off cannot be recovered.</small>
+        <button class="btn" onclick="setState('on',document.querySelector('.state button'))">Turn on observability</button>
+      </div>
+
+      <div class="run sel" data-when="on">
+        <span class="t">03 Oct 14:02</span><span class="c">Compare castle hotels near Füssen</span><span class="tag ok">completed</span>
+        <span class="m">llama-3.3-70b · deepseek-v4.1-flash · qwen3-235b</span><span class="n">$0.0412</span><span class="n">48.2s</span><span class="an">2 ⚠</span>
+        <span class="acts"><button class="ab" title="Open run.md"><svg class="i"><use href="#doc"/></svg></button><button class="ab" title="Reveal folder"><svg class="i"><use href="#fold"/></svg></button><button class="ab" title="Copy run id"><svg class="i"><use href="#copy"/></svg></button><button class="ab del" title="Delete"><svg class="i"><use href="#del"/></svg></button></span>
+      </div>
+      <div class="detail" data-when="on">
+        <div>
+          <h4>Plan</h4>
+          <div class="dag">
+            <div class="col"><span class="nd">1.1 Scout</span><span class="nd">1.2 Analyst</span><span class="nd f">1.3 Pricer</span></div>
+            <span class="arrow">→</span>
+            <div class="col"><span class="nd">2.1 Editor</span></div>
+            <span class="arrow">→</span>
+            <div class="col"><span class="nd s">Synthesis</span></div>
+          </div>
+          <h4 style="margin-top:20px">Run</h4>
+          <div class="kv"><span>Run id</span><span>7f3c…e21a</span><span>Peak parallel</span><span>3 calls</span><span>Calls</span><span>14 model · 4 tool</span><span>Totals</span><span>reconciled</span></div>
+          <div class="files"><button>run.md</button><button>planner.md</button><button>agent-1.1.md</button><button>agent-1.2.md</button><button>agent-1.3.md</button><button>agent-2.1.md</button><button>synthesis.md</button></div>
+        </div>
+        <div>
+          <h4>Timeline</h4>
+          <div class="tl">
+            <div class="tr"><span>planner</span><span class="track"><span class="bar p" style="left:0;width:7%"></span></span><span class="ms">3.1s</span></div>
+            <div class="tr"><span>1.1 worker ×2</span><span class="track"><span class="bar w" style="left:8%;width:14%"></span><span class="bar tool" style="left:22%;width:6%"></span><span class="bar w" style="left:28%;width:12%"></span></span><span class="ms">14.9s</span></div>
+            <div class="tr"><span>1.1 reflection</span><span class="track"><span class="bar r" style="left:41%;width:5%"></span></span><span class="ms">2.2s</span></div>
+            <div class="tr"><span>1.2 worker</span><span class="track"><span class="bar w" style="left:8%;width:22%"></span></span><span class="ms">10.6s</span></div>
+            <div class="tr"><span>1.2 reflection</span><span class="track"><span class="bar r" style="left:31%;width:5%"></span></span><span class="ms">2.4s</span></div>
+            <div class="tr"><span>1.3 worker</span><span class="track"><span class="bar w bad" style="left:8%;width:26%"></span></span><span class="ms">12.5s</span></div>
+            <div class="tr"><span>2.1 worker</span><span class="track"><span class="bar w" style="left:47%;width:24%"></span></span><span class="ms">11.6s</span></div>
+            <div class="tr"><span>2.1 reflection</span><span class="track"><span class="bar r" style="left:72%;width:5%"></span></span><span class="ms">2.3s</span></div>
+            <div class="tr"><span>synthesis</span><span class="track"><span class="bar s" style="left:78%;width:22%"></span></span><span class="ms">10.4s</span></div>
+          </div>
+          <div class="legend"><span><i style="background:rgba(139,139,139,.45)"></i>planner</span><span><i style="background:rgba(229,57,53,.55)"></i>worker</span><span><i style="border:.5px dashed var(--mute)"></i>tool</span><span><i style="background:rgba(226,169,59,.55)"></i>reflection</span><span><i style="background:rgba(67,207,143,.55)"></i>synthesis</span><span>Click a bar to open its file.</span></div>
+          <div class="anom">
+            <div><b>length</b>worker 1.3 attempt 0 stopped at its token limit (budget bound)<a>agent-1.3.md#call-9</a></div>
+            <div><b>served_model_differs</b>worker 1.3 requested deepseek-v4.1-flash, OpenRouter served deepseek-v4-flash<a>agent-1.3.md#call-9</a></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="run" data-when="on off">
+        <span class="t">03 Oct 11:47</span><span class="c">Summarise the Q3 board pack</span><span class="tag fail">failed</span>
+        <span class="m">llama-3.3-70b · deepseek-v4.1-flash · qwen3-235b</span><span class="n">$0.0090</span><span class="n">21.0s</span><span class="an">4 ⚠</span>
+        <span class="acts"><button class="ab"><svg class="i"><use href="#doc"/></svg></button><button class="ab"><svg class="i"><use href="#fold"/></svg></button><button class="ab"><svg class="i"><use href="#copy"/></svg></button><button class="ab del"><svg class="i"><use href="#del"/></svg></button></span>
+      </div>
+      <div class="run" data-when="on off">
+        <span class="t">02 Oct 19:20</span><span class="c">Trip plan: Munich to Salzburg</span><span class="tag inc">incomplete</span>
+        <span class="m">llama-3.3-70b · deepseek-v4.1-flash · qwen3-235b</span><span class="n">$0.0031</span><span class="n">—</span><span class="an z">0</span>
+        <span class="acts"><button class="ab"><svg class="i"><use href="#doc"/></svg></button><button class="ab"><svg class="i"><use href="#fold"/></svg></button><button class="ab"><svg class="i"><use href="#copy"/></svg></button><button class="ab del"><svg class="i"><use href="#del"/></svg></button></span>
+      </div>
+      <div class="run nr" data-when="on off" title="This run happened while observability was off">
+        <span class="t">01 Oct 09:05</span><span class="c">Which castle tickets sell out first?</span><span class="tag">not recorded</span>
+        <span class="m">Observability was off when this run started.</span><span class="n"></span><span class="n"></span><span class="an z"></span><span></span>
+      </div>
+    </div>
+
+    <div class="sec" data-when="on"><h3>Raw UI events · selected run</h3><span>newest first</span></div>
+    <div class="box" data-when="on">
+      <div class="ev"><span>#212</span><span>run</span><span class="ty">task_complete</span><span class="d">run total $0.0412 · 18,904 tok</span></div>
+      <div class="ev"><span>#204</span><span>synthesizer</span><span class="ty">synthesis_token</span><span class="d">run so far $0.0371</span></div>
+      <div class="ev"><span>#203</span><span>synthesizer</span><span class="ty">synthesis_start</span><span class="d">run so far $0.0371</span></div>
+      <div class="ev"><span>#201</span><span>reflection 2.1</span><span class="ty">reflection_result</span><span class="d">4/5 passed — covers every hotel with prices marked unverified</span></div>
+      <div class="ev"><span>#188</span><span>worker 2.1</span><span class="ty">agent_complete</span><span class="d">3,120 tok · $0.0061</span></div>
+      <div class="pager"><span>Events 1–25 of 212</span><span style="display:flex;gap:6px"><button disabled>Newer</button><button>Older</button></span></div>
+    </div>
+  </div></div>
+</div>
+<script>
+function setState(s, btn){document.body.dataset.state=s;document.querySelectorAll('.state button').forEach(b=>b.classList.toggle('on',b===btn));document.getElementById('tgOn').classList.toggle('on',s==='on')}
+document.getElementById('tgOn').classList.add('on')
+</script>
+</body></html>

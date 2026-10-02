@@ -38,6 +38,7 @@ import type {
   MultiAgentConfig,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent, MultiAgentTraceLogEntry } from '../main/services/ObservabilityService'
+import type { RunDetail, RunListRow } from '../main/services/MultiAgentRunLogger'
 
 const api = {
   // ── Model Connection ────────────────────────────────────────
@@ -306,6 +307,25 @@ const api = {
 
   obsOpenMultiAgentEventsFile: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_EVENTS_FILE),
+
+  obsListMultiAgentRuns: (): Promise<RunListRow[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_RUNS),
+
+  obsGetMultiAgentRun: (chatId: string, runId: string): Promise<RunDetail | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_GET_MULTI_AGENT_RUN, chatId, runId),
+
+  obsListMultiAgentRunEvents: (chatId: string, runId: string, offset: number, limit: number): Promise<{ total: number; entries: MultiAgentTraceLogEntry[] }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_RUN_EVENTS, chatId, runId, offset, limit),
+
+  /** Resolves to '' on success, else the OS error (shell.openPath). */
+  obsOpenMultiAgentRunFile: (chatId: string, runId: string, file?: string): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_RUN_FILE, chatId, runId, file),
+
+  obsRevealMultiAgentRun: (chatId: string, runId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_REVEAL_MULTI_AGENT_RUN, chatId, runId),
+
+  obsDeleteMultiAgentRun: (chatId: string, runId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_DELETE_MULTI_AGENT_RUN, chatId, runId),
 
   // ── Suggestion cards ─────────────────────────────────────────
   getSuggestions: (): Promise<string[]> =>

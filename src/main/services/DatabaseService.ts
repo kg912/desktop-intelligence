@@ -459,6 +459,15 @@ export function saveMultiAgentTrace(
 }
 
 /** The chat's latest run, or `runId` when given. Carries the run list once the chat has run history. */
+/** Every multi-agent run, newest first, with its chat title (Debug panel: shows runs that were not recorded). */
+export function listMultiAgentRunHistory(limit = 200, db: Database.Database = getDB()): Array<{ runId: string; chatId: string; chatTitle: string; startedAt: number; status: RunStatus }> {
+  return (db.prepare(`
+    SELECT r.run_id AS runId, r.chat_id AS chatId, c.title AS chatTitle, r.started_at AS startedAt, r.status AS status
+    FROM multi_agent_runs r JOIN chats c ON c.id = r.chat_id
+    ORDER BY r.started_at DESC, r.rowid DESC LIMIT ?
+  `).all(limit) as Array<{ runId: string; chatId: string; chatTitle: string; startedAt: number; status: RunStatus }>)
+}
+
 export function getMultiAgentRun(chatId: string, db: Database.Database = getDB(), runId?: string): MultiAgentRunRecord | null {
   const chat = db.prepare('SELECT mode, run_status, agent_graph, execution_trace FROM chats WHERE id = ?').get(chatId) as {
     mode: 'single' | 'multi-agent'; run_status: RunStatus; agent_graph?: string | null; execution_trace?: string | null

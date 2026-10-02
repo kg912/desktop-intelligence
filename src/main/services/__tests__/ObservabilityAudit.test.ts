@@ -11,7 +11,8 @@ import { join } from 'path'
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 
 const USER_DATA = mkdtempSync(join(tmpdir(), 'di-obs-audit-'))
-vi.mock('electron', () => ({ app: { getPath: () => USER_DATA }, shell: { openPath: vi.fn() } }))
+const shell = vi.hoisted(() => ({ openPath: vi.fn(async () => ''), showItemInFolder: vi.fn() }))
+vi.mock('electron', () => ({ app: { getPath: () => USER_DATA }, shell }))
 
 let settings: Record<string, unknown> = {}
 vi.mock('../SettingsStore', () => ({
@@ -222,5 +223,35 @@ describe('Phase 0 audit — the old multi-agent logger', () => {
     expect(() => seq.forEach((type, i) => sidecar.emit('event', event(type, i + 1)))).not.toThrow()
     expect(sent.map((e) => e.type)).toEqual([...seq])
     expect(db.saveAssistantMessage).toHaveBeenCalled()
+  })
+})
+
+describe('Phase 4 — Debug panel actions on per-run logs', () => {
+  const CONFIG = { ...DEFAULT_MULTI_AGENT_CONFIG, models: { orchestrator: 'm', worker: 'm', reflection: 'm', synthesizer: 'm' } }
+
+  it('lists recorded runs merged with "not recorded" history; open renders an unfinished run first; reveal; files outside the run are refused', async () => {
+    settings = { observabilityEnabled: true }
+    const obs = new ObservabilityService()
+    obs.multiAgentRuns.begin({ runId: 'r1', chatId: 'c1', chatTitle: 'T', task: 't', config: CONFIG, startedAt: 2 })
+    await obs.multiAgentRuns.flush()
+    const rows = await obs.listMultiAgentRunLogs([{ runId: 'r0', chatId: 'c0', chatTitle: 'Old', startedAt: 1 }, { runId: 'r1', chatId: 'c1', chatTitle: 'T', startedAt: 2 }])
+    expect(rows.map((r) => [r.runId, r.status])).toEqual([['r1', 'running'], ['r0', 'not_recorded']])
+    expect(await obs.deleteMultiAgentRun('c1', 'r1')).toBe(false) // never while active
+
+    obs.multiAgentRuns.event(event('task_failed', 1, { runId: 'r1' }))
+    await obs.multiAgentRuns.flush()
+    const dir = obs.multiAgentRuns.runDir('c1', 'r1')
+    rmSync(join(dir, 'run.md'), { force: true })
+    await obs.openMultiAgentRunFile('c1', 'r1')
+    expect(existsSync(join(dir, 'run.md'))).toBe(true)
+    expect(shell.openPath).toHaveBeenLastCalledWith(join(dir, 'run.md'))
+    expect(await obs.openMultiAgentRunFile('c1', 'r1', '../../../settings.json')).toBe('not found')
+    obs.revealMultiAgentRun('c1', 'r1')
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(join(dir, 'run.meta.json'))
+
+    const page = await obs.listMultiAgentRunEvents('c1', 'r1', 0, 25)
+    expect(page.total).toBe(1)
+    expect(await obs.deleteMultiAgentRun('c1', 'r1')).toBe(true)
+    expect(existsSync(dir)).toBe(false)
   })
 })

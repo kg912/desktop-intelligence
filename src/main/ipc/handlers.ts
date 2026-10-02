@@ -28,6 +28,7 @@ import {
   getChatSystemInstructions,
   setChatSystemInstructions,
   starChatById,
+  listMultiAgentRunHistory,
 } from '../services/DatabaseService'
 import { retrieve as ragRetrieve, buildContextEnvelope } from '../services/rag/RagRetrievalService'
 import type {
@@ -1584,6 +1585,26 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_EVENTS_FILE, async (): Promise<void> =>
     observabilityService.openMultiAgentEventsFile()
+  )
+
+  // ── Per-run multi-agent logs (observability spec §5) ────────────
+  ipcMain.handle(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_RUNS, async () =>
+    observabilityService.listMultiAgentRunLogs(listMultiAgentRunHistory())
+  )
+  ipcMain.handle(IPC_CHANNELS.OBS_GET_MULTI_AGENT_RUN, async (_e, chatId: string, runId: string) =>
+    observabilityService.getMultiAgentRunDetail(String(chatId), String(runId))
+  )
+  ipcMain.handle(IPC_CHANNELS.OBS_LIST_MULTI_AGENT_RUN_EVENTS, async (_e, chatId: string, runId: string, offset: number, limit: number) =>
+    observabilityService.listMultiAgentRunEvents(String(chatId), String(runId), Math.max(0, Number(offset) || 0), Math.min(500, Math.max(1, Number(limit) || 25)))
+  )
+  ipcMain.handle(IPC_CHANNELS.OBS_OPEN_MULTI_AGENT_RUN_FILE, async (_e, chatId: string, runId: string, file?: string) =>
+    observabilityService.openMultiAgentRunFile(String(chatId), String(runId), file === undefined ? undefined : String(file))
+  )
+  ipcMain.handle(IPC_CHANNELS.OBS_REVEAL_MULTI_AGENT_RUN, async (_e, chatId: string, runId: string): Promise<void> =>
+    observabilityService.revealMultiAgentRun(String(chatId), String(runId))
+  )
+  ipcMain.handle(IPC_CHANNELS.OBS_DELETE_MULTI_AGENT_RUN, async (_e, chatId: string, runId: string) =>
+    observabilityService.deleteMultiAgentRun(String(chatId), String(runId))
   )
 
   // ── Per-chat system instructions ────────────────────────────────

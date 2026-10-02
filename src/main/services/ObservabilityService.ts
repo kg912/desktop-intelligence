@@ -5,7 +5,8 @@ import { readSettings, writeSettings } from './SettingsStore'
 import type { AgentEvent, SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
 import { shouldAlertForViolation } from './sandbox/isCredentialPath'
 import { agentEventStepType } from '../../shared/agentEvents'
-import { DEFAULT_KEEP_RUNS, MultiAgentRunLogger } from './MultiAgentRunLogger'
+import { DEFAULT_KEEP_RUNS, MultiAgentRunLogger, renderRun, rowFromMeta, runDetail, runEvents } from './MultiAgentRunLogger'
+import type { RunDetail, RunListRow } from './MultiAgentRunLogger'
 import type { AgentTraceStepType } from '../../shared/agentEvents'
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -373,6 +374,49 @@ export class ObservabilityService {
       }
     }
     this.multiAgentWriting = false
+  }
+
+  // ── Per-run multi-agent logs (Debug panel) ─────────────────────────────
+
+  /** Recorded runs merged with the run history, so a run that started while off shows as "not recorded". */
+  async listMultiAgentRunLogs(history: Array<{ runId: string; chatId: string; chatTitle: string; startedAt: number }>): Promise<RunListRow[]> {
+    const logged = await this.multiAgentRuns.listRuns()
+    const rows = logged.map((meta) => rowFromMeta(meta, this.multiAgentRuns.isActive(meta.runId)))
+    const seen = new Set(rows.map((r) => r.runId))
+    for (const h of history) {
+      if (!seen.has(h.runId)) rows.push({ ...h, status: 'not_recorded', models: {}, costUsd: null, durationMs: null, anomalyCount: null })
+    }
+    return rows.sort((a, b) => b.startedAt - a.startedAt)
+  }
+
+  async getMultiAgentRunDetail(chatId: string, runId: string): Promise<RunDetail | null> {
+    try { return await runDetail(this.multiAgentRuns.runDir(chatId, runId)) } catch { return null }
+  }
+
+  async listMultiAgentRunEvents(chatId: string, runId: string, offset: number, limit: number): Promise<{ total: number; entries: MultiAgentTraceLogEntry[] }> {
+    const { total, events } = await runEvents(this.multiAgentRuns.runDir(chatId, runId), offset, limit)
+    return {
+      total,
+      entries: events.map((event) => ({ chatId, runId, ...('agentId' in event ? { agentId: event.agentId } : {}), stepType: agentEventStepType(event), event })),
+    }
+  }
+
+  /** Opens one file of a run (default run.md, rendered first if the run never finished). Only files inside that run's directory. */
+  async openMultiAgentRunFile(chatId: string, runId: string, file = 'run.md'): Promise<string> {
+    const dir = this.multiAgentRuns.runDir(chatId, runId)
+    if (file === 'run.md' && !this.multiAgentRuns.isActive(runId)) {
+      await fs.access(path.join(dir, 'run.md')).catch(() => renderRun(dir))
+    }
+    if (!(await fs.readdir(dir)).includes(file) || path.basename(file) !== file) return 'not found'
+    return shell.openPath(path.join(dir, file))
+  }
+
+  revealMultiAgentRun(chatId: string, runId: string): void {
+    shell.showItemInFolder(path.join(this.multiAgentRuns.runDir(chatId, runId), 'run.meta.json'))
+  }
+
+  deleteMultiAgentRun(chatId: string, runId: string): Promise<boolean> {
+    return this.multiAgentRuns.deleteRun(chatId, runId)
   }
 
   async listMultiAgentEvents(limit = 200): Promise<MultiAgentTraceLogEntry[]> {
