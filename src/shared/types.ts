@@ -582,6 +582,8 @@ interface AgentAttempt {
 export interface OrchestratorPlanEvent extends AgentEventBase {
   type:  'orchestrator_plan'
   steps: AgentStep[]
+  /** The planner never returned a usable plan; these are the sidecar's built-in steps. */
+  fallback?: boolean
 }
 
 export interface AgentStartEvent extends AgentEventBase, AgentAttempt {

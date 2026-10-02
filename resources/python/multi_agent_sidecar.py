@@ -827,10 +827,11 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
             print(f"[plan] run {run.run_id}: chain correction → {outcome}", file=sys.stderr, flush=True)
         steps = candidate
         break
+    fallback = steps is None
     steps = steps or fallback_plan(config)
     for s in steps:
         s.pop("chainReason", None)
-    await run.emit("orchestrator_plan", steps=steps)
+    await run.emit("orchestrator_plan", steps=steps, **({"fallback": True} if fallback else {}))
     await run.emit("run_config", models=config.models,
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
                    catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,

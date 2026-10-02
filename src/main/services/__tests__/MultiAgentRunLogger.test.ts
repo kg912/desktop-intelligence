@@ -160,12 +160,14 @@ describe('MultiAgentRunLogger (observability spec Phase 2)', () => {
         }
         if (seq === 200) console.log('ready')
       }, 1)
+      setTimeout(() => process.exit(1), 10_000).unref() // never outlive the test, even if the kill is missed
     `)
     // One process (no tsx wrapper), so SIGKILL hits the writer itself.
     const child = spawn(process.execPath, ['--import', 'tsx', script], { cwd: resolve(__dirname, '../../../..'), stdio: ['ignore', 'pipe', 'inherit'] })
     await new Promise<void>((ready) => child.stdout.on('data', (d) => String(d).includes('ready') && ready()))
+    const exited = new Promise((r) => child.once('exit', r))
     child.kill('SIGKILL')
-    await new Promise((r) => child.once('exit', r))
+    await exited
     const dir = join(root, 'chat-1', 'run-1')
     expect(readMeta(dir)?.status).toBe('incomplete')
     for (const name of ['events.jsonl', 'agent-1.1.jsonl']) {
@@ -206,6 +208,15 @@ describe('MultiAgentRunLogger (observability spec Phase 2)', () => {
     await logger.flush()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  it('Phase 3: totals that do not match the call records are a reconciliation anomaly', async () => {
+    // fullRun reports 0.009 / 1350 but its eight model records sum to 0.008 / 1200.
+    const { dir } = await fullRun(freshRoot())
+    const runMd = readFileSync(join(dir, 'run.md'), 'utf8')
+    expect(runMd).toContain('**Mismatch** between call records')
+    expect(runMd).toMatch(/- \*\*reconciliation\*\*: call records sum to 1200 tokens \/ \$0\.008000; the run reported 1350 tokens \/ \$0\.009000/)
+    expect(readMeta(dir)?.summary?.anomalies.map((a) => a.kind)).toContain('reconciliation')
   })
 
   it('ids from model output cannot escape the run directory', () => {

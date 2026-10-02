@@ -457,9 +457,42 @@ export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallR
   }
 }
 
-/** Phase 3 fills this in; Phase 2 reports none. */
-export function findAnomalies(_meta: RunLogMeta, _events: AgentEvent[], _records: CallRecord[], _costUsd: number, _tokens: number): Anomaly[] {
-  return []
+/** Cost differences below this are float rounding (the sidecar rounds totals to 8 decimals). */
+const RECONCILE_USD = 1e-6
+
+/** Everything in a run worth a second look, each linked to the call that shows it (spec §4 item 7). */
+export function findAnomalies(_meta: RunLogMeta, events: AgentEvent[], records: CallRecord[], costUsd: number, tokens: number): Anomaly[] {
+  const out: Anomaly[] = []
+  const who = (r: CallRecord): string => `${r.role}${r.agentId ? ` ${r.agentId}` : ''} attempt ${r.attempt}`
+  for (const r of records) {
+    const ref = callRef(r)
+    if (r.kind === 'tool') {
+      if (r.error) out.push({ kind: 'tool_rejected', message: `${r.name} rejected for agent ${r.agentId}: ${r.error}`, ref })
+      else if (r.denied) out.push({ kind: 'tool_denied', message: `${r.name} denied for agent ${r.agentId}`, ref })
+      continue
+    }
+    const res = r.response
+    if (res?.finishReason === 'length') out.push({ kind: 'length', message: `${who(r)} stopped at its token limit (${res.truncated ?? 'unknown'} bound)`, ref })
+    if (res?.looped) out.push({ kind: 'repetition', message: `${who(r)}: repetition guard stopped the ${res.looped} stream`, ref })
+    // A dated or variant id of the same model (e.g. "<id>-20240620") is not a different model.
+    if (r.modelServed && r.model && !r.modelServed.startsWith(r.model)) {
+      out.push({ kind: 'served_model_differs', message: `${who(r)} requested \`${r.model}\`, OpenRouter served \`${r.modelServed}\``, ref })
+    }
+    if (res?.finishReason === 'cancelled') out.push({ kind: 'cancelled', message: `${who(r)} was cancelled mid-call`, ref })
+    else if (r.error) out.push({ kind: 'error', message: `${who(r)} failed: ${r.error.kind}${r.error.httpStatus ? ` HTTP ${r.error.httpStatus}` : ''}: ${r.error.message}`, ref })
+    if (r.role === 'planner' && r.attempt > 0) out.push({ kind: 'retry', message: `planner re-asked (attempt ${r.attempt})`, ref })
+    if (r.role === 'reflection' && (r.retry ?? 0) > 0) out.push({ kind: 'retry', message: `reviewer re-asked for agent ${r.agentId} after an unusable verdict`, ref })
+    for (const c of r.capped ?? []) out.push({ kind: 'capped', message: `${who(r)}: ${c.field} cut in the log (${c.originalChars} chars)`, ref })
+  }
+  for (const e of events) {
+    if (e.type === 'orchestrator_plan' && e.fallback) out.push({ kind: 'fallback_plan', message: 'the planner never returned a usable plan; the built-in fallback plan ran', ref: 'planner.md' })
+    if (e.type === 'retry') out.push({ kind: 'retry', message: `agent ${e.agentId} retried (attempt ${e.attempt}): ${e.reason}`, ref: `agent-${safeId(e.agentId)}.md` })
+  }
+  const done = events.find((e): e is Ev<'task_complete'> => e.type === 'task_complete')
+  if (done && (Math.abs(done.totalCostUsd - costUsd) > RECONCILE_USD || done.totalTokens !== tokens)) {
+    out.push({ kind: 'reconciliation', message: `call records sum to ${tokens} tokens / ${usd(costUsd)}; the run reported ${done.totalTokens} tokens / ${usd(done.totalCostUsd)}` })
+  }
+  return out
 }
 
 function mermaidId(id: string): string {
@@ -542,7 +575,10 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     L.push(`| \`${cell(id)}\` | ${rs.length} | ${rs.reduce((s, r) => s + tokensOf(r), 0)} | ${usd(rs.reduce((s, r) => s + (r.usage?.costUsd ?? 0), 0))} |`)
   }
   L.push('', `Sum of call records: ${summary.modelCalls} model calls, ${summary.toolCalls} tool calls, ${summary.tokens} tokens, ${usd(summary.costUsd)}.`)
-  if (summary.reportedCostUsd != null) L.push(`Reported by the run: ${summary.reportedTokens} tokens, ${usd(summary.reportedCostUsd)}.`)
+  if (summary.reportedCostUsd != null) {
+    L.push(`Reported by the run: ${summary.reportedTokens} tokens, ${usd(summary.reportedCostUsd)}.`, '')
+    L.push(summary.anomalies.some((a) => a.kind === 'reconciliation') ? '**Mismatch** between call records and the run\'s totals: see Anomalies.' : 'Reconciled with the run\'s own totals.')
+  }
   L.push('')
 
   L.push('## Anomalies', '')

@@ -30,9 +30,9 @@ vi.mock('electron', () => ({
 
 import { MultiAgentSidecarManager } from '../MultiAgentSidecarManager'
 import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
-import { McpServerManager } from '../McpServerManager'
+import { McpDeniedError, McpServerManager } from '../McpServerManager'
 import { MultiAgentRunLogger, readRun } from '../MultiAgentRunLogger'
-import type { CallRecord } from '../MultiAgentRunLogger'
+import type { CallRecord, RunLogMeta } from '../MultiAgentRunLogger'
 import type { McpToolPermissionRequest } from '../../../shared/types'
 import { srtBackend } from '../sandbox/sandboxServiceInstance'
 
@@ -65,6 +65,8 @@ interface Reply {
   finishReason?: string
   /** Answer with this HTTP error instead of a stream. */
   httpError?: { status: number; message: string }
+  /** Chunks carry this `model` (OpenRouter names the model that actually served the request). */
+  servedModel?: string
 }
 type Body = {
   model: string
@@ -108,7 +110,7 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
       const price = fake.pricing[body.model]
       const cost = price ? PROMPT_TOKENS * price.prompt + completion * price.completion : 0.001
       res.writeHead(200, { 'content-type': 'text/event-stream' })
-      const send = (obj: unknown): boolean => res.write(`data: ${JSON.stringify(obj)}\n\n`)
+      const send = (obj: unknown): boolean => res.write(`data: ${JSON.stringify(reply.servedModel ? { model: reply.servedModel, ...(obj as object) } : obj)}\n\n`)
       res.write(': OPENROUTER PROCESSING\n\n')
       const stream = (): void => {
         for (const part of reply.reasoning?.match(/.{1,12}/gs) ?? []) {
@@ -1027,7 +1029,8 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
     expect(records).toEqual([])
   }, 90_000)
 
-  it('Phase 2: real sidecar → real coordinator → real run logger produces the section 4 tree with every call', async () => {
+  /** One run through the real sidecar, the real coordinator and a real run logger; returns the run directory. */
+  async function loggedRun(opts: { denyTools?: boolean } = {}): Promise<{ dir: string; runMd: string; root: string }> {
     const root = mkdtempSync(join(tmpdir(), 'di-runlog-it-'))
     const logger = new MultiAgentRunLogger(root, { secrets: () => ['sk-or-test'] })
     let coordinator!: MultiAgentRunCoordinator
@@ -1038,7 +1041,10 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
         sidecar: mgr,
         mcp: {
           getToolSchemas: () => [{ type: 'function', function: { name: 'fs__read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } }],
-          callToolForMultiAgent: async () => ({ text: 'notes-content', images: [], userNote: '' }),
+          callToolForMultiAgent: async () => {
+            if (opts.denyTools) throw new McpDeniedError('not now')
+            return { text: 'notes-content', images: [], userNote: '' }
+          },
           callBuiltinForMultiAgent: async () => ({ text: '', images: [], userNote: '' }),
           clearRunTrust: () => {},
           cancelRunPermissions: () => {},
@@ -1058,11 +1064,17 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
     const started = await coordinator.start({ chatId: 'chat-obs', task: 'Explain X', config: baseConfig() })
     expect(started.ok).toBe(true)
     await done
-    const runId = started.ok ? started.runId : ''
-    const dir = logger.runDir('chat-obs', runId)
+    const dir = logger.runDir('chat-obs', started.ok ? started.runId : '')
     const end = Date.now() + 10_000
-    while (!existsSync(join(dir, 'run.md')) && Date.now() < end) await new Promise((r) => setTimeout(r, 20))
-    await new Promise((r) => setTimeout(r, 100))
+    while (!(JSON.parse(readFileSync(join(dir, 'run.meta.json'), 'utf8')) as RunLogMeta).summary && Date.now() < end) await new Promise((r) => setTimeout(r, 20))
+    return { dir, root, runMd: readFileSync(join(dir, 'run.md'), 'utf8') }
+  }
+
+  /** The bullet lines of run.md's Anomalies section. */
+  const anomaliesOf = (runMd: string): string[] => runMd.split('## Anomalies')[1].split('## Files')[0].split('\n').filter((l) => l.startsWith('- '))
+
+  it('Phase 2: real sidecar → real coordinator → real run logger produces the section 4 tree with every call', async () => {
+    const { dir, root } = await loggedRun()
     expect(readdirSync(dir).sort()).toEqual([
       'agent-1.1.jsonl', 'agent-1.1.md', 'agent-1.2.jsonl', 'agent-1.2.md', 'events.jsonl',
       'planner.jsonl', 'planner.md', 'run.md', 'run.meta.json', 'synthesis.jsonl', 'synthesis.md',
@@ -1076,6 +1088,66 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
     expect(synthesis).toContain('The topic is X [1.1] and it implies Y [1.2].') // raw answer
     expect(synthesis).toContain('Analysis v2') // the prompt carries every agent output as received
     rmSync(root, { recursive: true, force: true })
+  }, 90_000)
+
+  // ── Phase 3: seeded faults each appear in run.md's anomalies; totals reconcile ──
+
+  it('Phase 3: the default run reconciles, and its retry and rejected tool are anomalies', async () => {
+    const { runMd, root } = await loggedRun()
+    const anomalies = anomaliesOf(runMd)
+    expect(anomalies.some((l) => l.includes('**retry**') && l.includes('agent 1.2 retried'))).toBe(true)
+    expect(anomalies.some((l) => l.includes('**tool_rejected**') && l.includes('evil__exec'))).toBe(true)
+    expect(anomalies.some((l) => l.includes('**reconciliation**'))).toBe(false)
+    expect(runMd).toContain('Reconciled with the run\'s own totals.')
+    rmSync(root, { recursive: true, force: true })
+  }, 90_000)
+
+  it('Phase 3: forced finish_reason "length" on the synthesis is an anomaly', async () => {
+    replyOverride = (body) => (systemOf(body).includes('synthesize') ? { content: 'Cut short', finishReason: 'length' } : undefined)
+    try {
+      const { runMd, root } = await loggedRun()
+      expect(anomaliesOf(runMd).some((l) => l.includes('**length**') && l.includes('synthesis') && l.includes('synthesis.md#call-'))).toBe(true)
+      rmSync(root, { recursive: true, force: true })
+    } finally {
+      replyOverride = null
+    }
+  }, 90_000)
+
+  it('Phase 3: forced fallback — OpenRouter serves a different model than requested — is an anomaly', async () => {
+    replyOverride = (body) => (systemOf(body).includes('Analyzer agent') ? { content: 'Analysis v2 — thorough, covering second-order effects.', servedModel: 'other/served-instead' } : undefined)
+    try {
+      const { runMd, root } = await loggedRun()
+      expect(anomaliesOf(runMd).some((l) => l.includes('**served_model_differs**') && l.includes('`fake/worker`') && l.includes('`other/served-instead`'))).toBe(true)
+      rmSync(root, { recursive: true, force: true })
+    } finally {
+      replyOverride = null
+    }
+  }, 90_000)
+
+  it('Phase 3: forced fallback plan — the planner never returns a usable plan — is an anomaly, with each re-ask', async () => {
+    planOverride = () => ({ content: 'no plan here' })
+    try {
+      const { runMd, root } = await loggedRun()
+      const anomalies = anomaliesOf(runMd)
+      expect(anomalies.some((l) => l.includes('**fallback_plan**'))).toBe(true)
+      expect(anomalies.filter((l) => l.includes('planner re-asked'))).toHaveLength(3)
+      rmSync(root, { recursive: true, force: true })
+    } finally {
+      planOverride = null
+    }
+  }, 90_000)
+
+  it('Phase 3: forced repetition loop and a denied tool are anomalies', async () => {
+    replyOverride = (body) => (systemOf(body).includes('Analyzer agent') && !userOf(body).includes('stuck') ? { content: 'Start.\n' + 'Final Answer: Your final answer here\n'.repeat(50) } : undefined)
+    try {
+      const { runMd, root } = await loggedRun({ denyTools: true })
+      const anomalies = anomaliesOf(runMd)
+      expect(anomalies.some((l) => l.includes('**repetition**') && l.includes('worker 1.2 attempt 0'))).toBe(true)
+      expect(anomalies.some((l) => l.includes('**tool_denied**') && l.includes('fs__read_file'))).toBe(true)
+      rmSync(root, { recursive: true, force: true })
+    } finally {
+      replyOverride = null
+    }
   }, 90_000)
 
   it('an HTTP error is recorded with its status and finish reason "error"', async () => {
