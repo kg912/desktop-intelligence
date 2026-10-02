@@ -338,9 +338,26 @@ export class ObservabilityService {
       event,
     }
     const line = JSON.stringify(entry) + '\n'
-    fs.mkdir(this.logsDir, { recursive: true })
-      .then(() => fs.appendFile(this.multiAgentEventsLogPath(), line, 'utf8'))
-      .catch((err) => console.warn('[ObservabilityService] multi-agent event write failed:', err))
+    // One writer at a time: parallel appendFile calls land in any order (Phase 0 audit finding).
+    this.multiAgentPending.push(line)
+    if (!this.multiAgentWriting) void this.drainMultiAgentEvents()
+  }
+
+  private multiAgentPending: string[] = []
+  private multiAgentWriting = false
+
+  private async drainMultiAgentEvents(): Promise<void> {
+    this.multiAgentWriting = true
+    while (this.multiAgentPending.length) {
+      const batch = this.multiAgentPending.splice(0).join('')
+      try {
+        await fs.mkdir(this.logsDir, { recursive: true })
+        await fs.appendFile(this.multiAgentEventsLogPath(), batch, 'utf8')
+      } catch (err) {
+        console.warn('[ObservabilityService] multi-agent event write failed:', err)
+      }
+    }
+    this.multiAgentWriting = false
   }
 
   async listMultiAgentEvents(limit = 200): Promise<MultiAgentTraceLogEntry[]> {

@@ -272,7 +272,12 @@ export class MultiAgentRunCoordinator {
 
   private record(run: RunContext, event: AgentEvent): void {
     run.trace.push(event)
-    this.deps.observe(run.chatId, event)
+    try {
+      this.deps.observe(run.chatId, event)
+    } catch (err) {
+      // A logger failure must never fail a run.
+      console.warn('[MultiAgent] observability write failed:', err)
+    }
   }
 
   private flushTokens(run: RunContext): void {
