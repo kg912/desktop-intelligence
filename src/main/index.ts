@@ -4,7 +4,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-call
 ; (require('fix-path') as () => void)()
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, systemPreferences } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -36,6 +36,19 @@ const DEV_MODE = __DEV_MODE__
 if (DEV_MODE) {
   app.setName('[DEV] Desktop Intelligence')
   console.log('[App] DEV_MODE=true — DevTools will open automatically')
+}
+
+// macOS 26 AppKit runs an autofill heuristic on the main thread for every
+// text input, which janks typing. Chromium disables it from M140 (Electron
+// 38.2+); Electron 33 does not. registerDefaults, not setUserDefault: it sets
+// the same key in the volatile registration domain the way Chromium does,
+// instead of persisting it in the app's plist. Opt out with
+// DI_ENABLE_AUTOFILL_HEURISTIC=1. Stopgap until the Electron upgrade.
+if (process.platform === 'darwin' && process.env['DI_ENABLE_AUTOFILL_HEURISTIC'] !== '1') {
+  systemPreferences.registerDefaults({ NSAutoFillHeuristicControllerEnabled: false })
+  console.log(
+    `[App] NSAutoFillHeuristicControllerEnabled=${systemPreferences.getUserDefault('NSAutoFillHeuristicControllerEnabled', 'boolean')}`
+  )
 }
 
 // ----------------------------------------------------------------
@@ -118,7 +131,9 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    titleBarStyle: 'hiddenInset',
+    // A/B switches for the macOS WindowServer stutter investigation (darwin only).
+    titleBarStyle: process.platform === 'darwin' && process.env['DI_TITLEBAR'] === 'hidden' ? 'hidden' : 'hiddenInset',
+    ...(process.platform === 'darwin' && process.env['DI_NO_WINDOW_SHADOW'] === '1' ? { hasShadow: false } : {}),
     backgroundColor: '#0f0f0f',
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
