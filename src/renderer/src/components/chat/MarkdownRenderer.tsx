@@ -32,6 +32,7 @@ import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2, LineChart, Shapes } from 'lucide-react'
+import { LruMap } from '../../lib/lruMap'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
 import css from 'highlight.js/lib/languages/css'
@@ -146,16 +147,17 @@ for (const [name, lang] of Object.entries({ bash, css, dockerfile, javascript, j
 }
 
 // Cache Map for highlighted HTML to avoid hljs re-run on scroll remounts.
-const HIGHLIGHT_CACHE = new Map<string, string>()
+// Capped: streaming adds an entry per revision of a growing code block.
+const HIGHLIGHT_CACHE = new LruMap<string, string>(500)
 
 // Module-level caches for chart blocks — prevent re-evaluation on virtualised remounts.
 // When a chart scrolls out of view and back in, the component remounts with empty state.
 // These caches let each block initialise synchronously from the cached result and skip
 // the expensive async work (mermaid.render, JSON parse + ECharts init, IPC to Python).
-const MERMAID_CACHE    = new Map<string, string>()                    // code → responsive SVG
-const ECHARTS_CACHE    = new Map<string, Record<string, unknown>>()   // code → processed option
-const MATPLOTLIB_CACHE = new Map<string, string>()                    // code → imageBase64 PNG
-const SVG_CACHE        = new Map<string, string>()                    // code → validated SVG markup
+const MERMAID_CACHE    = new LruMap<string, string>(200)                 // code → responsive SVG
+const ECHARTS_CACHE    = new LruMap<string, Record<string, unknown>>(200)   // code → processed option
+const MATPLOTLIB_CACHE = new LruMap<string, string>(200)                 // code → imageBase64 PNG
+const SVG_CACHE        = new LruMap<string, string>(200)                 // code → validated SVG markup
 
 
 // ----------------------------------------------------------------
