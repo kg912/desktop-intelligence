@@ -289,17 +289,23 @@ export function registerRagDiagnosticsHandlers(): void {
   )
 
   // ── PICK EVAL FILE ────────────────────────────────────────────────────────────
+  // Electron 43+ opens dialogs in Downloads when defaultPath is unset and stops
+  // the OS from remembering the last folder, so remember it here.
+  let lastEvalDir: string | undefined
   ipcMain.handle(IPC_CHANNELS.RAG_PICK_EVAL_FILE, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(win ?? BrowserWindow.getAllWindows()[0], {
       title: 'Select Eval File',
+      defaultPath: lastEvalDir,
       filters: [
         { name: 'JSONL / JSON / Text', extensions: ['jsonl', 'json', 'txt'] },
         { name: 'All Files', extensions: ['*'] },
       ],
       properties: ['openFile'],
     })
-    return result.canceled ? null : (result.filePaths[0] ?? null)
+    const picked = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (picked) lastEvalDir = path.dirname(picked)
+    return picked
   })
 
   // ── LIST DOC CHATS ────────────────────────────────────────────────────────────

@@ -804,7 +804,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         const pdfBuffer = await printWebContents.printToPDF({
           printBackground: true,
           pageSize: 'A4',
-          margins: { marginType: 'default' },
         })
 
         await fs.promises.writeFile(saveResult.filePath, pdfBuffer)

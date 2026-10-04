@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.0.0-beta-84",
+  "version": "3.0.0-beta-85",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -20,8 +20,8 @@
     "bench:microsandbox": "tsx scripts/bench-microsandbox.ts",
     "test:sidecar:setup": "python3 -m venv node_modules/.cache/di-sidecar-venv && node_modules/.cache/di-sidecar-venv/bin/python -m pip install --disable-pip-version-check -q -r resources/python/requirements-multi-agent.txt",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "postinstall": "electron-builder install-app-deps",
-    "prepackage": "electron-builder install-app-deps",
+    "postinstall": "install-electron && electron-builder install-app-deps",
+    "prepackage": "rm -f node_modules/better-sqlite3/build/Release/.forge-meta && electron-builder install-app-deps",
     "prepare": "husky"
   },
   "dependencies": {
@@ -31,7 +31,7 @@
     "@tanstack/react-virtual": "^3.11.0",
     "@xenova/transformers": "^2.17.2",
     "axios": "1.13.6",
-    "better-sqlite3": "^12.8.0",
+    "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",
     "duck-duck-scrape": "^2.2.7",
     "echarts": "^6.0.0",
@@ -74,8 +74,8 @@
     "@vitest/coverage-v8": "^4.1.7",
     "autoprefixer": "^10.4.19",
     "cross-env": "^10.1.0",
-    "electron": "^33.0.0",
-    "electron-builder": "^24.13.3",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "electron-devtools-installer": "^4.0.0",
     "electron-vite": "^2.3.0",
     "husky": "^9.1.7",
