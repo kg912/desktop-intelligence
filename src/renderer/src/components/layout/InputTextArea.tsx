@@ -4,7 +4,6 @@ import {
 } from 'react'
 import { cn } from '../../lib/utils'
 import { Signal } from '@preact/signals-react'
-import { useSignals } from '@preact/signals-react/runtime'
 
 // ----------------------------------------------------------------
 // InputBar
@@ -20,7 +19,6 @@ const MAX_TEXTAREA_HEIGHT = 200
 const MIN_TEXTAREA_HEIGHT = 24
 
 export const InputTextArea = ({ textareaRef, handleKeyDown, textAreaSignal, placeholder = 'Message… (Shift+Enter for newline)' }: InputTextAreaProps) => {
-    useSignals();
     return (
         <textarea
             ref={textareaRef}

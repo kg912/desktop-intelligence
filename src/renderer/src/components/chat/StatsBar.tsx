@@ -9,7 +9,6 @@
 
 import { useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useSignals } from '@preact/signals-react/runtime'
 import { signal } from '@preact/signals-react'
 import { useComputed } from '@preact/signals-react'
 import { Zap, Clock, Timer, StopCircle } from 'lucide-react'
@@ -74,7 +73,6 @@ interface StatsBarProps {
 }
 
 export function StatsBar({ isThinking, isStreaming, stats }: StatsBarProps) {
-  useSignals()
 
   // Wrap stats in a local signal so useComputed can track changes.
   // A new signal is created only once per mount; value is updated each render

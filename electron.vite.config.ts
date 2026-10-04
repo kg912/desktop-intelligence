@@ -54,7 +54,10 @@ export default defineConfig({
         '@': resolve('src/renderer/src')
       }
     },
-    plugins: [react()],
+    // Auto-subscribes components that read signal .value during render, with
+    // the subscription scoped to the render by try/finally — so components
+    // must NOT also call useSignals() themselves (that subscribes twice).
+    plugins: [react({ babel: { plugins: [['module:@preact/signals-react-transform']] } })],
     // Bake DEV_MODE into the renderer bundle at build time.
     // import.meta.env.DEV_MODE is true in `npm run package:dev`, false otherwise.
     define: {

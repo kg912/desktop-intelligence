@@ -8,7 +8,7 @@ import {
   type ChangeEvent,
   type DragEvent
 } from 'react'
-import { useSignals, useSignal, useSignalEffect, useComputed } from '@preact/signals-react/runtime'
+import { useSignal, useSignalEffect, useComputed } from '@preact/signals-react/runtime'
 import { Paperclip, ArrowUp, Square, X, FileText, ImageIcon, AlertCircle, Zap, Brain, Plug, Shield, ShieldOff, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
@@ -165,7 +165,6 @@ export const InputBar = memo(function InputBar({
   lockedMessage = null,
   modeLock = null,
 }: InputBarProps) {
-  useSignals();
   const isStreaming = isStreamingSignal.value
   const { thinkingMode, setThinkingMode, multiAgentMode, setMultiAgentMode } = useModelStore();
   const textAreaSignal = useSignal('');

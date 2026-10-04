@@ -1,6 +1,6 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, createContext } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { useSignals, useSignalEffect } from '@preact/signals-react/runtime'
+import { useSignalEffect } from '@preact/signals-react/runtime'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageBubble } from '../chat/MessageBubble'
 import { CompactToast } from '../chat/CompactToast'
@@ -28,7 +28,6 @@ export interface ChatAreaHandle {
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
 function ChatArea({ activeChatId, onSuggest, chatSystemInstructions, footer }, ref) {
-  useSignals()
   const { compactToast } = useModelRuntime()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 

@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import { useSignals } from '@preact/signals-react/runtime'
 import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText, Download } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
 
@@ -26,7 +25,6 @@ interface TopBarProps {
 }
 
 export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle, chatSystemInstructions, onUpdateChatSystemInstructions }: TopBarProps) {
-  useSignals()
   const {
     selectedModel,
     // contextUsage / isCompacting removed — read from signals below

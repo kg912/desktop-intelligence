@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.0.0-beta-85",
+  "version": "3.0.0-beta-86",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -61,6 +61,7 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^3.0.0",
+    "@preact/signals-react-transform": "^0.8.3",
     "@tailwindcss/typography": "^0.5.15",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
