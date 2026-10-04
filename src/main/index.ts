@@ -4,7 +4,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-call
 ; (require('fix-path') as () => void)()
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, protocol, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -24,6 +24,7 @@ import { braveWorkerTools } from './services/BraveSearchService'
 import { setMultiAgentCoordinator } from './services/multiAgentRuntime'
 import { getOpenRouterCatalogue } from './services/OpenRouterCatalogue'
 import { srtBackend } from './services/sandbox/sandboxServiceInstance'
+import { CHART_SCHEME, handleChartRequest } from './services/chartProtocol'
 import { shouldAlertForViolation } from './services/sandbox/isCredentialPath'
 import { setSandboxStartupCheck } from './services/sandbox/sandboxStatus'
 import { IPC_CHANNELS } from '../shared/types'
@@ -37,6 +38,10 @@ if (DEV_MODE) {
   app.setName('[DEV] Desktop Intelligence')
   console.log('[App] DEV_MODE=true — DevTools will open automatically')
 }
+
+// Stock chart pages load in a sandboxed iframe from this scheme — see chartProtocol.ts.
+// Must be registered before the app is ready.
+protocol.registerSchemesAsPrivileged([{ scheme: CHART_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 // ----------------------------------------------------------------
 // Security: prevent renderer from loading arbitrary URLs
@@ -129,7 +134,6 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: false,
       webSecurity: true,
-      webviewTag: true,
     }
   })
 
@@ -180,6 +184,7 @@ app.whenReady().then(async () => {
   // inside createWindow() would attempt to re-register the same ipcMain.handle
   // channels, which Electron rejects with "Attempted to register a second
   // handler" and crashes the main process.
+  protocol.handle(CHART_SCHEME, handleChartRequest)
   registerIpcHandlers(() => mainWindow?.webContents ?? null)
   registerRagSettingsHandlers()
   registerRagDiagnosticsHandlers()

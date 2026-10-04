@@ -5,23 +5,6 @@
  * AI    → left-aligned, transparent bg, full markdown + LaTeX + stats bar
  */
 
-// Electron-specific <webview> JSX element
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      webview: React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & {
-          src?:                string
-          nodeintegration?:    string
-          disablewebsecurity?: string
-          partition?:          string
-        },
-        HTMLElement
-      >
-    }
-  }
-}
-
 import { useState, useEffect, useRef, memo } from 'react'
 import { Paperclip, Plug } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -323,15 +306,15 @@ function StockChartBlock({
   phase:   'loading' | 'ready' | 'error'
   error?:  string
 }) {
-  const wvRef = useRef<HTMLElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
 
+  // The chart page posts Cmd/Ctrl zoom keys and Ctrl+wheel here (see
+  // chartProtocol.ts) so they zoom the app instead of the chart.
   useEffect(() => {
-    const webviewEl = wvRef.current
-    if (!webviewEl) return
-
-    const handleConsoleMessage = (e: any) => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.source !== frameRef.current?.contentWindow || typeof e.data !== 'string') return
       try {
-        const data = JSON.parse(e.message)
+        const data = JSON.parse(e.data)
         if (data.type === 'webview-zoom') {
           const currentZoom = window.api.getZoomLevel()
           if (data.action === '+' || data.action === '=') {
@@ -349,16 +332,14 @@ function StockChartBlock({
             window.api.setZoomLevel(currentZoom - 0.1)
           }
         }
-      } catch (err) {
+      } catch {
         // Not a JSON zoom message, ignore
       }
     }
 
-    webviewEl.addEventListener('console-message', handleConsoleMessage as any)
-    return () => {
-      webviewEl.removeEventListener('console-message', handleConsoleMessage as any)
-    }
-  }, [phase])
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
 
   if (phase === 'error') {
     return (
@@ -371,15 +352,15 @@ function StockChartBlock({
     <div
       className="mb-3 rounded-lg overflow-hidden border border-white/[0.07]"
       style={{ height: 380 }}
-      onMouseLeave={() => wvRef.current?.blur()}
+      onMouseLeave={() => frameRef.current?.blur()}
     >
-      <webview
-        ref={wvRef}
-        src={fileUri}
-        style={{ width: '100%', height: '100%' }}
-        nodeintegration="false"
-        disablewebsecurity="false"
-        partition="persist:charts"
+      {/* fileUri is the file:// path writeChartFile() saved; the page is served by name. */}
+      <iframe
+        ref={frameRef}
+        src={`di-chart://charts/${encodeURIComponent(fileUri.split('/').pop() ?? '')}`}
+        sandbox="allow-scripts allow-same-origin"
+        title={`${symbol} chart`}
+        style={{ width: '100%', height: '100%', border: 0 }}
       />
     </div>
   )
