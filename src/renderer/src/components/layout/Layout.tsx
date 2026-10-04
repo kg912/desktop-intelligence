@@ -106,6 +106,7 @@ export function Layout() {
   useEffect(() => { sendMessageRef.current = sendMessage }, [sendMessage])
   const abortRef = useRef(abort)
   useEffect(() => { abortRef.current = abort }, [abort])
+  const handleAbort = useCallback(() => abortRef.current(), [])
 
   // ── Load a chat's stored messages into the chat view ─────────
   const loadChatMessages = useCallback(async (chatId: string) => {
@@ -658,7 +659,7 @@ export function Layout() {
 
             <InputBar
               onSend={handleSend}
-              onAbort={() => abortRef.current()}
+              onAbort={handleAbort}
               attachments={attachments}
               onAttachments={setAttachments}
               mcpActivity={mcpActivity}

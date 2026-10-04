@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
 import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
 import { isTerminalAgentEvent } from '../../../shared/agentEvents'
@@ -138,5 +138,10 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     })
   }, [])
 
-  return { run, startError, setStartError, pricing, start, review, dismiss, approvePlan, abort }
+  // Memoised so Layout's callbacks that depend on it (handleSend → the memo'd
+  // InputBar) keep their identity across unrelated Layout renders.
+  return useMemo(
+    () => ({ run, startError, setStartError, pricing, start, review, dismiss, approvePlan, abort }),
+    [run, startError, pricing, start, review, dismiss, approvePlan, abort],
+  )
 }
