@@ -8,7 +8,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   root: 'src/renderer',
-  plugins: [react()],
+  // Same signals transform as the app build — components rely on it to subscribe.
+  plugins: [react({ babel: { plugins: [['module:@preact/signals-react-transform']] } })],
   resolve: {
     alias: {
       '@renderer': resolve(__dirname, 'src/renderer/src'),
