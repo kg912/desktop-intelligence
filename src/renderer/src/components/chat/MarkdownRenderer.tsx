@@ -32,7 +32,20 @@ import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import { Check, Copy, Terminal, ChevronRight, GitBranch, BarChart2, LineChart, Shapes } from 'lucide-react'
-import hljs from 'highlight.js'
+import hljs from 'highlight.js/lib/core'
+import bash from 'highlight.js/lib/languages/bash'
+import css from 'highlight.js/lib/languages/css'
+import dockerfile from 'highlight.js/lib/languages/dockerfile'
+import javascript from 'highlight.js/lib/languages/javascript'
+import json from 'highlight.js/lib/languages/json'
+import latex from 'highlight.js/lib/languages/latex'
+import markdown from 'highlight.js/lib/languages/markdown'
+import plaintext from 'highlight.js/lib/languages/plaintext'
+import python from 'highlight.js/lib/languages/python'
+import sql from 'highlight.js/lib/languages/sql'
+import typescript from 'highlight.js/lib/languages/typescript'
+import xml from 'highlight.js/lib/languages/xml'
+import yaml from 'highlight.js/lib/languages/yaml'
 import mermaid from 'mermaid'
 import ReactECharts from 'echarts-for-react'
 import { cn } from '../../lib/utils'
@@ -124,6 +137,13 @@ mermaid.initialize({
 
 // Monotonically-increasing counter → unique, stable DOM ids per block.
 let _mermaidIdCounter = 0
+
+// Only the languages that appear in real chat history (aliases cover ts/tsx,
+// js/jsx, md, html, sh, text…). Unknown or missing tags render as plain text;
+// highlightAuto ran every grammar on each streamed revision of the block.
+for (const [name, lang] of Object.entries({ bash, css, dockerfile, javascript, json, latex, markdown, plaintext, python, sql, typescript, xml, yaml })) {
+  hljs.registerLanguage(name, lang)
+}
 
 // Cache Map for highlighted HTML to avoid hljs re-run on scroll remounts.
 const HIGHLIGHT_CACHE = new Map<string, string>()
@@ -1155,6 +1175,7 @@ function CodeBlock({ className, children }: CodeProps) {
     // that return their own component (Mermaid, Matplotlib, ECharts, SVG).
     if (
       !isBlock ||
+      !lang || !hljs.getLanguage(lang) ||
       kind === 'mermaid' ||
       kind === 'matplotlib' ||
       kind === 'svg' ||
@@ -1175,11 +1196,11 @@ function CodeBlock({ className, children }: CodeProps) {
     // shown for a different code string while the new idle task is pending.
     setHighlightedHtml(null)
     const cancel = scheduleIdle(() => {
-      let result = rawCode
+      let result: string
       try {
-        result = hljs.highlight(rawCode, { language: lang!, ignoreIllegals: true }).value
+        result = hljs.highlight(rawCode, { language: lang, ignoreIllegals: true }).value
       } catch {
-        try { result = hljs.highlightAuto(rawCode).value } catch { /* use raw */ }
+        return // stays plain text — rawCode must never go through innerHTML
       }
       HIGHLIGHT_CACHE.set(cacheKey, result)
       setHighlightedHtml(result)
