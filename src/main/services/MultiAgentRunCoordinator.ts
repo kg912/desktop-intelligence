@@ -207,7 +207,7 @@ export class MultiAgentRunCoordinator {
       if (!result.ok) return result
       // runStarted fired inside startRun, so this run is already in the history.
       const runIds = this.deps.db.getRun(payload.chatId)?.runIds
-      return { ...result, config, ...(runIds ? { runIds } : {}) }
+      return { ...result, config, ...(this.deps.runLog ? { recorded: observe } : {}), ...(runIds ? { runIds } : {}) }
     } finally {
       this.starting.delete(payload.chatId)
     }

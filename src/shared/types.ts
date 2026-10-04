@@ -815,7 +815,7 @@ export interface MultiAgentStartPayload {
 
 // Phase 1 always returns the failure branch (sidecar not built yet).
 export type StartRunResult =
-  | { ok: true;  runId: string; /** Role models as resolved by main (catalogue fallback applied). */ config?: MultiAgentConfig; /** The chat's runs, oldest first, this one last. */ runIds?: string[] }
+  | { ok: true;  runId: string; /** Role models as resolved by main (catalogue fallback applied). */ config?: MultiAgentConfig; /** The chat's runs, oldest first, this one last. */ runIds?: string[]; /** Observability was on at start: this run gets a log folder. Decided once per run. */ recorded?: boolean }
   | { ok: false; reason: string }
 
 // --- LM Studio API shapes ---

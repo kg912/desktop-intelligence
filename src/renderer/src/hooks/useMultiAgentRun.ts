@@ -16,6 +16,8 @@ export interface ActiveRun {
   config: MultiAgentConfig
   /** Every run of this chat, oldest first (absent until the chat has run history). */
   runIds?: string[]
+  /** Live runs only: false = started with observability off, so this run has no log. */
+  recorded?: boolean
 }
 
 /** Events for a run id the renderer has not learned yet (IPC reply vs first stream event race). */
@@ -90,7 +92,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     const buffered = early.current.filter((e) => e.runId === started.runId)
     early.current = early.current.filter((e) => e.runId !== started.runId)
     const view = buffered.reduce(applyAgentEvent, emptyRunView(started.runId))
-    const next: ActiveRun = { chatId, task, view, review: false, config: started.config ?? config, runIds: started.runIds }
+    const next: ActiveRun = { chatId, task, view, review: false, config: started.config ?? config, runIds: started.runIds, recorded: started.recorded }
     runRef.current = next
     setRun(next)
     if (buffered.some(isTerminalAgentEvent)) finishedRef.current(chatId)

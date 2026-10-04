@@ -15,6 +15,15 @@ and outputs contain private chat and tool content.
   when a run began, nothing about it is captured, and the Debug panel lists it as
   **not recorded**. Turning the toggle on partway through a run does not start
   recording it.
+- A run that started with it off shows **Logging off** in the agent dock header,
+  with a **Log the next run** button that turns it on (the current run stays
+  unrecorded).
+- A run with no entry at all in the Debug panel never got a run id: it was
+  refused before it started (backend, API key, model not in the catalogue,
+  sidecar unavailable), or its chat was deleted. **Not recorded** also covers runs
+  from before per-run logs existed and runs removed by retention, not only runs
+  started with the toggle off.
+- The Debug panel's run list refreshes when a run starts or ends.
 - When it is off, the sidecar is told `observe: false` and copies nothing. No
   files are written.
 

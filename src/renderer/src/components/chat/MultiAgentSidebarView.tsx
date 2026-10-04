@@ -69,6 +69,8 @@ interface Props {
   /** The chat's runs, oldest first; "Run N of M" shows when there is more than one. */
   runIds?: string[]
   onShowRun?: (runId: string) => void
+  /** false: this live run started with observability off and is not being logged. */
+  recorded?: boolean
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -102,6 +104,7 @@ export function MultiAgentSidebarView(props: Props) {
             {readOnly && <span className="font-mono text-[11px] font-normal text-ma-mute">read-only</span>}
           </div>
           <RunNav runIds={props.runIds} current={view.runId} locked={live} onShowRun={props.onShowRun} />
+          {!readOnly && props.recorded === false && <LoggingOff />}
           <p className="mt-0.5 truncate text-[12px] text-ma-mute" title={task}>{task || 'Multi-agent run'}</p>
           <div className="mt-2 flex flex-wrap gap-1" aria-label="Run models">
             {(['orchestrator', 'reflection', 'synthesizer'] as const).map((role) => (
@@ -182,6 +185,26 @@ const formatTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1
 
 /** "Tools: brave_web_search, +2" / "No tools" — names without their server namespace. */
 /** "Run N of M" with prev/next. Locked while a live run is shown — it cannot be swapped out. */
+/** The run started with observability off: say so, and offer to log the next one (this one cannot be). */
+function LoggingOff() {
+  const [enabled, setEnabled] = useState(false)
+  const enable = () => {
+    window.api.obsSetPrefs({ observabilityEnabled: true }).then(() => setEnabled(true), (err: unknown) => console.error('[MultiAgent] could not turn on logging:', err))
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-2 text-[11.5px]" data-testid="logging-off">
+      <span className="font-mono text-ma-amber">Logging off</span>
+      {enabled ? (
+        <span className="text-ma-mute">On from the next run</span>
+      ) : (
+        <button onClick={enable} className="h-5 rounded-[5px] border-[0.5px] border-white/[0.09] px-2 text-ma-mute hover:bg-ma-bg3 hover:text-ma-text">
+          Log the next run
+        </button>
+      )}
+    </div>
+  )
+}
+
 function RunNav({ runIds, current, locked, onShowRun }: { runIds?: string[]; current: string; locked: boolean; onShowRun?: (runId: string) => void }) {
   const index = runIds?.indexOf(current) ?? -1
   if (!runIds || runIds.length < 2 || index < 0) return null

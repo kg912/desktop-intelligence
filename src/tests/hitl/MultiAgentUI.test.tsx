@@ -682,3 +682,23 @@ describe('Max tool rounds', () => {
     expect(view([...events, { type: 'retry', agentId: '1.1', attempt: 1, reason: 'score 2/5' }]).agents['1.1'].stoppedAtToolLimit).toBeUndefined()
   })
 })
+
+describe('Logging off in the dock header', () => {
+  it('a live run started with logging off says so, and the button turns logging on for the next run', async () => {
+    const obsSetPrefs = vi.fn().mockResolvedValue(undefined)
+    ;(window as any).api = { ...(window as any).api, obsSetPrefs }
+    render(<MultiAgentSidebarView {...dockProps} view={view()} recorded={false} />)
+    expect(screen.getByTestId('logging-off').textContent).toContain('Logging off')
+    fireEvent.click(screen.getByText('Log the next run'))
+    expect(obsSetPrefs).toHaveBeenCalledWith({ observabilityEnabled: true })
+    expect(await screen.findByText('On from the next run')).toBeTruthy()
+  })
+
+  it('is absent for a recorded run and for a saved run opened read-only', () => {
+    const { unmount } = render(<MultiAgentSidebarView {...dockProps} view={view()} recorded />)
+    expect(screen.queryByTestId('logging-off')).toBeNull()
+    unmount()
+    render(<MultiAgentSidebarView {...dockProps} view={view()} readOnly recorded={false} />)
+    expect(screen.queryByTestId('logging-off')).toBeNull()
+  })
+})

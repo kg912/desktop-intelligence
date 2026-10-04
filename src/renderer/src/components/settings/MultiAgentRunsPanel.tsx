@@ -42,6 +42,10 @@ export function MultiAgentRunsPanel({ enabled, onEnable }: { enabled: boolean; o
     setRows((await window.api.obsListMultiAgentRuns?.()) ?? [])
   }, [])
   useEffect(() => { refresh().catch(console.error) }, [refresh, enabled])
+  // A run that starts or ends while this panel is open shows up without reopening it.
+  useEffect(() => window.api.onMultiAgentEvent?.((e) => {
+    if (e.type === 'orchestrator_plan' || e.type === 'task_complete' || e.type === 'task_failed') refresh().catch(console.error)
+  }), [refresh])
 
   const loadEvents = useCallback(async (row: RunListRow, offset: number) => {
     const res = await window.api.obsListMultiAgentRunEvents(row.chatId, row.runId, offset, EVENTS_PAGE)

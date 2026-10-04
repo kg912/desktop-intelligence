@@ -559,6 +559,7 @@ export function Layout() {
                     onClose={closeDock}
                     hidePlanColumn={tinyWindow}
                     runIds={shownRun.runIds}
+                    recorded={shownRun.recorded}
                     onShowRun={(runId) => { if (activeChatId) void reviewRun(activeChatId, activeTitle, runId) }}
                   />
                 ) : null
