@@ -22,6 +22,8 @@ const EFFORTS: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
 ]
 
+const TOOL_ROUNDS_UNLIMITED_STOP = 51
+
 type Config = MultiAgentConfig & { sidecarPort: number }
 
 export function MultiAgentSettingsPanel() {
@@ -85,6 +87,12 @@ export function MultiAgentSettingsPanel() {
 
       <Field label="Max agents" value={config.maxAgents}>
         <RangeSlider aria-label="Max agents" value={config.maxAgents} min={1} max={8} onChange={(v) => update('maxAgents', v)} />
+      </Field>
+      <Field label="Max tool rounds" value={config.maxToolRounds ?? 'Unlimited'}
+        help="Per worker attempt; the last round is a forced wrap-up with tools off. Unlimited has no forced round but is still stopped by the budget cap, the repetition guard and the model's context window.">
+        {/* The stop past the last number is Unlimited (null). */}
+        <RangeSlider aria-label="Max tool rounds" value={config.maxToolRounds ?? TOOL_ROUNDS_UNLIMITED_STOP} min={1} max={TOOL_ROUNDS_UNLIMITED_STOP}
+          onChange={(v) => update('maxToolRounds', v === TOOL_ROUNDS_UNLIMITED_STOP ? null : v)} />
       </Field>
       <Field label="Per-run budget cap (USD)" htmlFor="ma-budget" help="Output length is limited only by this budget and the model's context window.">
         <NumberInput id="ma-budget" min={0} step="0.05" value={config.budgetCapUsd}

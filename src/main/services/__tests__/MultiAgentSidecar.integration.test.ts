@@ -190,6 +190,7 @@ const TOOLS = [{ name: 'fs__read_file', description: 'Read a file', parameters: 
 
 const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig => ({
   maxAgents: 4,
+  maxToolRounds: 6,
   budgetCapUsd: 10,
   models: { orchestrator: 'fake/planner', worker: 'fake/worker', reflection: 'fake/reviewer', synthesizer: 'fake/synth' },
   reflectionPassThreshold: 3,

@@ -93,8 +93,8 @@ export const ESTIMATE = {
   workerSystemTokens: 250,
   workerOutMin: 500,
   workerOutMax: 1_500,
-  /** Must match MAX_TOOL_ROUNDS in multi_agent_sidecar.py. */
-  toolRoundsMax: 6,
+  /** Rounds assumed when maxToolRounds is unlimited; the estimate is then labelled nominal. */
+  nominalToolRounds: 20,
   toolCallOutTokens: 120,
   toolResultTokens: 800,
   reflectionPromptOverhead: 150,
@@ -116,6 +116,8 @@ export interface CostEstimate {
   maxUsd: number
   /** Models with no published price — counted as $0, so the range is a lower bound. */
   unpricedModels: string[]
+  /** maxToolRounds is unlimited: the worst case assumes ESTIMATE.nominalToolRounds rounds. */
+  nominal?: boolean
 }
 
 export const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
@@ -145,6 +147,8 @@ export function estimateRunCost(input: {
   let min = 0
   let max = 0
   const attemptsMax = config.maxRetriesPerAgent + 1
+  // Configs saved before the setting existed have no maxToolRounds: the default applies, as in the sidecar.
+  const toolRounds = config.maxToolRounds === null ? ESTIMATE.nominalToolRounds : (config.maxToolRounds ?? DEFAULT_MULTI_AGENT_CONFIG.maxToolRounds ?? 1)
 
   for (const step of steps) {
     const base = ESTIMATE.workerSystemTokens + taskTokens + estimateTokens(step.label)
@@ -161,10 +165,10 @@ export function estimateRunCost(input: {
 
     // Worst case: every attempt runs every tool round with growing context.
     for (let attempt = 0; attempt < attemptsMax; attempt++) {
-      for (let round = 0; round < ESTIMATE.toolRoundsMax; round++) {
+      for (let round = 0; round < toolRounds; round++) {
         const prompt =
           base + priorOutMax + round * (ESTIMATE.toolCallOutTokens + ESTIMATE.toolResultTokens)
-        const last = round === ESTIMATE.toolRoundsMax - 1
+        const last = round === toolRounds - 1
         max += cost(step.model, prompt, last ? ESTIMATE.workerOutMax : ESTIMATE.toolCallOutTokens)
       }
       max += cost(
@@ -180,7 +184,7 @@ export function estimateRunCost(input: {
   min += cost(config.models.synthesizer, ESTIMATE.synthesisPromptOverhead + allOutMin, ESTIMATE.synthesisOutMin)
   max += cost(config.models.synthesizer, ESTIMATE.synthesisPromptOverhead + allOutMax, ESTIMATE.synthesisOutMax)
 
-  return { minUsd: min, maxUsd: max, unpricedModels: [...unpriced].sort() }
+  return { minUsd: min, maxUsd: max, unpricedModels: [...unpriced].sort(), nominal: config.maxToolRounds === null }
 }
 
 /** "$0.04 – $0.18" with sensible precision for sub-cent values. */
@@ -199,7 +203,7 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number): n
 
 /**
  * Merge a partial/untrusted config over the defaults and clamp every field to
- * the spec's ranges (§08 Settings): 1–8 agents, threshold 1–5, 0–5 retries,
+ * the spec's ranges (§08 Settings): 1–8 agents, 1–50 tool rounds or null (unlimited), threshold 1–5, 0–5 retries,
  * a non-negative budget, and a HITL timeout between 10 s and 1 h.
  */
 export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null | undefined): MultiAgentConfig {
@@ -209,6 +213,7 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
   const budget = Number(c.budgetCapUsd)
   return {
     maxAgents: clampInt(c.maxAgents, 1, 8, d.maxAgents),
+    maxToolRounds: c.maxToolRounds === null ? null : clampInt(c.maxToolRounds ?? d.maxToolRounds, 1, 50, d.maxToolRounds as number),
     budgetCapUsd: Number.isFinite(budget) && budget >= 0 ? budget : d.budgetCapUsd,
     models: {
       orchestrator: model(c.models?.orchestrator, d.models.orchestrator),

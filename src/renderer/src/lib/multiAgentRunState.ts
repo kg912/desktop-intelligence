@@ -43,6 +43,8 @@ export interface AgentView {
   pause?: HitlPauseEvent
   /** The answer hit an output limit. */
   truncated?: OutputLimit
+  /** The answer came from the forced wrap-up round after maxToolRounds. */
+  stoppedAtToolLimit?: boolean
   startedAt?: number
   endedAt?: number
 }
@@ -147,6 +149,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
     case 'agent_complete':
       return updateAgent(next, event.agentId, () => ({
         output: event.output, tokenCount: event.tokenCount, costUsd: event.costUsd, status: 'done', endedAt: event.ts, truncated: event.truncated,
+        stoppedAtToolLimit: event.stoppedAtToolLimit,
       }))
     case 'reflection_start':
       return updateAgent(next, event.agentId, () => ({ status: 'reflecting' }))
@@ -167,7 +170,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
     case 'retry':
       return updateAgent(next, event.agentId, (a) => ({
         // The rejected attempt's output must not linger as if it were the answer.
-        status: 'retrying', attempt: a.attempt + 1, liveText: '', streamedTokens: 0, output: undefined, endedAt: undefined, truncated: undefined,
+        status: 'retrying', attempt: a.attempt + 1, liveText: '', streamedTokens: 0, output: undefined, endedAt: undefined, truncated: undefined, stoppedAtToolLimit: undefined,
       }))
     case 'agent_failed':
       return updateAgent(next, event.agentId, () => ({ status: 'failed', failure: event.reason, pause: undefined, endedAt: event.ts }))

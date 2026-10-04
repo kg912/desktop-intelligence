@@ -80,10 +80,11 @@ panel renders whatever was captured.
 | `repetition` | The repetition guard stopped a looping stream |
 | `served_model_differs` | OpenRouter served a different model than the one requested (a dated variant of the same id does not count) |
 | `fallback_plan` | The planner never returned a usable plan, so the built-in fallback plan ran |
-| `retry` | An agent was retried, the planner was re-asked, or the reviewer was re-asked after an unusable verdict |
+| `retry` | An agent was retried, the planner was re-asked, the reviewer was re-asked after an unusable verdict, or a worker was re-asked after a reply with no answer (empty or only tool-call text) |
 | `error` / `cancelled` | A call failed (with its HTTP status) or was cancelled mid-call |
 | `tool_denied` / `tool_rejected` | A tool call was denied (by the user, a policy or a timeout) or rejected (unregistered tool, bad arguments) |
 | `capped` | A field was longer than `RECORD_FIELD_CAP_CHARS` and was cut in the log |
+| `tool_limit` | A worker's answer came from the forced wrap-up round (tools off) after its `maxToolRounds` were used: "stopped at tool limit" |
 | `reconciliation` | The call records and the run's own totals disagree |
 
 ## Reading an agent file
@@ -113,7 +114,7 @@ fully sequential plan.
 Each line of a `.jsonl` file is one record. Model calls have `kind: "model"`:
 `schema`, `runId`, `chatId`, `seq` (per run, in completion order), `role`
 (`planner` | `worker` | `reflection` | `synthesis`), `agentId`, `attempt`
-(0-based, like the UI events), `toolRound`, `retry` (reflection and planner
+(0-based, like the UI events), `toolRound`, `retry` (reflection, planner and worker no-answer
 re-asks), `model`, `modelServed`, `request` (`messages`, `params`, `headers`),
 `response` (`content`, `reasoning`, `toolCalls`, `finishReason`, `looped`,
 `truncated`), `usage` (`promptTokens`, `completionTokens`, `reasoningTokens`,

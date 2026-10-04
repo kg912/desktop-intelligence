@@ -49,7 +49,7 @@ export interface RunSummary {
 }
 
 export interface Anomaly {
-  kind: 'length' | 'served_model_differs' | 'fallback_plan' | 'repetition' | 'retry' | 'error' | 'cancelled' | 'tool_denied' | 'tool_rejected' | 'reconciliation' | 'capped'
+  kind: 'length' | 'served_model_differs' | 'fallback_plan' | 'repetition' | 'retry' | 'error' | 'cancelled' | 'tool_denied' | 'tool_rejected' | 'reconciliation' | 'capped' | 'tool_limit'
   message: string
   /** Link target inside the run directory, e.g. "agent-1.1.md#call-7". */
   ref?: string
@@ -481,11 +481,15 @@ export function findAnomalies(_meta: RunLogMeta, events: AgentEvent[], records: 
     if (res?.finishReason === 'cancelled') out.push({ kind: 'cancelled', message: `${who(r)} was cancelled mid-call`, ref })
     else if (r.error) out.push({ kind: 'error', message: `${who(r)} failed: ${r.error.kind}${r.error.httpStatus ? ` HTTP ${r.error.httpStatus}` : ''}: ${r.error.message}`, ref })
     if (r.role === 'planner' && r.attempt > 0) out.push({ kind: 'retry', message: `planner re-asked (attempt ${r.attempt})`, ref })
+    if (r.role === 'worker' && (r.retry ?? 0) > 0) out.push({ kind: 'retry', message: `${who(r)} re-asked after a reply with no answer (empty or only tool-call text)`, ref })
     if (r.role === 'reflection' && (r.retry ?? 0) > 0) out.push({ kind: 'retry', message: `reviewer re-asked for agent ${r.agentId} after an unusable verdict`, ref })
     for (const c of r.capped ?? []) out.push({ kind: 'capped', message: `${who(r)}: ${c.field} cut in the log (${c.originalChars} chars)`, ref })
   }
   for (const e of events) {
     if (e.type === 'orchestrator_plan' && e.fallback) out.push({ kind: 'fallback_plan', message: 'the planner never returned a usable plan; the built-in fallback plan ran', ref: 'planner.md' })
+    if (e.type === 'agent_complete' && e.stoppedAtToolLimit) {
+      out.push({ kind: 'tool_limit', message: `agent ${e.agentId} stopped at tool limit (attempt ${e.attempt ?? 0}): its answer came from the forced wrap-up round`, ref: `agent-${safeId(e.agentId)}.md` })
+    }
     if (e.type === 'retry') out.push({ kind: 'retry', message: `agent ${e.agentId} retried (attempt ${e.attempt}): ${e.reason}`, ref: `agent-${safeId(e.agentId)}.md` })
   }
   const done = events.find((e): e is Ev<'task_complete'> => e.type === 'task_complete')
@@ -518,7 +522,9 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
   L.push('')
   const c = meta.config
   L.push('| Setting | Value |', '|---|---|')
-  L.push(`| Max agents | ${c.maxAgents} |`, `| Budget cap | ${usd(c.budgetCapUsd)} |`, `| Reflection pass threshold | ${c.reflectionPassThreshold} |`)
+  // run_config is what the sidecar used; meta.config the request. Older runs have neither field.
+  const rounds = runConfig?.maxToolRounds !== undefined ? runConfig.maxToolRounds : c.maxToolRounds
+  L.push(`| Max agents | ${c.maxAgents} |`, `| Max tool rounds | ${rounds === null ? 'unlimited' : rounds ?? ''} |`, `| Budget cap | ${usd(c.budgetCapUsd)} |`, `| Reflection pass threshold | ${c.reflectionPassThreshold} |`)
   L.push(`| Max retries per agent | ${c.maxRetriesPerAgent} |`, `| Reasoning effort | ${c.reasoningEffort ?? ''} |`, `| Tool approvals required | ${c.requirePermissions} |`)
   L.push(`| Approval timeout | ${c.hitlTimeoutMs} ms |`, `| Catalogue checked | ${runConfig?.catalogueChecked ?? ''} |`, `| Tools offered | ${cell((runConfig?.tools ?? []).join(', '))} |`, '')
 

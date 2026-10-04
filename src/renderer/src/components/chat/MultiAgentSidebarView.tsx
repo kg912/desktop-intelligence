@@ -10,7 +10,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
-import { formatUsd } from '../../../../shared/multiAgentModels'
+import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
 
 export const DOCK_WIDTH = 760
@@ -270,6 +270,11 @@ function Preflight({ view, config, estimate, onApprove, onCancel }: {
         {estimate ? (
           <>
             <p>Estimated cost <span className="text-ma-text">{formatUsd(estimate.minUsd)} – {formatUsd(estimate.maxUsd)}</span></p>
+            {estimate.nominal && (
+              <p className="text-ma-mute" data-testid="estimate-nominal">
+                Nominal figure: tool rounds are unlimited, so the worst case assumes {ESTIMATE.nominalToolRounds} rounds per attempt.
+              </p>
+            )}
             <p className="font-medium text-ma-amber">
               Worst case {formatUsd(Math.min(estimate.maxUsd, cap))}
               {estimate.maxUsd > cap && <span className="font-normal text-ma-mute"> (capped by the {formatUsd(cap)} budget)</span>}
@@ -399,6 +404,12 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
           )}
         </span>
         {agent.truncated && <CutOffChip limit={agent.truncated} testId={`cut-off-${step.id}`} />}
+        {agent.stoppedAtToolLimit && (
+          <span data-testid={`tool-limit-${step.id}`} title="The answer came from the forced last round, with tools turned off, after the tool round limit."
+            className="inline-flex h-5 flex-none items-center rounded-[5px] border-[0.5px] border-ma-amber/30 bg-ma-amber/10 px-[7px] font-mono text-[11.5px] text-ma-amber">
+            stopped at tool limit
+          </span>
+        )}
         <span className={cn('inline-flex h-5 items-center rounded-[5px] border-[0.5px] px-[7px] font-mono text-[11.5px]', TAG_TONE[tag.tone])}>{tag.label}</span>
         <ChevronDown className={cn('h-[18px] w-[18px] flex-none text-ma-mute transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.6} />
       </button>

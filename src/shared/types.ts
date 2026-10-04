@@ -511,6 +511,8 @@ export interface AgentStep {
 
 export interface MultiAgentConfig {
   maxAgents:               number
+  /** Tool rounds per worker attempt, 1–50; the last one is a forced wrap-up with tools off. null = unlimited (no forced round). */
+  maxToolRounds:           number | null
   budgetCapUsd:            number
   models: {
     orchestrator: string
@@ -547,6 +549,7 @@ export const DEFAULT_SYNTHESIZER_MODEL = 'qwen/qwen3-235b-a22b-2507'
 
 export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   maxAgents:               4,
+  maxToolRounds:           12,
   budgetCapUsd:            0.5,
   models: {
     orchestrator: DEFAULT_ORCHESTRATOR_MODEL,
@@ -614,6 +617,8 @@ export interface AgentCompleteEvent extends AgentEventBase, AgentAttempt {
   costUsd:    number
   /** finish_reason "length": the answer was cut off by this limit. */
   truncated?: OutputLimit
+  /** The answer came from the forced wrap-up round (tools off) after maxToolRounds. */
+  stoppedAtToolLimit?: boolean
 }
 
 /** Which limit ended a generation early: the run's budget cap or the model's context window. */
@@ -664,6 +669,8 @@ export interface RunConfigEvent extends AgentEventBase {
   budgetCapUsd:            number
   reflectionPassThreshold: number
   maxRetriesPerAgent:      number
+  /** null = unlimited. Absent on older traces. */
+  maxToolRounds?:          number | null
   reasoningEffort:         ReasoningEffort
   /** Tool names offered to every worker (e.g. builtin__brave_web_search). Absent on older traces. */
   tools?:                  string[]

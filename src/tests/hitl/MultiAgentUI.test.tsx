@@ -644,3 +644,41 @@ describe('run history in the dock header', () => {
     expect((screen.getByLabelText('Previous run') as HTMLButtonElement).disabled).toBe(true)
   })
 })
+
+describe('Max tool rounds', () => {
+  it('the slider ends in an Unlimited stop that saves null, and its help names the three remaining stops', async () => {
+    const save = vi.fn().mockResolvedValue(undefined)
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentSidecarStatus: vi.fn().mockResolvedValue('running'),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({ models: [], error: null }),
+      getBackendSettings: vi.fn().mockResolvedValue({ provider: 'openrouter', openrouterModel: 'x/y' }),
+      saveMultiAgentConfig: save,
+    }
+    render(<MultiAgentSettingsPanel />)
+    const slider = await screen.findByLabelText('Max tool rounds') as HTMLInputElement
+    expect(slider.min).toBe('1')
+    await waitFor(() => expect(slider.value).toBe(String(DEFAULT_MULTI_AGENT_CONFIG.maxToolRounds)))
+    expect(screen.getByText(/budget cap, the repetition guard and the model's context window/)).toBeTruthy()
+    fireEvent.change(slider, { target: { value: slider.max } })
+    expect(screen.getByText('Unlimited')).toBeTruthy()
+    fireEvent.click(screen.getByText('Save multi-agent defaults'))
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ maxToolRounds: null })))
+    fireEvent.change(slider, { target: { value: '50' } })
+    expect(screen.queryByText('Unlimited')).toBeNull()
+  })
+
+  it('an agent answered on the forced last round shows "stopped at tool limit"; a retry clears it', () => {
+    const events = [
+      { type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 },
+      { type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'findings', tokenCount: 1, costUsd: 0, stoppedAtToolLimit: true },
+      { type: 'agent_start', agentId: '1.2', role: 'A', model: 'm', attempt: 0 },
+      { type: 'agent_complete', agentId: '1.2', attempt: 0, output: 'answer', tokenCount: 1, costUsd: 0 },
+    ]
+    render(<MultiAgentSidebarView {...dockProps} view={view(events)} />)
+    expect(screen.getByTestId('tool-limit-1.1').textContent).toBe('stopped at tool limit')
+    expect(screen.queryByTestId('tool-limit-1.2')).toBeNull()
+    expect(view([...events, { type: 'retry', agentId: '1.1', attempt: 1, reason: 'score 2/5' }]).agents['1.1'].stoppedAtToolLimit).toBeUndefined()
+  })
+})

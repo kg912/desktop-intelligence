@@ -45,8 +45,18 @@ TOKEN = os.environ.get("DI_MULTI_AGENT_TOKEN", "")
 # Overridable for the integration tests' local fake; production always uses OpenRouter.
 OPENROUTER_BASE_URL = os.environ.get("DI_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
 
-# Must match ESTIMATE.toolRoundsMax in src/shared/multiAgentModels.ts.
-MAX_TOOL_ROUNDS = 6
+# Sent as the last message of a finite run's forced wrap-up round (tools disabled).
+TOOL_BUDGET_USED = "Tool budget used. Write your findings from the results above. No more tool calls."
+NO_ANSWER_NUDGE = "Your last reply contained no answer. Write your findings as plain text, not as a tool call."
+# A reply that is only tool-call-shaped text (the model "calling" a tool in prose) is no answer.
+# ponytail: covers the common text formats (<tool_call>, <function=…>, [TOOL_CALLS], bare {"name": …} JSON); add a format when a model leaks a new one.
+TOOL_TEXT_RE = re.compile(r"<tool_call>.*?(?:</tool_call>|$)|<function[=\s].*?(?:</function>|$)|\[TOOL_CALLS\].*"
+                          r"|```(?:json)?\s*\{\s*\"(?:name|tool|function)\".*?```|\{\s*\"(?:name|tool|function)\"\s*:.*\}", re.S | re.I)
+
+
+def is_no_answer(text: str) -> bool:
+    return not TOOL_TEXT_RE.sub("", text).strip()
+
 # urllib's timeout is per socket operation (connect, each read), not per request: a long
 # generation keeps streaming chunks (and OpenRouter sends ": PROCESSING" keep-alives while
 # the model thinks), so this only ends a stream that has gone silent for 120 s.
@@ -89,6 +99,8 @@ class Pricing(BaseModel):
 
 class Config(BaseModel):
     maxAgents: int = Field(ge=1, le=8)
+    # None = unlimited: no forced wrap-up round; the budget cap, repetition guard and context window still stop a worker.
+    maxToolRounds: int | None = Field(default=12, ge=1, le=50)
     budgetCapUsd: float = Field(ge=0)
     models: dict[str, str]
     reflectionPassThreshold: int = Field(ge=1, le=5)
@@ -836,7 +848,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
                    catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,
                    reflectionPassThreshold=config.reflectionPassThreshold, maxRetriesPerAgent=config.maxRetriesPerAgent,
-                   reasoningEffort=config.reasoningEffort, tools=[str(t.get("name")) for t in run.request.tools])
+                   maxToolRounds=config.maxToolRounds, reasoningEffort=config.reasoningEffort, tools=[str(t.get("name")) for t in run.request.tools])
     return {**state, "steps": steps}
 
 
@@ -951,14 +963,21 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         output = ""
         truncated: str | None = None
         looped = False
+        stopped_at_limit = False
+        no_answer_retried = False
         evidence: list[str] = []
+        limit = config.maxToolRounds
+        _round = 0
         try:
-            for _round in range(MAX_TOOL_ROUNDS):
-                last_round = _round == MAX_TOOL_ROUNDS - 1
+            while True:
+                last_round = limit is not None and _round >= limit - 1
+                if last_round and messages[-1].get("content") not in (TOOL_BUDGET_USED, NO_ANSWER_NUDGE):
+                    messages.append({"role": "user", "content": TOOL_BUDGET_USED})
                 stream = DsmlTokenFilter(on_token)
                 reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
                                                 on_token=stream, on_reasoning=on_reasoning, loop_guard=True,
-                                                obs={"role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round})
+                                                obs={"role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
+                                                     "retry": int(no_answer_retried)})
                 await stream.flush()
                 agent_tokens += tokens
                 agent_cost += cost
@@ -974,8 +993,15 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     if dsml_calls and not last_round and run.request.tools:
                         calls = dsml_calls
                 if not calls:
-                    output = text
+                    if is_no_answer(text) and not no_answer_retried and not reply.get("truncated"):
+                        no_answer_retried = True  # same round again, once
+                        if text.strip():
+                            messages.append({"role": "assistant", "content": text})
+                        messages.append({"role": "user", "content": NO_ANSWER_NUDGE})
+                        continue
+                    output = "" if is_no_answer(text) else text
                     truncated = reply.get("truncated")
+                    stopped_at_limit = last_round
                     break
                 assistant: dict[str, Any] = {"role": "assistant", "content": text, "tool_calls": calls}
                 if reply.get("reasoning_details"):  # OpenRouter requires these back for tool-using reasoning models
@@ -1021,6 +1047,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                    resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
                     evidence.append(f"- {name}({preview(raw_args, 200)}) → {'ok' if ok else 'failed'}: {preview(content, 600)}")
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": content})
+                _round += 1
         except BudgetReached:
             if not output:
                 raise AgentFailed("budget cap reached before this agent produced an answer") from None
@@ -1033,9 +1060,9 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 continue
             raise AgentFailed(last_reason)
         if not output:
-            raise AgentFailed("no final answer after the maximum number of tool rounds")
+            raise AgentFailed("no final answer (empty or only tool-call text, after one re-ask)")
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
-                       **({"truncated": truncated} if truncated else {}))
+                       **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}))
 
         if run.budget_reached:
             return output  # no reflection spend once the cap is reached; output kept as-is
