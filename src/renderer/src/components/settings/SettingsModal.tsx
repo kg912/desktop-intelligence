@@ -146,7 +146,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           animate="animate"
           exit="exit"
           className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(10,10,10,0.80)', backdropFilter: 'blur(6px)' }}
+          style={{ background: 'rgba(10,10,10,0.80)' }}
           onClick={safeClose}
         >
           {/* Ambient red glow */}

@@ -244,7 +244,7 @@ export function ConnectionStatus({
           animate="animate"
           exit="exit"
           className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(8px)' }}
+          style={{ background: '#0f0f0f' }}
         >
           {/* Subtle red ambient glow in the background */}
           <div

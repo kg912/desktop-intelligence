@@ -340,7 +340,7 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
               {showTooltip && (
                 <div className="absolute right-0 top-5 z-50 min-w-[210px]
                                 rounded-xl border border-surface-border
-                                bg-surface-elevated/95 backdrop-blur-sm
+                                bg-surface-elevated
                                 px-3.5 py-2.5 shadow-xl">
                   <p className="text-[11px] font-medium text-content-primary mb-2 whitespace-nowrap">
                     Context Utilization
