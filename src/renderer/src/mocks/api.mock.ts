@@ -6,7 +6,7 @@
 
 import type { ElectronAPI } from '../../../preload/index'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
-import { multiAgentDemoApi } from './multiAgentDemo'
+import { multiAgentDemoApi, seedAgentChats } from './multiAgentDemo'
 import { observabilityMock } from './observabilityDemo'
 import type {
   ConnectionState,
@@ -132,8 +132,10 @@ export function registerDemoTrigger(fn: (text: string) => void) {
 }
 
 // ── In-memory chat store (mock mode only) ────────────────────────
-let mockChats: Chat[] = []
-const mockMessages: Record<string, StoredMessage[]> = {}
+// Agent chats in each top-bar state (no run / finished / stopped); a live run comes from the scripted demo.
+const seeded = seedAgentChats()
+let mockChats: Chat[] = [...seeded.chats]
+const mockMessages: Record<string, StoredMessage[]> = { ...seeded.messages }
 
 // ── Mock API ────────────────────────────────────────────────────
 const READY_STATE: ConnectionState = {

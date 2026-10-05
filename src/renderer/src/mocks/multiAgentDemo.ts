@@ -5,7 +5,7 @@
  * dependent fourth agent whose first gate fails, and a streamed synthesis.
  */
 import type {
-  AgentEvent, AgentStep, BackendSettings, McpToolPermissionRequest, MultiAgentRunRecord, RunTotals, StartRunResult,
+  AgentEvent, AgentStep, BackendSettings, Chat, McpToolPermissionRequest, MultiAgentRunRecord, RunTotals, StartRunResult, StoredMessage,
 } from '../../../shared/types'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
 
@@ -25,6 +25,61 @@ const STEPS: AgentStep[] = [
 ]
 
 const traces = new Map<string, AgentEvent[]>()
+const runIdsByChat = new Map<string, string[]>()
+
+// ── Saved agent chats for the top bar states (designs/05-topbar.html B, D) ──
+
+/** A finished or aborted run, as the coordinator would have saved it. */
+function savedTrace(runId: string, outcome: 'finished' | 'stopped'): AgentEvent[] {
+  const trace: AgentEvent[] = []
+  let seq = 0
+  let ts = Date.now() - 3_600_000
+  const emit = (type: string, body: Record<string, unknown> = {}): void => {
+    ts += 900
+    trace.push({ runId, seq: ++seq, ts, type, ...body } as AgentEvent)
+  }
+  emit('orchestrator_plan', { steps: STEPS })
+  emit('run_config', {
+    models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER },
+    sources: { orchestrator: 'default', worker: 'active', reflection: 'default', synthesizer: 'default' },
+    catalogueChecked: true, maxAgents: 4, budgetCapUsd: 0.5, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium',
+  })
+  emit('hitl_resume', { agentId: 'orchestrator', approved: true })
+  const steps = outcome === 'finished' ? STEPS : STEPS.slice(0, 2)
+  for (const step of steps) {
+    emit('agent_start', { agentId: step.id, role: step.role, model: WORKER, attempt: 0 })
+    if (outcome === 'stopped' && step.id === '1.2') break
+    emit('agent_complete', { agentId: step.id, attempt: 0, output: `${step.label}: done.`, tokenCount: 80_000, costUsd: 0.015 })
+    emit('reflection_result', { agentId: step.id, attempt: 0, score: 4, passed: true, reason: 'Covers the subtask.', model: DEFAULT_MULTI_AGENT_CONFIG.models.reflection })
+  }
+  if (outcome === 'stopped') {
+    emit('task_failed', { reason: 'Run aborted by user', runTotals: { costUsd: 0.018, tokens: 92_400, budgetReached: false } })
+    return trace
+  }
+  emit('synthesis_start')
+  emit('task_complete', { finalOutput: 'Days 1–2 Vienna [1.1] …', totalCostUsd: 0.07, totalTokens: 365_900 })
+  return trace
+}
+
+/** Agent chats in each top-bar state, so the browser preview shows them without a run. */
+export function seedAgentChats(): { chats: Chat[]; messages: Record<string, StoredMessage[]> } {
+  const now = Date.now()
+  const chat = (id: string, title: string, minutesAgo: number): Chat =>
+    ({ id, title, createdAt: now - minutesAgo * 60_000, updatedAt: now - minutesAgo * 60_000, systemInstructions: null, starred: false, mode: 'multi-agent' })
+  const msg = (role: 'user' | 'assistant', content: string): StoredMessage =>
+    ({ role, content, attachmentsJson: null, toolCallJson: null, blocksJson: null })
+  traces.set('demo-agents-done', savedTrace('demo-run-2', 'finished'))
+  runIdsByChat.set('demo-agents-done', ['demo-run-1', 'demo-run-2'])
+  traces.set('demo-agents-stopped', savedTrace('demo-run-3', 'stopped'))
+  return {
+    chats: [chat('demo-agents-new', 'Agent chat · no run yet', 2), chat('demo-agents-done', 'Alps itinerary · finished run', 30), chat('demo-agents-stopped', 'Alps itinerary · stopped run', 60)],
+    messages: {
+      'demo-agents-new': [],
+      'demo-agents-done': [msg('user', 'Plan 12 days in the Alps by rail in December.'), msg('assistant', 'Days 1–2 Vienna [1.1] …')],
+      'demo-agents-stopped': [msg('user', 'Plan 12 days in the Alps by rail in December.')],
+    },
+  }
+}
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => Promise<void>) {
@@ -158,7 +213,8 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       currentRunId = runId
       aborted = false
       void run(runId, chatId)
-      return { ok: true, runId, config: { ...DEFAULT_MULTI_AGENT_CONFIG, budgetCapUsd: 0.65, models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER } } }
+      runIdsByChat.set(chatId, [...(runIdsByChat.get(chatId) ?? []), runId])
+      return { ok: true, runId, runIds: runIdsByChat.get(chatId), config: { ...DEFAULT_MULTI_AGENT_CONFIG, budgetCapUsd: 0.65, models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER } } }
     },
     respondMultiAgentPlan: async (_runId: string, approved: boolean) => planAnswer?.(approved),
     mcpRespondToPermission: async (response: { requestId: string; approved: boolean }) => toolAnswers.get(response.requestId)?.(response.approved),
@@ -168,7 +224,9 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
     },
     getMultiAgentRun: async (chatId: string): Promise<MultiAgentRunRecord | null> => {
       const trace = traces.get(chatId)
-      return trace ? { mode: 'multi-agent', runStatus: 'completed', agentGraph: STEPS, executionTrace: [...trace] } : null
+      if (!trace) return null
+      const runIds = runIdsByChat.get(chatId)
+      return { mode: 'multi-agent', runStatus: 'completed', agentGraph: STEPS, executionTrace: [...trace], ...(runIds && { runId: runIds.at(-1), runIds }) }
     },
   }
 }

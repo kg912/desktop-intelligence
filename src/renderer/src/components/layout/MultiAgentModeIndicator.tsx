@@ -123,7 +123,10 @@ function nodeCaption(agent: AgentView): string {
     : agent.status === 'paused' ? 'approval'
     : agent.status === 'running' && agent.timeline.some((t) => t.kind === 'tool' && !t.done) ? 'tool'
     : ''
-  return suffix ? `${fit(agent.step.label, 17 - suffix.length)} · ${suffix}` : fit(agent.step.label, 20)
+  // ~17 chars of 10px system sans fit a 110px node; too little room left for the label → the state alone.
+  const room = 17 - 3 - suffix.length
+  if (!suffix) return fit(agent.step.label, 17)
+  return room >= 8 ? `${fit(agent.step.label, room)} · ${suffix}` : suffix[0].toUpperCase() + suffix.slice(1)
 }
 
 /** Agents as nodes in phase columns, edges from dependsOn, the synthesis node last. */

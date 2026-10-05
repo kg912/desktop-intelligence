@@ -293,7 +293,7 @@ describe('hover card', () => {
     expect(screen.getByTestId('graph-node-1.1').getAttribute('data-s')).toBe('ok')
     expect(screen.getByTestId('graph-node-1.2').getAttribute('data-s')).toBe('run')
     expect(screen.getByTestId('graph-node-1.2').querySelector('.ma-g-t')?.textContent).toMatch(/^Visa and.* · tool$/)
-    expect(screen.getByTestId('graph-node-1.3').textContent).toContain('· reflecting')
+    expect(screen.getByTestId('graph-node-1.3').querySelector('.ma-g-t')?.textContent).toBe('Reflecting') // label does not fit beside it
     expect(screen.getByTestId('graph-node-2.1').getAttribute('data-s')).toBe('q')
     expect(screen.getByTestId('graph-synthesis').getAttribute('opacity')).toBe('0.5')
     expect(screen.getByTestId('card-model-orchestrator').textContent).toContain(`${ORCH}done`)
