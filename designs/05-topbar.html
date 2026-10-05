@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DI · Multi-agent top bar</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0a; --bg1:#0e0e0e; --bg2:#131313; --bg3:#191919;
+  --hair:rgba(255,255,255,.05); --line:rgba(255,255,255,.09);
+  --text:#ebebeb; --mute:#8b8b8b; --dim:#5a5a5a;
+  --red:#e53935; --red-08:rgba(229,57,53,.08); --red-14:rgba(229,57,53,.14); --red-35:rgba(229,57,53,.35);
+  --ok:#43cf8f; --ok-10:rgba(67,207,143,.10); --amber:#e2a93b; --amber-10:rgba(226,169,59,.10);
+  --sans:'Inter',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.mono{font-family:var(--mono);font-size:12px}
+:focus-visible{outline:1px solid var(--red-35);outline-offset:2px}
+
+/* app frame */
+.app{display:flex;height:100vh;min-width:1100px;overflow:hidden}
+.rail{width:56px;flex:none;border-right:.5px solid var(--hair);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;background:var(--bg)}
+.rail .sp{flex:1}
+.rbtn{position:relative;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;color:var(--mute);transition:color .15s,background .15s}
+.rbtn:hover{color:var(--text);background:var(--bg3)}
+.rbtn.on{color:var(--red);background:var(--red-08)}
+.rbtn.on::before{content:"";position:absolute;left:-9px;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--red)}
+.rbtn .badge{position:absolute;right:3px;top:3px;min-width:14px;height:14px;padding:0 4px;border-radius:7px;background:var(--red);color:#fff;font:600 9px/14px var(--mono);text-align:center}
+
+/* the multi-agent rail button glows while a run is live */
+.rbtn.ma.live{color:var(--red)}
+.rbtn.ma.live::after{content:"";position:absolute;inset:-1px;border-radius:10px;box-shadow:0 0 0 .5px var(--red-35),0 0 14px 1px rgba(229,57,53,.28);animation:glow 2.4s ease-in-out infinite;pointer-events:none}
+@keyframes glow{0%,100%{opacity:.55}50%{opacity:1}}
+
+/* sidebar / dock */
+.side{flex:none;width:320px;background:var(--bg1);border-right:.5px solid var(--hair);display:flex;flex-direction:column;overflow:hidden;
+  transition:width .32s cubic-bezier(.2,.8,.2,1)}
+.app.dock .side{width:820px}
+.side-h{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:.5px solid var(--hair);font-weight:600}
+.btn{height:28px;padding:0 12px;border-radius:7px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px}
+.btn:hover{background:var(--red-14)}
+.btn.ghost{border-color:var(--line);background:none;color:var(--mute)}
+.btn.ghost:hover{color:var(--text);background:var(--bg3)}
+.list{overflow:auto;padding:8px}
+.grp{padding:14px 10px 6px;font-size:12px;color:var(--dim)}
+.item{position:relative;padding:9px 12px;border-radius:8px;font-size:13px;color:#cfcfcf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item small{display:block;font-size:11px;color:var(--dim);margin-top:1px}
+.item.on{background:var(--bg3);color:var(--text)}
+.item.on::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--red);border-radius:2px}
+.chat-pane,.ma-pane{display:none;flex:1;min-height:0}
+.app:not(.dock) .chat-pane{display:flex;flex-direction:column}
+.app.dock .ma-pane{display:flex}
+
+/* main */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.top{height:52px;flex:none;border-bottom:.5px solid var(--hair);display:flex;align-items:center;gap:12px;padding:0 20px;color:var(--mute)}
+.top .mono{color:#cfcfcf}
+.scroll{flex:1;overflow:auto}
+.col{max-width:760px;margin:0 auto;padding:28px 28px 120px}
+.ubub{margin-left:auto;max-width:620px;background:var(--bg3);border-radius:16px;padding:14px 18px;color:#dcdcdc;line-height:1.6}
+.prose{margin-top:26px;color:#d6d6d6;line-height:1.7}
+.prose h4{font-size:15px;margin:22px 0 8px;color:var(--text)}
+.prose li{margin:4px 0 4px 18px}
+.pill{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;border-radius:15px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px;margin:0 auto}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:glow 1.6s ease-in-out infinite}
+.composer{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;width:min(760px,calc(100% - 56px));background:var(--bg1);border:.5px solid var(--line);border-radius:16px;padding:14px 16px}
+.composer .ph{color:var(--dim);padding:4px 2px 12px}
+.chips{display:flex;gap:8px}
+.chip{height:26px;padding:0 10px;border-radius:7px;border:.5px solid var(--line);color:var(--dim);font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.chip.on{border-color:var(--red-35);background:var(--red-08);color:#ff7571}
+
+/* status */
+.sd{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dim)}
+.sd.ok{background:var(--ok)} .sd.run{background:var(--red);box-shadow:0 0 0 3px var(--red-14);animation:glow 1.4s ease-in-out infinite}
+.sd.wait{background:var(--amber);box-shadow:0 0 0 3px var(--amber-10)} .sd.fail{background:transparent;border:1.5px solid var(--red)}
+.tag{font:11.5px/1 var(--mono);height:20px;padding:0 7px;border-radius:5px;display:inline-flex;align-items:center;border:.5px solid var(--line);color:var(--mute)}
+.tag.ok{color:var(--ok);border-color:rgba(67,207,143,.3);background:var(--ok-10)}
+.tag.run{color:#ff7571;border-color:var(--red-35);background:var(--red-08)}
+.tag.wait{color:var(--amber);border-color:rgba(226,169,59,.3);background:var(--amber-10)}
+.tag.model{color:var(--mute)}
+
+/* form controls: nothing here is ever white */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;color:#cfcfcf;display:flex;justify-content:space-between}
+.field label b{font:500 12px var(--mono);color:var(--text)}
+.help{font-size:12px;color:var(--dim)}
+.in,.sel{height:38px;width:100%;background:var(--bg2);border:.5px solid var(--line);border-radius:9px;color:var(--text);font:13px var(--sans);padding:0 12px;outline:none;transition:border-color .15s,box-shadow .15s}
+.in.mono,.sel.mono{font-family:var(--mono);font-size:12.5px}
+.in:hover,.sel:hover{border-color:rgba(255,255,255,.16)}
+.in:focus,.sel:focus{border-color:var(--red-35);box-shadow:0 0 0 3px var(--red-08)}
+.in::placeholder{color:var(--dim)}
+.sel{appearance:none;-webkit-appearance:none;padding-right:34px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b8b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.sel option{background:var(--bg2);color:var(--text)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;background:none;--p:50%}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(90deg,var(--red) var(--p),var(--bg3) var(--p))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;margin-top:-5.5px;border-radius:50%;background:var(--bg);border:1.5px solid var(--red);box-shadow:0 0 0 3px var(--red-08)}
+.chk{display:flex;align-items:center;gap:10px;font-size:13px;color:#cfcfcf;cursor:pointer;user-select:none}
+.chk input{appearance:none;-webkit-appearance:none;width:16px;height:16px;border-radius:4px;border:.5px solid rgba(255,255,255,.2);background:var(--bg2);display:grid;place-items:center;flex:none}
+.chk input:checked{background:var(--red-14);border-color:var(--red)}
+.chk input:checked::after{content:"";width:8px;height:4px;border-left:1.5px solid #ff7571;border-bottom:1.5px solid #ff7571;transform:rotate(-45deg) translate(1px,-1px)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+body{padding:40px;overflow:auto}
+h1{font-size:20px;font-weight:600}.lead{color:var(--mute);margin:4px 0 28px;max-width:720px}
+.cell{margin-bottom:44px;max-width:1080px}
+.cell h3{font-size:14px;font-weight:600;margin-bottom:4px}.cell>p{color:var(--mute);font-size:13px;margin-bottom:14px;max-width:700px}
+.frame{position:relative;border:.5px solid var(--line);border-radius:14px;background:var(--bg);overflow:visible;height:300px}
+.frame.tall{height:430px}
+.frame .clip{position:absolute;inset:0;border-radius:14px;overflow:hidden;pointer-events:none}
+
+/* the top bar */
+.tb{position:relative;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 28px 0 18px;border-bottom:.5px solid var(--hair);background:var(--bg)}
+.tb.ma{background:#000}
+.tb .l,.tb .r{display:flex;align-items:center;gap:6px}
+.ib{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--dim);transition:color .15s,background .15s}
+.ib:hover{color:var(--text);background:var(--bg3)}
+.ib svg.i{width:16px;height:16px}
+.ib.set{color:#ff7571;border:.5px solid var(--red-35);background:var(--red-08)}
+.model{display:flex;align-items:center;gap:7px;font:12px var(--mono);color:#8b8b8b;margin-left:4px}
+.model svg{width:12px;height:12px;stroke:var(--red);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ctx{display:flex;align-items:center;gap:12px}
+.ctx .bar{width:128px;height:6px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden}
+.ctx .bar i{display:block;height:100%;width:34%;background:rgba(150,40,40,.7);border-radius:3px}
+
+/* multi-agent mode indicator */
+.mode{position:relative;margin-left:6px}
+.mpill{position:relative;height:30px;display:inline-flex;align-items:center;gap:9px;padding:0 13px 0 10px;border-radius:15px;border:.5px solid var(--red-35);background:var(--red-08);color:#ff7571;font-size:12.5px;font-weight:500}
+.mpill svg.i{width:15px;height:15px}
+.mpill .sub{font:11.5px var(--mono);color:#b86a68;font-weight:400}
+.mpill.idle{color:#b86a68;border-color:rgba(229,57,53,.2);background:rgba(229,57,53,.04)}
+.mpill.live::after{content:"";position:absolute;inset:-1px;border-radius:16px;box-shadow:0 0 0 .5px var(--red-35),0 0 16px 1px rgba(229,57,53,.32);animation:glow 2.4s ease-in-out infinite;pointer-events:none}
+.mpill .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:glow 1.6s ease-in-out infinite}
+.mpill .dot.ok{background:var(--ok);animation:none}
+.mpill.hov{background:var(--red-14)}
+
+/* hover card */
+.pop{position:absolute;left:0;top:40px;z-index:5;width:520px;background:var(--bg2);border:.5px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(0,0,0,.65);padding:14px 16px 12px}
+.pop::before{content:"";position:absolute;left:34px;top:-5px;width:9px;height:9px;background:var(--bg2);border-left:.5px solid var(--line);border-top:.5px solid var(--line);transform:rotate(45deg)}
+.pop h4{font-size:12px;font-weight:500;color:var(--mute);display:flex;justify-content:space-between;margin-bottom:8px}
+.pop h4 b{color:var(--text);font-weight:500}
+.pop svg.g{display:block;width:100%;height:auto;margin:2px 0 10px}
+.models{border-top:.5px solid var(--hair);padding-top:8px;display:grid;grid-template-columns:96px 1fr auto;gap:5px 10px;font-size:12px;align-items:center}
+.models .r{color:var(--mute)} .models .m{font:11.5px var(--mono);color:var(--text)}
+.src{font:10.5px var(--mono);height:18px;padding:0 6px;border-radius:5px;display:inline-flex;align-items:center;border:.5px solid var(--line);color:var(--dim)}
+.src.saved{color:var(--ok);border-color:rgba(67,207,143,.3);background:var(--ok-10)}
+.foot{display:flex;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:.5px solid var(--hair);font:11.5px var(--mono);color:var(--dim)}
+.foot a{color:#ff7571;font-family:var(--sans);font-size:12px}
+.empty{padding:6px 0 12px;color:var(--mute);font-size:12.5px;line-height:1.55}
+
+/* chat stub under the bar, for context */
+.stub{padding:26px 0 0;display:flex;justify-content:center}
+.bub{max-width:560px;background:#141414;border-radius:14px;padding:14px 18px;color:#cfcfcf;font-size:13.5px}
+.cap{margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--dim)}
+.cap b{color:var(--mute);font-weight:500}
+.note{margin-top:10px;max-width:760px;font-size:12.5px;color:var(--mute)}
+.node rect{fill:#161616;stroke:rgba(255,255,255,.14);stroke-width:.6}
+.node.ok rect{stroke:rgba(67,207,143,.45)} .node.run rect{stroke:rgba(229,57,53,.6)} .node.q rect{stroke-dasharray:3 3}
+.node text{font:11px 'JetBrains Mono',monospace;fill:#d6d6d6}
+.node text.t{font:10px 'Inter',sans-serif;fill:#8b8b8b}
+.edge{stroke:rgba(255,255,255,.18);stroke-width:.8;fill:none}
+.edge.live{stroke:rgba(229,57,53,.55)}
+.syn rect{fill:rgba(229,57,53,.07);stroke:rgba(229,57,53,.4);stroke-width:.6}
+.syn text{font:11px 'Inter',sans-serif;fill:#ff9a97}
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="net" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7.5l3 8M16 7.5l-3 8M8.5 6h7"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+<symbol id="scroll" viewBox="0 0 24 24"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/></symbol>
+<symbol id="dl" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></symbol>
+<symbol id="zap" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></symbol>
+
+<!-- the agent graph, reused in the hover cards; sample data -->
+<g id="graph-done">
+  <path class="edge" d="M118 24 C150 24 150 60 182 60"/><path class="edge" d="M118 60 L182 60"/><path class="edge" d="M118 96 C150 96 150 60 182 60"/>
+  <path class="edge" d="M300 60 L352 60"/>
+  <g class="node ok"><rect x="8" y="8" width="110" height="32" rx="7"/><text x="18" y="22">1.1</text><text class="t" x="18" y="34">Flights from SIN</text></g>
+  <g class="node ok"><rect x="8" y="44" width="110" height="32" rx="7"/><text x="18" y="58">1.2</text><text class="t" x="18" y="70">Visa and entry</text></g>
+  <g class="node ok"><rect x="8" y="80" width="110" height="32" rx="7"/><text x="18" y="94">1.3</text><text class="t" x="18" y="106">Weather in December</text></g>
+  <g class="node ok"><rect x="182" y="44" width="118" height="32" rx="7"/><text x="192" y="58">2.1</text><text class="t" x="192" y="70">Day-by-day itinerary</text></g>
+  <g class="syn"><rect x="352" y="44" width="136" height="32" rx="7"/><text x="364" y="64">Final synthesis</text></g>
+</g>
+<g id="graph-live">
+  <path class="edge live" d="M118 24 C150 24 150 60 182 60"/><path class="edge live" d="M118 60 L182 60"/><path class="edge" d="M118 96 C150 96 150 60 182 60"/>
+  <path class="edge" d="M300 60 L352 60"/>
+  <g class="node ok"><rect x="8" y="8" width="110" height="32" rx="7"/><text x="18" y="22">1.1</text><text class="t" x="18" y="34">Flights from SIN</text></g>
+  <g class="node run"><rect x="8" y="44" width="110" height="32" rx="7"/><text x="18" y="58">1.2</text><text class="t" x="18" y="70">Visa and entry · tool</text></g>
+  <g class="node run"><rect x="8" y="80" width="110" height="32" rx="7"/><text x="18" y="94">1.3</text><text class="t" x="18" y="106">Weather · reflecting</text></g>
+  <g class="node q"><rect x="182" y="44" width="118" height="32" rx="7"/><text x="192" y="58">2.1</text><text class="t" x="192" y="70">Queued</text></g>
+  <g class="syn" opacity=".5"><rect x="352" y="44" width="136" height="32" rx="7"/><text x="364" y="64">Final synthesis</text></g>
+</g>
+</defs></svg>
+
+<h1>Multi-agent top bar</h1>
+<p class="lead">In multi-agent mode the bar tells you what you are in, instead of showing the worker model's name. The context meter goes, because each agent has its own context. The bar is pure black so the mode is obvious at a glance. Instructions and download move to the far right. All run data below is sample data.</p>
+
+<div class="cell"><h3>A. Today, in a normal chat (unchanged)</h3><p>For comparison only. Single-chat mode keeps its model name, context meter and lighter bar.</p>
+<div class="frame" style="height:150px"><div class="tb">
+  <div class="l"><button class="ib"><svg class="i"><use href="#chev"/></svg></button>
+    <span class="model"><svg><use href="#zap"/></svg>deepseek/deepseek-v4.1-flash</span>
+    <button class="ib"><svg class="i"><use href="#scroll"/></svg></button><button class="ib"><svg class="i"><use href="#dl"/></svg></button></div>
+  <div class="ctx"><div class="bar"><i></i></div></div></div></div></div>
+
+<div class="cell"><h3>B. Multi-agent chat, nothing run yet</h3><p>The indicator is dim, not glowing. Hovering says there is no graph yet and shows which model each role will use, with where that choice came from.</p>
+<div class="frame tall"><div class="tb ma">
+  <div class="l"><button class="ib"><svg class="i"><use href="#chev"/></svg></button>
+    <div class="mode"><span class="mpill idle hov"><svg class="i"><use href="#net"/></svg>Multi-agent</span>
+      <div class="pop"><h4><b>No agent graph yet</b><span>sidecar running</span></h4>
+        <div class="empty">The orchestrator plans the agents after your first message. The graph appears here and in the run view.</div>
+        <div class="models"><span class="r">Orchestrator</span><span class="m">llama-3.3-70b-instruct</span><span class="src saved">saved</span>
+          <span class="r">Workers</span><span class="m">deepseek-v4.1-flash</span><span class="src">follows active</span>
+          <span class="r">Reflection</span><span class="m">gemini-3.5-flash-lite</span><span class="src saved">saved</span>
+          <span class="r">Synthesis</span><span class="m">glm-5.3-flash</span><span class="src saved">saved</span></div>
+        <div class="foot"><span>Change in Settings → Multi-Agent</span><a>Open settings</a></div></div></div></div>
+  <div class="r"><button class="ib"><svg class="i"><use href="#scroll"/></svg></button><button class="ib"><svg class="i"><use href="#dl"/></svg></button></div></div>
+  <div class="clip"></div></div></div>
+
+<div class="cell"><h3>C. A run is live</h3><p>The pill glows and counts agents. Hovering shows the live graph: finished agents green, working agents red, queued agents dashed. Clicking opens the run view in the dock.</p>
+<div class="frame tall"><div class="tb ma">
+  <div class="l"><button class="ib"><svg class="i"><use href="#chev"/></svg></button>
+    <div class="mode"><span class="mpill live hov"><span class="dot"></span>Multi-agent<span class="sub">2 of 4 working</span></span>
+      <div class="pop"><h4><b>Run 2 of 2 · in progress</b><span>Phase 1 of 2</span></h4>
+        <svg class="g" viewBox="0 0 496 120"><use href="#graph-live"/></svg>
+        <div class="models"><span class="r">Orchestrator</span><span class="m">llama-3.3-70b-instruct</span><span class="src">done</span>
+          <span class="r">Workers</span><span class="m">deepseek-v4.1-flash</span><span class="src">3 agents</span>
+          <span class="r">Reflection</span><span class="m">gemini-3.5-flash-lite</span><span class="src">1 check</span>
+          <span class="r">Synthesis</span><span class="m">glm-5.3-flash</span><span class="src">waiting</span></div>
+        <div class="foot"><span>$0.02 of $0.50 budget</span><a>Open run view</a></div></div></div></div>
+  <div class="r"><button class="ib"><svg class="i"><use href="#scroll"/></svg></button><button class="ib"><svg class="i"><use href="#dl"/></svg></button></div></div></div></div>
+
+<div class="cell"><h3>D. A finished run</h3><p>The glow settles to a green dot. The hover card keeps the last graph, which agent ran what, the models actually used, and the totals.</p>
+<div class="frame tall"><div class="tb ma">
+  <div class="l"><button class="ib"><svg class="i"><use href="#chev"/></svg></button>
+    <div class="mode"><span class="mpill hov"><span class="dot ok"></span>Multi-agent<span class="sub">4 agents · 2 phases</span></span>
+      <div class="pop"><h4><b>Run 2 of 2 · finished</b><span>all agents passed</span></h4>
+        <svg class="g" viewBox="0 0 496 120"><use href="#graph-done"/></svg>
+        <div class="models"><span class="r">Orchestrator</span><span class="m">llama-3.3-70b-instruct</span><span class="src">1 call</span>
+          <span class="r">Workers</span><span class="m">deepseek-v4.1-flash</span><span class="src">4 calls</span>
+          <span class="r">Reflection</span><span class="m">gemini-3.5-flash-lite</span><span class="src">4 checks</span>
+          <span class="r">Synthesis</span><span class="m">glm-5.3-flash</span><span class="src">1 call</span></div>
+        <div class="foot"><span>$0.07 · 365.9k tokens</span><a>Open run view</a></div></div></div></div>
+  <div class="r"><button class="ib"><svg class="i"><use href="#scroll"/></svg></button><button class="ib set"><svg class="i"><use href="#dl"/></svg></button></div></div></div></div>
+
+<div class="cell"><h3>Behaviour</h3>
+<p style="max-width:760px">The pill appears whenever the chat is in multi-agent mode, with or without a run. It replaces the model name and the context meter, and the Compact and Reload buttons are not shown in this mode. Hover or keyboard focus opens the card, and click or Enter opens the dock. The card closes on blur or Escape. If the model a worker actually used differs from the saved one, that row shows the real model with an amber "served" tag. Narrow windows drop the sub-label before the pill itself. Single chats keep today's bar.</p></div>
+</body></html>
