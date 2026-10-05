@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText, Download } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
+import type { ChatMode } from '../../../../shared/types'
+import { MultiAgentModeIndicator, type TopBarRun } from './MultiAgentModeIndicator'
 
 const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
 
@@ -13,6 +15,10 @@ const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boo
  *
  * The Compact button appears alongside the context bar and is disabled
  * until contextUsage.used >= 5000 tokens.
+ *
+ * Multi-agent chats get their own bar (designs/05-topbar.html): pure black,
+ * the mode pill instead of the model name, no context meter / Compact / Reload,
+ * chat instructions and PDF download at the far right.
  */
 
 interface TopBarProps {
@@ -22,9 +28,20 @@ interface TopBarProps {
   onSidebarToggle?:               () => void
   chatSystemInstructions:         string | null
   onUpdateChatSystemInstructions: (text: string) => void
+  /** 'multi-agent' renders the agent bar; anything else is today's bar. */
+  mode?:                          ChatMode | null
+  /** The run the dock shows (or would show) for this chat; null before the first run. */
+  agentRun?:                      TopBarRun | null
+  agentDockOpen?:                 boolean
+  onToggleAgentDock?:             () => void
+  onOpenAgentRunView?:            () => void
+  onOpenAgentSettings?:           () => void
 }
 
-export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle, chatSystemInstructions, onUpdateChatSystemInstructions }: TopBarProps) {
+export function TopBar({
+  activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle, chatSystemInstructions, onUpdateChatSystemInstructions,
+  mode, agentRun = null, agentDockOpen = false, onToggleAgentDock, onOpenAgentRunView, onOpenAgentSettings,
+}: TopBarProps) {
   const {
     selectedModel,
     // contextUsage / isCompacting removed — read from signals below
@@ -193,29 +210,141 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
     }
   }
 
+  const sidebarToggle = (
+    <>
+      {/* Sidebar toggle — ChevronRight when collapsed, ChevronLeft when expanded */}
+      {onSidebarToggle && (
+        <button
+          onClick={onSidebarToggle}
+          className="p-1.5 rounded-lg text-content-tertiary
+                     hover:text-content-secondary hover:bg-surface-hover
+                     transition-colors duration-100 mr-1"
+          title={sidebarCollapsed ? 'Open sidebar' : 'Close sidebar'}
+        >
+          {sidebarCollapsed
+            ? <ChevronRight className="w-4 h-4" />
+            : <ChevronLeft className="w-4 h-4" />}
+        </button>
+      )}
+    </>
+  )
+
+  const chatActions = (
+    <>
+      {/* Chat instructions button */}
+      <button
+        ref={sysPromptBtnRef}
+        onClick={() => {
+          if (!showSysPromptPopup) {
+            setSysPromptDraft(chatSystemInstructions ?? '')
+            if (sysPromptBtnRef.current) {
+              const btnRect = sysPromptBtnRef.current.getBoundingClientRect()
+              const popupWidth = 400
+              const centeredLeft = btnRect.left + btnRect.width / 2 - popupWidth / 2
+              setPopupLeft(Math.max(8, Math.min(centeredLeft, window.innerWidth - popupWidth - 8)))
+            }
+          }
+          setShowSysPromptPopup(prev => !prev)
+        }}
+        title={
+          chatSystemInstructions
+            ? `Instructions: ${chatSystemInstructions.length > 80
+                ? chatSystemInstructions.slice(0, 80).trimEnd() + '…'
+                : chatSystemInstructions}`
+            : 'Add instructions for this chat'
+        }
+        className={[
+          'ml-1 p-1 rounded transition-colors cursor-pointer',
+          chatSystemInstructions
+            ? 'text-accent-400 border border-accent-700/40 bg-accent-900/30 hover:bg-accent-900/50'
+            : 'text-content-muted hover:text-content-secondary hover:bg-surface-border/30',
+        ].join(' ')}
+      >
+        <ScrollText className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Download chat as PDF */}
+      <button
+        onClick={handleExportPdf}
+        disabled={!activeChatId || isExporting}
+        title={!activeChatId ? 'Select a chat to export' : isExporting ? 'Exporting…' : 'Download chat as PDF'}
+        className={
+          !activeChatId
+            ? 'ml-1 p-1 rounded text-content-muted opacity-40 cursor-not-allowed'
+            : 'ml-1 p-1 rounded text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer transition-colors'
+        }
+      >
+        {isExporting
+          ? <RotateCw className="w-3.5 h-3.5 animate-spin text-accent-400" />
+          : <Download className="w-3.5 h-3.5" />}
+      </button>
+    </>
+  )
+
+  // Chat instructions popup
+  const sysPromptPopup = showSysPromptPopup && (
+    <div
+      ref={sysPromptPopupRef}
+      style={{ left: popupLeft, top: 60, width: 400 }}
+      className="fixed z-50 rounded-xl border border-surface-border bg-[#111111] shadow-xl p-3.5"
+    >
+      <p className="text-[11px] font-medium text-content-primary mb-2">
+        Chat instructions
+      </p>
+      <textarea
+        autoFocus
+        value={sysPromptDraft}
+        onChange={e => setSysPromptDraft(e.target.value)}
+        maxLength={4000}
+        placeholder="Add instructions for this chat only — e.g. 'You are reviewing Python code. Be terse. Assume a senior reader.' Appended to your global system prompt."
+        className="w-full min-h-[96px] resize-none rounded-lg bg-surface-border/20 border border-surface-border text-[12px] text-content-secondary placeholder:text-content-muted/50 p-2.5 leading-relaxed focus:outline-none focus:border-accent-700/60"
+      />
+      <div className="flex items-center justify-between mt-1.5">
+        <span className="text-[10px] text-content-muted/50 italic">
+          Saved on dismiss · persists until chat deleted
+        </span>
+        <span className={`text-[10px] font-mono ${sysPromptDraft.length >= 3600 ? 'text-accent-400' : 'text-content-muted/40'}`}>
+          {sysPromptDraft.length} / 4000
+        </span>
+      </div>
+    </div>
+  )
+
+  const barPadding = sidebarCollapsed
+    ? isFullscreen ? 'pl-4 pr-8' : 'pl-[80px] pr-8'
+    : 'px-8'
+
+  if (mode === 'multi-agent') {
+    return (
+      <div
+        data-testid="top-bar"
+        data-mode="multi-agent"
+        className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative bg-black ${barPadding}`}
+      >
+        <div className="no-drag flex items-center gap-1.5">
+          {sidebarToggle}
+          <MultiAgentModeIndicator
+            run={agentRun}
+            dockOpen={agentDockOpen}
+            onToggleDock={() => onToggleAgentDock?.()}
+            onOpenRunView={() => onOpenAgentRunView?.()}
+            onOpenSettings={() => onOpenAgentSettings?.()}
+          />
+        </div>
+        {sysPromptPopup}
+        <div className="no-drag flex items-center gap-1.5" data-testid="top-bar-actions">
+          {chatActions}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${
-      sidebarCollapsed
-        ? isFullscreen ? 'pl-4 pr-8' : 'pl-[80px] pr-8'
-        : 'px-8'
-    }`}>
+    <div data-testid="top-bar" data-mode="single" className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative ${barPadding}`}>
 
       {/* Left: sidebar toggle (collapsed only) + model name + reload button */}
       <div className="no-drag flex items-center gap-1.5">
-        {/* Sidebar toggle — ChevronRight when collapsed, ChevronLeft when expanded */}
-        {onSidebarToggle && (
-          <button
-            onClick={onSidebarToggle}
-            className="p-1.5 rounded-lg text-content-tertiary
-                       hover:text-content-secondary hover:bg-surface-hover
-                       transition-colors duration-100 mr-1"
-            title={sidebarCollapsed ? 'Open sidebar' : 'Close sidebar'}
-          >
-            {sidebarCollapsed
-              ? <ChevronRight className="w-4 h-4" />
-              : <ChevronLeft className="w-4 h-4" />}
-          </button>
-        )}
+        {sidebarToggle}
         <div className="flex items-center gap-1.5">
           <Zap className="w-3 h-3 text-accent-500" />
           <span className="text-[12px] font-mono text-content-tertiary tracking-wide truncate max-w-[360px]">
@@ -243,88 +372,16 @@ export function TopBar({ activeChatId, onCompactComplete, sidebarCollapsed = fal
           </button>
         )}
 
-        {/* Chat instructions button */}
-        <button
-          ref={sysPromptBtnRef}
-          onClick={() => {
-            if (!showSysPromptPopup) {
-              setSysPromptDraft(chatSystemInstructions ?? '')
-              if (sysPromptBtnRef.current) {
-                const btnRect = sysPromptBtnRef.current.getBoundingClientRect()
-                const popupWidth = 400
-                const centeredLeft = btnRect.left + btnRect.width / 2 - popupWidth / 2
-                setPopupLeft(Math.max(8, centeredLeft))
-              }
-            }
-            setShowSysPromptPopup(prev => !prev)
-          }}
-          title={
-            chatSystemInstructions
-              ? `Instructions: ${chatSystemInstructions.length > 80
-                  ? chatSystemInstructions.slice(0, 80).trimEnd() + '…'
-                  : chatSystemInstructions}`
-              : 'Add instructions for this chat'
-          }
-          className={[
-            'ml-1 p-1 rounded transition-colors cursor-pointer',
-            chatSystemInstructions
-              ? 'text-accent-400 border border-accent-700/40 bg-accent-900/30 hover:bg-accent-900/50'
-              : 'text-content-muted hover:text-content-secondary hover:bg-surface-border/30',
-          ].join(' ')}
-        >
-          <ScrollText className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Download chat as PDF */}
-        <button
-          onClick={handleExportPdf}
-          disabled={!activeChatId || isExporting}
-          title={!activeChatId ? 'Select a chat to export' : isExporting ? 'Exporting…' : 'Download chat as PDF'}
-          className={
-            !activeChatId
-              ? 'ml-1 p-1 rounded text-content-muted opacity-40 cursor-not-allowed'
-              : 'ml-1 p-1 rounded text-content-muted hover:text-content-secondary hover:bg-surface-border/30 cursor-pointer transition-colors'
-          }
-        >
-          {isExporting
-            ? <RotateCw className="w-3.5 h-3.5 animate-spin text-accent-400" />
-            : <Download className="w-3.5 h-3.5" />}
-        </button>
+        {chatActions}
       </div>
 
-      {/* Chat instructions popup */}
-      {showSysPromptPopup && (
-        <div
-          ref={sysPromptPopupRef}
-          style={{ left: popupLeft, top: 60, width: 400 }}
-          className="fixed z-50 rounded-xl border border-surface-border bg-[#111111] shadow-xl p-3.5"
-        >
-          <p className="text-[11px] font-medium text-content-primary mb-2">
-            Chat instructions
-          </p>
-          <textarea
-            autoFocus
-            value={sysPromptDraft}
-            onChange={e => setSysPromptDraft(e.target.value)}
-            maxLength={4000}
-            placeholder="Add instructions for this chat only — e.g. 'You are reviewing Python code. Be terse. Assume a senior reader.' Appended to your global system prompt."
-            className="w-full min-h-[96px] resize-none rounded-lg bg-surface-border/20 border border-surface-border text-[12px] text-content-secondary placeholder:text-content-muted/50 p-2.5 leading-relaxed focus:outline-none focus:border-accent-700/60"
-          />
-          <div className="flex items-center justify-between mt-1.5">
-            <span className="text-[10px] text-content-muted/50 italic">
-              Saved on dismiss · persists until chat deleted
-            </span>
-            <span className={`text-[10px] font-mono ${sysPromptDraft.length >= 3600 ? 'text-accent-400' : 'text-content-muted/40'}`}>
-              {sysPromptDraft.length} / 4000
-            </span>
-          </div>
-        </div>
-      )}
+      {sysPromptPopup}
 
       {/* Right: context bar then Compact button — always visible */}
       <div className="no-drag flex items-center gap-3">
           {/* Progress bar with tooltip — bar comes first */}
             <div
+              data-testid="context-meter"
               className="relative cursor-default"
               style={{ padding: '12px 4px', margin: '-12px -4px' }}
               onMouseEnter={() => setShowTooltip(true)}

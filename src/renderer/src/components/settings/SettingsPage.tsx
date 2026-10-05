@@ -9,13 +9,15 @@ import { RagSettings } from "./RagSettings";
 import { MultiAgentSettingsPanel } from "./MultiAgentSettingsPanel";
 import { version, author } from "../../../../../package.json";
 
-type SettingsTab = "model" | "websearch" | "tools" | "backend" | "rag" | "agents" | "debug" | "about";
+export type SettingsTab = "model" | "websearch" | "tools" | "backend" | "rag" | "agents" | "debug" | "about";
 
 interface SettingsPageProps {
   onClose: () => void;
   // Called by ModelSettingsPanel to report that a reload is in-flight,
   // so the X button is blocked while lms unload→load is running.
   onReloadingChange?: (reloading: boolean) => void;
+  /** Tab to open on (default: model). */
+  initialTab?: SettingsTab;
 }
 
 function TabItem({
@@ -153,8 +155,8 @@ function AboutPanel() {
   );
 }
 
-export function SettingsPage({ onClose, onReloadingChange }: SettingsPageProps) {
-  const [tab, setTab] = useState<SettingsTab>("model");
+export function SettingsPage({ onClose, onReloadingChange, initialTab = "model" }: SettingsPageProps) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   // Track whether ModelSettingsPanel is mid-reload so we block the X.
   const [isReloading, setIsReloading] = useState(false);
 

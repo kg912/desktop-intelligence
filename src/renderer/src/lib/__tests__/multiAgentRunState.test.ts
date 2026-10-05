@@ -191,3 +191,26 @@ describe('run_config (refinement Phase 3)', () => {
     expect(v.runConfig).toMatchObject(config)
   })
 })
+
+describe('served models (top bar "served" tag)', () => {
+  it('keeps what OpenRouter served for the planner, each agent, each gate and the synthesis', async () => {
+    const { servedDiffers } = await import('../multiAgentRunState')
+    seq = 0
+    const v = reduceRunEvents('r', [
+      ev({ type: 'orchestrator_plan', steps, modelServed: 'p/planner-v2' }),
+      ev({ type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'w' }),
+      ev({ type: 'agent_complete', agentId: '1.1', output: 'x', tokenCount: 1, costUsd: 0, modelServed: 'other/w' }),
+      ev({ type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'ok', model: 'judge', modelServed: 'judge-2026' }),
+      ev({ type: 'task_complete', finalOutput: 'done', totalCostUsd: 0, totalTokens: 1, modelServed: 's/synth' }),
+    ])
+    expect(v.served).toEqual({ orchestrator: 'p/planner-v2', synthesizer: 's/synth' })
+    expect(v.agents['1.1'].modelServed).toBe('other/w')
+    expect(v.agents['1.1'].reflections[0].modelServed).toBe('judge-2026')
+    expect(v.agents['1.2'].modelServed).toBeUndefined()
+    expect(reduceRunEvents('r', [ev({ type: 'orchestrator_plan', steps })]).served).toEqual({})
+    // The run log's rule: a dated variant is the same model.
+    expect(servedDiffers('judge', 'judge-2026')).toBe(false)
+    expect(servedDiffers('w', 'other/w')).toBe(true)
+    expect(servedDiffers('w', undefined)).toBe(false)
+  })
+})

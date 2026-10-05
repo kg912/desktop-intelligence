@@ -16,11 +16,11 @@ import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentCon
 export const DOCK_WIDTH = 760
 const PLAN_COLUMN_WIDTH = 248
 
-type Dot = 'ok' | 'run' | 'wait' | 'fail' | 'idle'
-const DOT: Record<AgentStatus, Dot> = {
+export type Dot = 'ok' | 'run' | 'wait' | 'fail' | 'idle'
+export const DOT: Record<AgentStatus, Dot> = {
   queued: 'idle', running: 'run', reflecting: 'run', retrying: 'run', paused: 'wait', done: 'ok', failed: 'fail', cancelled: 'fail',
 }
-const isWorking = (s: AgentStatus): boolean => s === 'running' || s === 'reflecting' || s === 'retrying' || s === 'paused'
+export const isWorking = (s: AgentStatus): boolean => s === 'running' || s === 'reflecting' || s === 'retrying' || s === 'paused'
 
 /** "deepseek/deepseek-v4.1-flash" → "deepseek-v4.1-flash" */
 export const shortModel = (id: string): string => id.split('/').pop() || id
@@ -181,7 +181,7 @@ function useEscape(onClose: () => void): void {
   }, [onClose])
 }
 
-const formatTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+export const formatTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
 /** "Tools: brave_web_search, +2" / "No tools" — names without their server namespace. */
 /** "Run N of M" with prev/next. Locked while a live run is shown — it cannot be swapped out. */

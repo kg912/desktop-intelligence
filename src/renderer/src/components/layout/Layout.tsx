@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid'
 import { Sidebar } from './Sidebar'
 import type { AgentRailState, SidebarMode } from './Sidebar'
 import { SettingsPage } from '../settings/SettingsPage'
+import type { SettingsTab } from '../settings/SettingsPage'
 import { TopBar } from './TopBar'
 import { ChatArea } from './ChatArea'
 import type { ChatAreaHandle } from './ChatArea'
@@ -16,7 +17,9 @@ import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
 import { useMultiAgentRun } from '../../hooks/useMultiAgentRun'
-import { inputLockMessage, isRunActive, pausedAgents } from '../../lib/multiAgentRunState'
+import { inputLockMessage, isRunActive, pausedAgents, reduceRunEvents } from '../../lib/multiAgentRunState'
+import type { RunView } from '../../lib/multiAgentRunState'
+import type { TopBarRun } from './MultiAgentModeIndicator'
 import { estimateRunCost } from '../../../../shared/multiAgentModels'
 import type { Chat, McpToolPermissionResponse, ProcessedAttachment, StoredMessage, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
@@ -26,11 +29,14 @@ export function Layout() {
   const { setContextUsage, isReloading } = useModelRuntime()
   const [sidebarMode,          setSidebarMode]          = useState<SidebarMode | null>('chat')
   const [settingsOpen,         setSettingsOpen]         = useState(false)
+  const [settingsTab,          setSettingsTab]          = useState<SettingsTab>('model')
   const [mcpPermissionRequests, setMcpPermissionRequests] = useState<McpToolPermissionRequest[]>([])
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
   // The multi-agent run lives in the sidebar, widened ('agents' mode) — no separate pane.
   const [focusAgentId,   setFocusAgentId]   = useState<string | null>(null)
   const [reviewableChat, setReviewableChat] = useState<string | null>(null)
+  // The active chat's latest saved run, for the top bar while the dock has not loaded it.
+  const [savedRun, setSavedRun] = useState<{ chatId: string; view: RunView; runIds?: string[] } | null>(null)
   const [isOpenRouter,   setIsOpenRouter]   = useState(false)
   // Below 1280 px the dock overlays the chat; below 1024 px its plan column hides too.
   const narrowWindow    = useMediaQuery('(max-width: 1279px)')
@@ -227,15 +233,31 @@ export function Layout() {
   // Offer "View agent run" for chats that hold a persisted multi-agent trace.
   useEffect(() => {
     setReviewableChat(null)
+    setSavedRun(null)
     if (!activeChatId) return
     let cancelled = false
     window.api.getMultiAgentRun(activeChatId)
       .then((record) => {
-        if (!cancelled && record?.mode === 'multi-agent' && record.executionTrace.length > 0) setReviewableChat(activeChatId)
+        if (!cancelled && record?.mode === 'multi-agent' && record.executionTrace.length > 0) {
+          setReviewableChat(activeChatId)
+          // Same record and reducer the dock's review() uses, so the two cannot disagree.
+          setSavedRun({ chatId: activeChatId, view: reduceRunEvents(record.executionTrace[0].runId, record.executionTrace), runIds: record.runIds })
+        }
       })
       .catch(() => { /* non-fatal */ })
     return () => { cancelled = true }
   }, [activeChatId, multiAgent.run])
+
+  // What the top bar's mode pill and hover card show: the run on screen, else the saved one.
+  const topBarRun = useMemo((): TopBarRun | null => {
+    if (shownRun) {
+      return {
+        view: shownRun.view, runIds: shownRun.runIds, live: !shownRun.review && isRunActive(shownRun.view),
+        budgetCapUsd: shownRun.review ? undefined : shownRun.config.budgetCapUsd,
+      }
+    }
+    return savedRun && savedRun.chatId === activeChatId ? { view: savedRun.view, runIds: savedRun.runIds, live: false } : null
+  }, [shownRun, savedRun, activeChatId])
 
   // ── Sidebar: new chat ─────────────────────────────────────────
   const handleNewChat = useCallback(() => {
@@ -529,7 +551,7 @@ export function Layout() {
       </AnimatePresence>
 
       {settingsOpen ? (
-        <SettingsPage onClose={() => setSettingsOpen(false)} />
+        <SettingsPage initialTab={settingsTab} onClose={() => setSettingsOpen(false)} />
       ) : (
         <>
           {/* ── Sidebar ── */}
@@ -572,7 +594,7 @@ export function Layout() {
               onDeleteChat={handleDeleteChat}
               onRenameChat={handleRenameChat}
               onStarChat={handleStarChat}
-              onOpenSettings={() => { if (!isStreaming && !navLocked) setSettingsOpen(true) }}
+              onOpenSettings={() => { if (!isStreaming && !navLocked) { setSettingsTab('model'); setSettingsOpen(true) } }}
             />
             {/* Streaming lock — blocks the sidebar while a single-chat response is in
                 flight; never the dock, which needs Abort and Approve during a run. */}
@@ -625,6 +647,12 @@ export function Layout() {
               onSidebarToggle={() => setSidebarMode(sidebarMode !== null ? null : navLocked ? 'agents' : lastSidebarMode.current)}
               chatSystemInstructions={chatSystemInstructions}
               onUpdateChatSystemInstructions={updateChatSystemInstructions}
+              mode={useAgents ? 'multi-agent' : 'single'}
+              agentRun={topBarRun}
+              agentDockOpen={dockOpen}
+              onToggleAgentDock={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
+              onOpenAgentRunView={() => setSidebarMode('agents')}
+              onOpenAgentSettings={() => { if (!isStreaming && !navLocked) { setSettingsTab('agents'); setSettingsOpen(true) } }}
             />
 
             {/* The main area stays a chat: a pill to the dock and, while a run is live, the synthesis. */}

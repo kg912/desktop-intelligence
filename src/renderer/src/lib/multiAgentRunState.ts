@@ -14,6 +14,8 @@ export interface ReflectionView {
   /** Judge model id, or "deterministic precheck". Absent on older traces. */
   model?: string
   issues?: string[]
+  /** What OpenRouter actually answered with, when it said. */
+  modelServed?: string
 }
 
 /** One entry of an agent's trace, in arrival order. Attempts are 0-based. */
@@ -45,6 +47,8 @@ export interface AgentView {
   truncated?: OutputLimit
   /** The answer came from the forced wrap-up round after maxToolRounds. */
   stoppedAtToolLimit?: boolean
+  /** Model OpenRouter actually served for the accepted answer, when it said. */
+  modelServed?: string
   startedAt?: number
   endedAt?: number
 }
@@ -63,6 +67,8 @@ export interface RunView {
   finalOutput?: string
   synthesisTruncated?: OutputLimit
   failureReason?: string
+  /** Models OpenRouter actually served the planner and the synthesis, when it said. */
+  served: { orchestrator?: string; synthesizer?: string }
   totals: RunTotals
   startedAt: number
   endedAt?: number
@@ -76,6 +82,7 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
     steps: [],
     agents: {},
     synthesis: '',
+    served: {},
     totals: { costUsd: 0, tokens: 0, budgetReached: false },
     startedAt,
     lastSeq: 0,
@@ -103,7 +110,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
           step, status: 'queued', liveText: '', streamedTokens: 0, tokenCount: 0, costUsd: 0, attempt: 0, reflections: [], timeline: [],
         }
       }
-      return { ...next, steps: event.steps, agents }
+      return { ...next, steps: event.steps, agents, ...(event.modelServed && { served: { ...next.served, orchestrator: event.modelServed } }) }
     }
     case 'run_config':
       return { ...next, runConfig: event }
@@ -149,7 +156,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
     case 'agent_complete':
       return updateAgent(next, event.agentId, () => ({
         output: event.output, tokenCount: event.tokenCount, costUsd: event.costUsd, status: 'done', endedAt: event.ts, truncated: event.truncated,
-        stoppedAtToolLimit: event.stoppedAtToolLimit,
+        stoppedAtToolLimit: event.stoppedAtToolLimit, modelServed: event.modelServed,
       }))
     case 'reflection_start':
       return updateAgent(next, event.agentId, () => ({ status: 'reflecting' }))
@@ -159,6 +166,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
           attempt: a.attempt, score: event.score, passed: event.passed, reason: event.reason,
           ...(event.model !== undefined && { model: event.model }),
           ...(event.issues !== undefined && { issues: event.issues }),
+          ...(event.modelServed !== undefined && { modelServed: event.modelServed }),
         }
         return {
           reflections: [...a.reflections, gate],
@@ -185,6 +193,7 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
         finalOutput: event.finalOutput,
         synthesis: event.finalOutput,
         synthesisTruncated: event.truncated,
+        ...(event.modelServed && { served: { ...next.served, synthesizer: event.modelServed } }),
         totals: { ...next.totals, costUsd: event.totalCostUsd, tokens: event.totalTokens },
         endedAt: event.ts,
       }
@@ -233,6 +242,10 @@ export function inputLockMessage(view: RunView): string | null {
   if (paused.length > 1) return `${paused.length} agents need your approval`
   return view.phase === 'synthesizing' ? 'Synthesizing the final answer…' : 'Agents running…'
 }
+
+/** OpenRouter served another model than the one requested. A dated or variant id of the same model ("<id>-20240620") is not a different model — the run log's rule. */
+export const servedDiffers = (requested: string, served: string | undefined): served is string =>
+  !!served && !!requested && !served.startsWith(requested)
 
 export const CUT_OFF_LABEL: Record<OutputLimit, string> = {
   budget:  'Cut off: budget cap',

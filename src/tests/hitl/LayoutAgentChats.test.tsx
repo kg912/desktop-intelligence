@@ -40,7 +40,9 @@ vi.mock('../../renderer/src/hooks/useChat', () => ({
 vi.mock('../../renderer/src/components/layout/ChatArea', () => ({
   ChatArea: forwardRef(function ChatArea(_props: unknown, _ref) { return <div data-testid="chat-area" /> }),
 }))
-vi.mock('../../renderer/src/components/layout/TopBar', () => ({ TopBar: () => <div data-testid="top-bar" /> }))
+// The stub records its props so the top-bar mode / run wiring can be checked.
+let topBarProps: Record<string, any> = {}
+vi.mock('../../renderer/src/components/layout/TopBar', () => ({ TopBar: (props: Record<string, any>) => { topBarProps = props; return <div data-testid="top-bar" /> } }))
 vi.mock('../../renderer/src/components/settings/SettingsPage', () => ({ SettingsPage: () => <div data-testid="settings-page" /> }))
 vi.mock('../../renderer/src/components/chat/CompactingGate', () => ({ CompactingGate: () => null }))
 
@@ -262,5 +264,48 @@ describe('Part C — navigation lock while a run is live', () => {
     expect(panelMode()).toBe('agents')
     await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }) })
     expect(panelMode()).toBe('closed')
+  })
+})
+
+describe('Top bar mode and run (designs/05-topbar.html)', () => {
+  it('a regular chat gets today\'s bar; an agent chat gets the multi-agent bar; a new chat follows the toggle', async () => {
+    await renderLayout()
+    await openChat('regular title')
+    expect(topBarProps.mode).toBe('single')
+    expect(topBarProps.agentRun).toBeNull()
+    await openChat('agents title')
+    expect(topBarProps.mode).toBe('multi-agent')
+    await act(async () => { fireEvent.click(screen.getByText('New')) })
+    expect(topBarProps.mode).toBe('single')
+    fireEvent.click(toggle())
+    expect(topBarProps.mode).toBe('multi-agent')
+  })
+
+  it('an agent chat with a saved run hands that run to the bar without opening the dock; the pill toggles the dock', async () => {
+    const steps = [{ id: '1.1', label: 'Look', stage: 'worker', role: 'Scout', model: 'w', phase: 1, dependsOn: [] }]
+    const executionTrace = [
+      { runId: 'r9', seq: 1, ts: 1, type: 'orchestrator_plan', steps },
+      { runId: 'r9', seq: 2, ts: 2, type: 'task_complete', finalOutput: 'x', totalCostUsd: 0.01, totalTokens: 5 },
+    ]
+    overrides.getMultiAgentRun.mockImplementation((async (chatId: string) =>
+      chatId === 'agents' ? { mode: 'multi-agent', runStatus: 'completed', agentGraph: steps, executionTrace, runId: 'r9', runIds: ['r9'] } : null) as any)
+    await renderLayout()
+    await openChat('agents title')
+    await waitFor(() => expect(topBarProps.agentRun?.view.runId).toBe('r9'))
+    expect(topBarProps.agentRun).toMatchObject({ live: false, runIds: ['r9'] })
+    expect(topBarProps.agentRun.view.phase).toBe('complete')
+    expect(topBarProps.agentDockOpen).toBe(false)
+    await act(async () => { topBarProps.onToggleAgentDock() })
+    await waitFor(() => expect(topBarProps.agentDockOpen).toBe(true))
+    expect(screen.getByTestId('agent-dock')).toBeTruthy()
+    await act(async () => { topBarProps.onToggleAgentDock() })
+    expect(topBarProps.agentDockOpen).toBe(false)
+  })
+
+  it('"Open settings" in the card opens Settings', async () => {
+    await renderLayout()
+    await openChat('agents title')
+    await act(async () => { topBarProps.onOpenAgentSettings() })
+    expect(screen.getByTestId('settings-page')).toBeTruthy()
   })
 })
