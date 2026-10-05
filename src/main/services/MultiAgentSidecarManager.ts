@@ -73,6 +73,8 @@ export interface RunStartRequest extends MultiAgentStartPayload {
   catalogueChecked?: boolean
   /** observabilityEnabled: the sidecar records every model and tool call (obs_record frames). Off: nothing is captured. */
   observe?: boolean
+  /** currentDateTimeLine() in the user's timezone; the sandboxed sidecar's clock is not theirs. */
+  currentDateTime: string
 }
 
 type FetchFn = typeof fetch

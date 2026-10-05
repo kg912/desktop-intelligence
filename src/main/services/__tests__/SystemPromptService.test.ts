@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { BASE_SYSTEM_PROMPT } from '../SystemPromptService'
+import { BASE_SYSTEM_PROMPT, currentDateTimeLine } from '../SystemPromptService'
 
 /** Soft character-count ceiling for the base system prompt.
  *  Update this constant (and the comment below) whenever the limit is
@@ -153,5 +153,17 @@ describe('BASE_SYSTEM_PROMPT', () => {
     const lower = BASE_SYSTEM_PROMPT.toLowerCase()
     expect(lower).toContain('end')
     expect(lower).toContain('reserved')
+  })
+})
+
+describe('currentDateTimeLine', () => {
+  it('formats the date line in the local timezone (same text ChatService has always sent)', () => {
+    const tz = process.env.TZ
+    process.env.TZ = 'Asia/Singapore'
+    try {
+      expect(currentDateTimeLine(new Date('2026-10-04T14:38:00Z'))).toBe('Current date and time: Sunday, October 4, 2026, 10:38 PM GMT+8.')
+    } finally {
+      process.env.TZ = tz
+    }
   })
 })

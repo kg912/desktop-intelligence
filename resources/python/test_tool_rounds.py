@@ -12,7 +12,7 @@ CALL = {"tool_calls": [{"id": "c", "function": {"name": "fs__read_file", "argume
 def make_run(max_tool_rounds):
     config = s.Config(maxAgents=1, budgetCapUsd=1, models={"worker": "m/w"}, reflectionPassThreshold=1,
                       maxRetriesPerAgent=0, hitlTimeoutMs=60_000, maxToolRounds=max_tool_rounds)
-    run = s.Run(run_id="r", request=s.RunRequest(runId="r", chatId="c", task="t", config=config, tools=TOOLS, openRouterApiKey="k"))
+    run = s.Run(run_id="r", request=s.RunRequest(runId="r", chatId="c", task="t", config=config, tools=TOOLS, openRouterApiKey="k", currentDateTime="Current date and time: x."))
 
     async def approve(*_a, **_k):
         return True, "notes"

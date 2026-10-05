@@ -131,6 +131,7 @@ describe('MultiAgentRunCoordinator.start', () => {
       modelSources: { orchestrator: 'default', worker: 'active', reflection: 'default', synthesizer: 'active' },
     })
     expect(sent.openRouterApiKey).toBe('sk-or-1')
+    expect(sidecar.startRun.mock.calls[0][0]).toMatchObject({ currentDateTime: expect.stringMatching(/^Current date and time: \w+day, .+ \d{4}, .+\.$/) })
     expect(result).toEqual({ ok: true, runId: 'run-1', config: sent.config })
     // Run history: begin now also records the run's id, task and resolved config.
     expect(db.begin).toHaveBeenCalledWith('chat-1', { runId: 'run-1', task: 'do it', config: sent.config })

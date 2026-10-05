@@ -30,7 +30,7 @@ import {
   resolveBraveApiKey,
 } from "./BraveSearchService";
 import { mcpServerManager, McpDeniedError, buildApprovedToolResult, buildDeniedToolMessage } from "./McpServerManager";
-import { BASE_SYSTEM_PROMPT } from "./SystemPromptService";
+import { BASE_SYSTEM_PROMPT, currentDateTimeLine } from "./SystemPromptService";
 import { countTokens } from "./tokenUtils";
 import { getCompactedSummary, clearCompactedSummary } from "./DatabaseService";
 
@@ -2915,16 +2915,7 @@ export class ChatService {
 
     // Inject current date so models use the right year in search queries and
     // time-sensitive reasoning — training cutoff is no longer the reference.
-    const _now = new Date();
-    const DATE_INJECTION = `Current date and time: ${_now.toLocaleDateString(
-      "en-US",
-      {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      },
-    )}, ${_now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}.`;
+    const DATE_INJECTION = currentDateTimeLine();
 
     const systemParts: string[] = [BASE_SYSTEM_PROMPT, DATE_INJECTION];
     if (braveEnabled) systemParts.push(buildWebSearchAddendum(appSettings.maxSearchLoops ?? 4));

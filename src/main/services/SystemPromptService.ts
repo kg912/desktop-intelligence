@@ -135,3 +135,17 @@ THINKING RULE: Keep ALL reasoning inside <think>…</think>. Outside <think> = f
 
 RESPONSE FORMAT: explanation + visuals combined. Steps as numbered lists (1. 2. 3.) — never in code blocks.
 BANNED: ASCII trees (├──, └──) — use \`\`\`mermaid mindmap instead.`;
+
+/**
+ * The date line every model call gets (single chat and each multi-agent role),
+ * so models reason from today rather than their training cutoff. Uses the
+ * process's local timezone — always call it in Electron, never in the sandbox.
+ */
+export function currentDateTimeLine(now: Date = new Date()): string {
+  return `Current date and time: ${now.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })}, ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}.`;
+}

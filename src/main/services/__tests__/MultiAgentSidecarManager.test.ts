@@ -13,7 +13,7 @@ import type { SandboxRunSpec } from '../sandbox/types'
 // covered by MultiAgentSidecar.integration.test.ts.
 
 const request: RunStartRequest = {
-  chatId: 'chat-1', task: 'Summarise', config: DEFAULT_MULTI_AGENT_CONFIG, tools: [], openRouterApiKey: 'sk-or-test',
+  chatId: 'chat-1', task: 'Summarise', config: DEFAULT_MULTI_AGENT_CONFIG, tools: [], openRouterApiKey: 'sk-or-test', currentDateTime: 'Current date and time: x.',
 }
 
 interface FakeChild extends EventEmitter {

@@ -126,6 +126,8 @@ class RunRequest(BaseModel):
     catalogueChecked: bool = True
     # Electron's observabilityEnabled. Off: no call records, nothing copied.
     observe: bool = False
+    # "Current date and time: …" computed by Electron in the user's timezone; the sandbox clock is not theirs.
+    currentDateTime: str = Field(min_length=1)
 
 
 class HitlResponse(BaseModel):
@@ -803,12 +805,17 @@ def fallback_plan(config: Config) -> list[dict[str, Any]]:
             for i in range(min(config.maxAgents, len(labels)))]
 
 
+def with_date(run: Run, text: str) -> str:
+    """Every role's system message ends with Electron's date line, as in single-model chat."""
+    return f"{text}\n\n{run.request.currentDateTime}"
+
+
 async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     run: Run = state["run"]
     config = run.config
     model = config.models.get("orchestrator", "")
     messages = [
-        {"role": "system", "content": PLANNER_SYSTEM.replace("{max_agents}", str(config.maxAgents))},
+        {"role": "system", "content": with_date(run, PLANNER_SYSTEM.replace("{max_agents}", str(config.maxAgents)))},
         {"role": "user", "content": run.request.task},
     ]
     steps: list[dict[str, Any]] | None = None
@@ -916,9 +923,9 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
     tools = "\n".join(evidence) or "(no tool calls were made)"
     earlier = "\n\n".join(f"[{k}] {v}" for k, v in prior.items()) or "(this step depends on no earlier agent)"
     messages = [
-        {"role": "system", "content": "You are a strict reviewer of one agent's work in a multi-agent team. Judge the output against this rubric:\n"
+        {"role": "system", "content": with_date(run, "You are a strict reviewer of one agent's work in a multi-agent team. Judge the output against this rubric:\n"
                                       f"{rubric}\n\nScore 1 (useless) to 5 (excellent). A claim with no tool evidence that is not marked as unverified is an issue. "
-                                      "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}"},
+                                      "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}")},
         {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask ({step['id']}): {step['label']}\n\n"
                                     f"Tool calls the agent made:\n{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}"},
     ]
@@ -958,9 +965,9 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     for attempt in range(config.maxRetriesPerAgent + 1):
         run.attempts[agent_id] = attempt
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
+            {"role": "system", "content": with_date(run, f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
                                           f"{tools_line} Never claim to have executed anything you did not. "
-                                          "Mark any claim you could not verify with a tool as unverified."},
+                                          "Mark any claim you could not verify with a tool as unverified.")},
             {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}{feedback}"},
         ]
 
@@ -1171,9 +1178,9 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     sources = "\n\n".join(f"[{agent_id}] ({steps[agent_id]['role']}: {steps[agent_id]['label']})\n{text}" for agent_id, text in outputs.items())
     missing = "".join(f"\n- [{agent_id}] failed: {reason}" for agent_id, reason in failures.items())
     prompt = [
-        {"role": "system", "content": "You synthesize a multi-agent team's work into one final answer for the user. "
+        {"role": "system", "content": with_date(run, "You synthesize a multi-agent team's work into one final answer for the user. "
                                       "Cite every factual contribution with its source agent marker exactly as given, e.g. [1.1]. "
-                                      "Do not invent markers. If some agents failed, say what is missing."},
+                                      "Do not invent markers. If some agents failed, say what is missing.")},
         {"role": "user", "content": f"Task: {run.request.task}\n\nAgent outputs:\n\n{sources}" + (f"\n\nFailed agents:{missing}" if missing else "")},
     ]
 

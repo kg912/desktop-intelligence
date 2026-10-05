@@ -29,6 +29,7 @@ import { isTerminalAgentEvent } from '../../shared/agentEvents'
 import { MODEL_ROLES, resolveRoleModels } from '../../shared/multiAgentModels'
 import type { ModelPricing, ModelRole, OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import type { RunStartRequest } from './MultiAgentSidecarManager'
+import { currentDateTimeLine } from './SystemPromptService'
 import { BUILTIN_SERVER, McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext } from './McpServerManager'
 
@@ -203,6 +204,7 @@ export class MultiAgentRunCoordinator {
         modelSources: Object.fromEntries(MODEL_ROLES.map((role) => [role, resolved[role].source])) as Record<ModelRole, 'saved' | 'default' | 'active'>,
         catalogueChecked,
         observe,
+        currentDateTime: currentDateTimeLine(),
       })
       if (!result.ok) return result
       // runStarted fired inside startRun, so this run is already in the history.

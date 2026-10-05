@@ -224,7 +224,7 @@ function runToEnd(
     }
     mgr.on('event', listener)
     mgr
-      .startRun({ chatId: 'chat-1', task: 'Explain X', config: opts.config ?? baseConfig(), tools: TOOLS, openRouterApiKey: 'sk-or-test', pricing: opts.pricing, noReasoning: opts.noReasoning, observe: opts.observe })
+      .startRun({ chatId: 'chat-1', task: 'Explain X', config: opts.config ?? baseConfig(), tools: TOOLS, openRouterApiKey: 'sk-or-test', currentDateTime: 'Current date and time: Monday, October 5, 2026, 10:38 PM GMT+8.', pricing: opts.pricing, noReasoning: opts.noReasoning, observe: opts.observe })
       .then((r) => {
         if (!r.ok) reject(new Error(r.reason))
         else runId = r.runId
