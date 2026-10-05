@@ -448,6 +448,7 @@ def _stream_openrouter(
     guards = {"content": RepetitionDetector(), "reasoning": RepetitionDetector()} if loop_guard else {}
     looped = ""
     reasoning_chars = 0
+    served = ""  # the model OpenRouter actually answered with (may differ from `model`)
     if capture is not None:
         capture.update(toolCalls=tool_calls, usage=usage)
     try:
@@ -466,6 +467,7 @@ def _stream_openrouter(
                     raise provider_error(model, str(chunk["error"].get("message", chunk["error"])), "OpenRouter error")
                 if chunk.get("usage"):
                     usage = chunk["usage"]
+                served = served or str(chunk.get("model") or "")
                 if capture is not None:
                     capture["usage"] = usage
                     capture.setdefault("modelServed", chunk.get("model"))
@@ -527,6 +529,8 @@ def _stream_openrouter(
         message["reasoning_details"] = details
     if finish_reason:
         message["finish_reason"] = finish_reason
+    if served:
+        message["model_served"] = served
     if looped:
         message["looped"] = looped
         if capture is not None:
@@ -809,8 +813,10 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     ]
     steps: list[dict[str, Any]] | None = None
     chain_checked = False
+    served = ""
     for attempt in range(4):
         reply, _, _ = await ask(run, model, messages, obs={"role": "planner", "attempt": attempt})
+        served = reply.get("model_served") or served
         text = str(reply.get("content") or "")
         try:
             candidate = parse_plan(text, config)
@@ -843,7 +849,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     steps = steps or fallback_plan(config)
     for s in steps:
         s.pop("chainReason", None)
-    await run.emit("orchestrator_plan", steps=steps, **({"fallback": True} if fallback else {}))
+    await run.emit("orchestrator_plan", steps=steps, **({"fallback": True} if fallback else {}), **({"modelServed": served} if served else {}))
     await run.emit("run_config", models=config.models,
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
                    catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,
@@ -897,8 +903,10 @@ def preview(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1] + "…"
 
 
-async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], evidence: list[str]) -> tuple[int, bool, str, list[str], str]:
-    """(score, passed, reason, issues, judge model). An unusable verdict is a failure, never a pass."""
+async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], evidence: list[str],
+                  served: dict[str, str] | None = None) -> tuple[int, bool, str, list[str], str]:
+    """(score, passed, reason, issues, judge model). An unusable verdict is a failure, never a pass.
+    served: filled with {"model": <id OpenRouter answered with>} when it reported one."""
     config = run.config
     model = config.models.get("reflection", "")
     failure = precheck(output)
@@ -917,6 +925,8 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
     for _try in range(2):  # one retry on an unusable reply
         verdict, _, _ = await ask(run, model, messages, obs={"role": "reflection", "agentId": step["id"],
                                                              "attempt": run.attempts.get(step["id"], 0), "retry": _try})
+        if verdict.get("model_served") and served is not None:
+            served["model"] = verdict["model_served"]
         try:
             judgement = json.loads(re.search(r"\{.*\}", str(verdict.get("content") or ""), re.S).group(0))  # type: ignore[union-attr]
             score = max(1, min(5, int(judgement["score"])))
@@ -962,6 +972,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
         output = ""
         truncated: str | None = None
+        served = ""
         looped = False
         stopped_at_limit = False
         no_answer_retried = False
@@ -979,6 +990,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                                 obs={"role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
                                                      "retry": int(no_answer_retried)})
                 await stream.flush()
+                served = reply.get("model_served") or served
                 agent_tokens += tokens
                 agent_cost += cost
                 if reply.get("looped"):
@@ -1062,17 +1074,19 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         if not output:
             raise AgentFailed("no final answer (empty or only tool-call text, after one re-ask)")
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
-                       **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}))
+                       **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
+                       **({"modelServed": served} if served else {}))
 
         if run.budget_reached:
             return output  # no reflection spend once the cap is reached; output kept as-is
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
         try:
-            score, passed, reason, issues, judge = await reflect(run, step, output, prior, evidence)
+            judge_served: dict[str, str] = {}
+            score, passed, reason, issues, judge = await reflect(run, step, output, prior, evidence, judge_served)
         except BudgetReached:
             return output
         await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
-                       issues=issues, model=judge, rubric=REFLECTION_RUBRIC)
+                       issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}))
         if passed:
             return output
         last_reason = f"score {score}/5: {reason}" if score else reason
@@ -1167,18 +1181,20 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
         await run.emit("synthesis_token", token=text)
 
     truncated = None
+    served = ""
     try:
         reply, _, _ = await ask(run, run.config.models.get("synthesizer", ""), prompt, on_token=on_token, synthesis=True,
                                 obs={"role": "synthesis"})
         final = str(reply.get("content") or "")
         truncated = reply.get("truncated")
+        served = reply.get("model_served") or ""
     except BudgetReached:
         # Remaining budget cannot cover even a short synthesis: deliver the
         # partial outputs verbatim, provenance intact, with zero extra spend.
         final = "Budget cap reached — partial results from the agents that finished:\n\n" + "\n\n".join(f"[{k}] {v}" for k, v in outputs.items())
         await run.emit("synthesis_token", token=final)
     await run.emit("task_complete", finalOutput=final, totalCostUsd=round(run.total_cost, 8), totalTokens=run.total_tokens,
-                   **({"truncated": truncated} if truncated else {}))
+                   **({"truncated": truncated} if truncated else {}), **({"modelServed": served} if served else {}))
     return state
 
 

@@ -487,6 +487,26 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     })
   }, 60_000)
 
+  it('the model OpenRouter served reaches the events as modelServed; absent when the stream reports none', async () => {
+    const plain = await timedRun([{ id: '1.1', label: 'Look up source 1', role: 'Scout', phase: 1 }])
+    expect(plain.events.at(-1)?.type).toBe('task_complete')
+    expect(plain.events.filter((e) => 'modelServed' in e)).toEqual([])
+
+    const { events } = await timedRun([{ id: '1.1', label: 'Look up source 1', role: 'Scout', phase: 1 }], {
+      reply: (body) => {
+        const system = systemOf(body)
+        if (system.includes('Scout agent')) return { content: 'Findings for 1.1: detailed results with sources.', servedModel: 'other/scout-served' }
+        if (system.includes('strict reviewer')) return { content: '{"score": 5, "reason": "solid"}', servedModel: 'fake/reviewer-20260101' }
+        if (system.includes('synthesize')) return { content: 'Done [1.1].', servedModel: 'other/synth-served' }
+        return undefined
+      },
+    })
+    expect(events.find((e) => e.type === 'agent_complete')).toMatchObject({ modelServed: 'other/scout-served' })
+    expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ model: 'fake/reviewer', modelServed: 'fake/reviewer-20260101' })
+    expect(events.find((e) => e.type === 'task_complete')).toMatchObject({ modelServed: 'other/synth-served' })
+    expect(events.find((e) => e.type === 'orchestrator_plan')).not.toHaveProperty('modelServed')
+  }, 60_000)
+
   // ── Phase 1: dependency scheduling ─────────────────────────────────────────
 
   it('fan-out of three plus a dependent fourth: the fourth starts when its last dependency passes, not at a phase boundary', async () => {

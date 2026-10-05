@@ -593,6 +593,8 @@ export interface OrchestratorPlanEvent extends AgentEventBase {
   steps: AgentStep[]
   /** The planner never returned a usable plan; these are the sidecar's built-in steps. */
   fallback?: boolean
+  /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
+  modelServed?: string
 }
 
 export interface AgentStartEvent extends AgentEventBase, AgentAttempt {
@@ -619,6 +621,8 @@ export interface AgentCompleteEvent extends AgentEventBase, AgentAttempt {
   truncated?: OutputLimit
   /** The answer came from the forced wrap-up round (tools off) after maxToolRounds. */
   stoppedAtToolLimit?: boolean
+  /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
+  modelServed?: string
 }
 
 /** Which limit ended a generation early: the run's budget cap or the model's context window. */
@@ -652,6 +656,8 @@ export interface ReflectionResultEvent extends AgentEventBase, AgentAttempt {
   rubric?: string[]
   /** Specific problems to fix; injected into the retry. */
   issues?: string[]
+  /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
+  modelServed?: string
 }
 
 /**
@@ -753,6 +759,8 @@ export interface TaskCompleteEvent extends AgentEventBase {
   totalTokens:  number
   /** The synthesis was cut off by this limit. */
   truncated?:   OutputLimit
+  /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
+  modelServed?: string
 }
 
 export interface TaskFailedEvent extends AgentEventBase {
