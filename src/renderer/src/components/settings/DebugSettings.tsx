@@ -76,6 +76,8 @@ function kindBadgeClass(kind: SandboxViolationLogEntry['kind']): string {
   return 'text-sky-400 border-sky-900/50' // network
 }
 
+export const SESSIONS_PAGE = 25
+
 function truncateModel(modelId: string): string {
   return modelId.length > 28 ? modelId.slice(0, 28) + '…' : modelId
 }
@@ -87,6 +89,7 @@ export function DebugSettings() {
   const [sessionCount,         setSessionCount]         = useState(0)
   const [totalBytes,           setTotalBytes]           = useState(0)
   const [confirmClear,         setConfirmClear]         = useState(false)
+  const [visibleSessions,      setVisibleSessions]      = useState(SESSIONS_PAGE)
 
   const [violations,        setViolations]        = useState<SandboxViolationLogEntry[]>([])
   const [confirmClearViolations, setConfirmClearViolations] = useState(false)
@@ -208,6 +211,9 @@ export function DebugSettings() {
         />
       </div>
 
+      {/* ── Multi-agent runs: per-run call logs (observability spec §5) ── */}
+      <MultiAgentRunsPanel enabled={observabilityEnabled} onEnable={() => handleObsToggle(true)} />
+
       {/* ── Log list section ── */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -243,12 +249,13 @@ export function DebugSettings() {
               </p>
             </div>
           ) : (
-            sessions.map((entry, idx) => (
+            sessions.slice(0, visibleSessions).map((entry, idx) => (
               <div
                 key={entry.sessionId}
+                data-testid="obs-session-row"
                 onClick={() => void handleOpenSession(entry.filePath)}
                 className={`group flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-hover transition-colors duration-100 ${
-                  idx < sessions.length - 1 ? 'border-b border-surface-border/20' : ''
+                  idx < Math.min(sessions.length, visibleSessions) - 1 || sessions.length > visibleSessions ? 'border-b border-surface-border/20' : ''
                 }`}
               >
                 {/* Date / time */}
@@ -294,6 +301,14 @@ export function DebugSettings() {
               </div>
             ))
           )}
+          {sessions.length > visibleSessions && (
+            <button
+              onClick={() => setVisibleSessions((n) => n + SESSIONS_PAGE)}
+              className="w-full px-4 py-2.5 text-xs text-content-muted hover:text-content-primary hover:bg-surface-hover transition-colors duration-100"
+            >
+              Show more ({sessions.length - visibleSessions} older)
+            </button>
+          )}
         </div>
 
         {/* Clear all */}
@@ -332,9 +347,6 @@ export function DebugSettings() {
           )}
         </div>
       </div>
-
-      {/* ── Multi-agent runs: per-run call logs (observability spec §5) ── */}
-      <MultiAgentRunsPanel enabled={observabilityEnabled} onEnable={() => handleObsToggle(true)} />
 
       {/* ── Sandbox Violations section (Phase 3) ── */}
       <div>
