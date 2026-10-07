@@ -194,7 +194,7 @@ const BRAVE_SEARCH_TOOL = {
   },
 } as const;
 
-const TICKER_TOOL = {
+export const TICKER_TOOL = {
   type: "function",
   function: {
     name: "get_ticker_price",
