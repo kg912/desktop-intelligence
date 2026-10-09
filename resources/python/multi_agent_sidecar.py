@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import html
 import json
 import math
 import os
@@ -585,29 +586,37 @@ def extract_dsml(content: str) -> tuple[list[dict[str, Any]], str]:
 
 
 class DsmlTokenFilter:
-    """Streams tokens until a DSML block starts, so raw DSML never reaches the card.
-    Holds back a tail that could be the start of the marker."""
+    """Streams tokens until a DSML block or the claims block starts, so neither reaches the card
+    (the claims are reported with the reflection result). Holds back a tail that could start a marker,
+    and trailing whitespace, which is dropped before a claims block so the card text equals the prose."""
 
     def __init__(self, emit: Callable[[str], Awaitable[None]]) -> None:
         self.emit, self.pending, self.suppressed = emit, "", False
+
+    async def _send(self, text: str, keep_space: bool = False) -> str:
+        """Emit text minus its trailing whitespace (unless keep_space); return what was held back."""
+        body = text if keep_space else text.rstrip()
+        if body:
+            await self.emit(body)
+        return text[len(body):]
 
     async def __call__(self, text: str) -> None:
         if self.suppressed:
             return
         self.pending += text
         for i, ch in enumerate(self.pending):
-            if ch != "<":
+            if ch not in "<`":
                 continue
-            rest = normalise_dsml(self.pending[i:])
-            if rest.startswith(DSML_MARK) or DSML_MARK.startswith(rest):
-                head, self.pending = self.pending[:i], self.pending[i:]
-                if rest.startswith(DSML_MARK):
-                    self.suppressed, self.pending = True, ""
-                if head:
-                    await self.emit(head)
+            rest, marker = (normalise_dsml(self.pending[i:]), DSML_MARK) if ch == "<" else (self.pending[i:], CLAIMS_MARK)
+            if rest.startswith(marker):
+                self.suppressed, head, self.pending = True, self.pending[:i], ""
+                await self._send(head, keep_space=marker == DSML_MARK)
                 return
-        out, self.pending = self.pending, ""
-        await self.emit(out)
+            if marker.startswith(rest):  # could still become a marker: wait for more text
+                held = await self._send(self.pending[:i])
+                self.pending = held + self.pending[i:]
+                return
+        self.pending = await self._send(self.pending)
 
     async def flush(self) -> None:
         if self.pending and not self.suppressed:
@@ -899,6 +908,110 @@ def split_tool_name(name: str, allowed: set[str]) -> tuple[str, str]:
     return server, local
 
 
+# ── Claims contract (spec reflection hardening Phase 3) ───────────────────────
+# The worker ends its answer with a ```claims JSON array; each claim cites a tool call and a quote
+# from its result, is declared unverified, or cites an earlier agent's output as its source.
+
+CLAIMS_MARK = "```claims"
+CLAIMS_BLOCK_RE = re.compile(r"```claims[ \t]*\n?(.*?)(?:```|$)", re.S)
+QUOTE_MIN_CHARS, QUOTE_MAX_CHARS = 12, 400
+CLAIM_OK = {"verified", "unverified_declared", "source"}
+CLAIM_PROBLEM = {
+    "quote_not_found": "the quote is not in the cited tool result",
+    "call_not_found": "no tool call with that callId",
+    "call_failed": "the cited tool call failed or was denied",
+    "quote_too_short": f"the quote is under {QUOTE_MIN_CHARS} characters, which is not evidence",
+    "quote_too_long": f"the quote is over {QUOTE_MAX_CHARS} characters; quote only the supporting words",
+}
+CLAIMS_CONTRACT = (
+    "End your answer with a fenced claims block listing every factual claim, and mark each claim in the prose with its id, "
+    "e.g. [c1]. Each entry is one of: {\"id\", \"claim\", \"callId\", \"quote\"} — callId is the tool call whose result supports it "
+    "(shown as [callId: …] at the top of each successful tool result) and quote is copied exactly from that result "
+    f"({QUOTE_MIN_CHARS}–{QUOTE_MAX_CHARS} characters); {{\"id\", \"claim\", \"unverified\": true}} when no tool result supports it; "
+    "or {\"id\", \"claim\", \"source\": \"1.1\"} for something taken from an earlier agent's output. Example:\n"
+    "```claims\n[\n  {\"id\": \"c1\", \"claim\": \"ALAB Q2 2026 revenue $392.4M\", \"callId\": \"call_01a1\", \"quote\": \"record revenue of $392.4 million\"},\n"
+    "  {\"id\": \"c2\", \"claim\": \"ALAB 2-quarter 13F trend\", \"unverified\": true}\n]\n```\n"
+    "Use [] when the answer makes no factual claims."
+)
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'", "\u201c": '"', "\u201d": '"',
+                         "\u201e": '"', "\u2033": '"', "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",
+                         "\u2015": "-", "\u2212": "-"})
+
+
+def normalise_quote(text: str) -> str:
+    """Formatting only, never fuzzy: entities and HTML tags, curly quotes and dashes, markdown
+    emphasis, thousands separators inside digit runs, whitespace, case."""
+    text = re.sub(r"<[^>]{0,200}>", " ", html.unescape(text)).translate(_QUOTES)
+    text = re.sub(r"[*_`~]", "", text)
+    text = re.sub(r"(?<=\d),(?=\d)", "", text)
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def parse_claims(output: str) -> tuple[str, list[dict[str, Any]], list[str]]:
+    """(prose without the claims block, claims, parse errors). A missing or broken block is an issue to repair, never a crash."""
+    blocks = list(CLAIMS_BLOCK_RE.finditer(output))
+    if not blocks:
+        return output, [], ["No claims block: end the answer with a ```claims JSON array (use [] if it makes no factual claims)."]
+    block = blocks[-1]
+    prose = (output[:block.start()] + output[block.end():]).strip()
+    try:
+        raw = json.loads(block.group(1))
+    except ValueError as exc:
+        return prose, [], [f"The claims block is not valid JSON ({exc})."]
+    if not isinstance(raw, list):
+        return prose, [], ["The claims block must be a JSON array."]
+    claims: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, item in enumerate(raw):
+        claim_id = str(item.get("id") or f"#{index + 1}")[:20] if isinstance(item, dict) else f"#{index + 1}"
+        if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
+            errors.append(f"Claim {claim_id} needs an \"id\" and a \"claim\".")
+        elif item.get("callId") and isinstance(item.get("quote"), str):
+            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "callId": str(item["callId"]), "quote": item["quote"]})
+        elif item.get("unverified") is True:
+            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "unverified": True})
+        elif item.get("source"):
+            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "source": str(item["source"])[:20]})
+        else:
+            errors.append(f"Claim {claim_id} needs a callId and a quote, \"unverified\": true, or a \"source\".")
+    return prose, claims, errors
+
+
+def verify_claim(claim: dict[str, Any], store: dict[str, dict[str, Any]]) -> str:
+    """Deterministic check of one claim against the agent's evidence store; no model call."""
+    if claim.get("unverified"):
+        return "unverified_declared"
+    if claim.get("source"):
+        return "source"
+    call = store.get(claim["callId"])
+    if call is None:
+        return "call_not_found"
+    if not call["ok"]:
+        return "call_failed"
+    quote = normalise_quote(claim["quote"])
+    if len(quote) < QUOTE_MIN_CHARS:
+        return "quote_too_short"
+    if len(quote) > QUOTE_MAX_CHARS:
+        return "quote_too_long"
+    return "verified" if quote in normalise_quote(call["result"]) else "quote_not_found"
+
+
+def claim_problems(claims: list[dict[str, Any]], statuses: dict[str, str]) -> list[str]:
+    return [f"Claim {c['id']} (callId {c.get('callId')}): {CLAIM_PROBLEM[statuses[c['id']]]}." for c in claims if statuses[c["id"]] not in CLAIM_OK]
+
+
+def excerpt(result: str, quote: str) -> str | None:
+    """±EXCERPT_RADIUS_CHARS of the cited result around the quote, or None if it is not there."""
+    norm_result, norm_quote = normalise_quote(result), normalise_quote(quote)
+    at = norm_result.find(norm_quote) if norm_quote else -1
+    if at < 0:
+        return None
+    # ponytail: normalising shifts offsets, so the window is placed proportionally; widen the radius if quotes fall at its edge.
+    centre = round(at * len(result) / max(1, len(norm_result)))
+    start = max(0, centre - EXCERPT_RADIUS_CHARS)
+    return ("…" if start else "") + result[start:centre + len(quote) + EXCERPT_RADIUS_CHARS] + "…"
+
+
 REFUSAL = re.compile(r"^\W*(i'?m sorry|i am sorry|sorry,|i cannot|i can'?t|i am unable|i'?m unable|as an ai|i do not have access|i don'?t have access)", re.I)
 
 
@@ -951,10 +1064,13 @@ def judge_evidence_limit(run: Run, model: str) -> int:
 
 
 async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], store: dict[str, dict[str, Any]],
-                  served: dict[str, str] | None = None, info: dict[str, Any] | None = None) -> tuple[int, bool, str, list[str], str]:
+                  served: dict[str, str] | None = None, info: dict[str, Any] | None = None,
+                  claims: list[dict[str, Any]] | None = None, statuses: dict[str, str] | None = None) -> tuple[int, bool, str, list[str], str]:
     """(score, passed, reason, issues, judge model). An unusable verdict is a failure, never a pass.
     store: the agent's evidence store. served: filled with {"model": <id OpenRouter answered with>} when it
-    reported one. info: filled with evidenceMode, judgeInputChars and evidenceChars (absent for the precheck)."""
+    reported one. info: filled with evidenceMode, judgeInputChars and evidenceChars (absent for the precheck).
+    claims/statuses: the parsed claims and their mechanical check results, shown to the judge as a table."""
+    claims, statuses = claims or [], statuses or {}
     config = run.config
     model = config.models.get("reflection", "")
     failure = precheck(output)
@@ -964,16 +1080,30 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
     earlier = "\n\n".join(f"[{k}] {v}" for k, v in prior.items()) or "(this step depends on no earlier agent)"
     evidence_chars = sum(len(c["result"]) for c in store.values())
 
+    table = "\n".join(f"- {c['id']} | {c['claim']} | {statuses.get(c['id'], '?')} | "
+                      + (f"quote: {json.dumps(c['quote'], ensure_ascii=False)} | callId: {c['callId']}" if "callId" in c else
+                         f"source: {c['source']}" if "source" in c else "declared unverified")
+                      for c in claims) or "(no claims listed)"
+
     def judge_messages(mode: str) -> list[dict[str, Any]]:
-        tools = (f"Tool calls the agent made (complete results):\n{evidence_full(store)}" if mode == "full" else
-                 f"Tool calls the agent made (index; results are not shown in full):\n{evidence_index(store)}")
+        if mode == "full":
+            tools = f"Tool calls the agent made (complete results):\n{evidence_full(store)}"
+        else:
+            cuts = [f"[{c['id']}] from {c['callId']}:\n{cut}" for c in claims if "callId" in c and c["callId"] in store
+                    and (cut := excerpt(store[c["callId"]]["result"], c["quote"]))]
+            tools = (f"Tool calls the agent made (index; results are not shown in full):\n{evidence_index(store)}\n\n"
+                     f"Excerpts around each cited quote:\n" + ("\n\n".join(cuts) or "(none)"))
         return [
             {"role": "system", "content": with_date(run, "You are a strict reviewer of one agent's work in a multi-agent team. Judge the output against this rubric:\n"
                                           f"{rubric}\n\n{EVIDENCE_MODE_SENTENCE[mode]}\n\n"
+                                          "Each claim's quote was already checked mechanically against the result it cites (status column: verified = "
+                                          "the quote is in that result). Judge whether each quote actually supports its claim, and whether the prose makes "
+                                          "significant assertions with no [cN] marker; an unmarked numeric assertion counts as an unbacked claim. "
                                           "Score 1 (useless) to 5 (excellent). A claim with no tool evidence that is not marked as unverified is an issue. "
                                           "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}")},
             {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask ({step['id']}): {step['label']}\n\n"
-                                        f"{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}"},
+                                        f"{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}\n\n"
+                                        f"Claims (id | claim | check status | evidence):\n{table}"},
         ]
 
     mode = "full" if estimate_tokens(evidence_full(store)) <= judge_evidence_limit(run, model) else "excerpts"
@@ -1024,7 +1154,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": with_date(run, f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
                                           f"{tools_line} Never claim to have executed anything you did not. "
-                                          "Mark any claim you could not verify with a tool as unverified.")},
+                                          "Mark any claim you could not verify with a tool as unverified.\n\n" + CLAIMS_CONTRACT)},
             {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}{feedback}"},
         ]
 
@@ -1124,7 +1254,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                    durationMs=int((time.monotonic() - began) * 1000),
                                    resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
                     store[call_id] = {"name": name, "args": raw_args, "ok": ok, "attempt": attempt, "result": store_result(content)}
-                    messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": content})
+                    # A result that can back a claim carries its id in the text, so the worker can cite it.
+                    messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": f"[callId: {call_id}]\n{content}" if ok else content})
                 _round += 1
         except BudgetReached:
             if not output:
@@ -1139,6 +1270,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             raise AgentFailed(last_reason)
         if not output:
             raise AgentFailed("no final answer (empty or only tool-call text, after one re-ask)")
+        output, claims, parse_errors = parse_claims(output)
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
                        **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
                        **({"modelServed": served} if served else {}))
@@ -1146,15 +1278,26 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         if run.budget_reached:
             return output  # no reflection spend once the cap is reached; output kept as-is
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
-        try:
-            judge_served: dict[str, str] = {}
-            judge_info: dict[str, Any] = {}
-            score, passed, reason, issues, judge = await reflect(run, step, output, prior, store, judge_served, judge_info)
-        except BudgetReached:
-            return output
+        # Gate order: (a) precheck, (b) claims parse + mechanical quote check, (c) judge. A mechanical
+        # failure goes straight to a repair turn with no judge spend, except on the last allowed attempt.
+        statuses = {c["id"]: verify_claim(c, store) for c in claims}
+        mechanical = [] if precheck(output) else parse_errors + claim_problems(claims, statuses)
+        judge_served: dict[str, str] = {}
+        judge_info: dict[str, Any] = {}
+        if mechanical and attempt < config.maxRetriesPerAgent:
+            score, passed, reason, issues, judge = 1, False, f"Claims check: {len(mechanical)} problem(s)", mechanical, "claims check"
+        else:
+            try:
+                score, passed, reason, issues, judge = await reflect(run, step, output, prior, store, judge_served, judge_info, claims, statuses)
+            except BudgetReached:
+                return output
+            if mechanical:  # last attempt: judged for a score, but it cannot pass with failing claims
+                passed, reason, issues = False, f"{len(mechanical)} claim problem(s); reviewer: {reason}", (mechanical + issues)[:12]
         await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
                        issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}),
-                       **{k: judge_info[k] for k in ("evidenceMode", "judgeInputChars") if k in judge_info})
+                       **{k: judge_info[k] for k in ("evidenceMode", "judgeInputChars") if k in judge_info},
+                       claimsChecked=sum(1 for c in claims if "callId" in c), claimsFailed=sum(1 for s in statuses.values() if s not in CLAIM_OK),
+                       claimStatuses=statuses)
         if passed:
             return output
         last_reason = f"score {score}/5: {reason}" if score else reason

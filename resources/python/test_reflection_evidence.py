@@ -11,6 +11,7 @@ BIG = ("filler " * 3000)[:15_000] + NEEDLE + ("tail " * 2000)[: 20_000 - 15_000 
 assert len(BIG) == 20_000 and BIG.index(NEEDLE) == 15_000
 ANSWER = "The file contains the release marker near its end; everything else in it is filler text."
 CALL = {"tool_calls": [{"id": "call_big", "type": "function", "function": {"name": "fs__read_file", "arguments": '{"path": "/big.txt"}'}}]}
+NO_CLAIMS = "\n\n```claims\n[]\n```"
 TOOLS = [{"name": "fs__read_file", "description": "", "parameters": {"type": "object"}}]
 
 
@@ -35,7 +36,7 @@ class FakeOpenRouter:
         body = json.loads(json.dumps({"model": model, "messages": messages, "tools": tools}))
         role = role_of(body)
         self.requests.append((role, body))
-        reply = dict(self.route(role, body))
+        reply = json.loads(json.dumps(self.route(role, body)))  # fresh objects, like a real response
         if reply.get("content"):
             on_delta("content", reply["content"])
         return {"role": "assistant", "content": reply.get("content", ""), **({"tool_calls": reply["tool_calls"]} if reply.get("tool_calls") else {}),
@@ -69,7 +70,7 @@ def run_one_step(route, tool_result=lambda n: BIG, retries=2, request=None, obse
 
 def worker_reply(body):
     """Tool call until a tool result is in this attempt's history, then the answer."""
-    return {"content": ANSWER} if any(m["role"] == "tool" for m in body["messages"]) else CALL
+    return {"content": ANSWER + NO_CLAIMS} if any(m["role"] == "tool" for m in body["messages"]) else CALL
 
 
 def verdicts(*scores):

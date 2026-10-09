@@ -6,6 +6,7 @@ import multi_agent_sidecar as s
 
 TOOLS = [{"name": "fs__read_file", "description": "", "parameters": {"type": "object"}}]
 ANSWER = "Findings: the notes say the meeting moved to Thursday at 10."
+NO_CLAIMS = "\n\n```claims\n[]\n```"
 CALL = {"tool_calls": [{"id": "c", "function": {"name": "fs__read_file", "arguments": "{}"}}], "content": ""}
 
 
@@ -27,7 +28,9 @@ def worker(run, replies):
 
     async def ask(_run, _model, messages, *, tools=None, **_k):
         calls.append({"messages": [dict(m) for m in messages], "tools": tools})
-        return replies(len(calls) - 1, tools), 1, 0.0
+        reply = replies(len(calls) - 1, tools)
+        # Phase 3 claims contract: the answer ends with a claims block, removed from the output.
+        return ({**reply, "content": ANSWER + NO_CLAIMS} if reply.get("content") == ANSWER else reply), 1, 0.0
 
     async def reflect(*_a):
         return 5, True, "ok", [], "judge"

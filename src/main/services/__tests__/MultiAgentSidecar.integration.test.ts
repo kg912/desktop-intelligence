@@ -88,6 +88,16 @@ interface FakeOpenRouter {
 const PROMPT_TOKENS = 100
 const COMPLETION_TOKENS = 50
 
+/** Claims contract (reflection hardening Phase 3): a worker's final answer ends with a ```claims block.
+ *  The scripted answers here make no quoted claims, so the fake ends each with an empty one — the
+ *  sidecar removes it from the output and the card, so the answers the tests see are unchanged. */
+const NO_CLAIMS = '\n\n```claims\n[]\n```'
+function withClaims(body: Body, reply: Reply): Reply {
+  const worker = (body.messages[0]?.content ?? '').includes('agent in a multi-agent team')
+  const final = !reply.toolCalls && !!reply.content?.trim() && !reply.content.includes('```claims') && !/DSML/.test(reply.content)
+  return worker && final ? { ...reply, content: reply.content + NO_CLAIMS } : reply
+}
+
 function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRouter> {
   const fake = { requests: [] as FakeOpenRouter['requests'], pricing: {} as FakeOpenRouter['pricing'] }
   const server: Server = createServer((req: IncomingMessage, res) => {
@@ -97,7 +107,7 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
       const body = JSON.parse(raw) as Body
       const record = { body, auth: req.headers.authorization, start: Date.now(), end: 0 }
       fake.requests.push(record)
-      const reply = route(body)
+      const reply = withClaims(body, route(body))
       Object.assign(record, { reply })
       if (reply.httpError) {
         record.end = Date.now()
@@ -809,12 +819,13 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(permissions).toHaveLength(1)
     expect(permissions[0]).toMatchObject({ serverName: 'builtin', toolName: 'brave_web_search', agent: { agentId: '1.1', role: 'Scout', model: 'fake/worker' } })
     expect(search).toHaveBeenCalledWith('brave_web_search', { query: 'hotels near Neuschwanstein' })
-    // Sanitised like single chat: no EOS tokens reach the model or the trace.
+    // Sanitised like single chat: no EOS tokens reach the model or the trace. Since the claims contract
+    // (reflection hardening Phase 3) the model's copy is headed by the call id, so the worker can cite it.
+    const start = sent.find((e) => e.type === 'tool_start') as Extract<AgentEvent, { type: 'tool_start' }>
     const toolMessage = workerPrompts[1].body.messages.find((m) => m.role === 'tool')
-    expect(toolMessage?.content).toBe('Hotel Müller — 300 m from the castle')
+    expect(toolMessage?.content).toBe(`[callId: ${start.callId}]\nHotel Müller — 300 m from the castle`)
     expect(sent.find((e) => e.type === 'tool_done')).toMatchObject({ ok: true, resultPreview: 'Hotel Müller — 300 m from the castle', resultChars: 36 })
     // The card row: the renderer pairs tool_done with tool_start by callId and attempt (MultiAgentUI.test renders it).
-    const start = sent.find((e) => e.type === 'tool_start') as Extract<AgentEvent, { type: 'tool_start' }>
     expect(sent.find((e) => e.type === 'tool_done')).toMatchObject({ callId: start.callId, attempt: start.attempt, agentId: '1.1' })
   }
 

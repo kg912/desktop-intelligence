@@ -20,7 +20,7 @@ def request(**extra):
 
 if __name__ == "__main__":
     calls = []
-    replies = {"planner": PLAN, "worker": ANSWER, "reflection": '{"score": 5, "reason": "ok", "issues": []}', "synthesis": ANSWER}
+    replies = {"planner": PLAN, "worker": ANSWER + "\n\n```claims\n[]\n```", "reflection": '{"score": 5, "reason": "ok", "issues": []}', "synthesis": ANSWER}
 
     async def ask(_run, _model, messages, *, obs=None, synthesis=False, **_k):
         role = "synthesis" if synthesis else (obs or {}).get("role")
