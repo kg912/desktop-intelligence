@@ -101,7 +101,7 @@ export function MultiAgentSettingsPanel() {
       <Field label="Reflection pass threshold" value={config.reflectionPassThreshold}>
         <RangeSlider aria-label="Reflection pass threshold" value={config.reflectionPassThreshold} min={1} max={5} onChange={(v) => update('reflectionPassThreshold', v)} />
       </Field>
-      <Field label="Max retries per agent" value={config.maxRetriesPerAgent}>
+      <Field label="Max retries per agent" value={config.maxRetriesPerAgent} help="A retry continues the agent's conversation with the reviewer's feedback; it does not start over.">
         <RangeSlider aria-label="Max retries per agent" value={config.maxRetriesPerAgent} min={0} max={5} onChange={(v) => update('maxRetriesPerAgent', v)} />
       </Field>
       <Field label="Approval timeout (minutes)" htmlFor="ma-timeout" help="Unanswered tool approvals are auto-denied after this.">

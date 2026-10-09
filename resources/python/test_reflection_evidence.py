@@ -40,6 +40,7 @@ class FakeOpenRouter:
         if reply.get("content"):
             on_delta("content", reply["content"])
         return {"role": "assistant", "content": reply.get("content", ""), **({"tool_calls": reply["tool_calls"]} if reply.get("tool_calls") else {}),
+                **({"looped": reply["looped"]} if reply.get("looped") else {}),
                 "finish_reason": "tool_calls" if reply.get("tool_calls") else "stop"}, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "cost": 0}
 
     def of(self, role):
@@ -125,7 +126,8 @@ if __name__ == "__main__":
     assert len(failed) == 1 and failed[0]["reason"].startswith("reflection retry limit exceeded"), failed
     assert run.events[-1]["type"] == "task_failed" and not fake.of("synthesis")
 
-    # 3. A retry starts from nothing: attempt 1's first request has none of attempt 0's tool results. // flips in Phase 4
+    # 3. Phase 0 pinned that a retry started from nothing. Phase 4 flipped it: attempt 1 continues the
+    # conversation — attempt 0's tool results and answer are kept and the verdict is a new user turn.
     judge = verdicts(2, 5)
     run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
                              tool_result=lambda n: f"RESULT-{n} " + "x" * 100)
@@ -133,9 +135,12 @@ if __name__ == "__main__":
     first_judge = order.index("judge")
     attempt0 = [b for r, b in fake.requests[:first_judge] if r == "worker"]
     attempt1_first = next(b for r, b in fake.requests[first_judge:] if r == "worker")
-    assert "RESULT-1" in json.dumps(attempt0[-1])
-    assert "RESULT-1" not in json.dumps(attempt1_first) and ANSWER not in json.dumps(attempt1_first)
-    assert not any(m["role"] == "tool" for m in attempt1_first["messages"])
+    assert attempt1_first["messages"][:len(attempt0[-1]["messages"])] == attempt0[-1]["messages"]
+    assert attempt1_first["messages"][-2] == {"role": "assistant", "content": ANSWER + NO_CLAIMS}
+    assert attempt1_first["messages"][-1] == {"role": "user", "content": s.repair_turn(2, "unsupported figures", ["Back the figures"])}
+    assert attempt1_first["messages"][-1]["content"].startswith("Reviewer verdict: score 2/5 — unsupported figures\nFix these, keeping everything that was fine:\n- Back the figures\n")
+    assert len(fake.of("worker")) == 3 and [e["attempt"] for e in events(run, "tool_start")] == [0]  # no research repeated
+
     # Phase 1: servers Electron left out of the worker tools are echoed in run_config (the trace).
     excluded = [{"server": "memory", "reason": "sandbox bypassed"}]
     run, _ = run_one_step(lambda role, body: {"content": json.dumps({"score": 5, "reason": "ok", "issues": []})} if role == "judge" else worker_reply(body)

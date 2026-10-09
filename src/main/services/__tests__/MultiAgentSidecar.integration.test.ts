@@ -158,6 +158,9 @@ function startFakeOpenRouter(route: (body: Body) => Reply): Promise<FakeOpenRout
 
 const systemOf = (body: Body): string => body.messages[0]?.content ?? ''
 const userOf = (body: Body): string => body.messages.find((m) => m.role === 'user')?.content ?? ''
+/** Every user turn: since reflection hardening Phase 4 a retry continues the conversation, its verdict or nudge a later turn. */
+const usersOf = (body: Body): string => body.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+const lastUserOf = (body: Body): string => body.messages.filter((m) => m.role === 'user').at(-1)?.content ?? ''
 
 /** Default scenario: Researcher uses a tool, Analyzer is rejected once, synthesis cites both. */
 let planOverride: ((body: Body, attempt: number) => Reply) | null = null
@@ -191,7 +194,7 @@ function scenario(body: Body): Reply {
     }
   }
   if (system.includes('Analyzer agent')) {
-    return { content: userOf(body).includes('rejected') ? 'Analysis v2 — thorough, covering second-order effects.' : 'Analysis v1 — only the first-order effects.' }
+    return { content: usersOf(body).includes('Reviewer verdict') ? 'Analysis v2 — thorough, covering second-order effects.' : 'Analysis v1 — only the first-order effects.' }
   }
   return { content: 'ok' }
 }
@@ -685,9 +688,11 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
           : undefined,
     })
     expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ passed: false, issues: ['Verify the bus timetable'] })
-    const retryRequest = fake.requests.filter((r) => systemOf(r.body).includes('Scout agent')).find((r) => userOf(r.body).includes('rejected by the reviewer'))!
-    expect(userOf(retryRequest.body)).toContain('Verify the bus timetable')
-    expect(events.filter((e) => e.type === 'tool_start').map((e) => (e as { attempt: number }).attempt)).toEqual([0, 0, 1, 1])
+    // Reflection hardening Phase 4: the retry continues the conversation — the verdict is its last user turn, and the
+    // tool results are already in history, so no tool call is repeated (was [0, 0, 1, 1] when a retry restarted).
+    const retryRequest = fake.requests.filter((r) => systemOf(r.body).includes('Scout agent')).find((r) => lastUserOf(r.body).startsWith('Reviewer verdict'))!
+    expect(lastUserOf(retryRequest.body)).toContain('Verify the bus timetable')
+    expect(events.filter((e) => e.type === 'tool_start').map((e) => (e as { attempt: number }).attempt)).toEqual([0, 0])
     expect(events.at(-1)?.type).toBe('task_complete')
   }, 60_000)
 
@@ -716,7 +721,7 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
 
   const SKELETON = 'I hope this helps! Final Answer: Your final answer here\n'
   const scoutAnswer = (body: Body): boolean => systemOf(body).includes('Scout agent') && body.messages.some((m) => m.role === 'tool')
-  const scoutAttempt = (body: Body): number => (userOf(body).includes('stuck repeating') ? 1 : 0)
+  const scoutAttempt = (body: Body): number => (usersOf(body).includes('stuck repeating') ? 1 : 0)
 
   it('a content loop aborts the request, fails that attempt as "repetition loop", and the retry answers', async () => {
     const events = await tracedRun({
@@ -729,7 +734,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(attempt0.length).toBeLessThan(('Trains run hourly.\n' + SKELETON.repeat(400)).length)
     // The looping attempt is never reviewed or completed; the retry is.
     expect(events.filter((e) => e.type === 'agent_complete').map((e) => (e as { attempt: number }).attempt)).toEqual([1])
-    expect(events.filter((e) => e.type === 'tool_start').map((e) => (e as { attempt: number }).attempt)).toEqual([0, 0, 1, 1])
+    // Phase 4: the nudge is a new turn after the kept tool results, so none is repeated (was [0, 0, 1, 1]).
+    expect(events.filter((e) => e.type === 'tool_start').map((e) => (e as { attempt: number }).attempt)).toEqual([0, 0])
     expect(events.at(-1)?.type).toBe('task_complete')
   }, 60_000)
 
@@ -1171,7 +1177,7 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
   }, 90_000)
 
   it('Phase 3: forced repetition loop and a denied tool are anomalies', async () => {
-    replyOverride = (body) => (systemOf(body).includes('Analyzer agent') && !userOf(body).includes('stuck') ? { content: 'Start.\n' + 'Final Answer: Your final answer here\n'.repeat(50) } : undefined)
+    replyOverride = (body) => (systemOf(body).includes('Analyzer agent') && !usersOf(body).includes('stuck') ? { content: 'Start.\n' + 'Final Answer: Your final answer here\n'.repeat(50) } : undefined)
     try {
       const { runMd, root } = await loggedRun({ denyTools: true })
       const anomalies = anomaliesOf(runMd)

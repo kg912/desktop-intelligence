@@ -21,6 +21,7 @@ const KNOWN_TYPES = new Set<string>([
   'reflection_start',
   'reflection_result',
   'retry',
+  'context_compacted',
   'hitl_pause',
   'hitl_resume',
   'synthesis_start',
@@ -122,6 +123,9 @@ function validateVariant(obj: Record<string, unknown>): string | null {
         ['attempt',  'number'],
         ['reason',   'string'],
       ])
+
+    case 'context_compacted':
+      return checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['stubbed', 'number'], ['tokensFreed', 'number']])
 
     case 'hitl_pause': {
       const err = checkFields(obj, [

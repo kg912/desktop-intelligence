@@ -1131,6 +1131,50 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
     return 0, False, "gate unavailable", ["The reviewer did not return a usable verdict twice in a row"], model
 
 
+LOOP_NUDGE = ("Your previous reply got stuck repeating the same text and was stopped. "
+              "Answer once, concisely, without repeating yourself.")
+
+
+def repair_turn(score: int, reason: str, issues: list[str]) -> str:
+    """The verdict as a new user turn: the worker keeps its tool results and fixes only what is flagged."""
+    fixes = "".join(f"\n- {issue}" for issue in issues) or "\n- (no specific issues given)"
+    return (f"Reviewer verdict: score {score}/5 — {reason}\nFix these, keeping everything that was fine:{fixes}\n"
+            "You already have your tool results above. Re-check only what is flagged; do not repeat research you have already done. "
+            "Reply with the full corrected answer and claims block.")
+
+
+def compact_to_fit(run: Run, model: str, messages: list[dict[str, Any]], store: dict[str, dict[str, Any]],
+                   compacted: set[int]) -> tuple[int, int] | None:
+    """Only when the next request would not fit the model's context window (plan_request's test:
+    1.25 × estimated prompt tokens plus a minimal reply), stub the oldest tool results one at a time
+    until it does. The evidence store keeps every result, so quote checks and the judge lose nothing.
+    Returns (results stubbed, tokens freed), or None when nothing was touched. Unknown window: never."""
+    p = run.price(model)
+    window = p.contextLength if p else 0
+
+    def size() -> int:
+        return estimate_tokens(json.dumps(messages))
+
+    def fits() -> bool:
+        return math.ceil(size() * 1.25) + MIN_REQUEST_TOKENS <= window
+
+    if not window or fits():
+        return None
+    before, stubbed = size(), 0
+    for index, message in enumerate(messages):
+        if message.get("role") != "tool" or index in compacted:
+            continue
+        call = store.get(str(message.get("tool_call_id")))
+        full = call["result"] if call else str(message.get("content") or "")
+        label = f"{message.get('tool_call_id')} {call['name']} {preview(call['args'], 200)}" if call else str(message.get("tool_call_id"))
+        message["content"] = f"[{label}: result compacted, {len(full)} chars, first 300 chars: {full[:300]}]"
+        compacted.add(index)
+        stubbed += 1
+        if fits():
+            return stubbed, before - size()
+    raise ContextExceeded(f"Context window exceeded for {model}: the request does not fit even with every tool result compacted")
+
+
 async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> str:
     config = run.config
     agent_id, role, model = step["id"], step["role"], step["model"]
@@ -1144,19 +1188,21 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     context = ""
     if prior:
         context = "\n\nResults from the steps this one depends on (cite them by marker if you rely on them):\n" + "\n\n".join(f"[{k}] {v}" for k, v in prior.items())
-    feedback = ""
     last_reason = ""
     # Say exactly what is available, so the agent never guesses at tools it does not have.
     tools_line = (f"Your tools: {', '.join(sorted(allowed_tools))}. Call them by these exact names, only when you need evidence."
                   if allowed_tools else "You have no tools in this run. Do not attempt tool calls; work from what you know.")
+    # One conversation for every attempt: a repair continues it with the verdict as a new turn,
+    # so tool results and the last answer are kept (Phase 4).
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": with_date(run, f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
+                                      f"{tools_line} Never claim to have executed anything you did not. "
+                                      "Mark any claim you could not verify with a tool as unverified.\n\n" + CLAIMS_CONTRACT)},
+        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}"},
+    ]
+    compacted: set[int] = set()  # indices of tool messages already replaced by a stub
     for attempt in range(config.maxRetriesPerAgent + 1):
         run.attempts[agent_id] = attempt
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": with_date(run, f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
-                                          f"{tools_line} Never claim to have executed anything you did not. "
-                                          "Mark any claim you could not verify with a tool as unverified.\n\n" + CLAIMS_CONTRACT)},
-            {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}{feedback}"},
-        ]
 
         async def on_token(text: str, attempt: int = attempt) -> None:
             await run.emit("agent_token", agentId=agent_id, attempt=attempt, token=text)
@@ -1177,6 +1223,9 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 last_round = limit is not None and _round >= limit - 1
                 if last_round and messages[-1].get("content") not in (TOOL_BUDGET_USED, NO_ANSWER_NUDGE):
                     messages.append({"role": "user", "content": TOOL_BUDGET_USED})
+                freed = compact_to_fit(run, model, messages, store, compacted)
+                if freed:
+                    await run.emit("context_compacted", agentId=agent_id, attempt=attempt, stubbed=freed[0], tokensFreed=freed[1])
                 stream = DsmlTokenFilter(on_token)
                 reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
                                                 on_token=stream, on_reasoning=on_reasoning, loop_guard=True,
@@ -1264,12 +1313,13 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             last_reason = "repetition loop"
             if attempt < config.maxRetriesPerAgent and not run.budget_reached:
                 await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=last_reason)
-                feedback = ("\n\nYour previous attempt got stuck repeating the same text and was stopped. "
-                            "Answer once, concisely, without repeating yourself.")
+                # The looped reply is never kept; the nudge is a new turn in the same conversation.
+                messages.append({"role": "user", "content": LOOP_NUDGE})
                 continue
             raise AgentFailed(last_reason)
         if not output:
             raise AgentFailed("no final answer (empty or only tool-call text, after one re-ask)")
+        answer = output  # as written, claims block included: the conversation's last assistant turn on a repair
         output, claims, parse_errors = parse_claims(output)
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
                        **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
@@ -1303,9 +1353,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         last_reason = f"score {score}/5: {reason}" if score else reason
         if attempt < config.maxRetriesPerAgent:
             await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=reason)
-            fixes = "".join(f"\n- {issue}" for issue in issues)
-            feedback = (f"\n\nYour previous attempt was rejected by the reviewer ({last_reason})."
-                        + (f" Issues to fix:{fixes}" if fixes else "") + "\nAddress that and try again.")
+            messages += [{"role": "assistant", "content": answer}, {"role": "user", "content": repair_turn(score, reason, issues)}]
     raise AgentFailed(f"reflection retry limit exceeded ({last_reason})")
 
 

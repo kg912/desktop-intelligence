@@ -722,6 +722,17 @@ export interface RetryEvent extends AgentEventBase {
   reason:  string
 }
 
+/** The worker's history would not fit the model's context window: the oldest tool results were
+ *  replaced by stubs, just enough to fit (the evidence store keeps them in full). */
+export interface ContextCompactedEvent extends AgentEventBase {
+  type:        'context_compacted'
+  agentId:     string
+  attempt:     number
+  /** Tool results replaced by a stub in this event. */
+  stubbed:     number
+  tokensFreed: number
+}
+
 export interface HitlPauseEvent extends AgentEventBase, AgentAttempt {
   type:       'hitl_pause'
   agentId:    string
@@ -784,6 +795,7 @@ export type AgentEvent =
   | ReflectionStartEvent
   | ReflectionResultEvent
   | RetryEvent
+  | ContextCompactedEvent
   | HitlPauseEvent
   | HitlResumeEvent
   | SynthesisStartEvent

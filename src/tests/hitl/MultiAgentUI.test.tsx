@@ -631,6 +631,18 @@ describe('Output limits (Part F)', () => {
     render(<MultiAgentSettingsPanel />)
     expect(await screen.findByText("Output length is limited only by this budget and the model's context window.")).toBeTruthy()
   })
+
+  it('the retries setting says a retry continues the conversation (reflection hardening Phase 4)', async () => {
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({ models: [], error: null }),
+      getBackendSettings: vi.fn().mockResolvedValue({ provider: 'openrouter', openrouterModel: 'x/y' }),
+    }
+    render(<MultiAgentSettingsPanel />)
+    expect(await screen.findByText("A retry continues the agent's conversation with the reviewer's feedback; it does not start over.")).toBeTruthy()
+    expect(screen.getByLabelText('Max retries per agent')).toBeTruthy()
+  })
 })
 
 describe('run history in the dock header', () => {
