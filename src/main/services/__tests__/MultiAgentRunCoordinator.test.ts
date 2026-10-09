@@ -350,3 +350,17 @@ describe('MultiAgentRunCoordinator start returns the run list', () => {
     expect(result).toMatchObject({ ok: true, runId: 'run-1', runIds: ['run-0', 'run-1'] })
   })
 })
+
+// Reflection hardening Phase 0 (diagnosis 5): the coordinator offers workers every running
+// MCP schema, including servers the multi-agent guard will always reject.
+describe('MultiAgentRunCoordinator worker tools', () => {
+  // flips in Phase 1
+  it('offers a bypassed and an unreviewed stdio server to workers', async () => {
+    const h = setup()
+    const schema = (name: string) => ({ type: 'function' as const, function: { name, description: '', parameters: { type: 'object' as const, properties: {}, required: [] as string[] } } })
+    h.mcp.getToolSchemas.mockReturnValue([schema('fs__read'), schema('raw__x'), schema('unreviewed__x')])
+    await h.coordinator.start({ chatId: 'c', task: 't', config: config() })
+    const tools = (h.sidecar.startRun.mock.calls[0][0] as unknown as { tools: Array<{ name: string }> }).tools
+    expect(tools.map((t) => t.name)).toEqual(['fs__read', 'raw__x', 'unreviewed__x'])
+  })
+})

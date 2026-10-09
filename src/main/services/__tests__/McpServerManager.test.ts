@@ -914,3 +914,27 @@ describe('McpServerManager multi-agent tool proxy (spec §07 HITL expansion)', (
     sdkMocks.callTool.mockResolvedValue({ isError: false, content: [{ type: 'text', text: 'ok' }] })
   })
 })
+
+// Reflection hardening Phase 0 (specs/multi-agent-reflection-hardening.md, diagnosis 5):
+// tools a worker can never call are still offered.
+describe('multi-agent callable servers', () => {
+  const ctx = { chatId: 'c', runId: 'r', agentId: '1.1', role: 'Scout', model: 'm', requirePermissions: false, hitlTimeoutMs: 1_000 }
+  const schema = (name: string) => ({ type: 'function' as const, function: { name, description: '', parameters: { type: 'object' as const, properties: {}, required: [] } } })
+  /** A running server as McpServerManager holds it (a no-profile stdio server cannot start, so it is seeded). */
+  function seed(mgr: McpServerManager, name: string, config: McpServerSettings[string]): void {
+    ;(mgr as any).servers.set(name, {
+      name, config, client: { callTool: sdkMocks.callTool }, status: 'running', tools: ['x'], schemas: [schema(`${name}__x`)], error: undefined, requiresApproval: false,
+    })
+  }
+
+  // flips in Phase 1
+  it('a bypassed and an unreviewed stdio server are offered in getToolSchemas(), and the multi-agent guard rejects both', async () => {
+    const mgr = newMgr()
+    seed(mgr, 'raw', { command: 'node', enabled: true, sandboxProfile: { ...REVIEWED, bypassSandbox: true } })
+    seed(mgr, 'unreviewed', { command: 'node', enabled: true })
+    expect(mgr.getToolSchemas().map((s) => s.function.name)).toEqual(['raw__x', 'unreviewed__x'])
+    await expect(mgr.callToolForMultiAgent('raw', 'x', {}, ctx)).rejects.toThrow(/no active SandboxService profile/)
+    await expect(mgr.callToolForMultiAgent('unreviewed', 'x', {}, ctx)).rejects.toThrow(/no active SandboxService profile/)
+    expect(sdkMocks.callTool).not.toHaveBeenCalled()
+  })
+})
