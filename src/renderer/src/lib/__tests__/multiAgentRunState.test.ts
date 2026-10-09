@@ -214,3 +214,62 @@ describe('served models (top bar "served" tag)', () => {
     expect(servedDiffers('w', undefined)).toBe(false)
   })
 })
+
+describe('reflection hardening events (Phase 7)', () => {
+  const start = (): AgentEvent[] => [
+    ev({ type: 'orchestrator_plan', steps }),
+    ev({ type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'w', attempt: 0 }),
+  ]
+
+  it('reflection_result keeps evidence mode, judge input size and the claim check figures on the gate', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [...start(),
+      ev({ type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'A [c1]', tokenCount: 1, costUsd: 0 }),
+      ev({ type: 'reflection_result', agentId: '1.1', attempt: 0, score: 4, passed: true, reason: 'ok', model: 'judge',
+        evidenceMode: 'excerpts', judgeInputChars: 9_100, claimsChecked: 2, claimsFailed: 0, claimStatuses: { c1: 'verified', c2: 'unverified_declared' } }),
+    ])
+    expect(v.agents['1.1'].reflections).toEqual([{
+      attempt: 1, score: 4, passed: true, reason: 'ok', model: 'judge', evidenceMode: 'excerpts', judgeInputChars: 9_100,
+      claimsChecked: 2, claimsFailed: 0, claimStatuses: { c1: 'verified', c2: 'unverified_declared' },
+    }])
+  })
+
+  it('agent_degraded: the step is done with caveats, and its answer is the chosen attempt, not the last one', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [...start(),
+      ev({ type: 'agent_token', agentId: '1.1', attempt: 0, token: 'Best answer' }),
+      ev({ type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'Best answer', tokenCount: 1, costUsd: 0 }),
+      ev({ type: 'reflection_result', agentId: '1.1', attempt: 0, score: 3, passed: false, reason: 'meh', model: 'judge' }),
+      ev({ type: 'retry', agentId: '1.1', attempt: 1, reason: 'meh' }),
+      ev({ type: 'agent_token', agentId: '1.1', attempt: 1, token: 'Worse answer' }),
+      ev({ type: 'agent_complete', agentId: '1.1', attempt: 1, output: 'Worse answer', tokenCount: 2, costUsd: 0 }),
+      ev({ type: 'reflection_result', agentId: '1.1', attempt: 1, score: 2, passed: false, reason: 'worse', model: 'judge' }),
+      ev({ type: 'agent_degraded', agentId: '1.1', attempt: 0, score: 3, issues: ['Back the figure'], claimStatuses: { c1: 'quote_not_found' }, reason: 'reflection retry limit exceeded (score 2/5: worse)' }),
+    ])
+    const agent = v.agents['1.1']
+    expect(agent.status).toBe('done')
+    expect(agent.output).toBe('Best answer')
+    expect(agent.degraded).toEqual({ attempt: 0, score: 3, issues: ['Back the figure'], claimStatuses: { c1: 'quote_not_found' }, reason: 'reflection retry limit exceeded (score 2/5: worse)' })
+    expect(agent.failure).toBeUndefined()
+  })
+
+  it('agent_degraded unreviewed is kept as such', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [...start(),
+      ev({ type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'A', tokenCount: 1, costUsd: 0 }),
+      ev({ type: 'reflection_result', agentId: '1.1', attempt: 0, score: 0, passed: false, reason: 'gate unavailable', model: 'judge' }),
+      ev({ type: 'agent_degraded', agentId: '1.1', attempt: 0, score: 0, issues: [], claimStatuses: {}, reason: 'gate unavailable', unreviewed: true }),
+    ])
+    expect(v.agents['1.1']).toMatchObject({ status: 'done', output: 'A', degraded: { attempt: 0, score: 0, unreviewed: true } })
+  })
+
+  it('context_compacted adds up per agent', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [...start(),
+      ev({ type: 'context_compacted', agentId: '1.1', attempt: 0, stubbed: 2, tokensFreed: 5_000 }),
+      ev({ type: 'context_compacted', agentId: '1.1', attempt: 1, stubbed: 1, tokensFreed: 800 }),
+    ])
+    expect(v.agents['1.1'].compacted).toEqual({ events: 2, stubbed: 3, tokensFreed: 5_800 })
+    expect(v.agents['1.2'].compacted).toBeUndefined()
+  })
+})

@@ -7,7 +7,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { ChevronDown, ChevronLeft, ChevronRight, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import type { AgentStatus, AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
+import type { AgentStatus, AgentView, ReflectionView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
@@ -20,6 +20,8 @@ export type Dot = 'ok' | 'run' | 'wait' | 'fail' | 'idle'
 export const DOT: Record<AgentStatus, Dot> = {
   queued: 'idle', running: 'run', reflecting: 'run', retrying: 'run', paused: 'wait', done: 'ok', failed: 'fail', cancelled: 'fail',
 }
+/** A step accepted with caveats shows the amber (paused) state, never the failed one. */
+export const dotOf = (agent: AgentView): Dot => (agent.degraded ? 'wait' : DOT[agent.status])
 export const isWorking = (s: AgentStatus): boolean => s === 'running' || s === 'reflecting' || s === 'retrying' || s === 'paused'
 
 /** "deepseek/deepseek-v4.1-flash" → "deepseek-v4.1-flash" */
@@ -136,7 +138,7 @@ export function MultiAgentSidebarView(props: Props) {
                   focusAgentId === step.id && 'bg-ma-bg3 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-sm before:bg-ma-red'
                 )}
               >
-                <span className="ma-dot mt-1.5" data-s={DOT[agent.status]} />
+                <span className="ma-dot mt-1.5" data-s={dotOf(agent)} />
                 <span className="min-w-0">
                   <span className={cn('block text-[13px] leading-snug', agent.status === 'queued' && 'text-ma-mute')}>{step.label}</span>
                   {agent.status === 'queued' && waitingOn.length > 0 ? (
@@ -249,7 +251,7 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
       <div className="relative ml-[26px]">
         {agents.map((a) => {
           const started = a.startedAt
-          const state = started ? (a.status === 'done' ? 'ok' : DOT[a.status] === 'idle' ? 'q' : DOT[a.status]) : 'q'
+          const state = started ? (a.status === 'done' ? dotOf(a) : DOT[a.status] === 'idle' ? 'q' : DOT[a.status]) : 'q'
           if (!started && !live) return null
           const left = started ? pos(started) : pos(end)
           const right = started ? pos(a.endedAt ?? end) : 100
@@ -370,7 +372,9 @@ function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, f
 function stateTag(agent: AgentView, maxRetries: number, hasRequest: boolean): { label: string; tone: 'ok' | 'run' | 'wait' | 'fail' | 'idle' } {
   const lastGate = agent.reflections.at(-1)
   switch (agent.status) {
-    case 'done': return { label: lastGate ? `Pass ${lastGate.score}/5` : 'Done', tone: 'ok' }
+    case 'done':
+      if (agent.degraded) return { label: 'accepted with caveats', tone: 'wait' }
+      return { label: lastGate ? `Pass ${lastGate.score}/5` : 'Done', tone: 'ok' }
     case 'running': return { label: agent.attempt > 1 ? `Retry ${agent.attempt - 1} of ${maxRetries}` : 'Live', tone: 'run' }
     case 'reflecting': return { label: 'Reviewing', tone: 'run' }
     case 'retrying': return { label: `Retry ${agent.attempt - 1} of ${maxRetries}`, tone: 'run' }
@@ -409,7 +413,8 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
     : agent.status === 'paused' && requests.length
       ? [step.role, 'waiting on you']
       : [step.role, shortModel(step.model), agent.tokenCount ? `${formatTokens(agent.tokenCount)} tok` : agent.streamedTokens ? `~${formatTokens(agent.streamedTokens)} tok` : null,
-          agent.costUsd ? formatUsd(agent.costUsd) : null, elapsed !== null ? formatElapsed(elapsed) : null]
+          agent.costUsd ? formatUsd(agent.costUsd) : null, elapsed !== null ? formatElapsed(elapsed) : null,
+          agent.compacted ? `context compacted ×${agent.compacted.events}` : null]
   const multiAttempt = agent.timeline.some((t) => t.attempt > 0)
 
   return (
@@ -421,7 +426,7 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
       className={cn('mb-3 overflow-hidden rounded-xl border-[0.5px] bg-ma-bg1', isWorking(agent.status) && agent.status !== 'paused' ? 'border-ma-red/35' : 'border-white/[0.09]')}
     >
       <button onClick={() => onToggle(step.id, !open)} className="flex w-full items-center gap-2.5 px-3.5 py-[11px] text-left" aria-expanded={open}>
-        <span className="ma-dot" data-s={DOT[agent.status]} />
+        <span className="ma-dot" data-s={dotOf(agent)} />
         <span className="min-w-0 flex-1">
           <b className="block truncate text-[13.5px] font-medium">{step.id} {step.label}</b>
           <span className="block truncate font-mono text-[11.5px] text-ma-mute">{meta.filter(Boolean).join(' · ')}</span>
@@ -456,6 +461,7 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
             <div className="ma-ev" data-k="gate"><i className="ma-k" /><p className="text-[12px] text-ma-mute">Reflection gate · reviewing…</p></div>
           )}
           {requests.map((r) => <ApprovalBlock key={r.requestId} request={r} onRespond={onRespondPermission} />)}
+          {agent.degraded && <DegradedBlock degraded={agent.degraded} />}
           {agent.failure && (
             <div className="ma-ev" data-k="fail"><i className="ma-k" /><p className="text-[12.5px] text-[#ff8c88]">{agent.failure}</p></div>
           )}
@@ -464,6 +470,27 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
     </article>
   )
 })
+
+function DegradedBlock({ degraded }: { degraded: NonNullable<AgentView['degraded']> }) {
+  return (
+    <div className="ma-ev" data-k="approval" data-testid="degraded-detail">
+      <i className="ma-k" />
+      <div className="text-[12px] text-ma-mute">Accepted with caveats · attempt {degraded.attempt + 1}</div>
+      <div className="mt-1.5 rounded-[9px] border-[0.5px] border-ma-amber/35 bg-ma-amber/10 px-3 py-2.5 text-[12.5px] text-[#e8c77f]">
+        <p>{degraded.unreviewed ? 'The reviewer gave no usable verdict, so this answer was passed on unreviewed.'
+          : `Retries ran out; the best attempt (${degraded.score}/5) was passed on with its open issues.`}</p>
+        {degraded.issues.length > 0 && <ul className="mt-1 list-disc pl-4 text-[12px]">{degraded.issues.map((issue, i) => <li key={i}>{issue}</li>)}</ul>}
+      </div>
+    </div>
+  )
+}
+
+/** "{score}/5 · {evidenceMode} evidence · {claimsFailed} claims failed" — parts absent on older traces are left out. */
+export function gateStats(gate: ReflectionView): string | null {
+  if (gate.evidenceMode === undefined && gate.claimsFailed === undefined) return null
+  return [`${gate.score}/5`, gate.evidenceMode && `${gate.evidenceMode} evidence`, gate.claimsFailed !== undefined && `${gate.claimsFailed} claims failed`]
+    .filter(Boolean).join(' · ')
+}
 
 /**
  * Reasoning: 3 lines collapsed; expanded, at most 18 lines (3 paragraphs of ~6)
@@ -562,6 +589,7 @@ function TraceItem({ item, attemptLabel, streaming }: { item: TimelineItem; atte
         <div className="ma-ev" data-k={item.passed ? 'gate' : 'gate-bad'} data-testid="reflection-gate">
           <i className="ma-k" />
           <div className="text-[12px] text-ma-mute">Reflection gate{attemptLabel || ` · attempt ${item.attempt + 1}`}{judge}</div>
+          {gateStats(item) && <div className="font-mono text-[11.5px] text-ma-mute" data-testid="reflection-stats">{gateStats(item)}</div>}
           <p className={cn('mt-1 text-[12.5px]', item.passed ? 'text-[#7fdcb0]' : 'text-[#ff8c88]')}>
             {item.score ? `${item.score}/5 — ` : ''}{item.reason}
           </p>

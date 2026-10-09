@@ -16,6 +16,21 @@ export interface ReflectionView {
   issues?: string[]
   /** What OpenRouter actually answered with, when it said. */
   modelServed?: string
+  evidenceMode?: 'full' | 'excerpts'
+  judgeInputChars?: number
+  claimsChecked?: number
+  claimsFailed?: number
+  claimStatuses?: Record<string, string>
+}
+
+/** Retries ran out and the best attempt was passed on with its open issues (or accepted unreviewed). */
+export interface DegradedView {
+  attempt: number
+  score: number
+  issues: string[]
+  claimStatuses: Record<string, string>
+  reason?: string
+  unreviewed?: boolean
 }
 
 /** One entry of an agent's trace, in arrival order. Attempts are 0-based. */
@@ -49,6 +64,10 @@ export interface AgentView {
   stoppedAtToolLimit?: boolean
   /** Model OpenRouter actually served for the accepted answer, when it said. */
   modelServed?: string
+  /** Accepted with caveats: shown amber, never as failed. */
+  degraded?: DegradedView
+  /** History compacted to fit the context window: events and tool results stubbed in total. */
+  compacted?: { events: number; stubbed: number; tokensFreed: number }
   startedAt?: number
   endedAt?: number
 }
@@ -167,6 +186,11 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
           ...(event.model !== undefined && { model: event.model }),
           ...(event.issues !== undefined && { issues: event.issues }),
           ...(event.modelServed !== undefined && { modelServed: event.modelServed }),
+          ...(event.evidenceMode !== undefined && { evidenceMode: event.evidenceMode }),
+          ...(event.judgeInputChars !== undefined && { judgeInputChars: event.judgeInputChars }),
+          ...(event.claimsChecked !== undefined && { claimsChecked: event.claimsChecked }),
+          ...(event.claimsFailed !== undefined && { claimsFailed: event.claimsFailed }),
+          ...(event.claimStatuses !== undefined && { claimStatuses: event.claimStatuses }),
         }
         return {
           reflections: [...a.reflections, gate],
@@ -182,6 +206,24 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
       }))
     case 'agent_failed':
       return updateAgent(next, event.agentId, () => ({ status: 'failed', failure: event.reason, pause: undefined, endedAt: event.ts }))
+    case 'agent_degraded':
+      return updateAgent(next, event.agentId, (a) => ({
+        status: 'done', endedAt: event.ts,
+        // The answer passed on is the chosen attempt's, which may be earlier than the last one shown.
+        output: a.timeline.find((t): t is Extract<TimelineItem, { kind: 'output' }> => t.kind === 'output' && t.attempt === event.attempt)?.text ?? a.output,
+        degraded: {
+          attempt: event.attempt, score: event.score, issues: event.issues, claimStatuses: event.claimStatuses,
+          ...(event.reason !== undefined && { reason: event.reason }), ...(event.unreviewed && { unreviewed: true }),
+        },
+      }))
+    case 'context_compacted':
+      return updateAgent(next, event.agentId, (a) => ({
+        compacted: {
+          events: (a.compacted?.events ?? 0) + 1,
+          stubbed: (a.compacted?.stubbed ?? 0) + event.stubbed,
+          tokensFreed: (a.compacted?.tokensFreed ?? 0) + event.tokensFreed,
+        },
+      }))
     case 'synthesis_start':
       return { ...next, phase: 'synthesizing' }
     case 'synthesis_token':

@@ -3,6 +3,7 @@
  * a scripted itinerary run that exercises the dock end to end — plan approval,
  * three parallel agents with reasoning and tool calls, one tool approval, a
  * dependent fourth agent whose first gate fails, and a streamed synthesis.
+ * A saved run shows a step accepted with caveats (retries ran out, best attempt passed on).
  */
 import type {
   AgentEvent, AgentStep, BackendSettings, Chat, McpToolPermissionRequest, MultiAgentRunRecord, RunTotals, StartRunResult, StoredMessage,
@@ -30,7 +31,7 @@ const runIdsByChat = new Map<string, string[]>()
 // ── Saved agent chats for the top bar states (designs/05-topbar.html B, D) ──
 
 /** A finished or aborted run, as the coordinator would have saved it. */
-function savedTrace(runId: string, outcome: 'finished' | 'stopped'): AgentEvent[] {
+function savedTrace(runId: string, outcome: 'finished' | 'stopped' | 'degraded'): AgentEvent[] {
   const trace: AgentEvent[] = []
   let seq = 0
   let ts = Date.now() - 3_600_000
@@ -49,6 +50,24 @@ function savedTrace(runId: string, outcome: 'finished' | 'stopped'): AgentEvent[
   for (const step of steps) {
     emit('agent_start', { agentId: step.id, role: step.role, model: WORKER, attempt: 0 })
     if (outcome === 'stopped' && step.id === '1.2') break
+    if (outcome === 'degraded' && step.id === '1.2') {
+      const issues = ['Claim c2 (callId t1): the quote is not in the cited tool result.']
+      for (const attempt of [0, 1, 2]) {
+        emit('agent_token', { agentId: '1.2', attempt, token: `Salzburg → Innsbruck takes 1h50 [c1]; the last Railjet on 24 December leaves at 17:14 [c2]. (attempt ${attempt + 1})` })
+        emit('agent_complete', { agentId: '1.2', attempt, output: 'Salzburg → Innsbruck takes 1h50 [c1]; the last Railjet on 24 December leaves at 17:14 [c2].', tokenCount: 30_000 * (attempt + 1), costUsd: 0.006 * (attempt + 1) })
+        const judged = attempt === 2
+        emit('reflection_result', {
+          agentId: '1.2', attempt, score: judged ? 2 : 1, passed: false, issues,
+          reason: judged ? '1 claim problem(s); reviewer: the 24 December time is not in the ÖBB page' : 'Claims check: 1 problem(s)',
+          model: judged ? DEFAULT_MULTI_AGENT_CONFIG.models.reflection : 'claims check',
+          claimsChecked: 2, claimsFailed: 1, claimStatuses: { c1: 'verified', c2: 'quote_not_found' },
+          ...(judged && { evidenceMode: 'full', judgeInputChars: 18_400 }),
+        })
+        if (!judged) emit('retry', { agentId: '1.2', attempt: attempt + 1, reason: 'Claims check: 1 problem(s)' })
+      }
+      emit('agent_degraded', { agentId: '1.2', attempt: 2, score: 2, issues, claimStatuses: { c1: 'verified', c2: 'quote_not_found' }, reason: 'reflection retry limit exceeded' })
+      continue
+    }
     emit('agent_complete', { agentId: step.id, attempt: 0, output: `${step.label}: done.`, tokenCount: 80_000, costUsd: 0.015 })
     emit('reflection_result', { agentId: step.id, attempt: 0, score: 4, passed: true, reason: 'Covers the subtask.', model: DEFAULT_MULTI_AGENT_CONFIG.models.reflection })
   }
@@ -71,12 +90,15 @@ export function seedAgentChats(): { chats: Chat[]; messages: Record<string, Stor
   traces.set('demo-agents-done', savedTrace('demo-run-2', 'finished'))
   runIdsByChat.set('demo-agents-done', ['demo-run-1', 'demo-run-2'])
   traces.set('demo-agents-stopped', savedTrace('demo-run-3', 'stopped'))
+  traces.set('demo-agents-degraded', savedTrace('demo-run-4', 'degraded'))
   return {
-    chats: [chat('demo-agents-new', 'Agent chat · no run yet', 2), chat('demo-agents-done', 'Alps itinerary · finished run', 30), chat('demo-agents-stopped', 'Alps itinerary · stopped run', 60)],
+    chats: [chat('demo-agents-new', 'Agent chat · no run yet', 2), chat('demo-agents-done', 'Alps itinerary · finished run', 30), chat('demo-agents-stopped', 'Alps itinerary · stopped run', 60),
+      chat('demo-agents-degraded', 'Alps itinerary · step with caveats', 90)],
     messages: {
       'demo-agents-new': [],
       'demo-agents-done': [msg('user', 'Plan 12 days in the Alps by rail in December.'), msg('assistant', 'Days 1–2 Vienna [1.1] …')],
       'demo-agents-stopped': [msg('user', 'Plan 12 days in the Alps by rail in December.')],
+      'demo-agents-degraded': [msg('user', 'Plan 12 days in the Alps by rail in December.'), msg('assistant', 'Days 1–2 Vienna [1.1] … (step 1.2 was accepted with caveats)')],
     },
   }
 }
@@ -122,7 +144,8 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       await wait(400)
       emit('reflection_result', {
         agentId, attempt, score, passed: score >= 3, reason, issues, model: DEFAULT_MULTI_AGENT_CONFIG.models.reflection,
-        rubric: ['Answers the subtask it was given', 'Claims are backed by tool evidence or explicitly marked as unverified'],
+        rubric: ['Answers the subtask it was given', 'Every factual claim carries a quote from a tool result that supports it, or is explicitly marked unverified; a claim marked unverified is not an issue'],
+        evidenceMode: 'full', judgeInputChars: 12_000, claimsChecked: 1, claimsFailed: 0, claimStatuses: { c1: 'verified' },
       })
     }
     const outputs: Record<string, string> = {}
@@ -139,6 +162,7 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER },
       sources: { orchestrator: 'default', worker: 'active', reflection: 'default', synthesizer: 'default' },
       catalogueChecked: true, maxAgents: 4, budgetCapUsd: 0.65, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium',
+      excludedServers: [{ server: 'filesystem', reason: 'sandbox bypassed' }],
     })
     emit('hitl_pause', { agentId: 'orchestrator', role: 'Orchestrator', model: DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, toolName: 'approve_plan', serverName: 'multi-agent', args: { steps: STEPS } })
     const approved = await new Promise<boolean>((r) => { planAnswer = r })

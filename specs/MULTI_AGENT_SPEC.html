@@ -1243,6 +1243,7 @@ InputBar (ma-mode toggle)             multi-agent:sidecar-status
         <li><div class="check-box"></div>Max retry limit per agent (default: 2) → task_failed if exceeded</li>
         <li><div class="check-box"></div>Emits reflection_start, reflection_result, retry</li>
       </ul>
+      <p>Superseded in part by §15 (claims contract, evidence modes, repair retries, degraded steps).</p>
  
       <h3>Python Sidecar — Synthesis</h3>
       <ul class="checklist">
@@ -1820,6 +1821,21 @@ InputBar (ma-mode toggle)             multi-agent:sidecar-status
         <tr><td>§05 events</td><td>Adds <code>run_config</code>, <code>agent_reasoning</code>, <code>tool_start</code>, <code>tool_done</code>; <code>reflection_result</code> gains model, rubric, issues; agent events carry <code>attempt</code>; every event carries <code>elapsedMs</code>.</td></tr>
         <tr><td>§06 unknown configured model falls back to the active model</td><td>An unknown model stops the run with the role named. A blank slot still follows the active model.</td></tr>
         <tr><td>§12 D6 "all 6 states" of the old layout machine</td><td>Verified instead by the dock tests (rail states, widths, accordion, focus, read-only, Esc) and 1440×900 screenshots in <code>designs/shipped/</code>.</td></tr>
+      </table>
+    </section>
+
+    <hr>
+
+    <section id="addendum-2026-10-reflection">
+      <h2><span class="section-num">15</span> Addendum (2026-10-10): reflection hardening</h2>
+      <p>The rows below supersede parts of the reflection checklist (§10 "Python Sidecar — Reflection") and §05. Full detail and the run that prompted it: <code>specs/multi-agent-reflection-hardening.md</code>. Objectives unchanged.</p>
+      <table>
+        <tr><th>Was</th><th>Now</th></tr>
+        <tr><td>Workers were offered every running MCP server's tools</td><td>Only tools a worker can call: HTTP servers, or stdio servers with a reviewed, non-bypassed sandbox profile (one predicate for the schema list and the call guard). Excluded servers are named in pre-flight and in <code>run_config.excludedServers</code>.</td></tr>
+        <tr><td>Reflection agent receives goal spec + worker output; tool evidence as 600-char previews</td><td>Workers end their answer with a <code>claims</code> block: each claim cites a tool call and an exact quote, is declared unverified, or cites an earlier agent. Gate order: precheck → mechanical quote check against the full results (formatting-only normalisation, no fuzzy match) → judge. The judge sees every tool result in full up to <code>judgeEvidenceMaxTokens</code> (100k, ≤ half its context, within budget), otherwise an index plus ±800-char excerpts around each quote, and is told which.</td></tr>
+        <tr><td>Failed reflection triggers automatic retry with failure context injected</td><td>A retry continues the worker's conversation: its answer stays in history and the verdict is a new turn, so tool results are kept and research is not repeated. A mechanical failure retries without a judge call. History is compacted (oldest tool result first) only when the next request would not fit the context window.</td></tr>
+        <tr><td>Max retry limit per agent → task_failed if exceeded</td><td><code>onRetryExhausted</code> (default <code>degrade</code>): the best attempt is passed on as <code>agent_degraded</code> with a DEGRADED header and per-claim statuses for dependants and synthesis; a judge with no verdict is accepted as unreviewed; only a step with no usable output fails. <code>fail</code> keeps the old behaviour.</td></tr>
+        <tr><td>§05 events</td><td>Adds <code>agent_degraded</code> and <code>context_compacted</code>; <code>reflection_result</code> gains <code>claimsChecked</code>, <code>claimsFailed</code>, <code>claimStatuses</code>, <code>evidenceMode</code>, <code>judgeInputChars</code>.</td></tr>
       </table>
     </section>
  

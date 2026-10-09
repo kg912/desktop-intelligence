@@ -661,6 +661,15 @@ export interface ReflectionResultEvent extends AgentEventBase, AgentAttempt {
   issues?: string[]
   /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
   modelServed?: string
+  /** How the judge saw the tool results: all of them, or excerpts around each cited quote. Absent when no judge ran. */
+  evidenceMode?: 'full' | 'excerpts'
+  /** Characters of the judge's input (system + user). Absent when no judge ran. */
+  judgeInputChars?: number
+  /** Claims that cite a tool call (quote-checked), and how many of all claims failed the mechanical check. */
+  claimsChecked?: number
+  claimsFailed?: number
+  /** Claim id → check status (see AgentDegradedEvent.claimStatuses). */
+  claimStatuses?: Record<string, string>
 }
 
 /**

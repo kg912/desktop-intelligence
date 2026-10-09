@@ -50,6 +50,7 @@ export interface RunSummary {
 
 export interface Anomaly {
   kind: 'length' | 'served_model_differs' | 'fallback_plan' | 'repetition' | 'retry' | 'error' | 'cancelled' | 'tool_denied' | 'tool_rejected' | 'reconciliation' | 'capped' | 'tool_limit'
+    | 'degraded' | 'context_compacted'
   message: string
   /** Link target inside the run directory, e.g. "agent-1.1.md#call-7". */
   ref?: string
@@ -413,11 +414,20 @@ function renderAgentFile(agentId: string, records: CallRecord[], events: AgentEv
         lines.push(`Parsed verdict: score ${verdict.score}/5, ${verdict.passed ? 'passed' : 'failed'}${verdict.model ? ` (judge: \`${verdict.model}\`)` : ''}. ${verdict.reason}`, '')
         for (const issue of verdict.issues ?? []) lines.push(`- ${issue}`)
         lines.push('')
+        if (verdict.evidenceMode) lines.push(`Judge evidence: ${verdict.evidenceMode}, ${verdict.judgeInputChars ?? '?'} chars of input.`, '')
+        const claims = Object.entries(verdict.claimStatuses ?? {})
+        if (claims.length) lines.push(`Claims (${verdict.claimsFailed ?? 0} failed the quote check): ${claims.map(([id, status]) => `${id} ${status}`).join(', ')}`, '')
       }
     }
   }
   const failed = events.find((e): e is Ev<'agent_failed'> => e.type === 'agent_failed' && e.agentId === agentId)
   if (failed) lines.push(`## Failed`, '', failed.reason, '')
+  const degraded = events.find((e): e is Ev<'agent_degraded'> => e.type === 'agent_degraded' && e.agentId === agentId)
+  if (degraded) {
+    lines.push('## Accepted with caveats', '', `${degraded.unreviewed ? 'Accepted unreviewed' : `Attempt ${degraded.attempt} (score ${degraded.score}/5) was passed on`}${degraded.reason ? `: ${degraded.reason}` : ''}.`, '')
+    for (const issue of degraded.issues) lines.push(`- ${issue}`)
+    lines.push('')
+  }
   return lines.join('\n')
 }
 
@@ -491,6 +501,13 @@ export function findAnomalies(_meta: RunLogMeta, events: AgentEvent[], records: 
       out.push({ kind: 'tool_limit', message: `agent ${e.agentId} stopped at tool limit (attempt ${e.attempt ?? 0}): its answer came from the forced wrap-up round`, ref: `agent-${safeId(e.agentId)}.md` })
     }
     if (e.type === 'retry') out.push({ kind: 'retry', message: `agent ${e.agentId} retried (attempt ${e.attempt}): ${e.reason}`, ref: `agent-${safeId(e.agentId)}.md` })
+    if (e.type === 'agent_degraded') {
+      const what = e.unreviewed ? 'accepted unreviewed (no usable verdict)' : `accepted with caveats: attempt ${e.attempt}, score ${e.score}/5, ${e.issues.length} open issue(s)`
+      out.push({ kind: 'degraded', message: `agent ${e.agentId} ${what}`, ref: `agent-${safeId(e.agentId)}.md` })
+    }
+    if (e.type === 'context_compacted') {
+      out.push({ kind: 'context_compacted', message: `agent ${e.agentId} (attempt ${e.attempt}): ${e.stubbed} tool result(s) compacted to fit the context window, ~${e.tokensFreed} tokens freed`, ref: `agent-${safeId(e.agentId)}.md` })
+    }
   }
   const done = events.find((e): e is Ev<'task_complete'> => e.type === 'task_complete')
   if (done && (Math.abs(done.totalCostUsd - costUsd) > RECONCILE_USD || done.totalTokens !== tokens)) {
@@ -557,11 +574,12 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     const mine = records.filter((r) => r.agentId === s.id)
     const scores = eventsOf(events, 'reflection_result').filter((e) => e.agentId === s.id).map((e) => `${e.score}${e.passed ? '✓' : '✗'}`)
     const failed = eventsOf(events, 'agent_failed').find((e) => e.agentId === s.id)
+    const degraded = eventsOf(events, 'agent_degraded').find((e) => e.agentId === s.id)
     const done = eventsOf(events, 'agent_complete').some((e) => e.agentId === s.id)
     const tools = [...new Set(mine.filter((r) => r.kind === 'tool').map((r) => r.name))]
     const attempts = new Set(mine.map((r) => r.attempt)).size
     const cost = mine.reduce((sum, r) => sum + (r.usage?.costUsd ?? 0), 0)
-    L.push(`| [${s.id}](agent-${safeId(s.id)}.md) | ${cell(s.role)} | ${attempts} | ${scores.join(' ')} | ${cell(failed ? `failed: ${failed.reason}` : done ? 'completed' : 'not finished')} | ${cell(tools.join(', '))} | ${usd(cost)} |`)
+    L.push(`| [${s.id}](agent-${safeId(s.id)}.md) | ${cell(s.role)} | ${attempts} | ${scores.join(' ')} | ${cell(failed ? `failed: ${failed.reason}` : degraded ? `accepted with caveats (attempt ${degraded.attempt})` : done ? 'completed' : 'not finished')} | ${cell(tools.join(', '))} | ${usd(cost)} |`)
   }
   for (const s of plan) {
     const issues = eventsOf(events, 'reflection_result').filter((e) => e.agentId === s.id && (e.issues?.length ?? 0) > 0)

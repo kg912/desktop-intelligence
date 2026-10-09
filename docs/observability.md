@@ -94,6 +94,8 @@ panel renders whatever was captured.
 | `tool_denied` / `tool_rejected` | A tool call was denied (by the user, a policy or a timeout) or rejected (unregistered tool, bad arguments) |
 | `capped` | A field was longer than `RECORD_FIELD_CAP_CHARS` and was cut in the log |
 | `tool_limit` | A worker's answer came from the forced wrap-up round (tools off) after its `maxToolRounds` were used: "stopped at tool limit" |
+| `degraded` | An agent's retries ran out and its best attempt was passed on with open issues, or it was accepted unreviewed because the judge gave no usable verdict ("accepted with caveats") |
+| `context_compacted` | A worker's oldest tool results were stubbed so the next request would fit the model's context window (the full results stay in the evidence store) |
 | `reconciliation` | The call records and the run's own totals disagree |
 
 ## Reading an agent file
@@ -128,7 +130,10 @@ re-asks), `model`, `modelServed`, `request` (`messages`, `params`, `headers`),
 `response` (`content`, `reasoning`, `toolCalls`, `finishReason`, `looped`,
 `truncated`), `usage` (`promptTokens`, `completionTokens`, `reasoningTokens`,
 `costUsd`, `generationId`), `timing` (`startedAt`, `firstTokenAt`, `endedAt`,
-`ms`), `error`, and `capped`.
+`ms`), `error`, and `capped`. Reflection records also carry `evidenceMode` (`full` | `excerpts`),
+`judgeInputChars` and `evidenceChars` (how the judge saw the tool results). Each agent's markdown
+file lists, per attempt, the claim statuses and judge evidence, and ends with the accepted attempt
+when the step was accepted with caveats.
 
 Tool executions have `kind: "tool"` with `callId`, `name`, `args` (the raw
 string), `result`, `approved`, `denied`, `error` and `timing`.

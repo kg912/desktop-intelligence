@@ -36,6 +36,7 @@ import { ModelStoreProvider, useModelStore } from '../../renderer/src/store/Mode
 import { reduceRunEvents } from '../../renderer/src/lib/multiAgentRunState'
 import type { AgentEvent, McpToolPermissionRequest } from '../../shared/types'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../shared/types'
+import { multiAgentDemoApi, seedAgentChats } from '../../renderer/src/mocks/multiAgentDemo'
 
 let seq = 0
 const ev = (e: Record<string, unknown>): AgentEvent => ({ runId: 'run-1', seq: ++seq, ts: 1_000 * seq, ...e }) as AgentEvent
@@ -743,5 +744,57 @@ describe('Logging off in the dock header', () => {
     unmount()
     render(<MultiAgentSidebarView {...dockProps} view={view()} readOnly recorded={false} />)
     expect(screen.queryByTestId('logging-off')).toBeNull()
+  })
+})
+
+describe('steps accepted with caveats (reflection hardening Phase 7)', () => {
+  const degraded = [
+    { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm', attempt: 0 },
+    { type: 'agent_token', agentId: '1.1', attempt: 0, token: 'Salzburg first [c1].' },
+    { type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'Salzburg first [c1].', tokenCount: 10, costUsd: 0.001 },
+    { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 2, passed: false, reason: 'thin', model: 'judge/model', issues: ['Name the operator'],
+      evidenceMode: 'full', judgeInputChars: 8_000, claimsChecked: 1, claimsFailed: 1, claimStatuses: { c1: 'quote_not_found' } },
+    { type: 'agent_degraded', agentId: '1.1', attempt: 0, score: 2, issues: ['Name the operator'], claimStatuses: { c1: 'quote_not_found' }, reason: 'reflection retry limit exceeded (score 2/5: thin)' },
+  ]
+
+  it('an amber "accepted with caveats" badge, the amber (not failed) dot in the plan and the card, and the issues in the detail', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={view(degraded)} />)
+    const card = screen.getByTestId('agent-card-1.1')
+    const badge = within(card).getByText('accepted with caveats')
+    expect(badge.className).toContain('text-ma-amber')
+    expect(card.querySelector('.ma-dot')?.getAttribute('data-s')).toBe('wait')
+    expect(screen.getByTestId('step-1.1').querySelector('.ma-dot')?.getAttribute('data-s')).toBe('wait')
+    fireEvent.click(within(card).getByRole('button', { expanded: false }))
+    const detail = within(card).getByTestId('degraded-detail')
+    expect(detail.textContent).toContain('Accepted with caveats · attempt 1')
+    expect(detail.textContent).toContain('Retries ran out; the best attempt (2/5) was passed on with its open issues.')
+    expect(within(detail).getByText('Name the operator')).toBeTruthy()
+    expect(within(card).queryByText(/Failed/)).toBeNull()
+  })
+
+  it('the reflection row reads "{score}/5 · {evidenceMode} evidence · {claimsFailed} claims failed"', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={view(degraded)} />)
+    fireEvent.click(within(screen.getByTestId('agent-card-1.1')).getByRole('button', { expanded: false }))
+    expect(screen.getByTestId('reflection-stats').textContent).toBe('2/5 · full evidence · 1 claims failed')
+  })
+
+  it('a gate from before the claims contract shows no stats row', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={view([
+      { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm', attempt: 0 },
+      { type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'x', tokenCount: 1, costUsd: 0 },
+      { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 5, passed: true, reason: 'ok' },
+    ])} />)
+    fireEvent.click(within(screen.getByTestId('agent-card-1.1')).getByRole('button', { expanded: false }))
+    expect(screen.queryByTestId('reflection-stats')).toBeNull()
+  })
+
+  it('the browser-preview mock drives the degraded state: its saved run shows step 1.2 accepted with caveats', async () => {
+    seedAgentChats()
+    const record = await multiAgentDemoApi(async () => {}).getMultiAgentRun('demo-agents-degraded')
+    const v = reduceRunEvents('demo-run-4', record!.executionTrace)
+    expect(v.agents['1.2'].degraded).toMatchObject({ attempt: 2, score: 2 })
+    render(<MultiAgentSidebarView {...dockProps} readOnly view={v} />)
+    expect(within(screen.getByTestId('agent-card-1.2')).getByText('accepted with caveats')).toBeTruthy()
+    expect(within(screen.getByTestId('agent-card-1.1')).getByText('Pass 4/5')).toBeTruthy()
   })
 })

@@ -170,8 +170,10 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `agent_token` | `agentId, token` |
 | `agent_complete` | `agentId, output, tokenCount, costUsd` |
 | `reflection_start` | `agentId` |
-| `reflection_result` | `agentId, score (1–5), passed, reason` |
+| `reflection_result` | `agentId, score (1–5), passed, reason` (+ `claimsChecked, claimsFailed, claimStatuses, evidenceMode, judgeInputChars`) |
 | `retry` | `agentId, attempt, reason` |
+| `agent_degraded` | `agentId, attempt, score, issues, claimStatuses, reason?, unreviewed?` — retries ran out, best attempt passed on |
+| `context_compacted` | `agentId, attempt, stubbed, tokensFreed` — oldest tool results stubbed so the next request fits |
 | `hitl_pause` | `agentId, role, toolName, serverName, args` |
 | `hitl_resume` | `agentId, approved` |
 | `synthesis_start` | — |
@@ -203,6 +205,50 @@ possible — without a monotonic sequence you can't reconstruct ordering from th
 Model selection is **not** a curated shortlist — fetch `/api/v1/models` at runtime, filter by
 tool-call support + context length + price, expose four "slots" (orchestrator / worker /
 reflection / synthesizer). All workers in a run share one worker model.
+
+---
+
+### 7a. The reflection gate (specs/multi-agent-reflection-hardening.md)
+
+**Tools offered.** Workers see only tools they can call: built-ins plus MCP servers that are HTTP or
+stdio with a reviewed, non-bypassed sandbox profile. One predicate (`multiAgentExclusionReason`)
+drives both the schema list and the call guard. Excluded running servers are named in the start
+result, in `run_config.excludedServers` and as one row each on the pre-flight screen.
+
+**Claims contract.** A worker ends its answer with a ` ```claims ` JSON array, and marks each claim
+in the prose `[c1]`, `[c2]`…:
+`{id, claim, callId, quote}` (quote copied from that tool result, 12–400 chars),
+`{id, claim, unverified: true}`, or `{id, claim, source: "1.1"}` (taken from an earlier agent).
+Successful tool results reach the worker headed `[callId: …]` so it can cite them. The block is
+removed from the answer and never streamed to the card.
+
+**Gate order** for every answer: (a) deterministic precheck (empty, short, refusal); (b) claims
+parse and a **mechanical quote check** against the agent's evidence store — formatting-only
+normalisation (entities, tags, curly quotes/dashes, emphasis, thousands separators, whitespace,
+case), no fuzzy matching; statuses `verified · unverified_declared · source · quote_not_found ·
+call_not_found · call_failed · quote_too_short · quote_too_long`; (c) the judge. A mechanical
+failure skips the judge and goes straight to a repair turn; on the last allowed attempt the judge
+still runs (for a score) but the attempt cannot pass.
+
+**Evidence.** Every tool call is kept in full in a per-agent evidence store on the run, apart from
+the message history. The judge gets every result (`full`) when the estimate fits
+`judgeEvidenceMaxTokens` (100k, at most half its context window) and the remaining budget, otherwise
+`excerpts` (an index of calls plus ±800 chars around each cited quote). Its prompt says which, and
+it judges whether each quote supports its claim and whether the prose makes unmarked assertions.
+
+**Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
+last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
+research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same
+way. The history is compacted (oldest tool result first, to a stub) only when the next request would
+not fit the model's context window; `maxToolRounds` still counts per attempt.
+
+**Degraded steps.** With `onRetryExhausted: 'degrade'` (default), exhausted retries pass on the best
+attempt (highest score, ties to the latest) as `agent_degraded`; dependants and the synthesis get
+`[1.1 DEGRADED: score 2/5; open issues: …]`, the prose and `Claims (1.1): c1 verified; c2 unverified;
+c3 failed-check`, and the synthesis is told to caveat or drop failed-check claims. A judge with no
+usable verdict is accepted as `unreviewed`. Only a step with no usable output fails. The UI shows an
+amber **accepted with caveats** badge and the issues in the card; each reflection row reads
+`{score}/5 · {evidenceMode} evidence · {claimsFailed} claims failed`.
 
 ---
 
@@ -246,7 +292,8 @@ Pre-existing rows backfill `mode = 'single'` and `run_status = 'idle'` from thei
 | `budgetCapUsd` | 0.50 | per-run spend ceiling |
 | `models.{orchestrator,worker,reflection,synthesizer}` | from settings | one OpenRouter model id per slot |
 | `reflectionPassThreshold` | 3 | min reflection score (1–5) to pass without retry |
-| `maxRetriesPerAgent` | 2 | retries before `task_failed` for that agent |
+| `maxRetriesPerAgent` | 2 | repair turns per agent; a retry continues the agent's conversation with the reviewer's feedback |
+| `onRetryExhausted` | `degrade` | `degrade`: pass the best attempt on with its caveats; `fail`: fail that agent (dependants cascade) |
 | `hitlTimeoutMs` | 300000 | auto-deny a HITL pause after 5 min, fail that agent, continue others |
 | `requirePermissions` | `true` | HITL default for multi-agent runs (defaults to safe/on) |
 
@@ -263,7 +310,8 @@ always returns `{ ok: false, reason: 'sidecar_unavailable' }` — the renderer c
 sidecar not running    ──► IPC returns synthetic ready-state; button still renders   app fine
 sidecar crashes        ──► health-check loop (10s) restarts it                        app fine
 one worker fails       ──► run continues; synthesis uses the others' output           run continues
-reflection max retries ──► task_failed for that agent only                            run continues
+reflection max retries ──► best attempt passed on, "accepted with caveats"           run continues
+                           (onRetryExhausted 'fail': agent_failed for that agent only)
 HITL pause times out   ──► auto-deny that tool, fail that agent, others continue      run continues
 budget cap hit         ──► no new agents; partial synthesis; "budget cap" badge       run completes
 abort                  ──► DELETE /run/{id}; clean kill; no orphaned process          app fine

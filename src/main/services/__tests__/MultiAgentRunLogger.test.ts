@@ -4,7 +4,7 @@
  */
 import { spawn } from 'child_process'
 import { EventEmitter } from 'events'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { describe, it, expect, vi, afterAll } from 'vitest'
@@ -252,5 +252,39 @@ describe('MultiAgentRunLogger (observability spec Phase 2)', () => {
     writeFileSync(join(dir, 'planner.jsonl'), readFileSync(join(dir, 'planner.jsonl'), 'utf8') + '{"seq": 99, "kind": "mo')
     const { records } = await readRun(dir)
     expect(records.map((r) => r.seq)).not.toContain(99)
+  })
+})
+
+describe('reflection hardening trace (Phase 7)', () => {
+  it('the agent file carries each attempt\'s claim statuses and judge evidence, and the accepted attempt; run.md names it and lists anomalies', async () => {
+    const dir = join(TMP, 'rh-phase7')
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    const meta: RunLogMeta = { schema: 1, runId: 'run-rh', chatId: 'chat-rh', chatTitle: 'Screen', task: 'Screen names', startedAt: 1, endedAt: 9, status: 'completed', config: DEFAULT_MULTI_AGENT_CONFIG }
+    writeFileSync(join(dir, 'run.meta.json'), JSON.stringify(meta))
+    const ev = (seq: number, e: Record<string, unknown>): string => JSON.stringify({ runId: 'run-rh', seq, ts: seq, ...e })
+    writeFileSync(join(dir, 'events.jsonl'), [
+      ev(1, { type: 'orchestrator_plan', steps: [{ id: '1.1', label: 'Screen', stage: 'worker', role: 'Screener', model: 'w', phase: 1, dependsOn: [] }] }),
+      ev(2, { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 1, passed: false, reason: 'Claims check: 1 problem(s)', model: 'claims check',
+        issues: ['Claim c1 (callId q): the quote is not in the cited tool result.'], claimsChecked: 1, claimsFailed: 1, claimStatuses: { c1: 'quote_not_found' } }),
+      ev(3, { type: 'context_compacted', agentId: '1.1', attempt: 1, stubbed: 2, tokensFreed: 4_000 }),
+      ev(4, { type: 'reflection_result', agentId: '1.1', attempt: 1, score: 2, passed: false, reason: 'thin', model: 'judge', issues: ['Name the operator'],
+        evidenceMode: 'excerpts', judgeInputChars: 9_100, claimsChecked: 1, claimsFailed: 0, claimStatuses: { c1: 'verified', c2: 'unverified_declared' } }),
+      ev(5, { type: 'agent_degraded', agentId: '1.1', attempt: 1, score: 2, issues: ['Name the operator'], claimStatuses: { c1: 'verified', c2: 'unverified_declared' }, reason: 'reflection retry limit exceeded (score 2/5: thin)' }),
+      ev(6, { type: 'task_complete', finalOutput: 'x', totalCostUsd: 0, totalTokens: 0 }),
+    ].join('\n') + '\n')
+    const record = (seq: number, attempt: number): string => JSON.stringify({ schema: 1, runId: 'run-rh', chatId: 'chat-rh', seq, kind: 'model', role: 'worker', agentId: '1.1', attempt, toolRound: 0,
+      model: 'w', modelServed: null, request: { messages: [], params: {}, headers: {} }, response: { content: 'a', reasoning: '', toolCalls: [], finishReason: 'stop', looped: null, truncated: null },
+      usage: { promptTokens: 0, completionTokens: 0, reasoningTokens: null, costUsd: 0, generationId: null }, timing: { startedAt: seq, firstTokenAt: null, endedAt: seq, ms: 0 }, error: null, capped: null })
+    writeFileSync(join(dir, 'agent-1.1.jsonl'), [record(1, 0), record(2, 1)].join('\n') + '\n')
+    const updated = await renderRun(dir)
+    const agent = readFileSync(join(dir, 'agent-1.1.md'), 'utf8')
+    expect(agent).toMatch(/## Attempt 0[\s\S]*Claims \(1 failed the quote check\): c1 quote_not_found[\s\S]*## Attempt 1[\s\S]*Judge evidence: excerpts, 9100 chars of input\.[\s\S]*Claims \(0 failed the quote check\): c1 verified, c2 unverified_declared/)
+    expect(agent).toContain('## Accepted with caveats\n\nAttempt 1 (score 2/5) was passed on: reflection retry limit exceeded (score 2/5: thin).\n\n- Name the operator')
+    expect(readFileSync(join(dir, 'run.md'), 'utf8')).toContain('accepted with caveats (attempt 1)')
+    expect(updated.summary!.anomalies.filter((a) => a.kind === 'degraded' || a.kind === 'context_compacted').map((a) => a.message)).toEqual([
+      'agent 1.1 (attempt 1): 2 tool result(s) compacted to fit the context window, ~4000 tokens freed',
+      'agent 1.1 accepted with caveats: attempt 1, score 2/5, 1 open issue(s)',
+    ])
   })
 })
