@@ -90,6 +90,20 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     expect(screen.queryByTestId('agent-card-1.1')).toBeNull()
   })
 
+  it('pre-flight lists each MCP server left out of the worker tools, one row each; none when the list is empty', () => {
+    const runConfig = { type: 'run_config', models: DEFAULT_MULTI_AGENT_CONFIG.models, sources: {}, catalogueChecked: true, maxAgents: 2, budgetCapUsd: 0.5,
+      reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium' }
+    const { unmount } = render(<MultiAgentSidebarView {...dockProps} view={view([{ ...runConfig, excludedServers: [
+      { server: 'filesystem_HW2_CSE6242', reason: 'sandbox bypassed' }, { server: 'memory', reason: 'sandbox profile not reviewed' },
+    ] }, planPause])} />)
+    expect(screen.getAllByTestId('excluded-server').map((row) => row.textContent)).toEqual([
+      'filesystem_HW2_CSE6242 · excluded: sandbox bypassed', 'memory · excluded: sandbox profile not reviewed',
+    ])
+    unmount()
+    render(<MultiAgentSidebarView {...dockProps} view={view([{ ...runConfig, excludedServers: [] }, planPause])} />)
+    expect(screen.queryByTestId('excluded-server')).toBeNull()
+  })
+
   it('caps the displayed worst case at the budget and names unpriced models', () => {
     render(<MultiAgentSidebarView {...dockProps} view={view([planPause])} estimate={{ minUsd: 0.2, maxUsd: 3, unpricedModels: ['x/free'] }} />)
     expect(screen.getByText(/Worst case \$0\.50/)).toBeTruthy()

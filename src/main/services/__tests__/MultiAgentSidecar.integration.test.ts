@@ -1061,7 +1061,8 @@ describe.skipIf(!ENABLED)('observability: sidecar call records (spec Phase 1)', 
       coordinator = new MultiAgentRunCoordinator({
         sidecar: mgr,
         mcp: {
-          getToolSchemas: () => [{ type: 'function', function: { name: 'fs__read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } }],
+          getMultiAgentExclusions: () => [],
+          getToolSchemasForMultiAgent: () => [{ type: 'function', function: { name: 'fs__read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } }],
           callToolForMultiAgent: async () => {
             if (opts.denyTools) throw new McpDeniedError('not now')
             return { text: opts.toolText ?? 'notes-content', images: [], userNote: '' }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { McpDeniedError, McpServerManager, SANDBOX_REVIEW_REQUIRED } from '../McpServerManager'
+import { McpDeniedError, McpServerManager, SANDBOX_REVIEW_REQUIRED, isMultiAgentCallable, multiAgentExclusionReason } from '../McpServerManager'
 import type { McpServerSettings, McpToolPermissionRequest } from '../../../shared/types'
 
 const { fsMock, sdkMocks, mockStdioTransport, mockWrapStdioCommand, mockMemoryWatch, mockStopMemoryWatch, mockRelease } = vi.hoisted(() => {
@@ -915,26 +915,60 @@ describe('McpServerManager multi-agent tool proxy (spec §07 HITL expansion)', (
   })
 })
 
-// Reflection hardening Phase 0 (specs/multi-agent-reflection-hardening.md, diagnosis 5):
-// tools a worker can never call are still offered.
+// Reflection hardening (specs/multi-agent-reflection-hardening.md, diagnosis 5): workers are
+// offered only tools they can call. Phase 0 pinned that they were offered; Phase 1 flipped it.
 describe('multi-agent callable servers', () => {
   const ctx = { chatId: 'c', runId: 'r', agentId: '1.1', role: 'Scout', model: 'm', requirePermissions: false, hitlTimeoutMs: 1_000 }
   const schema = (name: string) => ({ type: 'function' as const, function: { name, description: '', parameters: { type: 'object' as const, properties: {}, required: [] } } })
   /** A running server as McpServerManager holds it (a no-profile stdio server cannot start, so it is seeded). */
-  function seed(mgr: McpServerManager, name: string, config: McpServerSettings[string]): void {
+  function seed(mgr: McpServerManager, name: string, config: McpServerSettings[string], tools = ['x']): void {
     ;(mgr as any).servers.set(name, {
-      name, config, client: { callTool: sdkMocks.callTool }, status: 'running', tools: ['x'], schemas: [schema(`${name}__x`)], error: undefined, requiresApproval: false,
+      name, config, client: { callTool: sdkMocks.callTool }, status: 'running', tools, schemas: tools.map((t) => schema(`${name}__${t}`)), error: undefined, requiresApproval: false,
     })
   }
 
-  // flips in Phase 1
-  it('a bypassed and an unreviewed stdio server are offered in getToolSchemas(), and the multi-agent guard rejects both', async () => {
+  it('a bypassed and an unreviewed stdio server stay in getToolSchemas() (single chat) but are not offered to workers, and the guard still rejects them', async () => {
     const mgr = newMgr()
     seed(mgr, 'raw', { command: 'node', enabled: true, sandboxProfile: { ...REVIEWED, bypassSandbox: true } })
     seed(mgr, 'unreviewed', { command: 'node', enabled: true })
-    expect(mgr.getToolSchemas().map((s) => s.function.name)).toEqual(['raw__x', 'unreviewed__x'])
+    seed(mgr, 'fs', { command: 'node', enabled: true, sandboxProfile: REVIEWED })
+    expect(mgr.getToolSchemas().map((s) => s.function.name)).toEqual(['raw__x', 'unreviewed__x', 'fs__x'])
+    expect(mgr.getToolSchemasForMultiAgent().map((s) => s.function.name)).toEqual(['fs__x'])
+    expect(mgr.getMultiAgentExclusions()).toEqual([
+      { server: 'raw', reason: 'sandbox bypassed' },
+      { server: 'unreviewed', reason: 'sandbox profile not reviewed' },
+    ])
     await expect(mgr.callToolForMultiAgent('raw', 'x', {}, ctx)).rejects.toThrow(/no active SandboxService profile/)
     await expect(mgr.callToolForMultiAgent('unreviewed', 'x', {}, ctx)).rejects.toThrow(/no active SandboxService profile/)
     expect(sdkMocks.callTool).not.toHaveBeenCalled()
+  })
+
+  it('a server with no active tools is off, not excluded', () => {
+    const mgr = newMgr()
+    seed(mgr, 'raw', { command: 'node', enabled: true, sandboxProfile: { ...REVIEWED, bypassSandbox: true }, disabledTools: ['x'] })
+    seed(mgr, 'empty', { command: 'node', enabled: true }, [])
+    expect(mgr.getToolSchemasForMultiAgent()).toEqual([])
+    expect(mgr.getMultiAgentExclusions()).toEqual([])
+  })
+
+  it('for every config combination, offered to workers ⇔ the guard lets the call through', async () => {
+    const configs: Record<string, McpServerSettings[string]> = {
+      http: { url: 'https://mcp.example.com/mcp', enabled: true },
+      noProfile: { command: 'node', enabled: true },
+      reviewed: { command: 'node', enabled: true, sandboxProfile: REVIEWED },
+      bypassFalse: { command: 'node', enabled: true, sandboxProfile: { ...REVIEWED, bypassSandbox: false } },
+      bypassTrue: { command: 'node', enabled: true, sandboxProfile: { ...REVIEWED, bypassSandbox: true } },
+    }
+    const mgr = newMgr()
+    for (const [name, config] of Object.entries(configs)) seed(mgr, name, config)
+    const offered = new Set(mgr.getToolSchemasForMultiAgent().map((s) => s.function.name.split('__')[0]))
+    expect([...offered].sort()).toEqual(['bypassFalse', 'http', 'reviewed'])
+    for (const name of Object.keys(configs)) {
+      const call = mgr.callToolForMultiAgent(name, 'x', {}, ctx)
+      if (offered.has(name)) await expect(call).resolves.toMatchObject({ text: 'ok' })
+      else await expect(call).rejects.toThrow(/no active SandboxService profile/)
+      expect(isMultiAgentCallable(configs[name])).toBe(offered.has(name))
+      expect(multiAgentExclusionReason(configs[name]) === null).toBe(offered.has(name))
+    }
   })
 })

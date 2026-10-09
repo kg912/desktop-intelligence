@@ -45,6 +45,22 @@ function needsSandboxReview(config: McpServerConfig): boolean {
   return !isHttpMcpConfig(config) && !config.sandboxProfile
 }
 
+/**
+ * Why multi-agent workers can never call this server, or null if they can.
+ * Workers only run tools inside SandboxService: HTTP servers are fine; a stdio
+ * server needs a reviewed profile that is not bypassed. The schema filter and
+ * the call guard both use this, so what is offered is what can be called.
+ */
+export function multiAgentExclusionReason(config: McpServerConfig): 'sandbox bypassed' | 'sandbox profile not reviewed' | null {
+  if (isHttpMcpConfig(config)) return null
+  if (!config.sandboxProfile) return 'sandbox profile not reviewed'
+  return config.sandboxProfile.bypassSandbox ? 'sandbox bypassed' : null
+}
+
+export function isMultiAgentCallable(config: McpServerConfig): boolean {
+  return multiAgentExclusionReason(config) === null
+}
+
 export const SANDBOX_REVIEW_REQUIRED =
   'Sandbox review required — approve this server\'s allowed domains and writable paths ' +
   '(Settings → MCP → Sandbox profile) before it can run'
@@ -272,21 +288,30 @@ export class McpServerManager extends EventEmitter {
   }
 
   getToolSchemas(): LMStudioTool[] {
-    const result: LMStudioTool[] = []
-    for (const entry of this.servers.values()) {
-      if (entry.status !== 'running') continue
-      const disabledSet = new Set(entry.config.disabledTools ?? [])
-      for (const schema of entry.schemas) {
-        // schema.function.name is namespaced: "serverName__toolName"
-        // Extract the un-namespaced tool name for the disable check
-        const parts = schema.function.name.split('__')
-        const unNamespacedTool = parts.slice(1).join('__') // handles tool names that might contain __
-        if (!disabledSet.has(unNamespacedTool)) {
-          result.push(schema)
-        }
-      }
-    }
-    return result
+    return [...this.servers.values()].flatMap((entry) => this._activeSchemas(entry))
+  }
+
+  /** getToolSchemas() minus servers a multi-agent worker could never call. */
+  getToolSchemasForMultiAgent(): LMStudioTool[] {
+    return [...this.servers.values()].filter((e) => isMultiAgentCallable(e.config)).flatMap((e) => this._activeSchemas(e))
+  }
+
+  /** Running servers with active tools that workers are not offered, and why. A server with no active tools is off, not excluded. */
+  getMultiAgentExclusions(): { server: string; reason: string }[] {
+    return [...this.servers.values()]
+      .filter((e) => this._activeSchemas(e).length > 0)
+      .flatMap((e) => {
+        const reason = multiAgentExclusionReason(e.config)
+        return reason ? [{ server: e.name, reason }] : []
+      })
+  }
+
+  /** A running server's schemas minus its disabled tools. */
+  private _activeSchemas(entry: ServerEntry): LMStudioTool[] {
+    if (entry.status !== 'running') return []
+    const disabledSet = new Set(entry.config.disabledTools ?? [])
+    // schema.function.name is namespaced "serverName__toolName"; tool names may themselves contain __
+    return entry.schemas.filter((schema) => !disabledSet.has(schema.function.name.split('__').slice(1).join('__')))
   }
 
   // ── Tool call dispatch ────────────────────────────────────────
@@ -369,7 +394,7 @@ export class McpServerManager extends EventEmitter {
     ctx:        MultiAgentToolContext,
   ): Promise<McpToolResult> {
     const entry = this._runningEntry(serverName)
-    if (!isHttpMcpConfig(entry.config) && (!entry.config.sandboxProfile || entry.config.sandboxProfile.bypassSandbox)) {
+    if (!isMultiAgentCallable(entry.config)) {
       throw new Error(`MCP server "${serverName}" has no active SandboxService profile for multi-agent execution`)
     }
     const perm = await this._authorizeForMultiAgent(serverName, toolName, args, ctx, !!entry.requiresApproval)

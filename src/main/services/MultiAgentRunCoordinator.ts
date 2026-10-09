@@ -4,7 +4,8 @@
  *  - start: resolves role models against the live OpenRouter catalogue
  *    (empty → the active OpenRouter model; unknown → the run does not start), supplies per-token
  *    pricing so the sidecar can enforce the budget cap, and passes the built-in
- *    tools (web search, when configured) plus the currently running MCP tool schemas.
+ *    tools (web search, when configured) plus the running MCP tool schemas a worker can
+ *    actually call; servers left out are named in `excludedServers`.
  *  - events: forwarded to the renderer; worker tool pauses are executed here
  *    through McpServerManager (→ SandboxService) with the agent's identity and
  *    the run's HITL settings — the sidecar never touches a tool.
@@ -62,7 +63,9 @@ export interface CoordinatorDeps {
     isAwaitingPlanApproval(runId: string): boolean
   }
   mcp: {
-    getToolSchemas(): LMStudioTool[]
+    /** Running MCP schemas a worker can actually call (see multiAgentExclusionReason). */
+    getToolSchemasForMultiAgent(): LMStudioTool[]
+    getMultiAgentExclusions(): { server: string; reason: string }[]
     callToolForMultiAgent(
       serverName: string,
       toolName: string,
@@ -187,13 +190,14 @@ export class MultiAgentRunCoordinator {
 
     const config: MultiAgentConfig = { ...payload.config, models }
     const observe = this.guard(() => this.deps.runLog?.enabled()) ?? false
+    const excludedServers = this.deps.mcp.getMultiAgentExclusions()
     this.starting.set(payload.chatId, { config, task: payload.task, observe })
     try {
       const result = await this.deps.sidecar.startRun({
         chatId: payload.chatId,
         task: payload.task,
         config,
-        tools: [...this.deps.builtin.getToolSchemas(), ...this.deps.mcp.getToolSchemas()].map((tool) => ({
+        tools: [...this.deps.builtin.getToolSchemas(), ...this.deps.mcp.getToolSchemasForMultiAgent()].map((tool) => ({
           name: tool.function.name,
           description: tool.function.description,
           parameters: tool.function.parameters as unknown as Record<string, unknown>,
@@ -205,11 +209,12 @@ export class MultiAgentRunCoordinator {
         catalogueChecked,
         observe,
         currentDateTime: currentDateTimeLine(),
+        excludedServers,
       })
       if (!result.ok) return result
       // runStarted fired inside startRun, so this run is already in the history.
       const runIds = this.deps.db.getRun(payload.chatId)?.runIds
-      return { ...result, config, ...(this.deps.runLog ? { recorded: observe } : {}), ...(runIds ? { runIds } : {}) }
+      return { ...result, config, ...(excludedServers.length ? { excludedServers } : {}), ...(this.deps.runLog ? { recorded: observe } : {}), ...(runIds ? { runIds } : {}) }
     } finally {
       this.starting.delete(payload.chatId)
     }

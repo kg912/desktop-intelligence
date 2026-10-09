@@ -5,7 +5,7 @@ vi.mock('electron', () => ({ app: { getPath: () => '/tmp/di-coordinator-test' } 
 
 import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
 import type { CoordinatorDeps } from '../MultiAgentRunCoordinator'
-import { McpDeniedError } from '../McpServerManager'
+import { McpDeniedError, McpServerManager } from '../McpServerManager'
 import { DEFAULT_MULTI_AGENT_CONFIG, DEFAULT_SYNTHESIZER_MODEL } from '../../../shared/types'
 import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
 import type { OpenRouterModelInfo } from '../../../shared/multiAgentModels'
@@ -32,7 +32,8 @@ class FakeSidecar extends EventEmitter {
 function setup(over: { settings?: Partial<ReturnType<CoordinatorDeps['settings']>>; catalogue?: OpenRouterModelInfo[] | Error } = {}) {
   const sidecar = new FakeSidecar()
   const mcp = {
-    getToolSchemas: vi.fn(() => [{ type: 'function' as const, function: { name: 'fs__read', description: 'read', parameters: { type: 'object', properties: {}, required: [] } } }]),
+    getMultiAgentExclusions: vi.fn((): Array<{ server: string; reason: string }> => []),
+    getToolSchemasForMultiAgent: vi.fn(() => [{ type: 'function' as const, function: { name: 'fs__read', description: 'read', parameters: { type: 'object', properties: {}, required: [] } } }]),
     callToolForMultiAgent: vi.fn(async () => ({ text: 'tool-output', images: [], userNote: '' })),
     // The real one runs the permission layers first; here they always approve.
     callBuiltinForMultiAgent: vi.fn(async (_tool: string, _args: Record<string, unknown>, _ctx: unknown, run: () => Promise<string>) => ({ text: await run(), images: [], userNote: '' })),
@@ -351,16 +352,33 @@ describe('MultiAgentRunCoordinator start returns the run list', () => {
   })
 })
 
-// Reflection hardening Phase 0 (diagnosis 5): the coordinator offers workers every running
-// MCP schema, including servers the multi-agent guard will always reject.
+// Reflection hardening (diagnosis 5): Phase 0 pinned that the coordinator offered workers every
+// running MCP schema; Phase 1 flipped it — only servers the multi-agent guard would let through.
 describe('MultiAgentRunCoordinator worker tools', () => {
-  // flips in Phase 1
-  it('offers a bypassed and an unreviewed stdio server to workers', async () => {
+  it('a real McpServerManager: bypassed and unreviewed stdio servers are not offered, and start() names them', async () => {
     const h = setup()
-    const schema = (name: string) => ({ type: 'function' as const, function: { name, description: '', parameters: { type: 'object' as const, properties: {}, required: [] as string[] } } })
-    h.mcp.getToolSchemas.mockReturnValue([schema('fs__read'), schema('raw__x'), schema('unreviewed__x')])
-    await h.coordinator.start({ chatId: 'c', task: 't', config: config() })
-    const tools = (h.sidecar.startRun.mock.calls[0][0] as unknown as { tools: Array<{ name: string }> }).tools
-    expect(tools.map((t) => t.name)).toEqual(['fs__read', 'raw__x', 'unreviewed__x'])
+    const real = new McpServerManager()
+    const seed = (name: string, config: object): void => {
+      ;(real as any).servers.set(name, {
+        name, config, client: null, status: 'running', tools: ['x'], error: undefined, requiresApproval: false,
+        schemas: [{ type: 'function', function: { name: `${name}__x`, description: '', parameters: { type: 'object', properties: {}, required: [] } } }],
+      })
+    }
+    seed('fs', { command: 'node', enabled: true, sandboxProfile: { allowedDomains: [], allowWrite: [] } })
+    seed('raw', { command: 'node', enabled: true, sandboxProfile: { allowedDomains: [], allowWrite: [], bypassSandbox: true } })
+    seed('unreviewed', { command: 'node', enabled: true })
+    h.mcp.getToolSchemasForMultiAgent.mockImplementation(() => real.getToolSchemasForMultiAgent() as never)
+    h.mcp.getMultiAgentExclusions.mockImplementation(() => real.getMultiAgentExclusions())
+    const result = await h.coordinator.start({ chatId: 'c', task: 't', config: config() })
+    const request = h.sidecar.startRun.mock.calls[0][0] as unknown as { tools: Array<{ name: string }>; excludedServers: unknown }
+    expect(request.tools.map((t) => t.name)).toEqual(['fs__x'])
+    const excluded = [{ server: 'raw', reason: 'sandbox bypassed' }, { server: 'unreviewed', reason: 'sandbox profile not reviewed' }]
+    expect(request.excludedServers).toEqual(excluded)
+    expect(result).toMatchObject({ ok: true, excludedServers: excluded })
+  })
+
+  it('no exclusions: start() has no excludedServers field', async () => {
+    const h = setup()
+    expect(await h.coordinator.start({ chatId: 'c', task: 't', config: config() })).not.toHaveProperty('excludedServers')
   })
 })

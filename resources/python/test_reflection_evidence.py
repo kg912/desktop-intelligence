@@ -45,7 +45,7 @@ class FakeOpenRouter:
         return [body for r, body in self.requests if r == role]
 
 
-def run_one_step(route, tool_result=lambda n: BIG, retries=2, **config):
+def run_one_step(route, tool_result=lambda n: BIG, retries=2, request=None, **config):
     """Full orchestrate() of a one-step plan. Returns (run, fake)."""
     fake = FakeOpenRouter(lambda role, body: {"content": json.dumps([{"id": "1.1", "label": "Read the file", "role": "Reader", "dependsOn": []}])}
                           if role == "planner" else route(role, body))
@@ -53,7 +53,7 @@ def run_one_step(route, tool_result=lambda n: BIG, retries=2, **config):
     cfg = s.Config(maxAgents=1, budgetCapUsd=1, models={"orchestrator": "m/o", "worker": "m/w", "reflection": "m/r", "synthesizer": "m/s"},
                    reflectionPassThreshold=3, maxRetriesPerAgent=retries, hitlTimeoutMs=60_000, **config)
     run = s.Run("r", s.RunRequest(runId="r", chatId="c", task="What is in the file?", config=cfg, tools=TOOLS, openRouterApiKey="k",
-                                  currentDateTime="Current date and time: x."))
+                                  currentDateTime="Current date and time: x.", **(request or {})))
     calls = [0]
 
     async def approve(agent_id, *_a, **_k):
@@ -107,4 +107,9 @@ if __name__ == "__main__":
     assert "RESULT-1" in json.dumps(attempt0[-1])
     assert "RESULT-1" not in json.dumps(attempt1_first) and ANSWER not in json.dumps(attempt1_first)
     assert not any(m["role"] == "tool" for m in attempt1_first["messages"])
+    # Phase 1: servers Electron left out of the worker tools are echoed in run_config (the trace).
+    excluded = [{"server": "memory", "reason": "sandbox bypassed"}]
+    run, _ = run_one_step(lambda role, body: {"content": json.dumps({"score": 5, "reason": "ok", "issues": []})} if role == "judge" else worker_reply(body)
+                          if role == "worker" else {"content": "done [1.1]"}, request={"excludedServers": excluded})
+    assert events(run, "run_config")[0]["excludedServers"] == excluded
     print("ok")

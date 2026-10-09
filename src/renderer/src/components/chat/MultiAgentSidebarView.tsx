@@ -289,6 +289,11 @@ function Preflight({ view, config, estimate, onApprove, onCancel }: {
           </li>
         ))}
       </ol>
+      {view.runConfig?.excludedServers?.map(({ server, reason }) => (
+        <p key={server} data-testid="excluded-server" className="mt-2 truncate border-t-[0.5px] border-white/5 pt-2 font-mono text-[11.5px] text-ma-mute" title={`${server} · excluded: ${reason}`}>
+          {server} · excluded: {reason}
+        </p>
+      ))}
       <div className="mt-3 space-y-0.5 border-t-[0.5px] border-white/5 pt-3 text-[12.5px] text-ma-soft">
         {estimate ? (
           <>

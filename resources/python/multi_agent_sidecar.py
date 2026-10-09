@@ -128,6 +128,8 @@ class RunRequest(BaseModel):
     observe: bool = False
     # "Current date and time: …" computed by Electron in the user's timezone; the sandbox clock is not theirs.
     currentDateTime: str = Field(min_length=1)
+    # Running MCP servers Electron did not offer to workers ({server, reason}); echoed in run_config.
+    excludedServers: list[dict[str, str]] = Field(default_factory=list)
 
 
 class HitlResponse(BaseModel):
@@ -861,7 +863,8 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
                    catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,
                    reflectionPassThreshold=config.reflectionPassThreshold, maxRetriesPerAgent=config.maxRetriesPerAgent,
-                   maxToolRounds=config.maxToolRounds, reasoningEffort=config.reasoningEffort, tools=[str(t.get("name")) for t in run.request.tools])
+                   maxToolRounds=config.maxToolRounds, reasoningEffort=config.reasoningEffort, tools=[str(t.get("name")) for t in run.request.tools],
+                   excludedServers=run.request.excludedServers)
     return {**state, "steps": steps}
 
 

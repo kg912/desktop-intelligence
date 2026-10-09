@@ -59,7 +59,7 @@ async function fullRun(root: string, opts: { enabled?: boolean } = {}) {
   })()
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,
-    mcp: { getToolSchemas: () => [], callToolForMultiAgent: vi.fn(), callBuiltinForMultiAgent: vi.fn(), clearRunTrust: vi.fn(), cancelRunPermissions: vi.fn() } as unknown as CoordinatorDeps['mcp'],
+    mcp: { getToolSchemasForMultiAgent: () => [], getMultiAgentExclusions: () => [], callToolForMultiAgent: vi.fn(), callBuiltinForMultiAgent: vi.fn(), clearRunTrust: vi.fn(), cancelRunPermissions: vi.fn() } as unknown as CoordinatorDeps['mcp'],
     builtin: { getToolSchemas: () => [], call: vi.fn() },
     sendEvent: () => {},
     db: { begin: vi.fn(), saveTrace: vi.fn(), saveAssistantMessage: vi.fn(), getRun: vi.fn(() => null), claimMode: vi.fn(() => null) },

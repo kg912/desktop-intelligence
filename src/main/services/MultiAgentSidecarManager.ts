@@ -75,6 +75,8 @@ export interface RunStartRequest extends MultiAgentStartPayload {
   observe?: boolean
   /** currentDateTimeLine() in the user's timezone; the sandboxed sidecar's clock is not theirs. */
   currentDateTime: string
+  /** Running MCP servers workers are not offered, and why; echoed in run_config for the trace. */
+  excludedServers?: { server: string; reason: string }[]
 }
 
 type FetchFn = typeof fetch

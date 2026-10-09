@@ -85,7 +85,7 @@ function coordinatorWith(obs: ObservabilityService, observe?: CoordinatorDeps['o
   const sent: AgentEvent[] = []
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,
-    mcp: { getToolSchemas: () => [], callToolForMultiAgent: vi.fn(), callBuiltinForMultiAgent: vi.fn(), clearRunTrust: vi.fn(), cancelRunPermissions: vi.fn() } as unknown as CoordinatorDeps['mcp'],
+    mcp: { getToolSchemasForMultiAgent: () => [], getMultiAgentExclusions: () => [], callToolForMultiAgent: vi.fn(), callBuiltinForMultiAgent: vi.fn(), clearRunTrust: vi.fn(), cancelRunPermissions: vi.fn() } as unknown as CoordinatorDeps['mcp'],
     builtin: { getToolSchemas: () => [], call: vi.fn() },
     sendEvent: (e) => sent.push(e),
     db,
