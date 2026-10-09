@@ -86,7 +86,7 @@ DSML_INVOKE_RE = re.compile(r'<\|DSML\|invoke\s+name="([^"]+)">(.*?)</\|DSML\|in
 DSML_PARAM_RE = re.compile(r'<\|DSML\|parameter\s+name="([^"]+)"[^>]*>(.*?)</\|DSML\|parameter>', re.S | re.I)
 REFLECTION_RUBRIC = [
     "Answers the subtask it was given",
-    "Claims are backed by tool evidence or explicitly marked as unverified",
+    "Every factual claim carries a quote from a tool result that supports it, or is explicitly marked unverified; a claim marked unverified is not an issue",
     "No invented bookings, prices or timetables",
     "Consistent with the outputs of the earlier agents it depends on",
 ]
@@ -748,7 +748,9 @@ PLANNER_SYSTEM = (
     "You are the orchestrator of a team of AI agents that run in parallel. Split the user's task into the largest set of "
     "steps that can run at the same time. A step may depend on another step only if it needs that step's output, and "
     "then it must list that step's id in dependsOn. Research, comparison, and per-region or per-source work is parallel "
-    "by default. A final assembly step may depend on the others. You may spawn a maximum of {max_agents} agents (steps). "
+    "by default. A final assembly step may depend on the others. If a step must evaluate many candidates against several criteria, "
+    "split it by sector, theme or criterion group into parallel steps and add one merge step that applies the exclusions and combines "
+    "the results. You may spawn a maximum of {max_agents} agents (steps). "
     "Return ONLY a JSON array. Each element: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
     "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs]}."
 )
@@ -1101,6 +1103,9 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
                                           "Each claim's quote was already checked mechanically against the result it cites (status column: verified = "
                                           "the quote is in that result). Judge whether each quote actually supports its claim, and whether the prose makes "
                                           "significant assertions with no [cN] marker; an unmarked numeric assertion counts as an unbacked claim. "
+                                          "Do not infer that something was invented from its absence in an excerpt; report only claims whose quote does "
+                                          "not support them, assertions with no marker, and rubric failures. "
+                                          + ("" if prior else "This step depends on no earlier agent: skip rubric item 4. ") +
                                           "Score 1 (useless) to 5 (excellent). A claim with no tool evidence that is not marked as unverified is an issue. "
                                           "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}")},
             {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask ({step['id']}): {step['label']}\n\n"
@@ -1210,7 +1215,10 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": with_date(run, f"You are the {role} agent in a multi-agent team. Work independently on your subtask. "
                                       f"{tools_line} Never claim to have executed anything you did not. "
-                                      "Mark any claim you could not verify with a tool as unverified.\n\n" + CLAIMS_CONTRACT)},
+                                      "Mark any claim you could not verify with a tool as unverified. "
+                                      "If a criterion cannot be verified with your tools, report it as unverified with the reason. Never report an "
+                                      "unverifiable criterion as met or as failed, and do not eliminate an item only because data is missing; flag it instead."
+                                      "\n\n" + CLAIMS_CONTRACT)},
         {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}"},
     ]
     compacted: set[int] = set()  # indices of tool messages already replaced by a stub

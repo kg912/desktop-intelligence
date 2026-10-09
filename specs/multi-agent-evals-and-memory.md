@@ -70,6 +70,7 @@ Every check is structural or lexical. Nothing in the default run asks a model wh
 12. Plan over the agent cap: expect the cap enforced.
 13. Repetition loop: the fake stream loops; expect either recovery on retry or `failureKind: repetition`, and no runaway spend.
 14. Cut-off answer: the fake stream ends with `finish_reason: length`; expect `truncated` set on the agent and a visible marker in the output.
+15. Wide stock screen (added by specs/multi-agent-reflection-hardening.md, Phase 6): the 6-criteria screen from run `69750960`, replayed from the recorded fixture `resources/python/fixtures/stock_screen_69750960.json` (the screening agent's three recorded attempts, its tool results trimmed to 1,500 chars, and its judge verdicts 2, 1, 2). Expect `outcome: partial` or `success` — step 1.1 passed or degraded, never failed — every dependant run, and synthesis produced. Until this harness exists the same replay runs as `resources/python/test_stock_screen_replay.py`.
 
 **Two modes**
 

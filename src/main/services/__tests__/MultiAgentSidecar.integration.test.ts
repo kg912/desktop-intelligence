@@ -671,7 +671,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     const review = fake.requests.find((r) => systemOf(r.body).includes('strict reviewer'))!
     expect(userOf(review.body)).toContain('fs__read_file')
     expect(userOf(review.body)).toContain('Railjet hourly')
-    expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ model: 'fake/reviewer', rubric: expect.arrayContaining([expect.stringMatching(/tool evidence/)]), attempt: 0 })
+    // Reflection hardening Phase 6 replaced rubric item 2 ("…backed by tool evidence…") with the quote rule.
+    expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ model: 'fake/reviewer', rubric: expect.arrayContaining([expect.stringMatching(/carries a quote from a tool result/)]), attempt: 0 })
   }, 60_000)
 
   it('sends no reasoning parameter when the effort is off or the catalogue says the model lacks it', async () => {
