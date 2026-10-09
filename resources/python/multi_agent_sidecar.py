@@ -112,6 +112,8 @@ class Config(BaseModel):
     # The judge gets every tool result in full up to this many (estimated) tokens, else excerpts.
     # Clamped to half the judge model's context window when that is known.
     judgeEvidenceMaxTokens: int = Field(default=100_000, ge=0)
+    # Retries exhausted: "degrade" passes the best attempt on with its open issues; "fail" fails the step (the old behaviour).
+    onRetryExhausted: Literal["degrade", "fail"] = "degrade"
 
 
 class RunRequest(BaseModel):
@@ -1131,6 +1133,17 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
     return 0, False, "gate unavailable", ["The reviewer did not return a usable verdict twice in a row"], model
 
 
+CLAIM_LABEL = {"verified": "verified", "unverified_declared": "unverified"}
+
+
+def downstream_text(agent_id: str, output: str, claims: list[dict[str, Any]], statuses: dict[str, str], header: str = "") -> str:
+    """What dependants and synthesis see: the prose, a one-line claim status appendix, and for a step
+    accepted with caveats a header line naming them."""
+    labels = [f"{c['id']} " + (f"from {c['source']}" if statuses[c["id"]] == "source" else CLAIM_LABEL.get(statuses[c["id"]], "failed-check"))
+              for c in claims]
+    return (f"{header}\n" if header else "") + output + (f"\n\nClaims ({agent_id}): " + "; ".join(labels) if labels else "")
+
+
 LOOP_NUDGE = ("Your previous reply got stuck repeating the same text and was stopped. "
               "Answer once, concisely, without repeating yourself.")
 
@@ -1201,6 +1214,20 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}"},
     ]
     compacted: set[int] = set()  # indices of tool messages already replaced by a stub
+    # Every judged attempt with usable output (precheck passed), for 'degrade' on exhaustion.
+    usable: list[dict[str, Any]] = []
+
+    async def exhausted(reason: str) -> str:
+        """Retries are used up (or the attempt cannot continue): fail, or pass on the best usable attempt
+        (highest score, ties to the latest) with its open issues. No usable attempt always fails."""
+        if config.onRetryExhausted != "degrade" or not usable:
+            raise AgentFailed(reason)
+        best = max(usable, key=lambda a: (a["score"], a["attempt"]))
+        await run.emit("agent_degraded", agentId=agent_id, attempt=best["attempt"], score=best["score"], issues=best["issues"],
+                       claimStatuses=best["statuses"], reason=reason)
+        header = f"[{agent_id} DEGRADED: score {best['score']}/5; open issues: {'; '.join(best['issues'][:5]) or 'none listed'}]"
+        return downstream_text(agent_id, best["output"], best["claims"], best["statuses"], header)
+
     for attempt in range(config.maxRetriesPerAgent + 1):
         run.attempts[agent_id] = attempt
 
@@ -1308,7 +1335,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 _round += 1
         except BudgetReached:
             if not output:
-                raise AgentFailed("budget cap reached before this agent produced an answer") from None
+                return await exhausted("budget cap reached before this agent produced an answer")
         if looped:
             last_reason = "repetition loop"
             if attempt < config.maxRetriesPerAgent and not run.budget_reached:
@@ -1316,21 +1343,21 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 # The looped reply is never kept; the nudge is a new turn in the same conversation.
                 messages.append({"role": "user", "content": LOOP_NUDGE})
                 continue
-            raise AgentFailed(last_reason)
+            return await exhausted(last_reason)
         if not output:
-            raise AgentFailed("no final answer (empty or only tool-call text, after one re-ask)")
+            return await exhausted("no final answer (empty or only tool-call text, after one re-ask)")
         answer = output  # as written, claims block included: the conversation's last assistant turn on a repair
         output, claims, parse_errors = parse_claims(output)
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
                        **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
                        **({"modelServed": served} if served else {}))
 
-        if run.budget_reached:
-            return output  # no reflection spend once the cap is reached; output kept as-is
+        statuses = {c["id"]: verify_claim(c, store) for c in claims}
+        if run.budget_reached:  # no reflection spend once the cap is reached; output kept as-is
+            return downstream_text(agent_id, output, claims, statuses)
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
         # Gate order: (a) precheck, (b) claims parse + mechanical quote check, (c) judge. A mechanical
         # failure goes straight to a repair turn with no judge spend, except on the last allowed attempt.
-        statuses = {c["id"]: verify_claim(c, store) for c in claims}
         mechanical = [] if precheck(output) else parse_errors + claim_problems(claims, statuses)
         judge_served: dict[str, str] = {}
         judge_info: dict[str, Any] = {}
@@ -1340,7 +1367,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             try:
                 score, passed, reason, issues, judge = await reflect(run, step, output, prior, store, judge_served, judge_info, claims, statuses)
             except BudgetReached:
-                return output
+                return downstream_text(agent_id, output, claims, statuses)
             if mechanical:  # last attempt: judged for a score, but it cannot pass with failing claims
                 passed, reason, issues = False, f"{len(mechanical)} claim problem(s); reviewer: {reason}", (mechanical + issues)[:12]
         await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
@@ -1349,12 +1376,19 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                        claimsChecked=sum(1 for c in claims if "callId" in c), claimsFailed=sum(1 for s in statuses.values() if s not in CLAIM_OK),
                        claimStatuses=statuses)
         if passed:
-            return output
+            return downstream_text(agent_id, output, claims, statuses)
+        if not precheck(output):
+            usable.append({"attempt": attempt, "output": output, "claims": claims, "statuses": statuses, "score": score, "issues": issues})
+        if reason == "gate unavailable" and not mechanical and config.onRetryExhausted == "degrade":
+            # No verdict is not a rejection: accept as unreviewed rather than re-asking the worker.
+            await run.emit("agent_degraded", agentId=agent_id, attempt=attempt, score=0, issues=issues, claimStatuses=statuses,
+                           reason="gate unavailable", unreviewed=True)
+            return downstream_text(agent_id, output, claims, statuses, f"[{agent_id} UNREVIEWED: the reviewer was unavailable]")
         last_reason = f"score {score}/5: {reason}" if score else reason
         if attempt < config.maxRetriesPerAgent:
             await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=reason)
             messages += [{"role": "assistant", "content": answer}, {"role": "user", "content": repair_turn(score, reason, issues)}]
-    raise AgentFailed(f"reflection retry limit exceeded ({last_reason})")
+    return await exhausted(f"reflection retry limit exceeded ({last_reason})")
 
 
 async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -1432,7 +1466,9 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     prompt = [
         {"role": "system", "content": with_date(run, "You synthesize a multi-agent team's work into one final answer for the user. "
                                       "Cite every factual contribution with its source agent marker exactly as given, e.g. [1.1]. "
-                                      "Do not invent markers. If some agents failed, say what is missing.")},
+                                      "Do not invent markers. If some agents failed, say what is missing. An agent output may end with its "
+                                      "claim statuses: drop or explicitly caveat any claim marked failed-check, and present unverified claims as "
+                                      "unverified. If an output is marked DEGRADED or UNREVIEWED, say that step's results were accepted with caveats.")},
         {"role": "user", "content": f"Task: {run.request.task}\n\nAgent outputs:\n\n{sources}" + (f"\n\nFailed agents:{missing}" if missing else "")},
     ]
 

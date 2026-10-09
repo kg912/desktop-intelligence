@@ -643,6 +643,23 @@ describe('Output limits (Part F)', () => {
     expect(await screen.findByText("A retry continues the agent's conversation with the reviewer's feedback; it does not start over.")).toBeTruthy()
     expect(screen.getByLabelText('Max retries per agent')).toBeTruthy()
   })
+
+  it('"When retries run out" defaults to keeping the best attempt and saves "fail" (reflection hardening Phase 5)', async () => {
+    const saveMultiAgentConfig = vi.fn().mockResolvedValue(undefined)
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({ models: [], error: null }),
+      getBackendSettings: vi.fn().mockResolvedValue({ provider: 'openrouter', openrouterModel: 'x/y' }),
+      saveMultiAgentConfig,
+    }
+    render(<MultiAgentSettingsPanel />)
+    const select = (await screen.findByLabelText('When retries run out')) as HTMLSelectElement
+    expect(select.value).toBe('degrade')
+    fireEvent.change(select, { target: { value: 'fail' } })
+    fireEvent.click(screen.getByText('Save multi-agent defaults'))
+    await waitFor(() => expect(saveMultiAgentConfig).toHaveBeenCalledWith(expect.objectContaining({ onRetryExhausted: 'fail' })))
+  })
 })
 
 describe('run history in the dock header', () => {

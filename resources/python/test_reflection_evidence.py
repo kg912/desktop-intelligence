@@ -119,12 +119,20 @@ if __name__ == "__main__":
                                   config=s.Config(maxAgents=1, budgetCapUsd=1, models={}, reflectionPassThreshold=3, maxRetriesPerAgent=0, hitlTimeoutMs=1_000)))
     assert s.judge_evidence_limit(run, "m/r") == 4_000 and s.judge_evidence_limit(run, "unknown") == 100_000
 
-    # 2. Three score-2 verdicts with maxRetriesPerAgent=2 fail the step and the run. // flips in Phase 5
+    # 2. Phase 0 pinned that three score-2 verdicts (maxRetriesPerAgent 2) failed the step and the run.
+    # Phase 5 flipped it: by default the best attempt (ties → latest) is passed on, degraded; 'fail' keeps the old outcome.
     judge = verdicts(2, 2, 2)
     run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"})
+    [degraded] = events(run, "agent_degraded")
+    assert (degraded["attempt"], degraded["score"], degraded["issues"]) == (2, 2, ["Back the figures"]), degraded
+    assert not events(run, "agent_failed") and run.events[-1]["type"] == "task_complete"
+    assert "[1.1 DEGRADED: score 2/5; open issues: Back the figures]" in fake.of("synthesis")[0]["messages"][1]["content"]
+    judge = verdicts(2, 2, 2)
+    run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
+                             onRetryExhausted="fail")
     failed = events(run, "agent_failed")
     assert len(failed) == 1 and failed[0]["reason"].startswith("reflection retry limit exceeded"), failed
-    assert run.events[-1]["type"] == "task_failed" and not fake.of("synthesis")
+    assert run.events[-1]["type"] == "task_failed" and not fake.of("synthesis") and not events(run, "agent_degraded")
 
     # 3. Phase 0 pinned that a retry started from nothing. Phase 4 flipped it: attempt 1 continues the
     # conversation — attempt 0's tool results and answer are kept and the verdict is a new user turn.

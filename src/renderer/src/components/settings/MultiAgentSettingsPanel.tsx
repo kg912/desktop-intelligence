@@ -104,6 +104,12 @@ export function MultiAgentSettingsPanel() {
       <Field label="Max retries per agent" value={config.maxRetriesPerAgent} help="A retry continues the agent's conversation with the reviewer's feedback; it does not start over.">
         <RangeSlider aria-label="Max retries per agent" value={config.maxRetriesPerAgent} min={0} max={5} onChange={(v) => update('maxRetriesPerAgent', v)} />
       </Field>
+      <Field label="When retries run out" htmlFor="ma-exhausted" help="Keep the best attempt marks it accepted with caveats; dependants and the synthesis see its open issues.">
+        <Select id="ma-exhausted" value={config.onRetryExhausted} onChange={(e) => update('onRetryExhausted', e.target.value as MultiAgentConfig['onRetryExhausted'])}>
+          <option value="degrade">Keep the best attempt</option>
+          <option value="fail">Fail the step</option>
+        </Select>
+      </Field>
       <Field label="Approval timeout (minutes)" htmlFor="ma-timeout" help="Unanswered tool approvals are auto-denied after this.">
         <NumberInput id="ma-timeout" min={1} max={60} value={Math.round(config.hitlTimeoutMs / 60_000)}
           onChange={(e) => update('hitlTimeoutMs', Math.min(60, Math.max(1, Number(e.target.value) || 5)) * 60_000)} />

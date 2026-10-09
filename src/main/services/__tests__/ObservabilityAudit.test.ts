@@ -37,6 +37,7 @@ const SAMPLES: Record<AgentEvent['type'], Record<string, unknown>> = {
   run_config: { models: { worker: 'm/w' }, sources: { worker: 'saved' }, catalogueChecked: true, maxAgents: 2, budgetCapUsd: 1, reflectionPassThreshold: 3, maxRetriesPerAgent: 1, reasoningEffort: 'medium' },
   hitl_pause: { agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} },
   hitl_resume: { agentId: 'orchestrator', approved: true },
+  agent_degraded: { agentId: '1.1', attempt: 1, score: 2, issues: ['Back the figures'], claimStatuses: { c1: 'verified' } },
   context_compacted: { agentId: '1.1', attempt: 0, stubbed: 2, tokensFreed: 5_000 },
   agent_start: { agentId: '1.1', role: 'Researcher', model: 'm/w', attempt: 0 },
   agent_reasoning: { agentId: '1.1', attempt: 0, token: 'think' },
@@ -139,7 +140,7 @@ describe('Phase 0 audit — the old multi-agent logger', () => {
       orchestrator_plan: 'orchestrator', run_config: 'orchestrator',
       hitl_pause: 'orchestrator', hitl_resume: 'orchestrator', // agentId "orchestrator" in SAMPLES
       agent_start: 'worker', agent_reasoning: 'worker', agent_token: 'worker', tool_start: 'worker', tool_done: 'worker',
-      agent_complete: 'worker', retry: 'worker', agent_failed: 'worker', context_compacted: 'worker',
+      agent_complete: 'worker', retry: 'worker', agent_failed: 'worker', context_compacted: 'worker', agent_degraded: 'worker',
       reflection_start: 'reflection', reflection_result: 'reflection',
       synthesis_start: 'synthesizer', synthesis_token: 'synthesizer',
       task_complete: 'run', task_failed: 'run',

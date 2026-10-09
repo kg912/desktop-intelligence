@@ -22,6 +22,7 @@ const KNOWN_TYPES = new Set<string>([
   'reflection_result',
   'retry',
   'context_compacted',
+  'agent_degraded',
   'hitl_pause',
   'hitl_resume',
   'synthesis_start',
@@ -126,6 +127,14 @@ function validateVariant(obj: Record<string, unknown>): string | null {
 
     case 'context_compacted':
       return checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['stubbed', 'number'], ['tokensFreed', 'number']])
+
+    case 'agent_degraded': {
+      const err = checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['score', 'number']])
+      if (err) return err
+      if (!Array.isArray(obj.issues) || !obj.issues.every((i) => typeof i === 'string')) return '"issues" must be an array of strings'
+      if (typeof obj.claimStatuses !== 'object' || obj.claimStatuses === null || Array.isArray(obj.claimStatuses)) return '"claimStatuses" must be an object'
+      return null
+    }
 
     case 'hitl_pause': {
       const err = checkFields(obj, [

@@ -211,6 +211,7 @@ const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig
   hitlTimeoutMs: 60_000,
   requirePermissions: true,
   reasoningEffort: 'medium',
+  onRetryExhausted: 'degrade',
   ...overrides,
 })
 
@@ -554,7 +555,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
       { id: '3.1', label: 'Use step 2.1', role: 'Scout', dependsOn: ['2.1'] },
     ]
     const { events } = await timedRun(plan, {
-      config: baseConfig({ maxRetriesPerAgent: 0 }),
+      // A rejected step fails only with onRetryExhausted 'fail' since reflection hardening Phase 5 ('degrade' passes it on).
+      config: baseConfig({ maxRetriesPerAgent: 0, onRetryExhausted: 'fail' }),
       holdMs: () => 50,
       reply: (body) => (systemOf(body).includes('strict reviewer') && userOf(body).includes('Findings for 1.1') ? { content: '{"score": 1, "reason": "wrong"}' } : undefined),
     })
@@ -698,12 +700,36 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
 
   it('an unparsable verdict is retried once, then fails as "gate unavailable" — never a pass', async () => {
     const events = await tracedRun({
-      config: baseConfig({ maxRetriesPerAgent: 0 }),
+      // 'fail' mode; with the default 'degrade' the answer is accepted as unreviewed (reflection hardening Phase 5, test below).
+      config: baseConfig({ maxRetriesPerAgent: 0, onRetryExhausted: 'fail' }),
       reply: (body) => (systemOf(body).includes('strict reviewer') ? { content: 'Looks great to me!' } : undefined),
     })
     expect(fake.requests.filter((r) => systemOf(r.body).includes('strict reviewer'))).toHaveLength(2)
     expect(events.find((e) => e.type === 'reflection_result')).toMatchObject({ passed: false, score: 0, reason: 'gate unavailable' })
     expect(events).toContainEqual(expect.objectContaining({ type: 'agent_failed', agentId: '1.1' }))
+  }, 60_000)
+
+  it('reflection hardening Phase 5: an unparsable verdict under the default degrade is accepted as unreviewed and passed on', async () => {
+    const events = await tracedRun({
+      config: baseConfig({ maxRetriesPerAgent: 1 }),
+      reply: (body) => (systemOf(body).includes('strict reviewer') ? { content: 'Looks great to me!' } : undefined),
+    })
+    expect(fake.requests.filter((r) => systemOf(r.body).includes('strict reviewer'))).toHaveLength(2)
+    expect(events.find((e) => e.type === 'agent_degraded')).toMatchObject({ agentId: '1.1', attempt: 0, score: 0, unreviewed: true, claimStatuses: {} })
+    expect(events.some((e) => e.type === 'retry' || e.type === 'agent_failed')).toBe(false)
+    expect(fake.requests.find((r) => systemOf(r.body).includes('synthesize'))?.body.messages[1].content).toContain('[1.1 UNREVIEWED: the reviewer was unavailable]')
+    expect(events.at(-1)?.type).toBe('task_complete')
+  }, 60_000)
+
+  it('reflection hardening Phase 5: exhausted retries pass the best attempt on as agent_degraded, through the real manager', async () => {
+    const events = await tracedRun({
+      config: baseConfig({ maxRetriesPerAgent: 1 }),
+      reply: (body) => (systemOf(body).includes('strict reviewer') ? { content: '{"score": 2, "reason": "thin", "issues": ["Name the bus operator"]}' } : undefined),
+    })
+    expect(events.find((e) => e.type === 'agent_degraded')).toMatchObject({ agentId: '1.1', attempt: 1, score: 2, issues: ['Name the bus operator'] })
+    expect(events.some((e) => e.type === 'agent_failed')).toBe(false)
+    expect(fake.requests.find((r) => systemOf(r.body).includes('synthesize'))?.body.messages[1].content).toContain('[1.1 DEGRADED: score 2/5; open issues: Name the bus operator]')
+    expect(events.at(-1)?.type).toBe('task_complete')
   }, 60_000)
 
   it('the deterministic precheck fails an empty, short or refusal-only answer without calling the reviewer', async () => {

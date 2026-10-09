@@ -526,6 +526,8 @@ export interface MultiAgentConfig {
   requirePermissions:      boolean  // HITL default for multi-agent runs
   /** OpenRouter `reasoning.effort` for worker requests; 'off' sends none. */
   reasoningEffort:         ReasoningEffort
+  /** When an agent's retries run out: 'degrade' passes its best attempt on with its open issues; 'fail' fails the step. */
+  onRetryExhausted:        'degrade' | 'fail'
 }
 
 export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high'
@@ -562,6 +564,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   hitlTimeoutMs:           300000,
   requirePermissions:      true,
   reasoningEffort:         'medium',
+  onRetryExhausted:        'degrade',
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */
@@ -722,6 +725,25 @@ export interface RetryEvent extends AgentEventBase {
   reason:  string
 }
 
+/**
+ * Retries ran out and onRetryExhausted is 'degrade': the best attempt (highest score, ties to the latest)
+ * is passed downstream with its open issues instead of failing the step. `unreviewed`: the judge returned
+ * no usable verdict, so the answer was accepted unreviewed (score 0).
+ */
+export interface AgentDegradedEvent extends AgentEventBase {
+  type:          'agent_degraded'
+  agentId:       string
+  /** The attempt whose output is passed on. */
+  attempt:       number
+  score:         number
+  issues:        string[]
+  /** Claim id → verified | unverified_declared | source | quote_not_found | call_not_found | call_failed | quote_too_short | quote_too_long. */
+  claimStatuses: Record<string, string>
+  /** Why retrying stopped (e.g. "reflection retry limit exceeded (…)", "gate unavailable"). */
+  reason?:       string
+  unreviewed?:   boolean
+}
+
 /** The worker's history would not fit the model's context window: the oldest tool results were
  *  replaced by stubs, just enough to fit (the evidence store keeps them in full). */
 export interface ContextCompactedEvent extends AgentEventBase {
@@ -796,6 +818,7 @@ export type AgentEvent =
   | ReflectionResultEvent
   | RetryEvent
   | ContextCompactedEvent
+  | AgentDegradedEvent
   | HitlPauseEvent
   | HitlResumeEvent
   | SynthesisStartEvent

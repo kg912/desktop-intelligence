@@ -228,5 +228,6 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
     reasoningEffort: (['off', 'low', 'medium', 'high'] as const).includes(c.reasoningEffort as ReasoningEffort)
       ? (c.reasoningEffort as ReasoningEffort)
       : d.reasoningEffort,
+    onRetryExhausted: c.onRetryExhausted === 'fail' || c.onRetryExhausted === 'degrade' ? c.onRetryExhausted : d.onRetryExhausted,
   }
 }
