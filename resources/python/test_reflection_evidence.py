@@ -45,14 +45,14 @@ class FakeOpenRouter:
         return [body for r, body in self.requests if r == role]
 
 
-def run_one_step(route, tool_result=lambda n: BIG, retries=2, request=None, **config):
+def run_one_step(route, tool_result=lambda n: BIG, retries=2, request=None, observe=False, **config):
     """Full orchestrate() of a one-step plan. Returns (run, fake)."""
     fake = FakeOpenRouter(lambda role, body: {"content": json.dumps([{"id": "1.1", "label": "Read the file", "role": "Reader", "dependsOn": []}])}
                           if role == "planner" else route(role, body))
     s._stream_openrouter = fake
     cfg = s.Config(maxAgents=1, budgetCapUsd=1, models={"orchestrator": "m/o", "worker": "m/w", "reflection": "m/r", "synthesizer": "m/s"},
                    reflectionPassThreshold=3, maxRetriesPerAgent=retries, hitlTimeoutMs=60_000, **config)
-    run = s.Run("r", s.RunRequest(runId="r", chatId="c", task="What is in the file?", config=cfg, tools=TOOLS, openRouterApiKey="k",
+    run = s.Run("r", s.RunRequest(runId="r", chatId="c", task="What is in the file?", config=cfg, tools=TOOLS, openRouterApiKey="k", observe=observe,
                                   currentDateTime="Current date and time: x.", **(request or {})))
     calls = [0]
 
@@ -82,12 +82,40 @@ def events(run, kind):
 
 
 if __name__ == "__main__":
-    # 1. The judge sees ~600-char previews: a needle at 15,000 of 20,000 never reaches it. // flips in Phase 2
+    # 1. Phase 0 pinned that the judge saw ~600-char previews (a needle at 15,000 of 20,000 never reached it).
+    # Phase 2 flipped it: within judgeEvidenceMaxTokens the judge gets every result in full, and is told so.
     judge = verdicts(5)
-    run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"})
-    assert len(fake.of("judge")) == 1
-    assert NEEDLE not in json.dumps(fake.of("judge")[0]), "judge saw the full tool result"
-    assert NEEDLE in json.dumps(fake.of("worker")[-1])  # the worker itself had it
+    run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
+                             observe=True)
+    [judge_body] = fake.of("judge")
+    assert NEEDLE in json.dumps(judge_body) and BIG in judge_body["messages"][1]["content"]
+    assert s.EVIDENCE_MODE_SENTENCE["full"] in judge_body["messages"][0]["content"]
+    [result] = events(run, "reflection_result")
+    input_chars = sum(len(m["content"]) for m in judge_body["messages"])
+    assert result["evidenceMode"] == "full" and result["judgeInputChars"] == input_chars, result
+    [record] = [e["record"] for e in run.events if e["type"] == "obs_record" and e["record"].get("role") == "reflection"]
+    assert (record["evidenceMode"], record["judgeInputChars"], record["evidenceChars"]) == ("full", input_chars, 20_000), record
+    assert run.evidence["1.1"]["call_big"] == {"name": "fs__read_file", "args": '{"path": "/big.txt"}', "ok": True, "attempt": 0, "result": BIG}
+
+    # Over judgeEvidenceMaxTokens: excerpts mode — an index line per call, never the full result, and the judge is told.
+    judge = verdicts(5)
+    run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
+                             judgeEvidenceMaxTokens=1_000)
+    [judge_body] = fake.of("judge")
+    assert NEEDLE not in json.dumps(judge_body) and s.EVIDENCE_MODE_SENTENCE["excerpts"] in judge_body["messages"][0]["content"]
+    assert '- call_big · fs__read_file · {"path": "/big.txt"} · ok · 20000 chars' in judge_body["messages"][1]["content"]
+    assert events(run, "reflection_result")[0]["evidenceMode"] == "excerpts"
+
+    # Full mode that the remaining budget cannot pay for falls back to excerpts instead of waiting.
+    judge = verdicts(5)
+    run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
+                             request={"pricing": {"m/r": s.Pricing(prompt=3e-4, completion=1e-6)}})
+    assert events(run, "reflection_result")[0]["evidenceMode"] == "excerpts" and NEEDLE not in json.dumps(fake.of("judge")[0])
+
+    # Half the judge's context window caps the full-evidence budget.
+    run = s.Run("x", s.RunRequest(runId="x", chatId="c", task="t", openRouterApiKey="k", currentDateTime="d", pricing={"m/r": s.Pricing(prompt=0, completion=0, contextLength=8_000)},
+                                  config=s.Config(maxAgents=1, budgetCapUsd=1, models={}, reflectionPassThreshold=3, maxRetriesPerAgent=0, hitlTimeoutMs=1_000)))
+    assert s.judge_evidence_limit(run, "m/r") == 4_000 and s.judge_evidence_limit(run, "unknown") == 100_000
 
     # 2. Three score-2 verdicts with maxRetriesPerAgent=2 fail the step and the run. // flips in Phase 5
     judge = verdicts(2, 2, 2)

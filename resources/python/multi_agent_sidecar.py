@@ -108,6 +108,9 @@ class Config(BaseModel):
     hitlTimeoutMs: int = Field(ge=1_000)
     requirePermissions: bool = True
     reasoningEffort: Literal["off", "low", "medium", "high"] = "medium"
+    # The judge gets every tool result in full up to this many (estimated) tokens, else excerpts.
+    # Clamped to half the judge model's context window when that is known.
+    judgeEvidenceMaxTokens: int = Field(default=100_000, ge=0)
 
 
 class RunRequest(BaseModel):
@@ -191,6 +194,9 @@ class Run:
     # agentId → current 0-based attempt, so events emitted outside run_worker carry it too.
     attempts: dict[str, int] = field(default_factory=dict)
     record_seq: int = 0
+    # agentId → callId → {name, args, ok, attempt, result}: every tool call in full (capped at
+    # RECORD_FIELD_CAP_CHARS), kept apart from the message history so compacting it loses no evidence.
+    evidence: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
     @property
     def config(self) -> Config:
@@ -913,28 +919,75 @@ def preview(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1] + "…"
 
 
-async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], evidence: list[str],
-                  served: dict[str, str] | None = None) -> tuple[int, bool, str, list[str], str]:
+# The judge is always told how the evidence is shown; it never has to infer truncation.
+EVIDENCE_MODE_SENTENCE = {
+    "full": "You are given the complete tool results.",
+    "excerpts": ("Tool results are shown as excerpts around each cited quote; a figure that is absent from an excerpt is not "
+                 "evidence that it is absent from the full result; judge claims by their quote."),
+}
+EXCERPT_RADIUS_CHARS = 800
+# A verdict is short JSON; below this the full evidence is not affordable and excerpts are used instead.
+JUDGE_MIN_COMPLETION_TOKENS = 512
+
+
+def store_result(result: str) -> str:
+    return cap_fields(result, "result", [])
+
+
+def evidence_full(store: dict[str, dict[str, Any]]) -> str:
+    return "\n\n".join(f"### {call_id} · {c['name']}({c['args']}) · {'ok' if c['ok'] else 'failed'} · attempt {c['attempt']}\n{c['result']}"
+                        for call_id, c in store.items()) or "(no tool calls were made)"
+
+
+def evidence_index(store: dict[str, dict[str, Any]]) -> str:
+    return "\n".join(f"- {call_id} · {c['name']} · {preview(c['args'], 200)} · {'ok' if c['ok'] else 'failed'} · {len(c['result'])} chars"
+                     for call_id, c in store.items()) or "(no tool calls were made)"
+
+
+def judge_evidence_limit(run: Run, model: str) -> int:
+    p = run.price(model)
+    limit = run.config.judgeEvidenceMaxTokens
+    return min(limit, p.contextLength // 2) if p and p.contextLength else limit
+
+
+async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], store: dict[str, dict[str, Any]],
+                  served: dict[str, str] | None = None, info: dict[str, Any] | None = None) -> tuple[int, bool, str, list[str], str]:
     """(score, passed, reason, issues, judge model). An unusable verdict is a failure, never a pass.
-    served: filled with {"model": <id OpenRouter answered with>} when it reported one."""
+    store: the agent's evidence store. served: filled with {"model": <id OpenRouter answered with>} when it
+    reported one. info: filled with evidenceMode, judgeInputChars and evidenceChars (absent for the precheck)."""
     config = run.config
     model = config.models.get("reflection", "")
     failure = precheck(output)
     if failure:
         return 1, False, f"Precheck: {failure}", [failure], "deterministic precheck"
     rubric = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(REFLECTION_RUBRIC))
-    tools = "\n".join(evidence) or "(no tool calls were made)"
     earlier = "\n\n".join(f"[{k}] {v}" for k, v in prior.items()) or "(this step depends on no earlier agent)"
-    messages = [
-        {"role": "system", "content": with_date(run, "You are a strict reviewer of one agent's work in a multi-agent team. Judge the output against this rubric:\n"
-                                      f"{rubric}\n\nScore 1 (useless) to 5 (excellent). A claim with no tool evidence that is not marked as unverified is an issue. "
-                                      "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}")},
-        {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask ({step['id']}): {step['label']}\n\n"
-                                    f"Tool calls the agent made:\n{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}"},
-    ]
+    evidence_chars = sum(len(c["result"]) for c in store.values())
+
+    def judge_messages(mode: str) -> list[dict[str, Any]]:
+        tools = (f"Tool calls the agent made (complete results):\n{evidence_full(store)}" if mode == "full" else
+                 f"Tool calls the agent made (index; results are not shown in full):\n{evidence_index(store)}")
+        return [
+            {"role": "system", "content": with_date(run, "You are a strict reviewer of one agent's work in a multi-agent team. Judge the output against this rubric:\n"
+                                          f"{rubric}\n\n{EVIDENCE_MODE_SENTENCE[mode]}\n\n"
+                                          "Score 1 (useless) to 5 (excellent). A claim with no tool evidence that is not marked as unverified is an issue. "
+                                          "Reply with JSON only: {\"score\": <1-5>, \"reason\": \"<one sentence>\", \"issues\": [\"<specific problem to fix>\", ...]}")},
+            {"role": "user", "content": f"Overall task: {run.request.task}\nSubtask ({step['id']}): {step['label']}\n\n"
+                                        f"{tools}\n\nEarlier agents' outputs it depends on:\n{earlier}\n\nOutput to judge:\n{output}"},
+        ]
+
+    mode = "full" if estimate_tokens(evidence_full(store)) <= judge_evidence_limit(run, model) else "excerpts"
+    messages = judge_messages(mode)
+    if mode == "full":  # never wait for budget to show everything: excerpts instead
+        max_tokens, _, shortfall, _ = run.plan_request(model, messages, synthesis=False)
+        if shortfall or (max_tokens is not None and max_tokens < JUDGE_MIN_COMPLETION_TOKENS):
+            mode, messages = "excerpts", judge_messages("excerpts")
+    sizes = {"evidenceMode": mode, "judgeInputChars": sum(len(m["content"]) for m in messages), "evidenceChars": evidence_chars}
+    if info is not None:
+        info.update(sizes)
     for _try in range(2):  # one retry on an unusable reply
         verdict, _, _ = await ask(run, model, messages, obs={"role": "reflection", "agentId": step["id"],
-                                                             "attempt": run.attempts.get(step["id"], 0), "retry": _try})
+                                                             "attempt": run.attempts.get(step["id"], 0), "retry": _try, **sizes})
         if verdict.get("model_served") and served is not None:
             served["model"] = verdict["model_served"]
         try:
@@ -955,6 +1008,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     agent_tokens = 0
     agent_cost = 0.0
     run.attempts[agent_id] = 0
+    store = run.evidence.setdefault(agent_id, {})
     await run.emit("agent_start", agentId=agent_id, role=role, model=model, attempt=0)
 
     context = ""
@@ -986,7 +1040,6 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         looped = False
         stopped_at_limit = False
         no_answer_retried = False
-        evidence: list[str] = []
         limit = config.maxToolRounds
         _round = 0
         try:
@@ -1033,6 +1086,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     fn = call.get("function") or {}
                     name = str(fn.get("name") or "")
                     call_id = str(call.get("id") or f"{name}#{index}")
+                    if call_id in store:  # ids repeat (DSML, or none from the provider): keep each call's evidence
+                        call_id = call["id"] = f"{call_id}.{len(store)}"
                     raw_args = str(fn.get("arguments") or "{}")
                     server, _, local = name.partition("__")
                     await run.emit("tool_start", agentId=agent_id, attempt=attempt, callId=call_id, tool=local or name,
@@ -1060,6 +1115,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                             approved, result = await run.wait_for_approval(agent_id, role, model, local, server, args)
                         except AgentFailed as exc:  # approval timed out: auto-denied, the agent fails
                             record_tool(None, False, True, str(exc))
+                            store[call_id] = {"name": name, "args": raw_args, "ok": False, "attempt": attempt, "result": f"Tool request denied: {exc}"}
                             raise
                         ok = approved
                         content = result if approved else f"Tool request denied: {result or 'denied by user'}"
@@ -1067,7 +1123,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=ok,
                                    durationMs=int((time.monotonic() - began) * 1000),
                                    resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
-                    evidence.append(f"- {name}({preview(raw_args, 200)}) → {'ok' if ok else 'failed'}: {preview(content, 600)}")
+                    store[call_id] = {"name": name, "args": raw_args, "ok": ok, "attempt": attempt, "result": store_result(content)}
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": content})
                 _round += 1
         except BudgetReached:
@@ -1092,11 +1148,13 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
         try:
             judge_served: dict[str, str] = {}
-            score, passed, reason, issues, judge = await reflect(run, step, output, prior, evidence, judge_served)
+            judge_info: dict[str, Any] = {}
+            score, passed, reason, issues, judge = await reflect(run, step, output, prior, store, judge_served, judge_info)
         except BudgetReached:
             return output
         await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
-                       issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}))
+                       issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}),
+                       **{k: judge_info[k] for k in ("evidenceMode", "judgeInputChars") if k in judge_info})
         if passed:
             return output
         last_reason = f"score {score}/5: {reason}" if score else reason
