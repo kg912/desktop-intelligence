@@ -1024,3 +1024,23 @@ describe('splitMarkdownIntoBlocks', () => {
     ])
   })
 })
+
+import { messageCopyText } from '../markdownUtils'
+
+describe('messageCopyText', () => {
+  it('joins only answer blocks, excluding thinking, search and stock_chart', () => {
+    const blocks = [
+      { id: '1', type: 'thinking', content: 'secret reasoning' },
+      { id: '2', type: 'answer', content: 'First part', isStreaming: false },
+      { id: '3', type: 'search', query: 'q', phase: 'done' },
+      { id: '4', type: 'stock_chart', symbol: 'AAPL', fileUri: 'file:///x', phase: 'ready' },
+      { id: '5', type: 'answer', content: 'Second part', isStreaming: false },
+    ]
+    expect(messageCopyText('ignored', blocks)).toBe('First part\n\nSecond part')
+  })
+
+  it('strips <think> from legacy flat content', () => {
+    expect(messageCopyText('<think>hidden plan</think>The answer.')).toBe('The answer.')
+    expect(messageCopyText('Plain answer', [])).toBe('Plain answer')
+  })
+})

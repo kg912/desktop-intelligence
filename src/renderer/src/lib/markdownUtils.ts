@@ -452,3 +452,21 @@ export function splitMarkdownIntoBlocks(markdown: string): string[] {
 
   return blocks
 }
+
+// ----------------------------------------------------------------
+// Copy text for an assistant message
+// ----------------------------------------------------------------
+/**
+ * The user-facing answer of an assistant message: answer blocks joined by a
+ * blank line, or (legacy flat content) the text outside <think>…</think>.
+ * Thinking, search and stock_chart blocks are never included.
+ */
+export function messageCopyText(
+  content: string,
+  blocks?: ReadonlyArray<{ type: string; content?: string }>,
+): string {
+  if (blocks && blocks.length > 0) {
+    return blocks.filter(b => b.type === 'answer').map(b => b.content ?? '').join('\n\n')
+  }
+  return parseThinkBlocks(content, true).answer
+}

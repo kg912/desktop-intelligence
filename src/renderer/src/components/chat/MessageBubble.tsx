@@ -5,10 +5,12 @@
  * AI    → left-aligned, transparent bg, full markdown + LaTeX + stats bar
  */
 
-import { useState, useEffect, useRef, memo } from 'react'
+import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import { Paperclip, Plug } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StatsBar } from './StatsBar'
+import { CopyMessageButton } from './CopyMessageButton'
+import { messageCopyText } from '../../lib/markdownUtils'
 import { ToolCallNotification, SearchResult } from './ToolCallNotification'
 import { ChevronIcon } from './ChevronIcon'
 import { cn } from '../../lib/utils'
@@ -726,6 +728,10 @@ function AssistantBubble({
   content, isThinking, isStreaming, isSearching, stats, error, toolCall, liveToolCall, blocks
 }: AssistantBubbleProps) {
   const hasBlocks = blocks && blocks.length > 0
+  const copyText = useMemo(() => messageCopyText(content, blocks), [content, blocks])
+  const showCopy = stats === null && !isThinking && !isStreaming && !isSearching && !error
+    && !blocks?.some(b => b.type === 'answer' && b.isStreaming)
+    && copyText.trim().length > 0
 
   return (
     <div className="flex">
@@ -833,6 +839,13 @@ function AssistantBubble({
         {error && (
           <div className="mt-2 px-3 py-2 rounded-lg bg-red-950/30 border border-red-900/40 text-xs text-red-400">
             {error}
+          </div>
+        )}
+
+        {/* Copy — only for finished messages without a StatsBar (reloaded chats) */}
+        {showCopy && (
+          <div className="flex justify-end mt-1">
+            <CopyMessageButton text={copyText} />
           </div>
         )}
 
