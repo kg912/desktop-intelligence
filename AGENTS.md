@@ -20,7 +20,7 @@ Violating this rule causes regressions — changes have been undone before becau
 1. **Read** `progress.md` from top to bottom before starting any work.
 2. **Work** — implement the feature or fix as requested.
 3. **Append** a new row to the bottom of `progress.md` when done.
-4. **Bump** `package.json` version and commit (Karan pushes manually — never push).
+4. **Bump** `package.json` version and commit (the user pushes manually — never push).
 
 ### Row format (append to progress.md, never edit existing rows)
 

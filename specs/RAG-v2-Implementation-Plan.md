@@ -2,7 +2,7 @@
 
 **Project:** Desktop Intelligence
 **Status:** Pre-implementation (pending sqlite-vec validation spike)
-**Author:** Drafted by Claude in collaboration with Karan, 2026-06-10
+**Author:** Drafted by Claude in collaboration with the user, 2026-06-10
 **Supersedes:** Phase 11 (full-doc injection) and Phase 28 (FTS5 keyword retrieval) RAG implementations
 **Companion doc:** `features/RAG-Implementation-v2.0.md` (end-to-end how-it-works reference)
 
@@ -68,7 +68,7 @@ brute-force injection path that usually wins.** Fair to rebuild from scratch.
 | Chronological fallback | `RAGService.retrieveContext()` | **Delete.** Fallback becomes "no context + honest signal," not "wrong context." |
 | `documents.content` column usage | `DatabaseService.ts` | Column stays (SQLite can't drop columns cheaply) but is no longer written. |
 | Old `chunks` table (Phase 5 relic) | `DatabaseService.ts` schema | Dropped in the v2 migration. |
-| `document_chunks` FTS5 table | `DatabaseService.ts` | Dropped and recreated as `chunks_fts` with the v2 schema (content-synced, see §4.3). Existing per-chat docs are NOT migrated — acceptable: per-chat docs are ephemeral working context, and re-upload is one drag-and-drop. Confirm this with Karan before Phase 1. |
+| `document_chunks` FTS5 table | `DatabaseService.ts` | Dropped and recreated as `chunks_fts` with the v2 schema (content-synced, see §4.3). Existing per-chat docs are NOT migrated — acceptable: per-chat docs are ephemeral working context, and re-upload is one drag-and-drop. Confirm this with the user before Phase 1. |
 
 **Kept untouched:** `EmbeddingService.ts` (it is the established embedding primitive, shared
 with the planned Semantic Tool Memory feature), `FileProcessorService` extraction +
@@ -122,11 +122,11 @@ model is configured. Everything runs in-process — no new sidecars.
 | D6 | Small-doc routing | **Docs ≤ `INLINE_BUDGET` = floor(0.5 × configured context window, read from SettingsStore at ingest time) are injected whole on every turn and NOT retrieved; larger docs are indexed and retrieved, never blob-injected.** Send-time safety cap: if combined inline text exceeds 0.5 × the *current* context window (user may have shrunk it after ingest), truncate with an explicit notice line inside the envelope. | Kills the v1 dual-path duplication. The context window is user-declared capacity — if they configure a large window, the app uses it; a whole doc beats any retrieval over it. Rationale documented in features/RAG-Implementation-v2.0.md §7. |
 | D7 | Scope | **Per-chat isolation only** (`chat_id` filter on both indexes) | Matches existing decision; cross-chat retrieval deferred to the "projects" feature. |
 | D8 | Fallback when retrieval finds nothing | **No context injected; a one-line system note states retrieval found no relevant passages in the attached files** | Honest > wrong. Chronological dump is deleted. |
-| D9 | Migration of v1 data | **No data migration.** v2 migration drops `chunks` + `document_chunks`, leaves `documents` metadata. | Per-chat docs are ephemeral; re-upload is trivial. Confirmed by Karan (O1). |
+| D9 | Migration of v1 data | **No data migration.** v2 migration drops `chunks` + `document_chunks`, leaves `documents` metadata. | Per-chat docs are ephemeral; re-upload is trivial. Confirmed by the user (O1). |
 | D10 | Failure isolation | **Embedding/vec failure degrades to FTS5-only retrieval with a logged warning** — never blocks send | The app must never lose chat because the ONNX runtime or vec extension hiccups. |
 | D11 | Where retrieval is invoked | **Stays in `handlers.ts`** (current splice point) | `handlers.ts` recompiles reliably under the Vite dev watcher; `ChatService.ts` does not. Also keeps `ChatService` provider-payload logic untouched — zero provider regression surface. |
 
-### Open items — RESOLVED with Karan, 2026-06-11
+### Open items — RESOLVED with the user, 2026-06-11
 - **O1 — RESOLVED:** No migration of v1-ingested docs. Confirmed acceptable: v1 never
   persisted extracted text into chat history (inject was wire-payload-only), so old
   chats will simply have no file content and the model will say so. Re-upload restores.
@@ -355,7 +355,7 @@ to before (old path still serving).
   paraphrase-only match found via vectors, RRF ordering, per-chat isolation, no-hit path,
   token budget cap, degraded (vec-unavailable) mode.
 
-GATE: manual eval set (Karan: ~10 real queries against 2–3 real PDFs, incl. at least 3
+GATE: manual eval set (the user: ~10 real queries against 2–3 real PDFs, incl. at least 3
 paraphrase queries that v1 failed) — side-by-side better or equal on all, strictly better
 on paraphrase.
 

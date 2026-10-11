@@ -20,7 +20,7 @@ Violating this rule causes regressions — changes have been undone before becau
 1. **Read** `progress.md` from top to bottom before starting any work.
 2. **Work** — implement the feature or fix as requested.
 3. **Append** a new row to the bottom of `progress.md` when done.
-4. **Bump** `package.json` version and commit (Karan pushes manually — never push).
+4. **Bump** `package.json` version and commit (the user pushes manually — never push).
 
 ### Row format (append to progress.md, never edit existing rows)
 
@@ -422,7 +422,7 @@ interface LMStudioPayload {
 
 10. **When in doubt, ask.** A 30-second clarification is better than 30 minutes of wrong work.
 
-11. **Never use git worktrees.** All work happens in the main checkout on `main`. Do not create worktrees (`git worktree add`, `EnterWorktree`, or agents with `isolation: "worktree"`), even for parallel or experimental work. Karan removed every worktree on 2026-10-11 because abandoned ones piled up with unmerged commits and uncommitted changes.
+11. **Never use git worktrees.** Work in the main checkout. The user decides which branch to work on; if they haven't specified one, work on whatever branch is currently checked out. Do not create worktrees (`git worktree add`, `EnterWorktree`, or agents with `isolation: "worktree"`), even for parallel or experimental work. The user removed every worktree on 2026-10-11 because abandoned ones piled up with unmerged commits and uncommitted changes.
 
 ---
 

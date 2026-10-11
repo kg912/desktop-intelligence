@@ -228,7 +228,7 @@ This document tracks the complete rebuild of the chat message renderer for Deskt
 
 ---
 
-## 6. Decisions Confirmed by Stakeholder (Karan)
+## 6. Decisions Confirmed by Stakeholder (the user)
 
 1. **`<webview>` → `<img>` poster with opt-in interactive mount** — AGREED. This is the largest single M1 Pro performance win and acceptable UX trade-off.
 2. **Scope of regression lock** — AGREED to include main-process services that the renderer depends on (`ChatService`, `chunkBuffer`) in Phase 2 lock.

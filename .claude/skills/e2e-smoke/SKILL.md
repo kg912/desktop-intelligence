@@ -23,7 +23,7 @@ D=scripts/e2e/di.mjs        # always invoke as: node scripts/e2e/di.mjs <command
 
 ## Setup (once)
 
-1. `.env.e2e.local` must exist (Karan creates it from `.env.e2e.example`). If it is missing, stop and ask for it.
+1. `.env.e2e.local` must exist (the user creates it from `.env.e2e.example`). If it is missing, stop and ask for it.
 2. LM Studio checks need LM Studio running: `curl -s -m 3 http://localhost:1234/v1/models`. MTPLX checks need MTPLX at its `MTPLX_BASE_URL`.
 3. `launch` rebuilds native modules for Electron itself (about 20 s). After the run, `npm test` rebuilds them for Node again, which is expected.
 
@@ -75,7 +75,7 @@ node scripts/e2e/di.mjs wait-idle 120
 PASS when the first `wait-idle` returns within about 5 s with a partial essay in `chatTail`, and the follow-up message gets an answer, which shows the app recovered. FAIL if it keeps streaming, the partial text vanishes, or the follow-up errors.
 
 ### 3. Chat with an indexed PDF
-Use a real multi-page PDF that is large enough to be indexed rather than inlined (a paper or manual of 20+ pages). Ask Karan for one if none is at hand. Pick a fact from page 5 or later that you can check.
+Use a real multi-page PDF that is large enough to be indexed rather than inlined (a paper or manual of 20+ pages). Ask the user for one if none is at hand. Pick a fact from page 5 or later that you can check.
 ```
 node scripts/e2e/di.mjs launch lmstudio
 node scripts/e2e/di.mjs attach "<path/to/doc.pdf>"
