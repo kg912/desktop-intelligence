@@ -2780,33 +2780,20 @@ export class ChatService {
     // Strip EOS tokens that may have been persisted before the stream-level fix
     content = content.replace(EOS_TOKENS_RE, "");
 
-    // Strip Qwen3-style <think>…</think> blocks
-    const open = "<think>";
-    const close = "</think>";
+    // Strip Qwen3-style <think>…</think>, then Gemma 4-style
+    // <|channel>thought\n…<channel|> blocks. Unclosed → cut from the open tag.
     let result = content;
-    const start = result.indexOf(open);
-    if (start !== -1) {
+    for (const [open, close] of [
+      ["<think>", "</think>"],
+      ["<|channel>thought\n", "<channel|>"],
+    ]) {
+      const start = result.indexOf(open);
+      if (start === -1) continue;
       const end = result.lastIndexOf(close);
-      if (end === -1) result = result.slice(0, start).trim();
-      else
-        result = (
-          result.slice(0, start) + result.slice(end + close.length)
-        ).trim();
+      result = end === -1
+        ? result.slice(0, start).trim()
+        : (result.slice(0, start) + result.slice(end + close.length)).trim();
     }
-
-    // Strip Gemma 4-style <|channel>thought\n…<channel|> blocks
-    const gOpen = "<|channel>thought\n";
-    const gClose = "<channel|>";
-    const gStart = result.indexOf(gOpen);
-    if (gStart !== -1) {
-      const gEnd = result.lastIndexOf(gClose);
-      if (gEnd === -1) result = result.slice(0, gStart).trim();
-      else
-        result = (
-          result.slice(0, gStart) + result.slice(gEnd + gClose.length)
-        ).trim();
-    }
-
     return result;
   }
 
