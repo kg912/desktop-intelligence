@@ -26,6 +26,23 @@ const LMS_CANDIDATES = [
   'lms',                                         // PATH fallback
 ]
 
+/** Locate the lms CLI binary (also used by the Settings handlers). */
+export function findLmsBinary(): string | null {
+  for (const candidate of LMS_CANDIDATES) {
+    if (candidate === 'lms') {
+      // PATH lookup — try to locate via `which`
+      try {
+        const result = execFileSync('which', ['lms'], { encoding: 'utf8', timeout: 2000 })
+        const path = result.trim()
+        if (path && existsSync(path)) return path
+      } catch { /* not in PATH */ }
+    } else if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
 const LMS_SERVER_URL = 'http://localhost:1234/v1/models'
 const PREFLIGHT_TIMEOUT_MS = 4_000
 const LOAD_TIMEOUT_MS      = 180_000  // model load can take a while on first run
@@ -59,7 +76,7 @@ export class LMSDaemonManager extends EventEmitter {
    * rely on ModelConnectionManager to detect whatever is already loaded.
    */
   async start(modelId?: string): Promise<void> {
-    this.lmsBin = this.findLmsBinary()
+    this.lmsBin = findLmsBinary()
 
     if (!this.lmsBin) {
       // lms CLI not installed — that's fine, LM Studio may already be running
@@ -285,26 +302,6 @@ export class LMSDaemonManager extends EventEmitter {
     }
     console.log(`[LMSDaemon] Phase: ${phase}${error ? ` — ${error}` : ''}`)
     this.emit('stateChange', this.getState())
-  }
-
-  // ----------------------------------------------------------------
-  // Binary discovery
-  // ----------------------------------------------------------------
-
-  private findLmsBinary(): string | null {
-    for (const candidate of LMS_CANDIDATES) {
-      if (candidate === 'lms') {
-        // PATH lookup — try to locate via `which`
-        try {
-          const result = execFileSync('which', ['lms'], { encoding: 'utf8', timeout: 2000 })
-          const path = result.trim()
-          if (path && existsSync(path)) return path
-        } catch { /* not in PATH */ }
-      } else if (existsSync(candidate)) {
-        return candidate
-      }
-    }
-    return null
   }
 }
 

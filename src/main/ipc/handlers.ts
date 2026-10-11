@@ -4,7 +4,7 @@ import fs from 'fs'
 import { is } from '@electron-toolkit/utils'
 import { IPC_CHANNELS } from '../../shared/types'
 import { modelConnectionManager, mtplxConnectionManager } from '../managers/ModelConnectionManager'
-import { lmsDaemonManager } from '../managers/LMSDaemonManager'
+import { lmsDaemonManager, findLmsBinary } from '../managers/LMSDaemonManager'
 import { mtplxDaemonManager } from '../managers/MTPLXDaemonManager'
 import { describeUnsafePort } from '../../shared/unsafePorts'
 import { chatService } from '../services/ChatService'
@@ -64,37 +64,6 @@ import { readSettings, writeSettings } from '../services/SettingsStore'
 import { mcpServerManager } from '../services/McpServerManager'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
-
-/**
- * Find the lms CLI binary — mirrors LMSDaemonManager.findLmsBinary().
- * Async so we can use dynamic imports without blocking the module load.
- */
-async function findLmsBinAsync(): Promise<string | null> {
-  const { existsSync } = await import('fs')
-  const { homedir }    = await import('os')
-  const { join }       = await import('path')
-  const { execFileSync } = await import('child_process')
-
-  const candidates = [
-    join(homedir(), '.lmstudio', 'bin', 'lms'),
-    '/usr/local/bin/lms',
-    '/opt/homebrew/bin/lms',
-    'lms',
-  ]
-
-  for (const c of candidates) {
-    if (c === 'lms') {
-      try {
-        const r = execFileSync('which', ['lms'], { encoding: 'utf8', timeout: 2_000 })
-        const p = r.trim()
-        if (p && existsSync(p)) return p
-      } catch { /* not in PATH */ }
-    } else if (existsSync(c)) {
-      return c
-    }
-  }
-  return null
-}
 
 /**
  * Spawn `lms <args>` and resolve with stdout when the process exits cleanly.
@@ -705,8 +674,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   //   • `lms unload --all`                    → unloads whatever is running
   //   • `lms load <id> --context-length <N>`  → loads with new n_ctx
   //
-  // Helpers (findLmsBinAsync, runLmsArgs, parseLmsPs) are defined at
-  // module scope above registerIpcHandlers.
+  // Helpers (runLmsArgs, parseLmsPs) are defined at module scope above
+  // registerIpcHandlers; findLmsBinary comes from LMSDaemonManager.
 
   // ── Fallback helper: parse a /api/v0/models entry ───────────────
   // Used when lms ps is unavailable or returns no context info.
@@ -771,7 +740,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
       // ── 2. lms ps — first-launch fallback (no pref saved yet) ────
       try {
-        const lmsBin = await findLmsBinAsync()
+        const lmsBin = findLmsBinary()
         if (lmsBin) {
           const psOut = await runLmsArgs(lmsBin, ['ps'], 5_000)
           const { modelId: psModelId, contextLength: psCtx } = parseLmsPs(psOut)
@@ -841,7 +810,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
 
       // ── LM Studio: use lms CLI ────────────────────────────────────
-      const lmsBin = await findLmsBinAsync()
+      const lmsBin = findLmsBinary()
       if (!lmsBin) {
         return {
           success: false,
@@ -984,7 +953,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { gpuOffload: initGpuOffload } = readSettings()
 
       // ── LM Studio: run lms load ───────────────────────────────────
-      const lmsBin = await findLmsBinAsync()
+      const lmsBin = findLmsBinary()
       if (!lmsBin) {
         return { success: false, error: 'lms CLI not found. Ensure LM Studio is installed with the lms command-line tool.' }
       }
