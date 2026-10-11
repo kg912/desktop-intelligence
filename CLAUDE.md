@@ -422,6 +422,8 @@ interface LMStudioPayload {
 
 10. **When in doubt, ask.** A 30-second clarification is better than 30 minutes of wrong work.
 
+11. **Never use git worktrees.** All work happens in the main checkout on `main`. Do not create worktrees (`git worktree add`, `EnterWorktree`, or agents with `isolation: "worktree"`), even for parallel or experimental work. Karan removed every worktree on 2026-10-11 because abandoned ones piled up with unmerged commits and uncommitted changes.
+
 ---
 
 ## 13. CURRENT SESSION OBJECTIVES (UPDATE AS COMPLETED)
