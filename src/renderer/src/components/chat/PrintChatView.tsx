@@ -14,7 +14,7 @@
  * a backstop if a chart never settles.
  */
 import { useEffect, useRef, useState } from 'react'
-import { v4 as uuid } from 'uuid'
+import { uuid } from '../../lib/uuid'
 import { MessageBubble } from './MessageBubble'
 import type { Message } from './MessageBubble'
 import { ChatIdCtx } from '../layout/ChatArea'

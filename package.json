@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.2.17",
+  "version": "3.2.18",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -53,8 +53,7 @@
     "shell-quote": "1.10.0",
     "sqlite-vec": "^0.1.9",
     "tailwind-merge": "^3.5.0",
-    "tiktoken": "^1.0.22",
-    "uuid": "^11.0.0"
+    "tiktoken": "^1.0.22"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.1",

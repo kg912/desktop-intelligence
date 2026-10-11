@@ -34,7 +34,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useModelStore } from "../store/ModelStore";
-import { v4 as uuid } from "uuid";
+import { uuid } from "../lib/uuid";
 import type {
   Message,
   MessageAttachment,

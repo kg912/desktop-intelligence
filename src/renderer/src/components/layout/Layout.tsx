@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { v4 as uuid } from 'uuid'
+import { uuid } from '../../lib/uuid'
 import { Sidebar, dockLayout } from './Sidebar'
 import type { AgentRailState, DockLayout, SidebarMode } from './Sidebar'
 import { SettingsPage } from '../settings/SettingsPage'
