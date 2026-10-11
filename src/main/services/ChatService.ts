@@ -2456,8 +2456,6 @@ export class ChatService {
             ];
 
             // Execute each query, emitting its own search pill in the UI
-            const allResultLinks: Array<{ title: string; url: string }> = [];
-            const resultSections: string[] = [];
             for (const { id, name: toolName, query, argsRaw } of queries) {
               // ── Tool registry screen ────────────────────────────────────────────────────
               // Reject any tool call whose name is not in validToolNames (the set of tools
@@ -2564,11 +2562,9 @@ export class ChatService {
                     queries.length > 1
                       ? `## Results for: "${query}"\n${formatted}`
                       : formatted;
-                  resultSections.push(section);
                   const links = results
                     .slice(0, 3)
                     .map((r) => ({ title: r.title, url: r.url }));
-                  allResultLinks.push(...links);
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
                     query: uiLabel,
                     toolName,
