@@ -3035,43 +3035,28 @@ export class ChatService {
     for (let i = 0; i < kept.length; i++) {
       const m = kept[i];
       const wm = m as unknown as WireMessage;
-
-      if (images.length > 0 && m.role === "user" && i === lastIdx) {
-        // Vision message — build multipart content, but still preserve any
-        // tool_calls / tool_call_id that might be on this message.
-        const parts: ContentPart[] = [
-          { type: "text", text: (m.content as string).replace(EOS_TOKENS_RE, "") },
-        ];
-        for (const img of images) {
-          parts.push({ type: "image_url", image_url: { url: img.dataUrl! } });
-        }
-        const wireMsg: Record<string, unknown> = {
-          role: m.role,
-          content: parts,
-        };
-        if (wm.tool_calls) wireMsg.tool_calls = wm.tool_calls;
-        if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id;
-        msgs.push(wireMsg as { role: string; content: string | ContentPart[] });
-      } else {
-        // Standard message — preserve tool_calls and tool_call_id so LM Studio
-        // sees a valid assistant→tool message pair.  Plain destructuring
-        // ({ role, content }) silently drops these fields, producing an
-        // invalid tool message whose tool_call_id references a non-existent
-        // tool_calls entry on the preceding assistant message.
-        // Sanitize: strip EOS tokens that may have been stored verbatim in the
-        // DB before stream-level stripping was in place (or if the model leaked
-        // them in a context-overflow edge case). OpenRouter rejects payloads
-        // containing <|endoftext|> and similar special tokens immediately.
-        const wireMsg: Record<string, unknown> = {
-          role: m.role,
-          content: typeof m.content === "string"
+      // Sanitize: strip EOS tokens that may have been stored verbatim in the
+      // DB before stream-level stripping was in place (or if the model leaked
+      // them in a context-overflow edge case). OpenRouter rejects payloads
+      // containing <|endoftext|> and similar special tokens immediately.
+      // The vision message (last user turn with images) becomes multipart content.
+      const content: string | ContentPart[] =
+        images.length > 0 && m.role === "user" && i === lastIdx
+          ? [
+              { type: "text", text: (m.content as string).replace(EOS_TOKENS_RE, "") },
+              ...images.map((img): ContentPart => ({ type: "image_url", image_url: { url: img.dataUrl! } })),
+            ]
+          : typeof m.content === "string"
             ? m.content.replace(EOS_TOKENS_RE, "")
-            : m.content,
-        };
-        if (wm.tool_calls) wireMsg.tool_calls = wm.tool_calls;
-        if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id;
-        msgs.push(wireMsg as { role: string; content: string | ContentPart[] });
-      }
+            : m.content;
+      // Preserve tool_calls and tool_call_id so LM Studio sees a valid
+      // assistant→tool message pair. Plain destructuring ({ role, content })
+      // silently drops these fields, producing an invalid tool message whose
+      // tool_call_id references a non-existent tool_calls entry.
+      const wireMsg: Record<string, unknown> = { role: m.role, content };
+      if (wm.tool_calls) wireMsg.tool_calls = wm.tool_calls;
+      if (wm.tool_call_id) wireMsg.tool_call_id = wm.tool_call_id;
+      msgs.push(wireMsg as { role: string; content: string | ContentPart[] });
     }
 
     // Gemma MLX thinking activation via assistant prefill.
