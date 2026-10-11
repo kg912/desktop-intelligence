@@ -674,7 +674,9 @@ interface SidebarProps {
   agentRail:       AgentRailState
   /** Content of the widened panel in 'agents' mode. */
   agentsPanel:     React.ReactNode
-  /** Narrow window (< 1280 px): the dock overlays the chat instead of pushing it. */
+  /** Dock width from dockLayout(); the chat/starred panels stay at PANEL_WIDTH. */
+  dockWidth:       number
+  /** Last resort: the chat could not keep MIN_CHAT_WIDTH, so the dock overlays it. */
   overlayDock:     boolean
   chats:           Chat[]
   activeChatId:    string | null
@@ -689,6 +691,24 @@ interface SidebarProps {
 /** Panel width per mode; the dock is the same panel, widened. */
 export const PANEL_WIDTH: Record<SidebarMode, number> = { chat: 264, starred: 264, agents: 760 }
 
+export const RAIL_WIDTH = 44
+export const MIN_CHAT_WIDTH = 420
+export const DOCK_MIN_WIDTH = 520
+/** Below this the dock drops its plan column (248) — the old < 1024 px window boundary. */
+export const DOCK_TWO_COLUMN_WIDTH = 560
+
+/** The dock pushes the chat, shrinking to keep MIN_CHAT_WIDTH; it overlays only when even DOCK_MIN_WIDTH would not leave that. */
+export interface DockLayout { dockWidth: number; overlay: boolean; hidePlanColumn: boolean }
+
+export function dockLayout(windowWidth: number): DockLayout {
+  const dockWidth = Math.max(DOCK_MIN_WIDTH, Math.min(windowWidth - RAIL_WIDTH - MIN_CHAT_WIDTH, PANEL_WIDTH.agents))
+  return {
+    dockWidth,
+    overlay: windowWidth - RAIL_WIDTH - DOCK_MIN_WIDTH < MIN_CHAT_WIDTH,
+    hidePlanColumn: dockWidth < DOCK_TWO_COLUMN_WIDTH,
+  }
+}
+
 export function Sidebar({
   sidebarMode,
   navLocked = false,
@@ -697,6 +717,7 @@ export function Sidebar({
   onToggleAgents,
   agentRail,
   agentsPanel,
+  dockWidth,
   overlayDock,
   chats,
   activeChatId,
@@ -723,6 +744,7 @@ export function Sidebar({
     : chats.filter((c) => c.starred)
 
   const starredGroups = groupChats(filteredStarred)
+  const panelWidth = sidebarMode === 'agents' ? dockWidth : PANEL_WIDTH[sidebarMode ?? 'chat']
 
   return (
     <div className="flex h-full flex-shrink-0">
@@ -731,7 +753,7 @@ export function Sidebar({
       <div
         className="flex-shrink-0 flex flex-col items-center"
         style={{
-          width:       44,
+          width:       RAIL_WIDTH,
           background:  '#0a0a0a',
           borderRight: '0.5px solid rgba(255,255,255,0.05)',
         }}
@@ -795,12 +817,12 @@ export function Sidebar({
         data-mode={sidebarMode ?? 'closed'}
         className="ma-dock-panel flex-shrink-0 h-full overflow-hidden"
         style={{
-          width:       sidebarMode ? PANEL_WIDTH[sidebarMode] : 0,
+          width:       sidebarMode ? panelWidth : 0,
           transition:  'width 220ms cubic-bezier(0.4, 0, 0.2, 1)',
           background:  sidebarMode === 'agents' ? '#0e0e0e' : '#141414',
           borderRight: '0.5px solid rgba(255,255,255,0.05)',
           ...(overlayDock && sidebarMode === 'agents' && {
-            position: 'absolute', left: 44, top: 0, bottom: 0, zIndex: 45, maxWidth: 'calc(100vw - 44px)',
+            position: 'absolute', left: RAIL_WIDTH, top: 0, bottom: 0, zIndex: 45, maxWidth: `calc(100vw - ${RAIL_WIDTH}px)`,
             boxShadow: '18px 0 40px rgba(0,0,0,0.55)',
           }),
         }}
@@ -809,7 +831,7 @@ export function Sidebar({
         <div
           className="flex flex-col h-full"
           style={{
-            width:      PANEL_WIDTH[sidebarMode ?? 'chat'],
+            width:      panelWidth,
             opacity:    sidebarMode ? 1 : 0,
             transition: 'opacity 180ms ease',
           }}

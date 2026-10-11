@@ -26,7 +26,7 @@ vi.mock('@preact/signals-react/runtime', () => {
 })
 
 import { FinalSynthesis, MultiAgentSidebarView } from '../../renderer/src/components/chat/MultiAgentSidebarView'
-import { Sidebar } from '../../renderer/src/components/layout/Sidebar'
+import { Sidebar, dockLayout } from '../../renderer/src/components/layout/Sidebar'
 import type { AgentRailState } from '../../renderer/src/components/layout/Sidebar'
 import { McpPermissionDialog } from '../../renderer/src/components/chat/McpPermissionDialog'
 import { MultiAgentSettingsPanel } from '../../renderer/src/components/settings/MultiAgentSettingsPanel'
@@ -311,7 +311,7 @@ describe('The main-area synthesis', () => {
 
 describe('Sidebar — multi-agent rail button and dock width', () => {
   const base = {
-    onToggleChat: vi.fn(), onToggleStarred: vi.fn(), onToggleAgents: vi.fn(), agentsPanel: <div>dock-content</div>, overlayDock: false,
+    onToggleChat: vi.fn(), onToggleStarred: vi.fn(), onToggleAgents: vi.fn(), agentsPanel: <div>dock-content</div>, dockWidth: 760, overlayDock: false,
     chats: [], activeChatId: null, onSelectChat: vi.fn(), onNewChat: vi.fn(), onDeleteChat: vi.fn(), onRenameChat: vi.fn(),
     onStarChat: vi.fn(), onOpenSettings: vi.fn(),
   }
@@ -367,7 +367,7 @@ describe('Sidebar — multi-agent rail button and dock width', () => {
     expect(base.onOpenSettings).not.toHaveBeenCalled()
   })
 
-  it('one panel, two widths: 264 px for chats and favourites, 760 px for the dock, 0 when closed; overlay below 1280 px', () => {
+  it('one panel: 264 px for chats and favourites, dockWidth for the dock (outer and inner), 0 when closed; overlay only when asked', () => {
     const { rerender } = render(<Sidebar {...base} sidebarMode="chat" agentRail={rail('live', 1)} />)
     const panel = (): HTMLElement => screen.getByTestId('sidebar-panel')
     expect(panel().style.width).toBe('264px')
@@ -375,6 +375,9 @@ describe('Sidebar — multi-agent rail button and dock width', () => {
     expect(panel().style.width).toBe('264px')
     rerender(<Sidebar {...base} sidebarMode="agents" agentRail={rail('live', 1)} />)
     expect(panel().style.width).toBe('760px')
+    rerender(<Sidebar {...base} sidebarMode="agents" dockWidth={560} agentRail={rail('live', 1)} />)
+    expect(panel().style.width).toBe('560px')
+    expect((panel().firstElementChild as HTMLElement).style.width).toBe('560px')
     expect(screen.getByText('dock-content')).toBeTruthy()
     expect(screen.queryByText('No chats yet')).toBeNull()
     expect(panel().style.position).toBe('')
@@ -382,6 +385,17 @@ describe('Sidebar — multi-agent rail button and dock width', () => {
     expect(panel().style.position).toBe('absolute')
     rerender(<Sidebar {...base} sidebarMode={null} agentRail={rail('live', 1)} />)
     expect(panel().style.width).toBe('0px')
+  })
+
+  it('dockLayout: the dock shrinks to keep 420 px of chat, drops the plan column below 560 px, overlays only below 984 px', () => {
+    expect(dockLayout(1500)).toEqual({ dockWidth: 760, overlay: false, hidePlanColumn: false })
+    expect(dockLayout(1280)).toEqual({ dockWidth: 760, overlay: false, hidePlanColumn: false })
+    expect(dockLayout(1150)).toEqual({ dockWidth: 686, overlay: false, hidePlanColumn: false })
+    expect(dockLayout(1024)).toEqual({ dockWidth: 560, overlay: false, hidePlanColumn: false })
+    expect(dockLayout(1000)).toEqual({ dockWidth: 536, overlay: false, hidePlanColumn: true })
+    expect(dockLayout(984)).toEqual({ dockWidth: 520, overlay: false, hidePlanColumn: true })
+    expect(dockLayout(983).overlay).toBe(true)
+    expect(dockLayout(900)).toEqual({ dockWidth: 520, overlay: true, hidePlanColumn: true })
   })
 })
 

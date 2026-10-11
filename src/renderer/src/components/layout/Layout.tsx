@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { v4 as uuid } from 'uuid'
-import { Sidebar } from './Sidebar'
-import type { AgentRailState, SidebarMode } from './Sidebar'
+import { Sidebar, dockLayout } from './Sidebar'
+import type { AgentRailState, DockLayout, SidebarMode } from './Sidebar'
 import { SettingsPage } from '../settings/SettingsPage'
 import type { SettingsTab } from '../settings/SettingsPage'
 import { TopBar } from './TopBar'
@@ -38,9 +38,8 @@ export function Layout() {
   // The active chat's latest saved run, for the top bar while the dock has not loaded it.
   const [savedRun, setSavedRun] = useState<{ chatId: string; view: RunView; runIds?: string[] } | null>(null)
   const [isOpenRouter,   setIsOpenRouter]   = useState(false)
-  // Below 1280 px the dock overlays the chat; below 1024 px its plan column hides too.
-  const narrowWindow    = useMediaQuery('(max-width: 1279px)')
-  const tinyWindow      = useMediaQuery('(max-width: 1023px)')
+  // The dock pushes the chat and shrinks with the window; it overlays only when the chat would drop below MIN_CHAT_WIDTH.
+  const dock            = useDockLayout()
   const chatAreaRef     = useRef<ChatAreaHandle>(null)
   const lastSidebarMode = useRef<SidebarMode>('chat')
 
@@ -563,7 +562,8 @@ export function Layout() {
               onToggleStarred={() => { if (!navLocked) setSidebarMode(sidebarMode === 'starred' ? null : 'starred') }}
               onToggleAgents={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
               agentRail={agentRail}
-              overlayDock={narrowWindow}
+              dockWidth={dock.dockWidth}
+              overlayDock={dock.overlay}
               agentsPanel={
                 shownRun ? (
                   <MultiAgentSidebarView
@@ -580,7 +580,7 @@ export function Layout() {
                     focusAgentId={focusAgentId}
                     onSelectAgent={selectAgent}
                     onClose={closeDock}
-                    hidePlanColumn={tinyWindow}
+                    hidePlanColumn={dock.hidePlanColumn}
                     runIds={shownRun.runIds}
                     recorded={shownRun.recorded}
                     onShowRun={(runId) => { if (activeChatId) void reviewRun(activeChatId, activeTitle, runId) }}
@@ -702,15 +702,19 @@ export function Layout() {
   )
 }
 
-function useMediaQuery(query: string): boolean {
-  const get = (): boolean => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches
-  const [matches, setMatches] = useState(get)
+const WIDTH_STEP = 16
+const measureDock = (): DockLayout => dockLayout(Math.floor(window.innerWidth / WIDTH_STEP) * WIDTH_STEP)
+
+/** dockLayout() for the window, on a 16 px grid; Layout re-renders only when the result changes, never per pixel. */
+function useDockLayout(): DockLayout {
+  const [dock, setDock] = useState(measureDock)
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const list = window.matchMedia(query)
-    const onChange = (): void => setMatches(list.matches)
-    list.addEventListener('change', onChange)
-    return () => list.removeEventListener('change', onChange)
-  }, [query])
-  return matches
+    const onResize = (): void => {
+      const next = measureDock()
+      setDock((prev) => (prev.dockWidth === next.dockWidth && prev.overlay === next.overlay ? prev : next))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return dock
 }

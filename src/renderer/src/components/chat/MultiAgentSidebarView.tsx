@@ -13,7 +13,6 @@ import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
 
-export const DOCK_WIDTH = 760
 const PLAN_COLUMN_WIDTH = 248
 
 export type Dot = 'ok' | 'run' | 'wait' | 'fail' | 'idle'
@@ -93,7 +92,7 @@ export function MultiAgentSidebarView(props: Props) {
 
   const models = view.runConfig?.models ?? config.models
   return (
-    <div className="flex h-full text-ma-text" style={{ width: DOCK_WIDTH }} data-testid="agent-dock">
+    <div className="flex h-full w-full text-ma-text" data-testid="agent-dock">
       {!props.hidePlanColumn && <section aria-label="Run plan" className="flex min-h-0 flex-none flex-col border-r-[0.5px] border-white/5" style={{ width: PLAN_COLUMN_WIDTH }}>
         <div className="border-b-[0.5px] border-white/5 px-4 pb-3 pt-3.5">
           <div className="flex items-center justify-between font-semibold">
