@@ -1,5 +1,5 @@
 import { ipcMain, shell, WebContents, app, dialog, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { join, isAbsolute } from 'path'
 import fs from 'fs'
 import { is } from '@electron-toolkit/utils'
 import { IPC_CHANNELS } from '../../shared/types'
@@ -59,6 +59,8 @@ import { getOpenRouterCatalogue } from '../services/OpenRouterCatalogue'
 import { sanitizeMultiAgentConfig } from '../../shared/multiAgentModels'
 import type { OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
+import { readSettings, writeSettings } from '../services/SettingsStore'
+import { mcpServerManager } from '../services/McpServerManager'
 
 // ── Settings helpers (module-level, used by the two Settings handlers) ──────
 
@@ -220,7 +222,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── Model Connection ────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, async (): Promise<ConnectionState> => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const bp = s.backendProvider ?? 'lmstudio'
     if (isCloud(bp)) {
@@ -253,7 +254,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.MODEL_FORCE_POLL, async (): Promise<ConnectionState> => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const bp = s.backendProvider ?? 'lmstudio'
     if (isCloud(bp)) {
@@ -299,7 +299,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // when MTPLX is active the LM Studio daemon is never started, so a synthetic
   // 'ready' is returned rather than a permanently-idle real state.
   ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
-    const { readSettings } = await import('../services/SettingsStore')
     if (skipsLmsCli(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
@@ -307,7 +306,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
-    const { readSettings } = await import('../services/SettingsStore')
     if (skipsLmsCli(readSettings().backendProvider ?? 'lmstudio')) {
       return { phase: 'ready', error: null, stderr: null }
     }
@@ -323,7 +321,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // Independent of the LM Studio daemon above — separate channels so both can
   // report state without one overwriting the other.
   ipcMain.handle(IPC_CHANNELS.MTPLX_DAEMON_GET_STATE, async (): Promise<DaemonState> => {
-    const { readSettings } = await import('../services/SettingsStore')
     if ((readSettings().backendProvider ?? 'lmstudio') !== 'mtplx') {
       return { phase: 'ready', error: null, stderr: null }
     }
@@ -331,7 +328,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.MTPLX_DAEMON_RETRY, async (): Promise<DaemonState> => {
-    const { readSettings } = await import('../services/SettingsStore')
     if ((readSettings().backendProvider ?? 'lmstudio') !== 'mtplx') {
       return { phase: 'ready', error: null, stderr: null }
     }
@@ -353,13 +349,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── Chat — streaming ────────────────────────────────────────
   /**
-   * chat:send  (Phase 4 + 5)
+   * chat:send
    *
-   * Enrichment pipeline before forwarding to the LLM:
-   *   1. Web search intent detection  (Phase 4)
-   *   2. RAG context retrieval        (Phase 5)
-   *   3. System-prompt assembly
-   *   4. Context sliding if > 6 000 tokens (Phase 5)
+   * Enrichment pipeline before forwarding to ChatService:
+   *   1. Routing guard — does this chat have documents? (sets hasDocuments)
+   *   2. v2 RAG envelope — inline docs + hybrid retrieval, passed as ragContext
+   *   3. Plot image RAG — past charts the user refers to, as image attachments
+   *   4. EOS sanitise — strip special tokens from message content
+   *   5. chatService.send()
    */
   ipcMain.handle(IPC_CHANNELS.CHAT_SEND, async (_, payload: ChatSendPayload): Promise<void> => {
     const wc = webContents()
@@ -367,6 +364,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     // Mode lock: an agent chat never takes a regular send.
     const modeError = payload.chatId ? claimChatMode(payload.chatId, 'single') : null
     if (modeError) throw new Error(modeError)
+    const settings = readSettings()
 
     // Model is dictated by the frontend (ModelStore). Fall back to DEFAULT_MODEL_ID
     // if the payload field is absent (e.g. during browser mock / unit tests).
@@ -379,11 +377,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     const systemParts: string[] = []
     // Prepend the global system prompt (saved in settings) as the first layer.
     // Per-message systemPrompt (e.g. from the frontend) appends on top.
-    try {
-      const { readSettings } = await import('../services/SettingsStore')
-      const { systemPrompt: savedSysPrompt } = readSettings()
-      if (savedSysPrompt?.trim()) systemParts.unshift(savedSysPrompt.trim())
-    } catch { /* non-fatal */ }
+    if (settings.systemPrompt?.trim()) systemParts.unshift(settings.systemPrompt.trim())
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt)
 
     // ── 1. Routing guard: check if this chat has local documents ──
@@ -412,20 +406,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     // and/or retrieved passages from indexed docs, then splices it as a single
     // system message immediately before the last user turn.
     // Doc-free chats: zero queries, zero added messages.
-    const enrichedSystemPrompt = systemParts.join('\n\n') || undefined
-    let enrichedMessages       = payload.messages
-
     if (payload.chatId) {
       try {
         const db = getDB()
 
         // Resolve current context window for inline truncation cap
-        let contextWindow = 32768
-        try {
-          const { readSettings } = await import('../services/SettingsStore')
-          const { contextLength } = readSettings()
-          if (typeof contextLength === 'number' && contextLength > 0) contextWindow = contextLength
-        } catch { /* fallback */ }
+        const { contextLength } = settings
+        const contextWindow = typeof contextLength === 'number' && contextLength > 0 ? contextLength : 32768
 
         // ── Inline documents: small docs stored in full ──────────────────────
         const inlineRows = db.prepare(
@@ -445,8 +432,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         let ragResult: Awaited<ReturnType<typeof ragRetrieve>> | null = null
         if (hasIndexed && lastUserMsg) {
           try {
-            const { readSettings: _rsRag } = await import('../services/SettingsStore')
-            const _ragVerbose = _rsRag().ragVerboseTrace ?? false
+            const _ragVerbose = settings.ragVerboseTrace ?? false
             ragResult = await ragRetrieve(userMessageText, payload.chatId,
               undefined, undefined, { captureTrace: _ragVerbose })
           } catch (err) {
@@ -474,7 +460,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         }
 
         // ── Build envelope and pass via ragContext ───────────────────────────
-        // The envelope is NOT spliced into enrichedMessages here — instead it is
+        // The envelope is NOT spliced into the messages here — instead it is
         // carried as payload.ragContext so buildMessages() can insert it as an
         // untrimmed system message (immune to token-budget trim) immediately
         // before the last user turn.
@@ -509,8 +495,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     // Old chart turns in history are already stubbed by ChatService.buildMessages().
     let enrichedPayload: ChatSendPayload = {
       ...payload,
-      messages:     enrichedMessages,
-      systemPrompt: enrichedSystemPrompt,
+      messages:     payload.messages,
+      systemPrompt: systemParts.join('\n\n') || undefined,
       hasDocuments: chatHasDocuments,   // suppresses web search Step 1 when RAG docs are present
       ...(ragContextEnvelope ? { ragContext: ragContextEnvelope } : {}),
     }
@@ -876,26 +862,21 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       // ── 1. SettingsStore — ground truth once a preference exists ──
       // modelId and contextLength are written here on every APP_INITIALIZE / SETTINGS_RELOAD,
       // so this is the most reliable source — no lms ps parsing needed.
-      try {
-        const { readSettings } = await import('../services/SettingsStore')
-        const s = readSettings()
-        if (s.contextLength && s.contextLength > 0) {
-          const modelId = s.modelId ?? DEFAULT_MODEL_ID
-          console.log(`[Settings] From SettingsStore: modelId="${modelId}" contextLength=${s.contextLength}`)
-          return {
-            modelId,
-            contextLength:          s.contextLength,
-            temperature:            s.temperature      ?? 0.7,
-            topP:                   s.topP             ?? 0.95,
-            maxOutputTokens:        s.maxOutputTokens  ?? 16384,
-            repeatPenalty:          s.repeatPenalty    ?? 1.1,
-            systemPrompt:           s.systemPrompt     ?? '',
-            gpuOffload:             s.gpuOffload       ?? false,
-            unlimitedOutputTokens:  s.unlimitedOutputTokens ?? false,
-          }
+      const s = readSettings()
+      if (s.contextLength && s.contextLength > 0) {
+        const modelId = s.modelId ?? DEFAULT_MODEL_ID
+        console.log(`[Settings] From SettingsStore: modelId="${modelId}" contextLength=${s.contextLength}`)
+        return {
+          modelId,
+          contextLength:          s.contextLength,
+          temperature:            s.temperature      ?? 0.7,
+          topP:                   s.topP             ?? 0.95,
+          maxOutputTokens:        s.maxOutputTokens  ?? 16384,
+          repeatPenalty:          s.repeatPenalty    ?? 1.1,
+          systemPrompt:           s.systemPrompt     ?? '',
+          gpuOffload:             s.gpuOffload       ?? false,
+          unlimitedOutputTokens:  s.unlimitedOutputTokens ?? false,
         }
-      } catch (err) {
-        console.warn('[Settings] SettingsStore read failed:', (err as Error).message)
       }
 
       // ── 2. lms ps — first-launch fallback (no pref saved yet) ────
@@ -952,11 +933,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { modelId, contextLength, gpuOffload } = payload
       console.log(`[Settings] Reloading "${modelId}" → contextLength=${contextLength} gpuOffload=${gpuOffload ?? false}`)
 
-      const { readSettings: _rs, writeSettings } = await import('../services/SettingsStore')
-
       // ── Non-LM-Studio guard: skip lms CLI entirely, just persist params ─────
       // Covers cloud providers and MTPLX — none of them load models via `lms`.
-      const currentSettings = _rs()
+      const currentSettings = readSettings()
       if (skipsLmsCli(currentSettings.backendProvider ?? 'lmstudio')) {
         const patch: Record<string, unknown> = {}
         if (payload.temperature          !== undefined) patch.temperature          = payload.temperature
@@ -1069,7 +1048,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // Returns true when no modelId has been saved yet (no settings file,
   // or settings file exists but modelId was never written).
   ipcMain.handle(IPC_CHANNELS.APP_IS_FIRST_LAUNCH, async (): Promise<boolean> => {
-    const { readSettings } = await import('../services/SettingsStore')
     const { modelId } = readSettings()
     return !modelId
   })
@@ -1105,19 +1083,18 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       const { modelId, contextLength } = payload
       console.log(`[App] Initializing: model="${modelId}" contextLength=${contextLength}`)
 
-      const { readSettings: readInitSettings, writeSettings } = await import('../services/SettingsStore')
       writeSettings({ modelId, contextLength })
 
       // ── Non-LM-Studio guard: skip lms CLI, settings already saved above ─────
       // Covers cloud providers and MTPLX — none of them load models via `lms`.
-      const _initSettings = readInitSettings()
+      const _initSettings = readSettings()
       if (skipsLmsCli(_initSettings.backendProvider ?? 'lmstudio')) {
         console.log(`[App] Non-LM-Studio provider (${_initSettings.backendProvider}) — skipping lms CLI`)
         return { success: true, confirmedCtx: contextLength }
       }
 
       // Read back gpuOffload from saved settings (set before first-launch in edge cases)
-      const { gpuOffload: initGpuOffload } = readInitSettings()
+      const { gpuOffload: initGpuOffload } = readSettings()
 
       // ── LM Studio: run lms load ───────────────────────────────────
       const lmsBin = await findLmsBinAsync()
@@ -1148,7 +1125,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── MCP Settings ─────────────────────────────────────────────────
   ipcMain.handle(IPC_CHANNELS.MCP_GET_SETTINGS, async () => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     return {
       braveEnabled:                s.braveSearchEnabled         ?? false,
@@ -1161,7 +1137,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.MCP_SAVE_SETTINGS,
     async (_, patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number; keepSearchResultsInContext?: boolean }) => {
-      const { writeSettings } = await import('../services/SettingsStore')
       // Only include defined fields — spreading undefined would erase existing keys
       const cleanPatch: Record<string, unknown> = {}
       if (patch.braveEnabled                 !== undefined) cleanPatch.braveSearchEnabled        = patch.braveEnabled
@@ -1178,7 +1153,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── settings:getSuggestions / settings:saveSuggestions ───────────
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_SUGGESTIONS, async (): Promise<string[]> => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     return s.suggestionCards ?? []   // [] means "use client-side defaults"
   })
@@ -1186,7 +1160,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_SUGGESTIONS,
     async (_, cards: string[]): Promise<void> => {
-      const { writeSettings } = await import('../services/SettingsStore')
       // Only persist non-empty, trimmed strings — max 4
       const clean = cards
         .filter((c) => typeof c === 'string' && c.trim().length > 0)
@@ -1197,7 +1170,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // ── settings:getBackend / settings:saveBackend ────────────────────
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_BACKEND, async () => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     return {
       provider:          s.backendProvider  ?? 'lmstudio',
@@ -1217,7 +1189,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
     async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string; openrouterReasoningEffort?: string; mtplxBaseUrl?: string; mtplxModel?: string }) => {
-      const { writeSettings } = await import('../services/SettingsStore')
       const cleanPatch: Record<string, unknown> = {}
       if (patch.provider                  !== undefined) cleanPatch.backendProvider           = patch.provider
       if (patch.nvidiaApiKey              !== undefined) cleanPatch.nvidiaApiKey              = patch.nvidiaApiKey
@@ -1235,7 +1206,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_OLLAMA_MODELS, async (_, baseUrl?: string, apiKey?: string) => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const url = (baseUrl ?? s.ollamaBaseUrl ?? 'https://ollama.com').replace(/\/$/, '')
     const key = apiKey ?? s.ollamaApiKey ?? ''
@@ -1256,7 +1226,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_MTPLX_MODELS, async (_, baseUrl?: string) => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const url = (baseUrl ?? s.mtplxBaseUrl ?? 'http://localhost:8000').replace(/\/$/, '')
 
@@ -1301,7 +1270,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_MODELS, async (_, apiKey?: string) => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const key = apiKey ?? s.openrouterApiKey ?? ''
     if (!key) return { models: [], modalities: {}, error: 'No API key configured' }
@@ -1345,7 +1313,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_OPENROUTER_STATS, async (_, apiKey?: string) => {
-    const { readSettings } = await import('../services/SettingsStore')
     const s = readSettings()
     const key = apiKey ?? s.openrouterApiKey ?? ''
     if (!key) return { credits: null, activity: null, error: 'No API key' }
@@ -1452,37 +1419,31 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // McpServerManager owns the child processes; handlers are thin pass-throughs.
 
   ipcMain.handle(IPC_CHANNELS.MCP_LIST_CUSTOM_SERVERS, async () => {
-    const { mcpServerManager } = await import('../services/McpServerManager')
     return mcpServerManager.readConfig()
   })
 
   ipcMain.handle(
     IPC_CHANNELS.MCP_SAVE_CUSTOM_SERVERS,
     async (_, settings) => {
-      const { mcpServerManager } = await import('../services/McpServerManager')
       await mcpServerManager.writeConfig(settings)
     }
   )
 
   ipcMain.handle(IPC_CHANNELS.MCP_GET_SERVER_STATUS, async () => {
-    const { mcpServerManager } = await import('../services/McpServerManager')
     return mcpServerManager.getServerStatus()
   })
 
   ipcMain.handle(IPC_CHANNELS.MCP_RESTART_SERVER, async (_, name: string) => {
-    const { mcpServerManager } = await import('../services/McpServerManager')
     await mcpServerManager.restartServer(name)
   })
 
   ipcMain.handle(IPC_CHANNELS.MCP_REMOVE_SERVER, async (_, name: string) => {
-    const { mcpServerManager } = await import('../services/McpServerManager')
     await mcpServerManager.removeServer(name)
   })
 
   ipcMain.handle(
     IPC_CHANNELS.MCP_SET_TOOL_ENABLED,
     async (_, { serverName, toolName, enabled }: { serverName: string; toolName: string; enabled: boolean }) => {
-      const { mcpServerManager } = await import('../services/McpServerManager')
       await mcpServerManager.setToolEnabled(serverName, toolName, enabled)
     }
   )
@@ -1490,7 +1451,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.MCP_TOOL_PERMISSION_RESPONSE,
     async (_, response: import('../../shared/types').McpToolPermissionResponse) => {
-      const { mcpServerManager } = await import('../services/McpServerManager')
       mcpServerManager.resolvePermission(response)
     }
   )
@@ -1498,7 +1458,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.MCP_BYPASS_PERMISSIONS_CHANGED,
     async (_, bypass: boolean) => {
-      const { mcpServerManager } = await import('../services/McpServerManager')
       mcpServerManager.setBypassPermissions(bypass)
     }
   )
@@ -1506,7 +1465,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.MCP_SET_SERVER_APPROVAL_MODE,
     async (_, { serverName, requiresApproval }: { serverName: string; requiresApproval: boolean }) => {
-      const { mcpServerManager } = await import('../services/McpServerManager')
       mcpServerManager.setServerApprovalMode(serverName, requiresApproval)
     }
   )
@@ -1527,7 +1485,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   ipcMain.handle(IPC_CHANNELS.OBS_OPEN_SESSION, async (_, sessionIdOrPath: string): Promise<void> => {
     // If passed an absolute path (e.g. the logs directory itself), open it directly.
-    if (sessionIdOrPath.startsWith('/') || /^[A-Za-z]:\\/.test(sessionIdOrPath)) {
+    if (isAbsolute(sessionIdOrPath)) {
       await shell.openPath(sessionIdOrPath)
       return
     }
@@ -1644,7 +1602,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // Enabling Multi-Agent mode starts the sidecar (and, on first use, its
   // private venv install) in the background so the first run doesn't wait.
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_WARM_UP, async (): Promise<SidecarStatus> => {
-    const { readSettings } = await import('../services/SettingsStore')
     if (readSettings().backendProvider !== 'openrouter') return multiAgentSidecar.getStatus()
     multiAgentSidecar.start().catch((err: Error) => console.warn('[Sidecar] warm-up failed:', err.message))
     return multiAgentSidecar.getStatus()
@@ -1655,7 +1612,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE, async (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> => {
-    const { readSettings } = await import('../services/SettingsStore')
     const key = readSettings().openrouterApiKey ?? ''
     if (!key) return { models: [], error: 'No OpenRouter API key configured' }
     try {
@@ -1666,7 +1622,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CONFIG, async (): Promise<MultiAgentConfig & { sidecarPort: number }> => {
-    const { readSettings } = await import('../services/SettingsStore')
     const settings = readSettings()
     return {
       ...sanitizeMultiAgentConfig(settings.multiAgentConfig),
@@ -1675,7 +1630,6 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   })
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SAVE_CONFIG, async (_, config: MultiAgentConfig & { sidecarPort?: number }): Promise<void> => {
-    const { writeSettings } = await import('../services/SettingsStore')
     const port = Math.trunc(Number(config.sidecarPort))
     writeSettings({
       multiAgentConfig: sanitizeMultiAgentConfig(config),
