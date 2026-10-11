@@ -84,12 +84,7 @@ export function getOpenRouterContextLength(modelId: string): number {
   if (id.includes('deepseek')) return 131072;   // DeepSeek V3/V4 series
   if (id.includes('claude'))   return 200000;   // Anthropic
   if (id.includes('gemini'))   return 1000000;  // Google Gemini
-  if (id.includes('llama'))    return 131072;   // Meta Llama
-  if (id.includes('qwen'))     return 131072;   // Alibaba Qwen
-  if (id.includes('mistral'))  return 131072;   // Mistral
-  if (id.includes('grok'))     return 131072;   // xAI Grok
-  if (id.includes('phi'))      return 131072;   // Microsoft Phi
-  return 131072;                                // safe default: 128k
+  return 131072;                                // Llama, Qwen, Mistral, Grok, Phi, unknown: 128k
 }
 
 /**
