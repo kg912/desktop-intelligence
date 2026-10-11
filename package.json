@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.2.8",
+  "version": "3.2.9",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -15,7 +15,6 @@
     "test:watch": "npm rebuild better-sqlite3 && vitest",
     "test:coverage": "npm rebuild better-sqlite3 && vitest run --coverage",
     "spike:vec": "tsx scripts/spike-sqlite-vec.ts",
-    "spike:rerank": "tsx scripts/spike-reranker.ts",
     "spike:sandbox-yf-hosts": "tsx scripts/spike-sandbox-yf-hosts.ts",
     "bench:microsandbox": "tsx scripts/bench-microsandbox.ts",
     "test:sidecar:setup": "python3 -m venv node_modules/.cache/di-sidecar-venv && node_modules/.cache/di-sidecar-venv/bin/python -m pip install --disable-pip-version-check -q -r resources/python/requirements-multi-agent.txt",
