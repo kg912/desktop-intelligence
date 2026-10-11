@@ -125,6 +125,7 @@ export class MultiAgentRunLogger {
   private readonly active = new Map<string, ActiveRun>()
   private readonly pending = new Map<string, { lines: string[]; secrets: Promise<string[]> }>()
   private draining: Promise<void> | null = null
+  private readonly finishing = new Set<Promise<void>>()
 
   constructor(readonly root: string, private readonly opts: RunLoggerOptions) {}
 
@@ -164,7 +165,8 @@ export class MultiAgentRunLogger {
       if (event.type === 'task_complete' || event.type === 'task_failed') {
         this.active.delete(event.runId)
         run.meta = { ...run.meta, endedAt: Date.now(), status: event.type === 'task_complete' ? 'completed' : 'failed' }
-        void this.finish(run)
+        const done: Promise<void> = this.finish(run).finally(() => this.finishing.delete(done))
+        this.finishing.add(done)
       }
     } catch (err) {
       console.warn('[RunLog] event write failed:', err)
@@ -180,15 +182,22 @@ export class MultiAgentRunLogger {
     }
   }
 
-  /** Resolves once every queued line is on disk. */
+  /** Resolves once every queued line is on disk and every finished run is rendered. */
   async flush(): Promise<void> {
+    while (this.draining || this.finishing.size) {
+      await this.drained()
+      await Promise.all(this.finishing)
+    }
+  }
+
+  private async drained(): Promise<void> {
     while (this.draining) await this.draining
   }
 
   private async finish(run: ActiveRun): Promise<void> {
     try {
       this.write(run.meta.runId, 'run.meta.json', JSON.stringify(run.meta, null, 2), 'replace', run)
-      await this.flush()
+      await this.drained() // not flush(): that waits for this very render
       await renderRun(run.dir, await run.secrets)
     } catch (err) {
       console.warn('[RunLog] render failed:', err)
