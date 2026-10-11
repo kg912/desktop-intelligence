@@ -219,6 +219,7 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions, footer }, r
   return (
     <div
       ref={scrollContainerRef}
+      data-testid="chat-scroll"
       onWheel={handleWheel}
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto relative no-drag"

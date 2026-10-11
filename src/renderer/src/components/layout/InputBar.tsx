@@ -487,6 +487,7 @@ export const InputBar = memo(function InputBar({
         />
         <button
           onClick={isStreaming ? onAbort : handleSend}
+          aria-label={isStreaming ? 'Stop generating' : 'Send message'}
           disabled={!isStreaming && !canSend.value}
           className={cn(
             'flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-xl self-end mb-px',
