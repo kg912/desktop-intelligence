@@ -59,6 +59,7 @@ import { getOpenRouterCatalogue } from '../services/OpenRouterCatalogue'
 import { sanitizeMultiAgentConfig } from '../../shared/multiAgentModels'
 import type { OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
+import { cloudModelState, daemonReady, buildLmsLoadArgs, definedOnly, stripEosFromMessages } from './handlerHelpers'
 import { readSettings, writeSettings } from '../services/SettingsStore'
 import { mcpServerManager } from '../services/McpServerManager'
 
@@ -224,64 +225,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MODEL_GET_STATUS, async (): Promise<ConnectionState> => {
     const s = readSettings()
     const bp = s.backendProvider ?? 'lmstudio'
-    if (isCloud(bp)) {
-      let modelId: string
-      let ownedBy: string
-      switch (bp) {
-        case 'nvidia':
-          modelId = s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b'
-          ownedBy = 'nvidia'
-          break
-        case 'ollama':
-          modelId = s.ollamaModel ?? 'ollama'
-          ownedBy = 'ollama'
-          break
-        case 'openrouter':
-        default:
-          modelId = s.openrouterModel ?? 'anthropic/claude-sonnet-4'
-          ownedBy = 'openrouter'
-          break
-      }
-      return {
-        status:         'ready',
-        modelInfo:      { id: modelId, object: 'model', created: 0, owned_by: ownedBy },
-        lastChecked:    Date.now(),
-        error:          null,
-        pollIntervalMs: 0,
-      }
-    }
+    if (isCloud(bp)) return cloudModelState(s, bp)
     return activeConnectionManager(bp).getState()
   })
 
   ipcMain.handle(IPC_CHANNELS.MODEL_FORCE_POLL, async (): Promise<ConnectionState> => {
     const s = readSettings()
     const bp = s.backendProvider ?? 'lmstudio'
-    if (isCloud(bp)) {
-      let modelId: string
-      let ownedBy: string
-      switch (bp) {
-        case 'nvidia':
-          modelId = s.nvidiaModel ?? 'mistralai/mistral-medium-3.5-128b'
-          ownedBy = 'nvidia'
-          break
-        case 'ollama':
-          modelId = s.ollamaModel ?? 'ollama'
-          ownedBy = 'ollama'
-          break
-        case 'openrouter':
-        default:
-          modelId = s.openrouterModel ?? 'anthropic/claude-sonnet-4'
-          ownedBy = 'openrouter'
-          break
-      }
-      return {
-        status:         'ready',
-        modelInfo:      { id: modelId, object: 'model', created: 0, owned_by: ownedBy },
-        lastChecked:    Date.now(),
-        error:          null,
-        pollIntervalMs: 0,
-      }
-    }
+    if (isCloud(bp)) return cloudModelState(s, bp)
     return activeConnectionManager(bp).forcePoll()
   })
 
@@ -300,14 +251,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // 'ready' is returned rather than a permanently-idle real state.
   ipcMain.handle(IPC_CHANNELS.DAEMON_GET_STATE, async (): Promise<DaemonState> => {
     if (skipsLmsCli(readSettings().backendProvider ?? 'lmstudio')) {
-      return { phase: 'ready', error: null, stderr: null }
+      return daemonReady()
     }
     return lmsDaemonManager.getState()
   })
 
   ipcMain.handle(IPC_CHANNELS.DAEMON_RETRY, async (): Promise<DaemonState> => {
     if (skipsLmsCli(readSettings().backendProvider ?? 'lmstudio')) {
-      return { phase: 'ready', error: null, stderr: null }
+      return daemonReady()
     }
     await lmsDaemonManager.retry()
     return lmsDaemonManager.getState()
@@ -322,14 +273,14 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   // report state without one overwriting the other.
   ipcMain.handle(IPC_CHANNELS.MTPLX_DAEMON_GET_STATE, async (): Promise<DaemonState> => {
     if ((readSettings().backendProvider ?? 'lmstudio') !== 'mtplx') {
-      return { phase: 'ready', error: null, stderr: null }
+      return daemonReady()
     }
     return mtplxDaemonManager.getState()
   })
 
   ipcMain.handle(IPC_CHANNELS.MTPLX_DAEMON_RETRY, async (): Promise<DaemonState> => {
     if ((readSettings().backendProvider ?? 'lmstudio') !== 'mtplx') {
-      return { phase: 'ready', error: null, stderr: null }
+      return daemonReady()
     }
     await mtplxDaemonManager.retry()
     return mtplxDaemonManager.getState()
@@ -556,79 +507,18 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     }
     console.log(`${'='.repeat(80)}\n`)
 
-    // ── EOS TOKEN TRACE (always-on) ─────────────────────────────────────────
-    // Scans every field of the enriched payload for <|endoftext|> and similar
-    // special tokens BEFORE chatService.send() processes them. This runs in
-    // handlers.ts (not ChatService) so it fires regardless of compilation state.
-    const _EOS_RE = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi
-    console.log(`[EOS-TRACE:handlers] Scanning ${enrichedPayload.messages.length} messages pre-send for EOS tokens...`)
-    let _eosFound = false
-    for (let _ei = 0; _ei < enrichedPayload.messages.length; _ei++) {
-      const _em = enrichedPayload.messages[_ei]
-      const _contentStr = typeof _em.content === 'string' ? _em.content : JSON.stringify(_em.content)
-      _EOS_RE.lastIndex = 0
-      const _contentHasEos = _EOS_RE.test(_contentStr)
-      _EOS_RE.lastIndex = 0
-      // Log every message briefly
-      console.log(`[EOS-TRACE:handlers]   msg[${_ei}] role=${_em.role} chars=${_contentStr.length} hasEOS=${_contentHasEos} tail="${_contentStr.slice(-80).replace(/\n/g, '↵')}"`)
-      if (_contentHasEos) {
-        _eosFound = true
-        // Find and show context around every match
-        const _allMatches = [..._contentStr.matchAll(new RegExp(_EOS_RE.source, 'gi'))]
-        for (const _m of _allMatches) {
-          const _s = Math.max(0, (_m.index ?? 0) - 60)
-          const _e2 = Math.min(_contentStr.length, (_m.index ?? 0) + 60)
-          console.warn(`[EOS-TRACE:handlers]   ⚠️ EOS in msg[${_ei}].content at index ${_m.index}: "...${_contentStr.slice(_s, _e2)}..."`)
-        }
-      }
-      // Also check tool_call_id and any WireMessage tool_calls
-      const _wem = _em as { tool_call_id?: string; tool_calls?: unknown }
-      if (_wem.tool_call_id) {
-        _EOS_RE.lastIndex = 0
-        if (_EOS_RE.test(_wem.tool_call_id)) {
-          console.warn(`[EOS-TRACE:handlers]   ⚠️ EOS in msg[${_ei}].tool_call_id: "${_wem.tool_call_id}"`)
-          _eosFound = true
-        }
-      }
-      if (_wem.tool_calls) {
-        const _tcStr = JSON.stringify(_wem.tool_calls)
-        _EOS_RE.lastIndex = 0
-        if (_EOS_RE.test(_tcStr)) {
-          console.warn(`[EOS-TRACE:handlers]   ⚠️ EOS in msg[${_ei}].tool_calls: "${_tcStr.slice(0, 200)}"`)
-          _eosFound = true
-        }
-      }
-    }
-    if (!_eosFound) {
-      console.log('[EOS-TRACE:handlers] ✅ No EOS tokens found in pre-send payload messages.')
-    }
-
-    // ── EOS SANITIZE (handlers-level nuclear strip) ───────────────────────
-    // ChatService.ts nuclear strip is not firing (compilation issue).
-    // Strip here unconditionally so it cannot reach the wire payload.
-    // Covers tool messages containing HuggingFace tokenizer JSON with
-    // "pad_token":"<|endoftext|>" and any other source.
-    if (_eosFound) {
-      enrichedPayload = {
-        ...enrichedPayload,
-        messages: enrichedPayload.messages.map((m) => {
-          if (typeof m.content !== 'string') return m
-          const _EOS_RE2 = /<\|(?:endoftext|im_end|eot_id|end)\|>/gi
-          const cleaned = m.content.replace(_EOS_RE2, '')
-          if (cleaned !== m.content) {
-            console.log(`[EOS-TRACE:handlers] ✅ Stripped EOS from role=${m.role} (${m.content.length} → ${cleaned.length} chars)`)
-          }
-          return { ...m, content: cleaned }
-        }),
-      }
-    }
-    // ───────────────────────────────────────────────────────────────────────
+    // ── EOS sanitise ──────────────────────────────────────────────────────
+    // Strip special tokens from message content before ChatService sees them.
+    // Tool results can carry HuggingFace tokenizer JSON ("pad_token":"<|endoftext|>"),
+    // and this strip lives here (not only in ChatService) because a Vite
+    // recompilation quirk once left ChatService's own strip not firing.
+    enrichedPayload = { ...enrichedPayload, messages: stripEosFromMessages(enrichedPayload.messages) }
 
     try {
       await chatService.send(enrichedPayload, modelId, wc)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      console.warn(`[EOS-TRACE:handlers] chatService.send() threw: ${msg}`)
+      console.warn(`[Chat] chatService.send() threw: ${msg}`)
       send(IPC_CHANNELS.CHAT_ERROR, msg)
     }
   })
@@ -937,15 +827,15 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       // Covers cloud providers and MTPLX — none of them load models via `lms`.
       const currentSettings = readSettings()
       if (skipsLmsCli(currentSettings.backendProvider ?? 'lmstudio')) {
-        const patch: Record<string, unknown> = {}
-        if (payload.temperature          !== undefined) patch.temperature          = payload.temperature
-        if (payload.topP                  !== undefined) patch.topP                  = payload.topP
-        if (payload.maxOutputTokens       !== undefined) patch.maxOutputTokens       = payload.maxOutputTokens
-        if (payload.repeatPenalty         !== undefined) patch.repeatPenalty         = payload.repeatPenalty
-        if (payload.systemPrompt          !== undefined) patch.systemPrompt          = payload.systemPrompt
-        if (payload.contextLength         !== undefined) patch.contextLength         = payload.contextLength
-        if (payload.unlimitedOutputTokens !== undefined) patch.unlimitedOutputTokens = payload.unlimitedOutputTokens
-        writeSettings(patch as Parameters<typeof writeSettings>[0])
+        writeSettings(definedOnly({
+          temperature:           payload.temperature,
+          topP:                  payload.topP,
+          maxOutputTokens:       payload.maxOutputTokens,
+          repeatPenalty:         payload.repeatPenalty,
+          systemPrompt:          payload.systemPrompt,
+          contextLength:         payload.contextLength,
+          unlimitedOutputTokens: payload.unlimitedOutputTokens,
+        }))
         console.log(`[Settings] Non-LM-Studio provider (${currentSettings.backendProvider}) — skipped lms CLI, params saved to SettingsStore`)
         return { success: true, confirmedCtx: payload.contextLength }
       }
@@ -987,11 +877,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         // ── Step 2: load with requested context length (+ GPU offload flag) ─
         // lms accepts both the full HuggingFace path and the short key.
         // --gpu max offloads all layers to GPU for maximum throughput.
-        const loadArgs = [
-          modelId,
-          ...(gpuOffload ? ['--gpu', 'max'] : []),
-          '--context-length', String(contextLength),
-        ]
+        const loadArgs = buildLmsLoadArgs(modelId, gpuOffload, contextLength)
         if (process.env.DEV_MODE === 'true') {
           console.log(`[DEBUG][Settings] lms load command: ${lmsBin} load ${loadArgs.join(' ')}`)
         }
@@ -1013,18 +899,19 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
         // ── Step 4: persist the preference for next app startup ────
         // LMSDaemonManager reads this and passes the same flags on next `lms load`.
         try {
-          const patch: Record<string, unknown> = {
+          writeSettings({
             contextLength: confirmedCtx ?? contextLength,
             modelId,
-          }
-          if (payload.temperature          !== undefined) patch.temperature          = payload.temperature
-          if (payload.topP                  !== undefined) patch.topP                  = payload.topP
-          if (payload.maxOutputTokens       !== undefined) patch.maxOutputTokens       = payload.maxOutputTokens
-          if (payload.repeatPenalty         !== undefined) patch.repeatPenalty         = payload.repeatPenalty
-          if (payload.systemPrompt          !== undefined) patch.systemPrompt          = payload.systemPrompt
-          if (payload.gpuOffload            !== undefined) patch.gpuOffload            = payload.gpuOffload
-          if (payload.unlimitedOutputTokens !== undefined) patch.unlimitedOutputTokens = payload.unlimitedOutputTokens
-          writeSettings(patch as Parameters<typeof writeSettings>[0])
+            ...definedOnly({
+              temperature:           payload.temperature,
+              topP:                  payload.topP,
+              maxOutputTokens:       payload.maxOutputTokens,
+              repeatPenalty:         payload.repeatPenalty,
+              systemPrompt:          payload.systemPrompt,
+              gpuOffload:            payload.gpuOffload,
+              unlimitedOutputTokens: payload.unlimitedOutputTokens,
+            }),
+          })
         } catch { /* non-fatal */ }
 
         modelConnectionManager.forcePoll().catch(() => { /* non-fatal */ })
@@ -1103,11 +990,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       }
 
       try {
-        const initLoadArgs = [
-          modelId,
-          ...(initGpuOffload ? ['--gpu', 'max'] : []),
-          '--context-length', String(contextLength),
-        ]
+        const initLoadArgs = buildLmsLoadArgs(modelId, initGpuOffload, contextLength)
         if (process.env.DEV_MODE === 'true') {
           console.log(`[DEBUG][App] lms load command: ${lmsBin} load ${initLoadArgs.join(' ')}`)
         }
@@ -1138,12 +1021,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     IPC_CHANNELS.MCP_SAVE_SETTINGS,
     async (_, patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number; keepSearchResultsInContext?: boolean }) => {
       // Only include defined fields — spreading undefined would erase existing keys
-      const cleanPatch: Record<string, unknown> = {}
-      if (patch.braveEnabled                 !== undefined) cleanPatch.braveSearchEnabled        = patch.braveEnabled
-      if (patch.braveApiKey                  !== undefined) cleanPatch.braveSearchApiKey         = patch.braveApiKey
-      if (patch.maxSearchLoops               !== undefined) cleanPatch.maxSearchLoops            = patch.maxSearchLoops
-      if (patch.keepSearchResultsInContext   !== undefined) cleanPatch.keepSearchResultsInContext = patch.keepSearchResultsInContext
-      writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
+      writeSettings(definedOnly({
+        braveSearchEnabled:         patch.braveEnabled,
+        braveSearchApiKey:          patch.braveApiKey,
+        maxSearchLoops:             patch.maxSearchLoops,
+        keepSearchResultsInContext: patch.keepSearchResultsInContext,
+      }))
     }
   )
 
@@ -1189,19 +1072,19 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_SAVE_BACKEND,
     async (_, patch: { provider?: string; nvidiaApiKey?: string; nvidiaModel?: string; ollamaApiKey?: string; ollamaModel?: string; ollamaBaseUrl?: string; openrouterApiKey?: string; openrouterModel?: string; openrouterReasoningEffort?: string; mtplxBaseUrl?: string; mtplxModel?: string }) => {
-      const cleanPatch: Record<string, unknown> = {}
-      if (patch.provider                  !== undefined) cleanPatch.backendProvider           = patch.provider
-      if (patch.nvidiaApiKey              !== undefined) cleanPatch.nvidiaApiKey              = patch.nvidiaApiKey
-      if (patch.nvidiaModel               !== undefined) cleanPatch.nvidiaModel               = patch.nvidiaModel
-      if (patch.ollamaApiKey              !== undefined) cleanPatch.ollamaApiKey              = patch.ollamaApiKey
-      if (patch.ollamaModel               !== undefined) cleanPatch.ollamaModel               = patch.ollamaModel
-      if (patch.ollamaBaseUrl             !== undefined) cleanPatch.ollamaBaseUrl             = patch.ollamaBaseUrl
-      if (patch.openrouterApiKey          !== undefined) cleanPatch.openrouterApiKey          = patch.openrouterApiKey
-      if (patch.openrouterModel           !== undefined) cleanPatch.openrouterModel           = patch.openrouterModel
-      if (patch.openrouterReasoningEffort !== undefined) cleanPatch.openrouterReasoningEffort = patch.openrouterReasoningEffort
-      if (patch.mtplxBaseUrl              !== undefined) cleanPatch.mtplxBaseUrl              = patch.mtplxBaseUrl
-      if (patch.mtplxModel                !== undefined) cleanPatch.mtplxModel                = patch.mtplxModel
-      writeSettings(cleanPatch as Parameters<typeof writeSettings>[0])
+      writeSettings(definedOnly({
+        backendProvider:           patch.provider,
+        nvidiaApiKey:              patch.nvidiaApiKey,
+        nvidiaModel:               patch.nvidiaModel,
+        ollamaApiKey:              patch.ollamaApiKey,
+        ollamaModel:               patch.ollamaModel,
+        ollamaBaseUrl:             patch.ollamaBaseUrl,
+        openrouterApiKey:          patch.openrouterApiKey,
+        openrouterModel:           patch.openrouterModel,
+        openrouterReasoningEffort: patch.openrouterReasoningEffort,
+        mtplxBaseUrl:              patch.mtplxBaseUrl,
+        mtplxModel:                patch.mtplxModel,
+      }) as Parameters<typeof writeSettings>[0])
     },
   )
 
