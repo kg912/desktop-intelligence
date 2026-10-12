@@ -37,8 +37,9 @@ vi.mock('../../renderer/src/hooks/useChat', () => ({
     chatSystemInstructions: '', updateChatSystemInstructions: vi.fn(),
   }),
 }))
+let chatAreaProps: Record<string, any> = {}
 vi.mock('../../renderer/src/components/layout/ChatArea', () => ({
-  ChatArea: forwardRef(function ChatArea(_props: unknown, _ref) { return <div data-testid="chat-area" /> }),
+  ChatArea: forwardRef(function ChatArea(props: Record<string, any>, _ref) { chatAreaProps = props; return <div data-testid="chat-area" /> }),
 }))
 // The stub records its props so the top-bar mode / run wiring can be checked.
 let topBarProps: Record<string, any> = {}
@@ -307,5 +308,54 @@ describe('Top bar mode and run (designs/05-topbar.html)', () => {
     await openChat('agents title')
     await act(async () => { topBarProps.onOpenAgentSettings() })
     expect(screen.getByTestId('settings-page')).toBeTruthy()
+  })
+})
+
+describe('Goal 1 — floating "Viewing agent run" pill (designs/01-floating-pill.png)', () => {
+  const savedRun = () => {
+    const steps = [{ id: '1.1', label: 'Look', stage: 'worker', role: 'Scout', model: 'w', phase: 1, dependsOn: [] }]
+    const executionTrace = [
+      { runId: 'r9', seq: 1, ts: 1, type: 'orchestrator_plan', steps },
+      { runId: 'r9', seq: 2, ts: 2, type: 'task_complete', finalOutput: 'x', totalCostUsd: 0.01, totalTokens: 5 },
+    ]
+    overrides.getMultiAgentRun.mockImplementation((async (chatId: string) =>
+      chatId === 'agents' ? { mode: 'multi-agent', runStatus: 'completed', agentGraph: steps, executionTrace, runId: 'r9', runIds: ['r9'] } : null) as any)
+  }
+
+  it('floats over the list: wrapper is absolute and click-through, only the pill takes clicks', async () => {
+    savedRun()
+    await renderLayout()
+    await openChat('agents title')
+    const pill = await screen.findByTestId('agent-run-pill')
+    const wrapper = pill.parentElement!
+    expect(wrapper.className).toContain('absolute')
+    expect(wrapper.className).toContain('pointer-events-none')
+    expect(pill.className).toContain('pointer-events-auto')
+    expect(pill.className).toContain('ma-glass-pill')
+    // The pill and the list share one positioned parent: no band row above the list.
+    expect(wrapper.parentElement!.contains(screen.getByTestId('chat-area'))).toBe(true)
+    expect(pill.textContent).toBe('View agent run')
+    await act(async () => { fireEvent.click(pill) })
+    expect(screen.getByTestId('agent-run-pill').textContent).toBe('Viewing agent run · close')
+    await act(async () => { fireEvent.click(screen.getByTestId('agent-run-pill')) })
+    expect(screen.getByTestId('agent-run-pill').textContent).toBe('View agent run')
+  })
+
+  it('the list inset depends on the chat mode, not on the pill, so nothing shifts when it appears', async () => {
+    let resolve: (v: unknown) => void = () => {}
+    overrides.getMultiAgentRun.mockImplementation((() => new Promise((r) => { resolve = r })) as any)
+    await renderLayout()
+    await openChat('regular title')
+    expect(chatAreaProps.topInset).toBe(0)
+    await openChat('agents title')
+    expect(screen.queryByTestId('agent-run-pill')).toBeNull()
+    expect(chatAreaProps.topInset).toBe(16)
+    const steps = [{ id: '1.1', label: 'Look', stage: 'worker', role: 'Scout', model: 'w', phase: 1, dependsOn: [] }]
+    await act(async () => {
+      resolve({ mode: 'multi-agent', runStatus: 'completed', agentGraph: steps, runIds: ['r9'],
+        executionTrace: [{ runId: 'r9', seq: 1, ts: 1, type: 'orchestrator_plan', steps }] })
+    })
+    await screen.findByTestId('agent-run-pill')
+    expect(chatAreaProps.topInset).toBe(16)
   })
 })

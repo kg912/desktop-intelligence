@@ -655,28 +655,33 @@ export function Layout() {
               onOpenAgentSettings={() => { if (!isStreaming && !navLocked) { setSettingsTab('agents'); setSettingsOpen(true) } }}
             />
 
-            {/* The main area stays a chat: a pill to the dock and, while a run is live, the synthesis. */}
-            {(shownRun || (reviewableChat === activeChatId && activeChatId)) && (
-              <div className="flex justify-center pt-3">
-                <button
-                  data-testid="agent-run-pill"
-                  onClick={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
-                  className="inline-flex h-[30px] items-center gap-2 rounded-[15px] border-[0.5px] border-ma-red/35 bg-ma-red/[0.08] px-3.5 text-[12.5px] text-ma-redtext hover:bg-ma-red/[0.14]"
-                >
-                  {dockOpen && shownRunActive && <span className="ma-pill-dot" />}
-                  {dockOpen ? 'Viewing agent run · close' : 'View agent run'}
-                </button>
-              </div>
-            )}
-            <ChatArea
-              ref={chatAreaRef}
-              activeChatId={activeChatId}
-              onSuggest={handleSuggest}
-              chatSystemInstructions={chatSystemInstructions}
-              footer={shownRun && shownRunActive && shownRun.view.phase !== 'planning' && shownRun.view.phase !== 'preflight'
-                ? <FinalSynthesis view={shownRun.view} onSelectAgent={selectAgent} />
-                : null}
-            />
+            {/* The main area stays a chat: a floating pill to the dock and, while a run is live, the synthesis.
+                The pill floats over the list (no band, no reserved row); agent chats get a fixed top inset
+                so nothing shifts when the pill appears. */}
+            <div className="relative flex-1 flex flex-col min-h-0">
+              {(shownRun || (reviewableChat === activeChatId && activeChatId)) && (
+                <div className="pointer-events-none absolute inset-x-0 top-2.5 z-20 flex justify-center">
+                  <button
+                    data-testid="agent-run-pill"
+                    onClick={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
+                    className="ma-glass-pill pointer-events-auto inline-flex h-[30px] items-center gap-2 rounded-[15px] px-4 font-mono text-[13px] text-[#ff8a85]"
+                  >
+                    {dockOpen && shownRunActive && <span className="ma-pill-dot" />}
+                    {dockOpen ? 'Viewing agent run · close' : 'View agent run'}
+                  </button>
+                </div>
+              )}
+              <ChatArea
+                ref={chatAreaRef}
+                activeChatId={activeChatId}
+                onSuggest={handleSuggest}
+                chatSystemInstructions={chatSystemInstructions}
+                topInset={useAgents ? AGENT_PILL_INSET : 0}
+                footer={shownRun && shownRunActive && shownRun.view.phase !== 'planning' && shownRun.view.phase !== 'preflight'
+                  ? <FinalSynthesis view={shownRun.view} onSelectAgent={selectAgent} />
+                  : null}
+              />
+            </div>
 
             {multiAgent.startError && (
               <div className="mx-4 mb-1 flex items-start gap-2 rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300" role="alert">
@@ -701,6 +706,9 @@ export function Layout() {
     </div>
   )
 }
+
+/** Top of the floating run pill (10px) + its height (30px) − ChatArea's own 32px start, rounded up. */
+const AGENT_PILL_INSET = 16
 
 const WIDTH_STEP = 16
 const measureDock = (): DockLayout => dockLayout(Math.floor(window.innerWidth / WIDTH_STEP) * WIDTH_STEP)

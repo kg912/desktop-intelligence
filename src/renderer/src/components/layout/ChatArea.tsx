@@ -17,6 +17,8 @@ interface ChatAreaProps {
   chatSystemInstructions?:  string | null
   /** Rendered after the last message, in the same column (e.g. a live multi-agent synthesis). */
   footer?:                  React.ReactNode
+  /** Extra space above the first message, for chrome floating over the top of the list. */
+  topInset?:                number
 }
 
 export const ChatIdCtx = createContext<string | null>(null)
@@ -27,7 +29,7 @@ export interface ChatAreaHandle {
 }
 
 export const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(
-function ChatArea({ activeChatId, onSuggest, chatSystemInstructions, footer }, ref) {
+function ChatArea({ activeChatId, onSuggest, chatSystemInstructions, footer, topInset = 0 }, ref) {
   const { compactToast } = useModelRuntime()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -46,7 +48,7 @@ function ChatArea({ activeChatId, onSuggest, chatSystemInstructions, footer }, r
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => 200,
     overscan: 3,
-    paddingStart: 32, // replicates py-8 top (absolute children ignore CSS padding)
+    paddingStart: 32 + topInset, // replicates py-8 top (absolute children ignore CSS padding)
     paddingEnd: 32,   // replicates py-8 bottom
   })
 

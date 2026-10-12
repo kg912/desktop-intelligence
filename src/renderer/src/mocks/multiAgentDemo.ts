@@ -80,6 +80,11 @@ function savedTrace(runId: string, outcome: 'finished' | 'stopped' | 'degraded')
   return trace
 }
 
+// Long enough to scroll, so the preview shows content passing under the floating run pill.
+const DONE_ANSWER = ['## 12 days in the Alps by rail — December', '',
+  ...Array.from({ length: 12 }, (_, i) => `**Day ${i + 1}.** ${['Vienna', 'Salzburg', 'Hallstatt', 'Innsbruck', 'St. Anton', 'Zurich', 'Lucerne', 'Interlaken', 'Zermatt', 'Montreux', 'Geneva', 'Annecy'][i]} [1.${(i % 3) + 1}] — trains run hourly; book seats a week ahead for the scenic lines, and keep the afternoon free for the Christmas markets, which open at 11:00 and close at 21:00 on weekdays.\n`),
+].join('\n')
+
 /** Agent chats in each top-bar state, so the browser preview shows them without a run. */
 export function seedAgentChats(): { chats: Chat[]; messages: Record<string, StoredMessage[]> } {
   const now = Date.now()
@@ -96,7 +101,7 @@ export function seedAgentChats(): { chats: Chat[]; messages: Record<string, Stor
       chat('demo-agents-degraded', 'Alps itinerary · step with caveats', 90)],
     messages: {
       'demo-agents-new': [],
-      'demo-agents-done': [msg('user', 'Plan 12 days in the Alps by rail in December.'), msg('assistant', 'Days 1–2 Vienna [1.1] …')],
+      'demo-agents-done': [msg('user', 'Plan 12 days in the Alps by rail in December.'), msg('assistant', DONE_ANSWER)],
       'demo-agents-stopped': [msg('user', 'Plan 12 days in the Alps by rail in December.')],
       'demo-agents-degraded': [msg('user', 'Plan 12 days in the Alps by rail in December.'), msg('assistant', 'Days 1–2 Vienna [1.1] … (step 1.2 was accepted with caveats)')],
     },
