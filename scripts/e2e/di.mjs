@@ -7,8 +7,9 @@
  *   renderer  → Chromium remote debugging, port 9222
  *   main      → Node inspector,             port 9229 (dialog stubs, main-eval)
  *
- * Every launch uses a throwaway profile (--user-data-dir under /tmp/di-e2e),
- * seeded from .env.e2e.local, so the real app profile is never touched.
+ * `launch` with no provider runs exactly what `npm run dev` runs, on the user's
+ * own profile and settings (no keys needed here). `launch <provider>` / `--fresh`
+ * use a throwaway profile under /tmp/di-e2e seeded from .env.e2e.local instead.
  * Keys are never printed.
  *
  * Run `node scripts/e2e/di.mjs help` for commands.
@@ -130,19 +131,25 @@ const commands = {
     const fresh = args.includes('--fresh')
     const pi = args.indexOf('--packaged')
     const packaged = pi >= 0 ? args[pi + 1] : null
-    if (!provider && !fresh) die(`launch <${PROVIDERS.join('|')}> | launch --fresh   [--packaged <path.app>]`)
     await commands.stop([], true)
 
-    const profile = join(WORK, `profile-${fresh ? 'fresh' : provider}`)
-    rmSync(profile, { recursive: true, force: true })
-    mkdirSync(profile, { recursive: true })
-    if (!fresh) {
+    // No provider: the user's own profile, as `npm run dev` would open it.
+    const profile = provider || fresh ? join(WORK, `profile-${fresh ? 'fresh' : provider}`) : null
+    if (!profile) {
+      try { execSync(`pgrep -f '[e]lectron-vite dev'`); die('`npm run dev` is already running on your profile — quit it first') } catch { /* none */ }
+      console.log('using your own profile and settings (same as npm run dev)')
+    } else {
+      rmSync(profile, { recursive: true, force: true })
+      mkdirSync(profile, { recursive: true })
+    }
+    if (provider) {
       const s = seedSettings(provider, loadEnv())
       writeFileSync(join(profile, 'app-settings.json'), JSON.stringify(s, null, 2))
       console.log(`seeded ${profile}/app-settings.json: provider=${provider} model=${s.modelId} brave=${!!s.braveSearchEnabled}`)
-    } else {
+    } else if (fresh) {
       console.log(`fresh profile ${profile} (first-launch flow)`)
     }
+    const profileArg = profile ? [`--user-data-dir=${profile}`] : []
 
     let cmd, cmdArgs
     if (packaged) {
@@ -150,7 +157,7 @@ const commands = {
       if (!existsSync(macos)) die(`no ${macos}`)
       const bin = execSync(`ls "${macos}"`).toString().trim().split('\n')[0]
       cmd = join(macos, bin)
-      cmdArgs = [`--remote-debugging-port=${RENDERER_PORT}`, `--inspect=${MAIN_PORT}`, `--user-data-dir=${profile}`]
+      cmdArgs = [`--remote-debugging-port=${RENDERER_PORT}`, `--inspect=${MAIN_PORT}`, ...profileArg]
     } else {
       // `npm test` leaves better-sqlite3 built for Node with a stale Electron
       // .forge-meta marker, so install-app-deps would skip it. Anaconda's libtool
@@ -160,7 +167,7 @@ const commands = {
       const PATH = process.env.PATH.split(':').filter((p) => !p.includes('anaconda')).join(':')
       execSync('npx electron-builder install-app-deps', { cwd: ROOT, stdio: 'ignore', env: { ...process.env, PATH } })
       cmd = join(ROOT, 'node_modules', '.bin', 'electron-vite')
-      cmdArgs = ['dev', '--remoteDebuggingPort', String(RENDERER_PORT), '--inspect', String(MAIN_PORT), '--', `--user-data-dir=${profile}`]
+      cmdArgs = ['dev', '--remoteDebuggingPort', String(RENDERER_PORT), '--inspect', String(MAIN_PORT), ...(profile ? ['--', ...profileArg] : [])]
     }
     const out = openSync(LOG, 'w')
     const child = spawn(cmd, cmdArgs, { cwd: ROOT, detached: true, stdio: ['ignore', out, out] })
@@ -173,7 +180,11 @@ const commands = {
       try {
         const list = await targets(RENDERER_PORT)
         if (list.some((t) => t.type === 'page' && /^(http:\/\/localhost|file:)/.test(t.url))) {
-          await sleep(3000) // let React mount
+          // Wait for React to mount: the composer, or the first-launch modal.
+          for (let j = 0; j < 60; j++) {
+            if (await withRenderer((cdp) => page(cdp, `return !!document.querySelector('textarea, [role="dialog"]')`)).catch(() => false)) break
+            await sleep(1000)
+          }
           console.log('READY')
           return commands.state()
         }
@@ -343,6 +354,7 @@ const commands = {
 
   help() {
     console.log(`node scripts/e2e/di.mjs <command>
+  launch [--packaged <path.app>]                        your own profile, like npm run dev
   launch <${PROVIDERS.join('|')}> [--packaged <path.app>]   fresh seeded profile, waits for the window
   launch --fresh [--packaged <path.app>]                 empty profile → first-launch modal
   stop
