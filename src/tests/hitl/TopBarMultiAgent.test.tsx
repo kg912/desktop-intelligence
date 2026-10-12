@@ -390,3 +390,43 @@ describe('chat actions in the multi-agent bar', () => {
     expect((download as HTMLButtonElement).disabled).toBe(true)
   })
 })
+
+// ── Goal 2: the card never clips (designs/02-overlay-clamp.png) ──────────────
+
+describe('hover card placement', () => {
+  const pillAt = (left: number, width = 180) =>
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return { left, width, top: 10, right: left + width, bottom: 42, height: 32, x: left, y: 10, toJSON: () => ({}) } as DOMRect
+    })
+  const setWidth = (w: number) => { (window as any).innerWidth = w }
+
+  it('pill in the right half: the card right-aligns with it and stays inside the 12px gutter', () => {
+    setWidth(1200)
+    const spy = pillAt(900)
+    try {
+      renderBar({ mode: 'multi-agent', run: runOf(FINISHED) })
+      fireEvent.mouseEnter(screen.getByTestId('mode-pill').parentElement!)
+      const card = screen.getByTestId('mode-card')
+      expect(card.style.left).toBe('560px') // 900 + 180 − 520
+      expect(card.style.width).toBe('520px')
+      expect(card.style.top).toBe('50px')
+    } finally { spy.mockRestore() }
+  })
+
+  it('re-measures on window resize: a narrow window caps the width at 100vw − 24px', () => {
+    setWidth(1200)
+    const spy = pillAt(100)
+    try {
+      renderBar({ mode: 'multi-agent', run: runOf(FINISHED) })
+      fireEvent.mouseEnter(screen.getByTestId('mode-pill').parentElement!)
+      expect(screen.getByTestId('mode-card').style.left).toBe('100px')
+      setWidth(400)
+      act(() => { window.dispatchEvent(new Event('resize')) })
+      const card = screen.getByTestId('mode-card')
+      expect(card.style.left).toBe('12px')
+      expect(card.style.width).toBe('376px')
+      // "Open run view" is still rendered at the narrow width.
+      expect(within(card).getByText('Open run view')).toBeTruthy()
+    } finally { spy.mockRestore(); setWidth(1024) }
+  })
+})

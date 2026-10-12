@@ -148,17 +148,21 @@ describe('MultiAgentRunLogger (observability spec Phase 2)', () => {
     const root = freshRoot()
     const script = join(TMP, 'crash-child.ts')
     writeFileSync(script, `
+      import { existsSync } from 'node:fs'
+      import { join } from 'node:path'
       import { MultiAgentRunLogger } from ${JSON.stringify(resolve(__dirname, '../MultiAgentRunLogger.ts'))}
       const logger = new MultiAgentRunLogger(${JSON.stringify(root)}, { secrets: () => [] })
       logger.begin({ runId: 'run-1', chatId: 'chat-1', chatTitle: 't', task: 'x', config: ${JSON.stringify(CONFIG)} })
       let seq = 0
+      let ready = false
       setInterval(() => {
         for (let i = 0; i < 20; i++) {
           seq++
           logger.event({ runId: 'run-1', seq, ts: seq, type: 'agent_token', agentId: '1.1', attempt: 0, token: 'x'.repeat(seq % 5000) })
           logger.record('run-1', { schema: 1, runId: 'run-1', chatId: 'chat-1', seq, kind: 'model', role: 'worker', agentId: '1.1', attempt: 0, timing: { startedAt: 1, endedAt: 2, ms: 1 }, response: { content: 'y'.repeat(seq * 37 % 9000), reasoning: '', toolCalls: [], finishReason: 'stop' } })
         }
-        if (seq === 200) console.log('ready')
+        // Ready once both files are on disk (writes are queued and async), so the kill lands mid-write, not before any.
+        if (seq >= 200 && !ready && ['events.jsonl', 'agent-1.1.jsonl'].every((f) => existsSync(join(${JSON.stringify(join(root, 'chat-1', 'run-1'))}, f)))) { ready = true; console.log('ready') }
       }, 1)
       setTimeout(() => process.exit(1), 10_000).unref() // never outlive the test, even if the kill is missed
     `)

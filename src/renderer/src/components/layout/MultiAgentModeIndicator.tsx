@@ -2,7 +2,8 @@
 // states B–D). Every figure comes from the same RunView the dock renders, with
 // the dock's status mapping, so the card and the dock cannot disagree.
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { Network } from 'lucide-react'
 import type { AgentView, RunView } from '../../lib/multiAgentRunState'
 import { servedDiffers } from '../../lib/multiAgentRunState'
@@ -10,6 +11,7 @@ import { DOT, formatTokens, isWorking } from '../chat/MultiAgentSidebarView'
 import { MODEL_ROLES, formatUsd, resolveRoleModels } from '../../../../shared/multiAgentModels'
 import type { ModelRole, ResolvedRoleModel } from '../../../../shared/multiAgentModels'
 import type { SidecarStatus } from '../../../../shared/types'
+import { placeOverlay } from '../../lib/overlayPlacement'
 
 export interface TopBarRun {
   view: RunView
@@ -22,6 +24,9 @@ export interface TopBarRun {
 }
 
 const CLOSE_DELAY_MS = 150
+const CARD_WIDTH = 520
+/** Card top below the pill's top, as before the card became viewport-positioned. */
+const CARD_OFFSET_Y = 40
 const PRECHECK = 'deterministic precheck'
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
 
@@ -212,6 +217,7 @@ export function MultiAgentModeIndicator({ run, dockOpen, onToggleDock, onOpenRun
     closeTimer.current = setTimeout(() => setOpen(false), CLOSE_DELAY_MS)
   }
   useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current) }, [])
+  const placement = useCardPlacement(open, wrapper)
 
   return (
     <div
@@ -244,9 +250,32 @@ export function MultiAgentModeIndicator({ run, dockOpen, onToggleDock, onOpenRun
         Multi-agent
         {sub && <span className="ma-mpill-sub" data-testid="mode-pill-sub">{sub}</span>}
       </button>
-      {open && <HoverCard id={cardId} run={run} onOpenRunView={onOpenRunView} onOpenSettings={onOpenSettings} />}
+      {open && <HoverCard id={cardId} style={placement} run={run} onOpenRunView={onOpenRunView} onOpenSettings={onOpenSettings} />}
     </div>
   )
+}
+
+/**
+ * Viewport-fixed placement for the card: anchored to the pill, clamped to a 12px gutter (placeOverlay).
+ * Re-measured on window resize and whenever the top bar resizes (the dock opening, closing or resizing).
+ */
+function useCardPlacement(open: boolean, wrapper: React.RefObject<HTMLDivElement | null>): CSSProperties | undefined {
+  const [style, setStyle] = useState<CSSProperties>()
+  useLayoutEffect(() => {
+    const el = wrapper.current
+    if (!open || !el) return
+    const measure = (): void => {
+      const pill = el.getBoundingClientRect()
+      const p = placeOverlay({ left: pill.left, width: pill.width }, CARD_WIDTH, window.innerWidth)
+      setStyle({ left: p.left, top: pill.top + CARD_OFFSET_Y, width: p.width, ['--ma-arrow-x' as string]: `${p.arrowX}px` })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    observer?.observe(el.closest('[data-testid="top-bar"]') ?? el)
+    return () => { window.removeEventListener('resize', measure); observer?.disconnect() }
+  }, [open, wrapper])
+  return style
 }
 
 function useNextRunModels(enabled: boolean): { models: Record<ModelRole, ResolvedRoleModel> | null; sidecar: SidecarStatus | null } {
@@ -271,7 +300,7 @@ function useNextRunModels(enabled: boolean): { models: Record<ModelRole, Resolve
   return { models, sidecar }
 }
 
-function HoverCard({ id, run, onOpenRunView, onOpenSettings }: { id: string; run: TopBarRun | null; onOpenRunView: () => void; onOpenSettings: () => void }) {
+function HoverCard({ id, style, run, onOpenRunView, onOpenSettings }: { id: string; style?: CSSProperties; run: TopBarRun | null; onOpenRunView: () => void; onOpenSettings: () => void }) {
   const view = run?.view ?? null
   const { models: next, sidecar } = useNextRunModels(!view?.runConfig)
   const rows = modelRows(run, next)
@@ -302,7 +331,7 @@ function HoverCard({ id, run, onOpenRunView, onOpenSettings }: { id: string; run
     : `${formatUsd(view.totals.costUsd)} · ${formatTokens(view.totals.tokens)} tokens`
 
   return (
-    <div id={id} role="dialog" aria-label="Multi-agent run" className="ma-pop" data-testid="mode-card">
+    <div id={id} role="dialog" aria-label="Multi-agent run" className="ma-pop" data-testid="mode-card" style={style}>
       <h4><b data-testid="mode-card-title">{title}</b>{right && <span>{right}</span>}</h4>
       {hasGraph ? <AgentGraph view={view!} /> : <p className="ma-pop-empty">{explanation}</p>}
       <div className="ma-models" aria-label="Models">
