@@ -13,6 +13,16 @@ import { edgeKind } from '../../lib/agentGraphNodes'
 export type { GraphNode } from '../../lib/agentGraphNodes'
 
 const M = GRAPH_METRICS
+/** Below this, node text is unreadable; the interactive graph's automatic fit stops here (the fit button still fits all). */
+export const AUTO_FIT_MIN_SCALE = 0.6
+
+/** Whole graph in view, centred. `readable`: never below AUTO_FIT_MIN_SCALE; a wider graph then starts at its left edge. */
+export function fitView(size: { w: number; h: number }, layout: { width: number; height: number }, readable: boolean): { x: number; y: number; k: number } {
+  const whole = Math.min(1, (size.w - 16) / layout.width, (size.h - 16) / layout.height)
+  const k = readable ? Math.max(whole, AUTO_FIT_MIN_SCALE) : whole
+  const x = layout.width * k <= size.w ? (size.w - layout.width * k) / 2 : 8
+  return { k, x, y: Math.max(8, (size.h - layout.height * k) / 2) }
+}
 
 const curve = (x1: number, y1: number, x2: number, y2: number): string => {
   const dx = (x2 - x1) / 2
@@ -65,13 +75,12 @@ export function AgentGraphCanvas({ nodes, columnLabels, animate, selectedId, onS
     return () => ro.disconnect()
   }, [])
 
-  const fit = useCallback((): void => {
+  const fit = useCallback((readable = false): void => {
     if (!size.w || !size.h) return // hidden (e.g. the List tab is showing): nothing to fit
-    const k = Math.min(1, (size.w - 16) / layout.width, (size.h - 16) / layout.height)
-    setView({ k, x: (size.w - layout.width * k) / 2, y: (size.h - layout.height * k) / 2 })
-  }, [size, layout.width, layout.height])
-  // Fit on first show, on resize and as nodes arrive, until the user takes over.
-  useLayoutEffect(() => { if (!interactive || !userMoved.current) fit() }, [fit, interactive, nodes.length])
+    setView(fitView(size, layout, readable))
+  }, [size, layout])
+  // Fit on first show, on resize and as nodes arrive, until the user takes over (interactive: kept readable).
+  useLayoutEffect(() => { if (!interactive || !userMoved.current) fit(interactive) }, [fit, interactive, nodes.length])
 
   const zoomBy = (factor: number, cx = size.w / 2, cy = size.h / 2): void => {
     userMoved.current = true

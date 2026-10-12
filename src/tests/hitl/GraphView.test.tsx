@@ -19,6 +19,7 @@ vi.mock('@preact/signals-react/runtime', () => {
 })
 
 import { GraphView } from '../../renderer/src/components/chat/GraphView'
+import { AUTO_FIT_MIN_SCALE, fitView } from '../../renderer/src/components/chat/AgentGraphCanvas'
 import { MultiAgentSidebarView } from '../../renderer/src/components/chat/MultiAgentSidebarView'
 import { reduceRunEvents } from '../../renderer/src/lib/multiAgentRunState'
 import { approvalQueues } from '../../renderer/src/lib/approvalQueue'
@@ -140,7 +141,7 @@ describe('GraphView', () => {
     expect(stats).toContain('$0 / $0.50')
     expect(stats).toContain('3 agents in parallel')
     expect(stats).toContain('1 approval waiting')
-    expect(stats).toContain('reflection 1 / 4 checks')
+    expect(stats).toContain('1 reflection check · 0/4 passed')
     expect(stats).toContain('orch llama-3.3-70b-instruct')
     fireEvent.click(within(screen.getByTestId('graph-stats')).getByText('Abort'))
     expect(props.onAbort).toHaveBeenCalledTimes(1)
@@ -196,5 +197,16 @@ describe('List and Graph in the dock', () => {
       expect(screen.getByTestId('graph-node-1.2').dataset.selected).toBe('true') // graph selection kept
       expect(screen.getByTestId('needs-focused').textContent).toContain('1 of 1') // and it shows 1.2's next request
     } finally { vi.useRealTimers() }
+  })
+})
+
+describe('fitView', () => {
+  it('fits and centres a graph that fits; a too-wide graph auto-fits no smaller than readable and starts at its left edge; the fit button fits it all', () => {
+    expect(fitView({ w: 1000, h: 600 }, { width: 500, height: 300 }, true)).toEqual({ k: 1, x: 250, y: 150 })
+    const auto = fitView({ w: 500, h: 600 }, { width: 1600, height: 400 }, true)
+    expect(auto).toEqual({ k: AUTO_FIT_MIN_SCALE, x: 8, y: (600 - 400 * AUTO_FIT_MIN_SCALE) / 2 })
+    const all = fitView({ w: 500, h: 600 }, { width: 1600, height: 400 }, false)
+    expect(all.k).toBeCloseTo(484 / 1600)
+    expect(all.x).toBeCloseTo((500 - 1600 * all.k) / 2)
   })
 })

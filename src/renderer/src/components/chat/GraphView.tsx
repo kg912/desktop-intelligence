@@ -238,17 +238,18 @@ function StatsStrip({ view, config, live, now, waiting, onAbort }: { view: RunVi
   const end = live ? now : (view.endedAt ?? now)
   const peak = peakOverlap(agents.filter((a) => a.startedAt).map((a) => [a.startedAt!, a.endedAt ?? end] as [number, number]))
   const checks = agents.reduce((n, a) => n + a.reflections.filter((g) => g.model !== 'deterministic precheck').length, 0)
+  const passed = agents.filter((a) => a.status === 'done').length
   const cap = view.runConfig?.budgetCapUsd ?? config.budgetCapUsd
   const m = view.runConfig?.models ?? config.models
   return (
-    <div className="flex h-[60px] flex-none items-center gap-x-8 gap-y-1 overflow-hidden border-t-[0.5px] border-white/[0.06] bg-[#080808] px-6 font-mono text-[12px] text-[#bdbdbd]" data-testid="graph-stats">
+    <div className="flex min-h-[60px] flex-none flex-wrap items-center gap-x-8 gap-y-1 border-t-[0.5px] border-white/[0.06] bg-[#080808] px-6 py-2 font-mono text-[12px] text-[#bdbdbd] [&>span]:whitespace-nowrap" data-testid="graph-stats">
       <span>{formatUsd(view.totals.costUsd)} <span className="text-ma-dim">/ {formatUsd(cap)}</span></span>
       <span>{formatTokens(view.totals.tokens)} tok</span>
       <span>{formatElapsed(Math.max(0, end - view.startedAt))} elapsed</span>
       <span>{live ? `${working} agent${working === 1 ? '' : 's'} in parallel` : `peak ${peak} in parallel`}</span>
       {waiting > 0 && <span className="text-[#e6b422]">{waiting} approval{waiting === 1 ? '' : 's'} waiting</span>}
-      <span className="text-ma-dim">reflection {checks} / {agents.length} checks</span>
-      <span className="min-w-0 flex-1 truncate text-right text-ma-dim" title={`orch ${m.orchestrator} · reflect ${m.reflection} · synth ${m.synthesizer}`}>
+      <span className="text-ma-dim">{checks} reflection check{checks === 1 ? '' : 's'} · {passed}/{agents.length} passed</span>
+      <span className="min-w-0 flex-1 truncate text-right text-ma-dim [white-space:nowrap]" title={`orch ${m.orchestrator} · reflect ${m.reflection} · synth ${m.synthesizer}`}>
         orch {shortModel(m.orchestrator)} · reflect {shortModel(m.reflection)} · synth {shortModel(m.synthesizer)}
       </span>
       {live && view.phase !== 'preflight' && (
