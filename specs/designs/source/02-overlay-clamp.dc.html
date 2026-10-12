@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hover overlay clamp</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'JetBrains Mono',ui-monospace,monospace}
+</style>
+</helmet>
+<div style="width:1100px;height:560px;box-sizing:border-box;background:#050505;padding:32px;font-family:'Inter',system-ui,sans-serif;color:#e8e8e8;display:flex;flex-direction:column;gap:16px">
+  <div style="display:flex;gap:20px">
+    <div style="width:500px;display:flex;align-items:center;gap:10px">
+      <span class="m" style="font-size:11px;letter-spacing:0.04em;color:#8a8a8a">BEFORE</span>
+      <span style="font-size:13px;color:#8a8a8a">Fixed 640px overlay runs off the right edge</span>
+    </div>
+    <div style="width:500px;display:flex;align-items:center;gap:10px">
+      <span class="m" style="font-size:11px;letter-spacing:0.04em;color:#ff6b66">AFTER</span>
+      <span style="font-size:13px;color:#8a8a8a">Clamped to viewport; graph scales to fit</span>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:20px">
+
+    <!-- BEFORE -->
+    <div style="width:500px;height:430px;position:relative;overflow:hidden;background:#0a0a0a;border:0.5px solid rgba(255,255,255,0.08);border-radius:12px">
+      <div style="position:absolute;left:0;right:0;top:0;height:48px;background:#000;border-bottom:0.5px solid rgba(255,255,255,0.05)">
+        <div class="m" style="position:absolute;left:36px;top:9px;font-size:13px;color:#ff6b66;border:0.5px solid rgba(229,57,53,0.5);background:rgba(229,57,53,0.08);border-radius:999px;padding:6px 14px;display:flex;gap:8px;align-items:center"><span style="width:7px;height:7px;border-radius:50%;background:#4ade80"></span>Multi-agent <span style="color:#8a8a8a">8 agents · 3 phases</span></div>
+      </div>
+      <div style="position:absolute;left:36px;top:56px;width:640px;box-sizing:border-box;background:#141414;border:0.5px solid rgba(255,255,255,0.1);border-radius:14px;padding:20px 24px;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
+        <div style="display:flex;justify-content:space-between;font-size:15px"><span>Run 1 of 1 · finished</span><span style="color:#8a8a8a">all agents passed</span></div>
+        <svg viewBox="0 0 560 190" width="590" height="200" style="margin-top:10px;display:block" aria-hidden="true">
+          <g fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="1">
+            <path d="M100 13 C150 13 150 95 200 95"/><path d="M100 45 C150 45 150 95 200 95"/><path d="M100 77 C150 77 150 95 200 95"/><path d="M100 109 C150 109 150 95 200 95"/>
+            <path d="M300 95 C320 95 320 95 340 95"/><path d="M100 141 C220 141 260 95 340 95"/><path d="M100 173 C220 173 260 95 340 95"/><path d="M440 95 L470 95"/>
+          </g>
+          <g fill="#0f0f0f" stroke="rgba(74,222,128,0.5)" stroke-width="1">
+            <rect x="0" y="0" width="100" height="26" rx="6"/><rect x="0" y="32" width="100" height="26" rx="6"/><rect x="0" y="64" width="100" height="26" rx="6"/><rect x="0" y="96" width="100" height="26" rx="6"/><rect x="0" y="128" width="100" height="26" rx="6"/><rect x="0" y="160" width="100" height="26" rx="6"/>
+            <rect x="200" y="82" width="100" height="26" rx="6"/><rect x="340" y="82" width="100" height="26" rx="6"/>
+          </g>
+          <rect x="470" y="82" width="110" height="26" rx="6" fill="rgba(229,57,53,0.1)" stroke="rgba(229,57,53,0.5)"/>
+          <g class="m" font-size="9" fill="#cfcfcf"><text x="8" y="17">1.1 Map Kratos</text><text x="8" y="49">1.2 Compile 5+</text><text x="8" y="81">1.3 Analyze</text><text x="8" y="113">1.4 Assess</text><text x="8" y="145">1.6 Review</text><text x="8" y="177">1.7 Analyze</text><text x="208" y="99">1.5 Valuation</text><text x="348" y="99">1.8 Synthesize</text><text x="478" y="99">Final synthesis</text></g>
+        </svg>
+        <div style="margin-top:12px;border-top:0.5px solid rgba(255,255,255,0.06);padding-top:12px;font-size:13px;color:#8a8a8a">Orchestrator <span class="m" style="color:#d8d8d8;margin-left:24px">deepseek/deepseek-v4.1-flash</span></div>
+      </div>
+      <div style="position:absolute;right:0;top:48px;bottom:0;width:3px;background:linear-gradient(#e53935,#e53935)"></div>
+      <div class="m" style="position:absolute;right:14px;bottom:14px;font-size:11px;color:#ff6b66;background:rgba(229,57,53,0.12);border-radius:4px;padding:3px 8px">Final synthesis cut off at viewport edge</div>
+    </div>
+
+    <!-- AFTER -->
+    <div style="width:500px;height:430px;position:relative;overflow:hidden;background:#0a0a0a;border:0.5px solid rgba(255,255,255,0.08);border-radius:12px">
+      <div style="position:absolute;left:0;right:0;top:0;height:48px;background:#000;border-bottom:0.5px solid rgba(255,255,255,0.05)">
+        <div class="m" style="position:absolute;left:36px;top:9px;font-size:13px;color:#ff6b66;border:0.5px solid rgba(229,57,53,0.5);background:rgba(229,57,53,0.08);border-radius:999px;padding:6px 14px;display:flex;gap:8px;align-items:center"><span style="width:7px;height:7px;border-radius:50%;background:#4ade80"></span>Multi-agent <span style="color:#8a8a8a">8 agents · 3 phases</span></div>
+      </div>
+      <div style="position:absolute;left:12px;right:12px;top:56px;box-sizing:border-box;background:#141414;border:0.5px solid rgba(255,255,255,0.1);border-radius:14px;padding:18px 20px;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
+        <div style="display:flex;justify-content:space-between;font-size:15px"><span>Run 1 of 1 · finished</span><span style="color:#8a8a8a">all agents passed</span></div>
+        <svg viewBox="0 0 580 190" width="100%" style="margin-top:10px;display:block" aria-hidden="true">
+          <g fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="1">
+            <path d="M100 13 C150 13 150 95 200 95"/><path d="M100 45 C150 45 150 95 200 95"/><path d="M100 77 C150 77 150 95 200 95"/><path d="M100 109 C150 109 150 95 200 95"/>
+            <path d="M300 95 C320 95 320 95 340 95"/><path d="M100 141 C220 141 260 95 340 95"/><path d="M100 173 C220 173 260 95 340 95"/><path d="M440 95 L470 95"/>
+          </g>
+          <g fill="#0f0f0f" stroke="rgba(74,222,128,0.5)" stroke-width="1">
+            <rect x="0" y="0" width="100" height="26" rx="6"/><rect x="0" y="32" width="100" height="26" rx="6"/><rect x="0" y="64" width="100" height="26" rx="6"/><rect x="0" y="96" width="100" height="26" rx="6"/><rect x="0" y="128" width="100" height="26" rx="6"/><rect x="0" y="160" width="100" height="26" rx="6"/>
+            <rect x="200" y="82" width="100" height="26" rx="6"/><rect x="340" y="82" width="100" height="26" rx="6"/>
+          </g>
+          <rect x="470" y="82" width="110" height="26" rx="6" fill="rgba(229,57,53,0.1)" stroke="rgba(229,57,53,0.5)"/>
+          <g class="m" font-size="9" fill="#cfcfcf"><text x="8" y="17">1.1 Map Kratos</text><text x="8" y="49">1.2 Compile 5+</text><text x="8" y="81">1.3 Analyze</text><text x="8" y="113">1.4 Assess</text><text x="8" y="145">1.6 Review</text><text x="8" y="177">1.7 Analyze</text><text x="208" y="99">1.5 Valuation</text><text x="348" y="99">1.8 Synthesize</text><text x="478" y="99">Final synthesis</text></g>
+        </svg>
+        <div style="margin-top:12px;border-top:0.5px solid rgba(255,255,255,0.06);padding-top:10px;display:flex;flex-direction:column;gap:6px;font-size:12px;color:#8a8a8a">
+          <div style="display:flex;justify-content:space-between"><span>Orchestrator</span><span class="m" style="color:#d8d8d8">deepseek-v4.1-flash</span></div>
+          <div style="display:flex;justify-content:space-between"><span>Reflection</span><span class="m" style="color:#d8d8d8">gemini-3.8-flash</span></div>
+        </div>
+        <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;font-size:12px"><span class="m" style="color:#6a6a6a">$0.79 · 2352.2k tokens</span><span style="color:#ff6b66">Open run view</span></div>
+      </div>
+      <div class="m" style="position:absolute;right:14px;bottom:14px;font-size:11px;color:#4ade80;background:rgba(74,222,128,0.10);border-radius:4px;padding:3px 8px">12px gutter · max-width: 100vw − 24px</div>
+    </div>
+  </div>
+
+  <div class="m" style="font-size:12px;color:#6a6a6a;display:flex;gap:28px">
+    <span>placement: anchor to pill, then shift left by overflow</span>
+    <span>flip to right-align when pill is in the right half</span>
+    <span>svg viewBox + width:100% keeps the whole graph visible</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1100,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

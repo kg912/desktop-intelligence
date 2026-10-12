@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Planning state</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'JetBrains Mono',ui-monospace,monospace}
+button{font-family:inherit;cursor:pointer}
+@keyframes shimmer{0%{background-position:-300px 0}100%{background-position:300px 0}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+.ghost{background:linear-gradient(90deg,rgba(255,255,255,0.03) 0%,rgba(229,57,53,0.10) 50%,rgba(255,255,255,0.03) 100%);background-size:600px 100%;animation:shimmer 1.8s linear infinite}
+.pulse{animation:pulse 1.4s ease-in-out infinite}
+</style>
+</helmet>
+<div style="width:1440px;height:820px;box-sizing:border-box;background:#0a0a0a;font-family:'Inter',system-ui,sans-serif;color:#e8e8e8;display:flex;overflow:hidden">
+
+  <!-- left -->
+  <div style="width:300px;box-sizing:border-box;border-right:0.5px solid rgba(255,255,255,0.05);padding:24px 20px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:18px;font-weight:600">Agent run</span><span class="m" style="font-size:12px;color:#bdbdbd;border:0.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 10px">Abort</span></div>
+    <div style="font-size:13px;color:#8a8a8a">I'd like to travel to Turkey for vacation…</div>
+    <div class="m" style="font-size:12px;display:flex;flex-direction:column;gap:6px;color:#bdbdbd">
+      <span style="border:0.5px solid rgba(229,57,53,0.4);border-radius:6px;padding:4px 8px;width:fit-content">orch · qwen3.8-27b</span>
+      <span style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;padding:4px 8px;width:fit-content">reflect · gemini-3.8-flash</span>
+      <span style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;padding:4px 8px;width:fit-content">synth · glm-5.3-flash</span>
+    </div>
+    <div class="m" style="font-size:13px">$0.01 <span style="color:#6a6a6a">/ $1.00</span> <span style="margin-left:12px;color:#bdbdbd">2.1k tok</span></div>
+
+    <div style="border-top:0.5px solid rgba(255,255,255,0.05);padding-top:16px;display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="m" style="font-size:11px;color:#8a8a8a">PLANNING</span><span class="m" style="font-size:12px;color:#ff6b66">0:38</span></div>
+      <sc-for list="{{steps}}" as="s" hint-placeholder-count="4">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <span style="width:9px;height:9px;border-radius:50%;margin-top:5px;background:{{s.dot}};flex-shrink:0;box-shadow:{{s.glow}}"></span>
+          <div><div style="font-size:13px;color:{{s.color}}">{{s.label}}</div><div class="m" style="font-size:11px;color:#6a6a6a;margin-top:2px">{{s.sub}}</div></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- center stage -->
+  <div style="width:700px;box-sizing:border-box;padding:24px 28px;display:flex;flex-direction:column;gap:18px;position:relative">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="pulse" style="width:8px;height:8px;border-radius:50%;background:#e53935"></span>
+      <span style="font-size:15px;font-weight:500">Orchestrator is drafting the plan</span>
+      <span style="flex:1"></span>
+      <span class="m" style="font-size:11px;color:#6a6a6a">usually 20–40s</span>
+    </div>
+
+    <!-- ghost graph -->
+    <div style="position:relative;height:300px;border:0.5px solid rgba(255,255,255,0.06);border-radius:14px;background-image:radial-gradient(rgba(255,255,255,0.06) 1px,transparent 1px);background-size:20px 20px;background-color:#0c0c0c">
+      <svg width="640" height="300" style="position:absolute;left:0;top:0" aria-hidden="true">
+        <g fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1" stroke-dasharray="4 4">
+          <path d="M210 48 C260 48 260 150 300 150"/><path d="M210 124 C260 124 260 150 300 150"/><path d="M210 202 C260 202 260 150 300 150"/><path d="M210 270 C260 270 260 150 300 150"/>
+          <path d="M470 150 L500 150"/>
+        </g>
+      </svg>
+      <div style="position:absolute;left:20px;top:18px;width:190px;box-sizing:border-box;border:0.5px solid rgba(74,222,128,0.45);border-radius:9px;background:#0f0f0f;padding:8px 10px"><div class="m" style="font-size:11px">1.1</div><div style="font-size:12px;color:#cfcfcf;margin-top:2px">Istanbul, Cappadocia, Ephesus: core route</div></div>
+      <div style="position:absolute;left:20px;top:96px;width:190px;box-sizing:border-box;border:0.5px solid rgba(74,222,128,0.45);border-radius:9px;background:#0f0f0f;padding:8px 10px"><div class="m" style="font-size:11px">1.2</div><div style="font-size:12px;color:#cfcfcf;margin-top:2px">Safety by region, December</div></div>
+      <div style="position:absolute;left:20px;top:174px;width:190px;box-sizing:border-box;border:0.5px solid rgba(74,222,128,0.45);border-radius:9px;background:#0f0f0f;padding:8px 10px"><div class="m" style="font-size:11px">1.3</div><div style="font-size:12px;color:#cfcfcf;margin-top:2px">Bus, flight and rail legs, no driving</div></div>
+      <div class="ghost" style="position:absolute;left:20px;top:252px;width:190px;height:36px;box-sizing:border-box;border:0.5px dashed rgba(229,57,53,0.4);border-radius:9px"></div>
+      <div class="ghost" style="position:absolute;left:300px;top:118px;width:170px;height:64px;box-sizing:border-box;border:0.5px dashed rgba(229,57,53,0.4);border-radius:9px"></div>
+      <div class="ghost" style="position:absolute;left:500px;top:118px;width:120px;height:64px;box-sizing:border-box;border:0.5px dashed rgba(229,57,53,0.4);border-radius:9px"></div>
+      <div class="m" style="position:absolute;left:20px;bottom:10px;font-size:11px;color:#6a6a6a">3 subtasks defined · roles and wiring still being assigned</div>
+    </div>
+
+    <!-- live draft -->
+    <div style="border:0.5px solid rgba(255,255,255,0.07);border-radius:12px;background:rgba(255,255,255,0.02);padding:14px 16px">
+      <div style="display:flex;justify-content:space-between"><span class="m" style="font-size:11px;color:#8a8a8a">ORCHESTRATOR THINKING</span><span class="m" style="font-size:11px;color:#6a6a6a">streaming · collapsible</span></div>
+      <div class="m" style="margin-top:10px;font-size:12px;line-height:1.75;color:#9a9a9a">Constraints: no car rental, safe areas only, 12–24 Dec, from Singapore.<br>Group by region so the legs chain by bus or flight.<br>Antalya is a coast stop in winter: needs a weather subtask…<span style="display:inline-block;width:6px;height:12px;background:#e53935;vertical-align:text-bottom;margin-left:2px"></span></div>
+    </div>
+
+    <!-- slow-plan escape hatch, appears after 45s -->
+    <div style="border:0.5px dashed rgba(230,180,34,0.5);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px;background:rgba(230,180,34,0.05)">
+      <span class="m" style="font-size:11px;color:#e6b422">after 45s</span>
+      <span style="font-size:13px;color:#d8d8d8;flex:1">Planning is slower than usual on this model.</span>
+      <button style="font-size:12px;color:#d8d8d8;background:transparent;border:0.5px solid rgba(255,255,255,0.14);border-radius:7px;padding:5px 10px">Keep waiting</button>
+      <button style="font-size:12px;color:#e6b422;background:transparent;border:0.5px solid rgba(230,180,34,0.5);border-radius:7px;padding:5px 10px">Use quick 3-step plan</button>
+    </div>
+  </div>
+
+  <!-- right: prompt (unchanged) -->
+  <div style="flex:1;box-sizing:border-box;border-left:0.5px solid rgba(255,255,255,0.05);padding:24px 24px 20px;display:flex;flex-direction:column">
+    <div style="background:#1a1a1a;border-radius:16px;padding:16px 18px;font-size:13.5px;line-height:1.6;color:#d8d8d8">I'd like to travel to Turkey for vacation from December 11th - 24th or 12th to 24th, from Singapore. I want to explore the exciting and unique experiences without overstraining myself.<br><br>Constraints: no tourist traps, safe areas only, no renting of cars, public transport where safe.</div>
+    <span style="flex:1"></span>
+    <div style="border:0.5px solid rgba(229,57,53,0.5);border-radius:14px;padding:12px 14px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#ff6b66"><span class="pulse" style="width:6px;height:6px;border-radius:50%;background:#e53935"></span>Orchestrator is planning…</div>
+      <div style="font-size:13px;color:#555;margin-top:12px">Describe a complex task for the agent network…</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":820}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const G='#4ade80';
+    return {
+      steps: [
+        {label:'Reading your request', sub:'done · 2s', dot:G, color:'#bdbdbd', glow:'none'},
+        {label:'Splitting into subtasks', sub:'3 found so far', dot:'#e53935', color:'#ffffff', glow:'0 0 10px rgba(229,57,53,0.7)'},
+        {label:'Assigning roles and tools', sub:'waiting', dot:'#3a3a3a', color:'#6a6a6a', glow:'none'},
+        {label:'Wiring dependencies', sub:'waiting', dot:'#3a3a3a', color:'#6a6a6a', glow:'none'}
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

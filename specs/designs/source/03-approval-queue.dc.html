@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approval queue rows</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'JetBrains Mono',ui-monospace,monospace}
+button{font-family:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;box-sizing:border-box;background:#0a0a0a;font-family:'Inter',system-ui,sans-serif;color:#e8e8e8;display:flex;overflow:hidden">
+
+  <!-- left: run summary (unchanged) -->
+  <div style="width:300px;box-sizing:border-box;border-right:0.5px solid rgba(255,255,255,0.05);padding:24px 20px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:18px;font-weight:600">Agent run</span><span class="m" style="font-size:12px;color:#8a8a8a;border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 10px">Abort</span></div>
+    <div style="font-size:13px;color:#8a8a8a">Build a complete, evidence-based position on Kratos…</div>
+    <div class="m" style="font-size:12px;display:flex;flex-direction:column;gap:6px;color:#bdbdbd">
+      <span style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;padding:4px 8px;width:fit-content">orch · deepseek-v4.1-flash</span>
+      <span style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;padding:4px 8px;width:fit-content">reflect · gemini-3.8-flash</span>
+      <span style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;padding:4px 8px;width:fit-content">synth · glm-5.3-flash</span>
+    </div>
+    <div class="m" style="font-size:13px">$0.31 <span style="color:#6a6a6a">/ $0.50</span> <span style="margin-left:12px;color:#bdbdbd">904.1k tok</span></div>
+    <div style="border-top:0.5px solid rgba(255,255,255,0.05);padding-top:14px;display:flex;flex-direction:column;gap:8px">
+      <div class="m" style="font-size:13px;color:#ff6b66">Peak: 6 agents in parallel</div>
+      <sc-for list="{{bars}}" as="b" hint-placeholder-count="8">
+        <div style="display:flex;align-items:center;gap:10px"><span class="m" style="font-size:11px;color:#8a8a8a;width:22px">{{b.id}}</span><div style="height:10px;border-radius:3px;margin-left:{{b.left}}px;width:{{b.w}}px;background:{{b.color}}"></div></div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- middle: agent list with sequential approvals -->
+  <div style="width:760px;box-sizing:border-box;padding:24px 28px;display:flex;flex-direction:column;gap:12px;overflow:hidden">
+
+    <!-- approval inbox bar -->
+    <div style="display:flex;align-items:center;gap:12px;background:rgba(230,180,34,0.07);border:0.5px solid rgba(230,180,34,0.35);border-radius:12px;padding:10px 14px">
+      <span style="width:8px;height:8px;border-radius:50%;background:#e6b422"></span>
+      <span style="font-size:13px"><b>11 tool calls</b> waiting on you across 4 agents</span>
+      <span style="flex:1"></span>
+      <span class="m" style="font-size:11px;color:#8a8a8a">J / K move · Y allow · N deny</span>
+      <button style="font-size:12px;color:#e6b422;background:transparent;border:0.5px solid rgba(230,180,34,0.5);border-radius:8px;padding:6px 10px">Review next</button>
+      <button style="font-size:12px;color:#d8d8d8;background:transparent;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;padding:6px 10px">Trust brave_web_search for all</button>
+    </div>
+
+    <sc-for list="{{rows}}" as="row" hint-placeholder-count="8">
+      <div style="border:0.5px solid {{row.border}};border-radius:12px;background:#0f0f0f;overflow:hidden;opacity:{{row.opacity}}">
+        <div style="display:flex;align-items:center;gap:14px;padding:11px 16px">
+          <span style="width:8px;height:8px;border-radius:50%;background:{{row.dot}};flex-shrink:0"></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{row.id}} {{row.title}}</div>
+            <div class="m" style="font-size:11px;color:#7a7a7a;margin-top:3px">{{row.meta}}</div>
+          </div>
+          <span class="m" style="font-size:11px;color:{{row.chipColor}};border:0.5px solid {{row.chipBorder}};border-radius:6px;padding:3px 8px;white-space:nowrap">{{row.chip}}</span>
+          <span style="width:26px;height:26px;border:0.5px solid rgba(255,255,255,0.1);border-radius:7px;display:flex;align-items:center;justify-content:center" aria-label="Open agent full screen">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#9a9a9a" stroke-width="1.2" aria-hidden="true"><path d="M7 1h4v4M5 11H1V7M11 1L7 5M1 11l4-4"/></svg>
+          </span>
+        </div>
+        <sc-if value="{{row.hasPerm}}" hint-placeholder-val="{{ true }}">
+          <div style="border-top:0.5px solid rgba(230,180,34,0.3);background:rgba(230,180,34,0.07);border-left:2px solid #e6b422;padding:10px 16px;display:flex;align-items:center;gap:12px">
+            <span class="m" style="font-size:12px;color:#e6b422;white-space:nowrap">{{row.tool}}</span>
+            <span class="m" style="font-size:11.5px;color:#a9a9a9;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{row.arg}}</span>
+            <sc-if value="{{row.hasQueue}}" hint-placeholder-val="{{ true }}"><span class="m" style="font-size:11px;color:#e6b422;background:rgba(230,180,34,0.12);border-radius:999px;padding:2px 8px;white-space:nowrap">{{row.queueText}}</span></sc-if>
+            <button style="font-size:12px;color:#0a0a0a;background:#e6b422;border:none;border-radius:7px;padding:5px 11px;font-weight:500">Allow</button>
+            <button style="font-size:12px;color:#e6b422;background:transparent;border:0.5px solid rgba(230,180,34,0.5);border-radius:7px;padding:5px 11px">Trust agent</button>
+            <button style="font-size:12px;color:#9a9a9a;background:transparent;border:0.5px solid rgba(255,255,255,0.12);border-radius:7px;padding:5px 11px">Deny</button>
+          </div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- right: run view context (dimmed, unchanged) -->
+  <div style="flex:1;box-sizing:border-box;border-left:0.5px solid rgba(255,255,255,0.05);padding:28px;opacity:0.5">
+    <div style="font-size:12px;color:#8a8a8a" class="m">Run view</div>
+    <div style="margin-top:14px;font-size:20px;font-weight:600;line-height:1.3">KRATOS DEFENSE &amp; SECURITY SOLUTIONS — FINAL INVESTMENT MEMO</div>
+    <div style="margin-top:12px;font-size:13px;line-height:1.7;color:#9a9a9a">Rows stay one line tall. Output no longer pushes the list around while agents stream.</div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const G='#4ade80', Y='#e6b422', R='#ff6b66', D='#5a5a5a';
+    const hair='rgba(255,255,255,0.06)', yb='rgba(230,180,34,0.35)';
+    const rows = [
+      {id:'1.1',title:'Map Kratos business segments, product lines…',meta:'Business Analyst · deepseek-v4.1-flash · 61.2k tok · 4 tool calls',dot:Y,chip:'needs approval',chipColor:Y,chipBorder:'rgba(230,180,34,0.5)',border:yb,opacity:1,hasPerm:true,tool:'brave_web_search',arg:'q: "Kratos Defense segment revenue mix 2026"',hasQueue:true,queueText:'+2 queued'},
+      {id:'1.2',title:'Compile 5+ year financials, latest quarter, guidance…',meta:'Financial Analyst · deepseek-v4.1-flash · 44.8k tok · 2 tool calls',dot:Y,chip:'needs approval',chipColor:Y,chipBorder:'rgba(230,180,34,0.5)',border:yb,opacity:1,hasPerm:true,tool:'web_fetch',arg:'url: https://investors.kratosdefense.com/financial-information',hasQueue:false,queueText:''},
+      {id:'1.3',title:'Analyze defense demand, programs, competitive…',meta:'Defense Demand Analyst · deepseek-v4.1-flash · 38.0k tok · 3 tool calls',dot:G,chip:'running · brave_web_search',chipColor:G,chipBorder:'rgba(74,222,128,0.35)',border:hair,opacity:1,hasPerm:false,tool:'',arg:'',hasQueue:false,queueText:''},
+      {id:'1.4',title:'Assess competitive position, moat, rivals, threats',meta:'Competitive Intelligence Analyst · deepseek-v4.1-flash · 52.4k tok',dot:Y,chip:'needs approval',chipColor:Y,chipBorder:'rgba(230,180,34,0.5)',border:yb,opacity:1,hasPerm:true,tool:'python_sandbox',arg:'df.groupby("peer").agg(rev_cagr=...)  · 14 lines',hasQueue:true,queueText:'+1 queued'},
+      {id:'1.5',title:'Build valuation multiples, consensus, priced-in…',meta:'Valuation Analyst · waits on 1.1 1.2 1.3 1.4',dot:D,chip:'queued',chipColor:'#8a8a8a',chipBorder:'rgba(255,255,255,0.12)',border:hair,opacity:0.55,hasPerm:false,tool:'',arg:'',hasQueue:false,queueText:''},
+      {id:'1.6',title:'Review management, governance, insider activity',meta:'Governance Analyst · deepseek-v4.1-flash · 29.7k tok',dot:Y,chip:'needs approval',chipColor:Y,chipBorder:'rgba(230,180,34,0.5)',border:yb,opacity:1,hasPerm:true,tool:'brave_web_search',arg:'q: "Kratos insider selling Form 4 2026"',hasQueue:true,queueText:'+4 queued'},
+      {id:'1.7',title:'Analyze market behavior, sentiment, ownership…',meta:'Market & Risk Analyst · deepseek-v4.1-flash · 41.3k tok',dot:G,chip:'running · reading',chipColor:G,chipBorder:'rgba(74,222,128,0.35)',border:hair,opacity:1,hasPerm:false,tool:'',arg:'',hasQueue:false,queueText:''},
+      {id:'1.8',title:'Synthesize final investment memo with verdict…',meta:'Investment Memo Synthesizer · waits on 1.5 1.6 1.7',dot:D,chip:'queued',chipColor:'#8a8a8a',chipBorder:'rgba(255,255,255,0.12)',border:hair,opacity:0.55,hasPerm:false,tool:'',arg:'',hasQueue:false,queueText:''}
+    ];
+    const bars=[
+      {id:'1.1',left:0,w:120,color:'#e6b422'},{id:'1.2',left:0,w:90,color:'#e6b422'},{id:'1.3',left:0,w:100,color:'#3f7d58'},{id:'1.4',left:0,w:110,color:'#e6b422'},
+      {id:'1.5',left:150,w:0,color:'#333'},{id:'1.6',left:0,w:80,color:'#e6b422'},{id:'1.7',left:0,w:95,color:'#3f7d58'},{id:'1.8',left:200,w:0,color:'#333'}
+    ];
+    return { rows, bars };
+  }
+}
+</script>
+</body>
+</html>

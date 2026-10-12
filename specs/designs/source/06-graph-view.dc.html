@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Graph view</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'JetBrains Mono',ui-monospace,monospace}
+button{font-family:inherit;cursor:pointer}
+@keyframes flow{to{stroke-dashoffset:-16}}
+.flow{animation:flow 0.9s linear infinite}
+</style>
+</helmet>
+<div style="width:1440px;height:980px;box-sizing:border-box;background:#0a0a0a;font-family:'Inter',system-ui,sans-serif;color:#e8e8e8;display:flex;flex-direction:column;overflow:hidden">
+
+  <!-- top bar -->
+  <div style="height:56px;flex-shrink:0;box-sizing:border-box;background:#000;border-bottom:0.5px solid rgba(255,255,255,0.05);display:flex;align-items:center;padding:0 24px;gap:16px">
+    <span style="color:#8a8a8a;font-size:16px">‹</span>
+    <div class="m" style="font-size:13px;color:#ff6b66;border:0.5px solid rgba(229,57,53,0.5);background:rgba(229,57,53,0.08);border-radius:999px;padding:6px 14px;display:flex;gap:8px;align-items:center"><span style="width:7px;height:7px;border-radius:50%;background:#e6b422"></span>Multi-agent <span style="color:#8a8a8a">8 agents · 3 phases</span></div>
+    <!-- view toggle -->
+    <div class="m" style="display:flex;border:0.5px solid rgba(255,255,255,0.12);border-radius:9px;overflow:hidden;font-size:12px">
+      <span style="padding:6px 14px;color:#8a8a8a">List</span>
+      <span style="padding:6px 14px;color:#fff;background:rgba(229,57,53,0.18);border-left:2px solid #e53935">Graph</span>
+    </div>
+    <span style="flex:1"></span>
+    <span class="m" style="font-size:12px;color:#8a8a8a;border:0.5px solid rgba(255,255,255,0.1);border-radius:8px;padding:5px 10px">Run 1 of 1 · running ▾</span>
+  </div>
+
+  <div style="flex:1;display:flex;min-height:0">
+
+    <!-- canvas -->
+    <div style="width:1060px;position:relative;background-color:#0c0c0c;background-image:radial-gradient(rgba(255,255,255,0.06) 1px,transparent 1px);background-size:22px 22px;border-right:0.5px solid rgba(255,255,255,0.05);overflow:hidden">
+
+      <!-- phase labels -->
+      <div class="m" style="position:absolute;left:24px;top:22px;font-size:11px;color:#6a6a6a">PLAN</div>
+      <div class="m" style="position:absolute;left:200px;top:22px;font-size:11px;color:#6a6a6a">PHASE 1 · PARALLEL WORKERS</div>
+      <div class="m" style="position:absolute;left:450px;top:22px;font-size:11px;color:#6a6a6a">PHASE 2</div>
+      <div class="m" style="position:absolute;left:720px;top:22px;font-size:11px;color:#6a6a6a">PHASE 3</div>
+
+      <svg width="1060" height="780" style="position:absolute;left:0;top:0" aria-hidden="true">
+        <sc-for list="{{edges}}" as="e" hint-placeholder-count="14">
+          <path d="{{e.d}}" fill="none" stroke="{{e.stroke}}" stroke-width="{{e.sw}}" stroke-dasharray="{{e.dash}}" class="{{e.cls}}"/>
+        </sc-for>
+      </svg>
+
+      <sc-for list="{{nodes}}" as="n" hint-placeholder-count="10">
+        <div style="position:absolute;left:{{n.left}}px;top:{{n.top}}px;width:{{n.w}}px;height:76px;box-sizing:border-box;background:#101010;border:0.5px solid {{n.border}};border-radius:11px;padding:9px 11px;box-shadow:{{n.shadow}};opacity:{{n.opacity}}">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="width:7px;height:7px;border-radius:50%;background:{{n.dot}}"></span>
+            <span class="m" style="font-size:11.5px;color:#fff">{{n.id}}</span>
+            <span style="flex:1"></span>
+            <sc-if value="{{n.hasBadge}}" hint-placeholder-val="{{ false }}"><span class="m" style="font-size:10.5px;color:#0a0a0a;background:#e6b422;border-radius:999px;padding:0 6px;font-weight:500">{{n.badge}}</span></sc-if>
+            <span class="m" style="font-size:10px;color:{{n.stateColor}}">{{n.state}}</span>
+          </div>
+          <div style="font-size:11.5px;color:#cfcfcf;margin-top:5px;line-height:1.3;height:30px;overflow:hidden">{{n.title}}</div>
+          <div class="m" style="font-size:10px;color:#6a6a6a;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{n.meta}}</div>
+        </div>
+      </sc-for>
+
+      <!-- legend -->
+      <div class="m" style="position:absolute;right:16px;top:16px;display:flex;gap:14px;font-size:10.5px;color:#8a8a8a">
+        <span><span style="color:#4ade80">●</span> running</span><span><span style="color:#e6b422">●</span> needs you</span><span><span style="color:#5a5a5a">●</span> waiting</span>
+      </div>
+
+      <!-- controls + minimap -->
+      <div style="position:absolute;left:16px;bottom:16px;display:flex;align-items:flex-end;gap:10px">
+        <div class="m" style="display:flex;flex-direction:column;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;background:#0f0f0f;font-size:13px;color:#bdbdbd"><span style="padding:4px 10px">+</span><span style="padding:4px 10px;border-top:0.5px solid rgba(255,255,255,0.08)">−</span><span style="padding:4px 10px;border-top:0.5px solid rgba(255,255,255,0.08);font-size:10px">fit</span></div>
+        <div style="width:150px;height:92px;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;background:#0f0f0f;position:relative">
+          <div style="position:absolute;left:8px;top:14px;width:20px;height:60px;border-radius:2px;background:rgba(255,255,255,0.12)"></div>
+          <div style="position:absolute;left:62px;top:40px;width:20px;height:10px;border-radius:2px;background:rgba(255,255,255,0.12)"></div>
+          <div style="position:absolute;left:96px;top:40px;width:20px;height:10px;border-radius:2px;background:rgba(255,255,255,0.12)"></div>
+          <div style="position:absolute;left:3px;top:3px;right:3px;bottom:3px;border:0.5px solid rgba(229,57,53,0.6);border-radius:5px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- inspector -->
+    <div style="flex:1;box-sizing:border-box;padding:20px 22px;display:flex;flex-direction:column;gap:14px;overflow:hidden">
+      <div style="display:flex;gap:18px;font-size:13px;border-bottom:0.5px solid rgba(255,255,255,0.06);padding-bottom:10px">
+        <span style="color:#fff;border-bottom:2px solid #e6b422;padding-bottom:9px;margin-bottom:-11px">Needs you <span class="m" style="font-size:11px;color:#e6b422">11</span></span>
+        <span style="color:#8a8a8a">Node 1.4</span>
+        <span style="color:#8a8a8a">Run log</span>
+      </div>
+
+      <!-- focused group -->
+      <div style="border:0.5px solid rgba(230,180,34,0.45);border-left:2px solid #e6b422;border-radius:12px;background:rgba(230,180,34,0.07);padding:14px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="m" style="font-size:12px;color:#fff">1.4</span><span style="font-size:12.5px;color:#cfcfcf">Competitive Intelligence</span>
+          <span style="flex:1"></span>
+          <span class="m" style="font-size:11px;color:#e6b422;background:rgba(230,180,34,0.12);border-radius:999px;padding:2px 8px">1 of 2</span>
+        </div>
+        <div class="m" style="margin-top:10px;font-size:12px;color:#e6b422">python_sandbox</div>
+        <div class="m" style="margin-top:6px;font-size:11px;line-height:1.6;color:#bdbdbd;background:rgba(0,0,0,0.35);border-radius:8px;padding:9px 11px">df.groupby("peer").agg(<br>&nbsp;&nbsp;rev_cagr=("rev","pct_change"))</div>
+        <div style="margin-top:12px;display:flex;gap:7px;flex-wrap:wrap">
+          <button style="font-size:12px;color:#0a0a0a;background:#e6b422;border:none;border-radius:7px;padding:6px 12px;font-weight:500">Allow</button>
+          <button style="font-size:12px;color:#e6b422;background:transparent;border:0.5px solid rgba(230,180,34,0.5);border-radius:7px;padding:6px 12px">Trust agent</button>
+          <button style="font-size:12px;color:#9a9a9a;background:transparent;border:0.5px solid rgba(255,255,255,0.12);border-radius:7px;padding:6px 12px">Deny</button>
+        </div>
+        <div class="m" style="margin-top:10px;font-size:11px;color:#6a6a6a">next: python_sandbox · df.to_csv(...)</div>
+      </div>
+
+      <!-- other agents, one line each -->
+      <sc-for list="{{others}}" as="o" hint-placeholder-count="3">
+        <div style="display:flex;align-items:center;gap:10px;border:0.5px solid rgba(255,255,255,0.07);border-radius:10px;padding:10px 12px;background:#0f0f0f">
+          <span style="width:7px;height:7px;border-radius:50%;background:#e6b422"></span>
+          <span class="m" style="font-size:12px">{{o.id}}</span>
+          <span class="m" style="font-size:11.5px;color:#e6b422;flex:1">{{o.tool}}</span>
+          <span class="m" style="font-size:10.5px;color:#8a8a8a">{{o.count}}</span>
+          <button style="font-size:11.5px;color:#e6b422;background:transparent;border:0.5px solid rgba(230,180,34,0.45);border-radius:6px;padding:3px 9px">Review</button>
+        </div>
+      </sc-for>
+
+      <span style="flex:1"></span>
+      <div style="border-top:0.5px solid rgba(255,255,255,0.06);padding-top:14px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:#8a8a8a">Selected 1.4 · feeds 1.5, 1.8</span>
+        <button style="font-size:12px;color:#d8d8d8;background:transparent;border:0.5px solid rgba(255,255,255,0.14);border-radius:7px;padding:5px 10px">Open full view</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- run stats strip -->
+  <div class="m" style="height:60px;flex-shrink:0;box-sizing:border-box;border-top:0.5px solid rgba(255,255,255,0.06);background:#080808;display:flex;align-items:center;padding:0 24px;gap:40px;font-size:12px;color:#bdbdbd">
+    <span>$0.31 <span style="color:#6a6a6a">/ $0.50</span></span>
+    <span>904.1k tok</span>
+    <span>3:12 elapsed</span>
+    <span>6 agents in parallel</span>
+    <span style="color:#e6b422">11 approvals waiting</span>
+    <span style="color:#6a6a6a">reflection 0 / 16 checks</span>
+    <span style="flex:1"></span>
+    <span style="color:#6a6a6a">orch deepseek-v4.1-flash · reflect gemini-3.8-flash · synth glm-5.3-flash</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const G='#4ade80', Y='#e6b422', D='#5a5a5a';
+    const wy=[110,206,302,398,494,590];
+    const W={left:200,w:190}, C={left:450,w:180}, S={left:720,w:160}, F={left:910,w:120}, O={left:24,w:120};
+    const mk=(id,title,meta,left,top,w,st)=>{
+      const m={run:{dot:G,state:'running',stateColor:G,border:'rgba(74,222,128,0.4)',opacity:1},
+               ap:{dot:Y,state:'approval',stateColor:Y,border:'rgba(230,180,34,0.6)',opacity:1},
+               wait:{dot:D,state:'waiting',stateColor:'#6a6a6a',border:'rgba(255,255,255,0.08)',opacity:0.6},
+               done:{dot:G,state:'done',stateColor:G,border:'rgba(74,222,128,0.4)',opacity:1}}[st];
+      return Object.assign({id,title,meta,left,top,w},m,{shadow:'none',hasBadge:false,badge:''});
+    };
+    const nodes=[
+      mk('orch','Orchestrator · plan','deepseek-v4.1-flash',O.left,350,O.w,'done'),
+      mk('1.1','Map Kratos business segments, product lines','Business · 61.2k',W.left,wy[0],W.w,'ap'),
+      mk('1.2','Compile 5+ year financials, latest quarter','Financial · 44.8k',W.left,wy[1],W.w,'ap'),
+      mk('1.3','Analyze defense demand, programs','Demand · 38.0k',W.left,wy[2],W.w,'run'),
+      mk('1.4','Assess competitive position, moat, rivals','Competitive · 52.4k',W.left,wy[3],W.w,'ap'),
+      mk('1.6','Review management, governance, insiders','Governance · 29.7k',W.left,wy[4],W.w,'ap'),
+      mk('1.7','Analyze market behavior, sentiment','Market & Risk · 41.3k',W.left,wy[5],W.w,'run'),
+      mk('1.5','Build valuation multiples, consensus','waits on 1.1 1.2 1.3 1.4',C.left,350,C.w,'wait'),
+      mk('1.8','Synthesize final investment memo','waits on 1.5 1.6 1.7',S.left,350,S.w,'wait'),
+      mk('out','Final synthesis','glm-5.3-flash',F.left,350,F.w,'wait')
+    ];
+    const badges={'1.1':'3','1.2':'1','1.4':'2','1.6':'5'};
+    nodes.forEach(n=>{ if(badges[n.id]){n.hasBadge=true;n.badge=badges[n.id];} if(n.id==='1.4'){n.border='#e53935';n.shadow='0 0 0 3px rgba(229,57,53,0.18)';} });
+    const cy=t=>t+38;
+    const path=(x1,y1,x2,y2)=>{const dx=(x2-x1)/2;return `M${x1} ${y1} C${x1+dx} ${y1} ${x2-dx} ${y2} ${x2} ${y2}`;};
+    const edges=[];
+    const add=(x1,y1,x2,y2,kind)=>{
+      const k={done:{stroke:'rgba(74,222,128,0.35)',sw:1.2,dash:'0',cls:''},
+               live:{stroke:'rgba(229,57,53,0.85)',sw:1.4,dash:'5 5',cls:'flow'},
+               hold:{stroke:'rgba(230,180,34,0.55)',sw:1.2,dash:'3 4',cls:''},
+               idle:{stroke:'rgba(255,255,255,0.14)',sw:1,dash:'3 4',cls:''}}[kind];
+      edges.push(Object.assign({d:path(x1,y1,x2,y2)},k));
+    };
+    wy.forEach((t,i)=>add(O.left+O.w,388,W.left,cy(t),'done'));
+    [0,1,2,3].forEach(i=>add(W.left+W.w,cy(wy[i]),C.left,388,i===2?'live':'hold'));
+    [4,5].forEach(i=>add(W.left+W.w,cy(wy[i]),S.left,388,i===5?'live':'hold'));
+    add(C.left+C.w,388,S.left,388,'idle');
+    add(S.left+S.w,388,F.left,388,'idle');
+    const others=[{id:'1.1',tool:'brave_web_search',count:'+2 queued'},{id:'1.2',tool:'web_fetch',count:''},{id:'1.6',tool:'brave_web_search',count:'+4 queued'}];
+    return { nodes, edges, others };
+  }
+}
+</script>
+</body>
+</html>
