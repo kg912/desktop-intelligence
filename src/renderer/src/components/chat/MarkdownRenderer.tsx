@@ -1418,10 +1418,12 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStre
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const userComponents = useMemo(() => buildComponents(), [])
   // Prepend hard line breaks to non-fence lines so Shift+Enter newlines render
-  // as <br> in the user bubble. Must be computed unconditionally.
-  const prepared = useMemo(() => prepareUserContent(content), [content])
+  // as <br> in the user bubble. Currency dollars are escaped like the
+  // assistant path, or pasted "$15B … $1.35B" pairs into one KaTeX span that
+  // can't wrap and overflows the chat. Must be computed unconditionally.
+  const prepared = useMemo(() => escapeCurrencyDollars(prepareUserContent(content)), [content])
 
-  // ── User variant — no think parsing, no escaping, no cursor ──────────────
+  // ── User variant — no think parsing, no cursor ───────────────────────────
   if (variant === 'user') {
     return (
       <StreamingCtx.Provider value={false}>

@@ -695,6 +695,25 @@ describe('escapeCurrencyDollars', () => {
     expect(result).toBe('The cost is \\$42 and the variable is $x$.')
   })
 
+  it('leaves an already-escaped \\$ alone (re-escaping would re-open math)', () => {
+    expect(escapeCurrencyDollars('cost \\$15B and \\$1.35B')).toBe('cost \\$15B and \\$1.35B')
+  })
+
+  it('escapes the pasted report text that spilled out as one KaTeX span', () => {
+    const input = 'a $15B bid pipeline at historical rates, $1.35B (2025) company becomes a ~$3.8–4.0B'
+    expect(escapeCurrencyDollars(input)).toBe(
+      'a \\$15B bid pipeline at historical rates, \\$1.35B (2025) company becomes a ~\\$3.8–4.0B')
+  })
+
+  it('leaves inline code untouched', () => {
+    expect(escapeCurrencyDollars('run `echo $1` for $5')).toBe('run `echo $1` for \\$5')
+  })
+
+  it('leaves fenced code untouched', () => {
+    const md = '```bash\necho $1 $2\n```\nthat costs $3'
+    expect(escapeCurrencyDollars(md)).toBe('```bash\necho $1 $2\n```\nthat costs \\$3')
+  })
+
   it('returns plain text unchanged when no dollar signs present', () => {
     const plain = 'No dollar signs here at all.'
     expect(escapeCurrencyDollars(plain)).toBe(plain)

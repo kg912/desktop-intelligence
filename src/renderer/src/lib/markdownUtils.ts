@@ -237,19 +237,29 @@ export function parseThinkBlocks(raw: string, streamEnded = false): ParsedConten
  * Math expressions such as `$K$`, `$\pi_k$`, and `$\mathbf{x}$` are
  * unaffected because they start with a letter or backslash, not a digit.
  *
+ * Already-escaped `\$5` is left alone (re-escaping it to `\\$5` would turn
+ * the `$` back into a math delimiter), and fenced/inline code is untouched so
+ * `echo $1` keeps its literal text.
+ *
  * Pure function — safe to call in a React useMemo.
  */
 export function escapeCurrencyDollars(md: string): string {
-  return md
-    // \$(?=\d) — dollar sign whose next char is a digit
-    .replace(/\$(?=\d)/g, '\\$')
-    // Ensure $$ display blocks are preceded by a newline when inline with text.
-    // Only fires when a space/tab immediately precedes $$ (distinguishes text
-    // separator from math content chars like digits/letters before closing $$).
-    // Note: $$$$ in replacement string = literal $$ (each $$ → single $).
-    .replace(/([ \t])\$\$/g, '$1\n$$$$')
-    // Ensure $$ display blocks are followed by a newline when inline with text.
-    .replace(/\$\$([ \t])/g, '$$$$\n$1')
+  let inFence = false
+  return md.split('\n').map(line => {
+    if (/^\s*(`{3,}|~{3,})/.test(line)) { inFence = !inFence; return line }
+    if (inFence) return line
+    return line
+      // Inline code spans pass through; a $ before a digit that isn't already
+      // escaped becomes \$.
+      .replace(/(`+)[^`]*?\1|(?<!\\)\$(?=\d)/g, m => (m === '$' ? '\\$' : m))
+      // Ensure $$ display blocks are preceded by a newline when inline with text.
+      // Only fires when a space/tab immediately precedes $$ (distinguishes text
+      // separator from math content chars like digits/letters before closing $$).
+      // Note: $$$$ in replacement string = literal $$ (each $$ → single $).
+      .replace(/([ \t])\$\$/g, '$1\n$$$$')
+      // Ensure $$ display blocks are followed by a newline when inline with text.
+      .replace(/\$\$([ \t])/g, '$$$$\n$1')
+  }).join('\n')
 }
 
 // ----------------------------------------------------------------
