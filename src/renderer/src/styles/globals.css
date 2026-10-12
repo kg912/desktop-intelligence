@@ -448,6 +448,15 @@
 .ma-ev[data-k="approval"] > .ma-k { border-color: rgba(226,169,59,.5); background: rgba(226,169,59,.10); }
 
 .ma-cursor { display: inline-block; width: 6px; height: 13px; background: #e53935; vertical-align: -2px; margin-left: 2px; animation: ma-blink 1s steps(2) infinite; }
+.ma-focus {
+  background: rgba(12,12,12,0.80);
+  -webkit-backdrop-filter: blur(26px) saturate(1.2);
+  backdrop-filter: blur(26px) saturate(1.2);
+  border: 0.5px solid rgba(255,255,255,0.10);
+  box-shadow: 0 30px 100px rgba(0,0,0,0.7);
+}
+[data-testid="agent-focus-backdrop"] { background: rgba(0,0,0,0.35); }
+
 .ma-strip { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms ease; }
 .ma-strip[data-open="true"] { grid-template-rows: 1fr; }
 @media (prefers-reduced-motion: reduce) { .ma-strip { transition: none; } }

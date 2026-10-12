@@ -174,7 +174,8 @@ export function MultiAgentSidebarView(props: Props) {
 function useEscape(onClose: () => void): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !e.defaultPrevented) onClose()
+      // A modal layer above the dock (the agent focus view) owns Escape while it is open.
+      if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[aria-modal="true"]')) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -429,7 +430,7 @@ function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, f
   )
 }
 
-function stateTag(agent: AgentView, maxRetries: number, hasRequest: boolean): { label: string; tone: 'ok' | 'run' | 'wait' | 'fail' | 'idle' } {
+export function stateTag(agent: AgentView, maxRetries: number, hasRequest: boolean): { label: string; tone: 'ok' | 'run' | 'wait' | 'fail' | 'idle' } {
   const lastGate = agent.reflections.at(-1)
   if (hasRequest) return { label: 'needs approval', tone: 'wait' }
   switch (agent.status) {
@@ -450,7 +451,7 @@ function stateTag(agent: AgentView, maxRetries: number, hasRequest: boolean): { 
   }
 }
 
-const TAG_TONE = {
+export const TAG_TONE = {
   ok: 'text-ma-ok border-ma-ok/30 bg-ma-ok/10',
   run: 'text-ma-redtext border-ma-red/35 bg-ma-red/[0.08]',
   wait: 'text-ma-amber border-ma-amber/30 bg-ma-amber/10',
@@ -503,7 +504,9 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
     >
       {/* One fixed-height row: output never grows it. */}
       <div className="flex items-center gap-2.5 px-3.5 py-[11px]">
-        <button onClick={() => onToggle(step.id, !open)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left" aria-expanded={open}>
+        {/* The title opens the focus view when there is one; the chevron expands the trace in place. */}
+        <button onClick={() => (onOpenAgent ? onOpenAgent(step.id) : onToggle(step.id, !open))} className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          data-testid={`agent-title-${step.id}`} title={onOpenAgent ? 'Open full screen' : undefined}>
           <span className="ma-dot" data-s={head ? 'wait' : dotOf(agent)} />
           <span className="min-w-0 flex-1">
             <b className="block truncate text-[13.5px] font-medium">{step.id} {step.label}</b>
@@ -520,13 +523,13 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
         <span className={cn('inline-flex h-5 max-w-[45%] flex-none items-center truncate rounded-[5px] border-[0.5px] px-[7px] font-mono text-[11.5px]', head ? APPROVAL_TONE : TAG_TONE[tag.tone])}
           data-testid={`agent-chip-${step.id}`}>{tag.label}</span>
         {onOpenAgent && (
-          <button onClick={() => onOpenAgent(step.id)} aria-label={`Open ${step.id} full screen`} title="Open full screen"
+          <button onClick={() => onOpenAgent(step.id)} aria-label={`Open ${step.id} full screen`} title="Open full screen" data-testid={`agent-fullscreen-${step.id}`}
             className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-[7px] border-[0.5px] border-white/10 text-ma-mute hover:bg-ma-bg3 hover:text-ma-text">
             <Maximize2 className="h-3 w-3" strokeWidth={1.6} />
           </button>
         )}
-        <button onClick={() => onToggle(step.id, !open)} aria-label={open ? 'Collapse trace' : 'Expand trace'} tabIndex={-1}
-          className="flex-none text-ma-mute hover:text-ma-text">
+        <button onClick={() => onToggle(step.id, !open)} aria-label={open ? 'Collapse trace' : 'Expand trace'} aria-expanded={open}
+          data-testid={`agent-chevron-${step.id}`} className="flex-none rounded text-ma-mute hover:text-ma-text">
           <ChevronDown className={cn('h-[18px] w-[18px] transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.6} />
         </button>
       </div>
@@ -560,7 +563,7 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
   )
 })
 
-const APPROVAL_TONE = 'text-[#e6b422] border-[#e6b422]/50'
+export const APPROVAL_TONE = 'text-[#e6b422] border-[#e6b422]/50'
 /** Matches the .ma-strip height transition. */
 export const STRIP_SLIDE_MS = 180
 

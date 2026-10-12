@@ -237,6 +237,28 @@ describe('Part C — navigation lock while a run is live', () => {
     expect(panelMode()).toBe('chat')
   })
 
+  it('Goal 4: the full-screen button opens the focus view over the dock; closing it leaves the run and the dock as they were', async () => {
+    await startRun()
+    await push(1, { type: 'orchestrator_plan', steps: [step] })
+    await push(2, { type: 'hitl_resume', agentId: 'orchestrator', approved: true })
+    await push(3, { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'w', attempt: 0 })
+    await act(async () => { fireEvent.click(screen.getByTestId('agent-fullscreen-1.1')) })
+    const dialog = screen.getByTestId('agent-focus')
+    expect(dialog.dataset.agent).toBe('1.1')
+    await push(4, { type: 'agent_token', agentId: '1.1', attempt: 0, token: 'Hotel Sonne' })
+    expect(screen.getByTestId('focus-draft').textContent).toContain('Hotel Sonne')
+    await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }) })
+    expect(screen.queryByTestId('agent-focus')).toBeNull()
+    expect(panelMode()).toBe('agents') // Esc closed the layer only, not the dock
+    expect(overrides.abortMultiAgentRun).not.toHaveBeenCalled()
+    expect(overrides.startMultiAgentRun).toHaveBeenCalledTimes(1)
+    await push(5, { type: 'agent_token', agentId: '1.1', attempt: 0, token: ' (4 min)' })
+    expect(screen.getByTestId('agent-chip-1.1').textContent).toBe('Live') // still streaming, unaffected
+    // Clicking the row title opens it too.
+    await act(async () => { fireEvent.click(screen.getByTestId('agent-title-1.1')) })
+    expect(screen.getByTestId('agent-focus').dataset.agent).toBe('1.1')
+  })
+
   it('releases when the run fails', async () => {
     await startRun()
     await push(1, { type: 'orchestrator_plan', steps: [step] })

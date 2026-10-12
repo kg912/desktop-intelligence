@@ -16,6 +16,8 @@ import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
+import { AgentFocusView } from '../chat/AgentFocusView'
+import { approvalQueues } from '../../lib/approvalQueue'
 import { useMultiAgentRun } from '../../hooks/useMultiAgentRun'
 import { inputLockMessage, isRunActive, pausedAgents, reduceRunEvents } from '../../lib/multiAgentRunState'
 import type { RunView } from '../../lib/multiAgentRunState'
@@ -34,6 +36,8 @@ export function Layout() {
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
   // The multi-agent run lives in the sidebar, widened ('agents' mode) — no separate pane.
   const [focusAgentId,   setFocusAgentId]   = useState<string | null>(null)
+  // Agent focus view (full-screen layer over the run page); a view only, never touches the agent.
+  const [focusViewAgent, setFocusViewAgent] = useState<string | null>(null)
   const [reviewableChat, setReviewableChat] = useState<string | null>(null)
   // The active chat's latest saved run, for the top bar while the dock has not loaded it.
   const [savedRun, setSavedRun] = useState<{ chatId: string; view: RunView; runIds?: string[] } | null>(null)
@@ -186,6 +190,10 @@ export function Layout() {
     setFocusAgentId(null)
     requestAnimationFrame(() => setFocusAgentId(agentId))
   }, [])
+
+  const closeFocusView = useCallback(() => setFocusViewAgent(null), [])
+  // A different chat or run has nothing to focus on.
+  useEffect(() => { setFocusViewAgent(null) }, [activeChatId, shownRun?.view.runId])
 
   // With the dock open, the active chat's saved run is loaded into it (read-only).
   const { review: reviewRun } = multiAgent
@@ -549,6 +557,20 @@ export function Layout() {
         {sandboxViolationToast && <SandboxViolationToast violation={sandboxViolationToast} />}
       </AnimatePresence>
 
+      {focusViewAgent && shownRun?.view.agents[focusViewAgent] && !settingsOpen && (
+        <AgentFocusView
+          view={shownRun.view}
+          agentId={focusViewAgent}
+          task={shownRun.task}
+          config={shownRun.config}
+          queue={approvalQueues(mcpPermissionRequests, shownRun.view.runId).get(focusViewAgent) ?? []}
+          readOnly={shownRun.review}
+          onRespond={respondToPermission}
+          onNavigate={setFocusViewAgent}
+          onClose={closeFocusView}
+        />
+      )}
+
       {settingsOpen ? (
         <SettingsPage initialTab={settingsTab} onClose={() => setSettingsOpen(false)} />
       ) : (
@@ -584,6 +606,7 @@ export function Layout() {
                     runIds={shownRun.runIds}
                     recorded={shownRun.recorded}
                     onShowRun={(runId) => { if (activeChatId) void reviewRun(activeChatId, activeTitle, runId) }}
+                    onOpenAgent={setFocusViewAgent}
                   />
                 ) : null
               }

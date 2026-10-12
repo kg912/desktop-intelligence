@@ -616,7 +616,7 @@ describe('Reasoning view and card fixes (Part E)', () => {
       { ...ev({ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 }), ts: Date.now() + 5_000 },
     ])
     render(<MultiAgentSidebarView {...dockProps} view={v} />)
-    const header = within(screen.getByTestId('agent-card-1.1')).getByRole('button', { expanded: false })
+    const header = screen.getByTestId('agent-meta-1.1')
     expect(header.textContent).toContain('0s')
     expect(header.textContent).not.toMatch(/-\d+s/)
   })
