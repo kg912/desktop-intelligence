@@ -519,8 +519,10 @@ export function Layout() {
     if (useAgents && effectiveChatId) {
       await window.api.saveMessage(effectiveChatId, uuid(), 'user', text)
       await loadChatMessages(effectiveChatId)
-      // Sending a multi-agent task opens the dock; it stays open after the run ends.
-      if (await multiAgent.start(effectiveChatId, text)) setSidebarMode('agents')
+      // Sending a multi-agent task opens the dock at once (planning shows while the run starts);
+      // it stays open after the run ends, and closes again only if the run could not start.
+      setSidebarMode('agents')
+      if (!(await multiAgent.start(effectiveChatId, text))) setSidebarMode((m) => (m === 'agents' ? 'chat' : m))
       return
     }
 
@@ -599,6 +601,7 @@ export function Layout() {
                     onApprove={() => multiAgent.approvePlan(true)}
                     onCancel={() => multiAgent.approvePlan(false)}
                     onAbort={multiAgent.abort}
+                    onQuickPlan={multiAgent.quickPlan}
                     focusAgentId={focusAgentId}
                     onSelectAgent={selectAgent}
                     onClose={closeDock}

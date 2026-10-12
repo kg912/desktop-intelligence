@@ -381,3 +381,33 @@ describe('Goal 1 — floating "Viewing agent run" pill (designs/01-floating-pill
     expect(chatAreaProps.topInset).toBe(16)
   })
 })
+
+describe('Goal 5 — from send to the first plan event the planning state is on screen', () => {
+  it('the dock opens on send with the stepper, timer and ghost canvas, before the sidecar has replied', async () => {
+    let reply: (v: unknown) => void = () => {}
+    overrides.startMultiAgentRun.mockImplementationOnce((() => new Promise((r) => { reply = r })) as never)
+    await renderLayout()
+    await openChat('agents title')
+    await send('Plan a trip')
+    await waitFor(() => expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('agents'))
+    expect(screen.getByTestId('planning-stepper')).toBeTruthy()
+    expect(screen.getByTestId('planning-clock')).toBeTruthy()
+    expect(screen.getByTestId('graph-node-__next').dataset.state).toBe('ghost')
+    await act(async () => { reply({ ok: true, runId: 'run-1' }) })
+    await act(async () => {
+      emit({ runId: 'run-1', seq: 1, ts: Date.now(), type: 'plan_started', maxAgents: 4 } as AgentEvent)
+      emit({ runId: 'run-1', seq: 2, ts: Date.now(), type: 'plan_subtask_added', attempt: 0, index: 0, step: { id: '1.1', label: 'Find hotels', role: 'R', dependsOn: [] } } as AgentEvent)
+      await new Promise((r) => requestAnimationFrame(() => r(null)))
+    })
+    expect(screen.getByTestId('graph-node-1.1').dataset.state).toBe('draft')
+  })
+
+  it('a run that cannot start closes the dock again and says why', async () => {
+    overrides.startMultiAgentRun.mockResolvedValueOnce({ ok: false, reason: 'OpenRouter API key missing' } as never)
+    await renderLayout()
+    await openChat('agents title')
+    await send('Plan a trip')
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('OpenRouter API key missing'))
+    expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('chat')
+  })
+})

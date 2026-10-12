@@ -9,6 +9,10 @@ import type { AgentEvent } from './types'
 type Prim = 'string' | 'number' | 'boolean'
 
 const KNOWN_TYPES = new Set<string>([
+  'plan_started',
+  'plan_stage_changed',
+  'plan_subtask_added',
+  'plan_reasoning',
   'orchestrator_plan',
   'run_config',
   'agent_start',
@@ -48,6 +52,23 @@ function checkFields(obj: Record<string, unknown>, fields: Array<[string, Prim]>
 
 function validateVariant(obj: Record<string, unknown>): string | null {
   switch (obj.type as string) {
+    case 'plan_started':
+      return checkFields(obj, [['maxAgents', 'number']])
+    case 'plan_stage_changed':
+      if (!['reading', 'splitting', 'assigning', 'wiring'].includes(obj.stage as string)) return '"stage" must be a plan stage'
+      return checkFields(obj, [['attempt', 'number']])
+    case 'plan_subtask_added': {
+      const err = checkFields(obj, [['attempt', 'number'], ['index', 'number']])
+      if (err) return err
+      const step = obj.step as Record<string, unknown> | null
+      if (typeof step !== 'object' || step === null) return '"step" must be an object'
+      const stepErr = checkFields(step, [['id', 'string'], ['label', 'string'], ['role', 'string']])
+      if (stepErr) return `"step": ${stepErr}`
+      if (!Array.isArray(step.dependsOn) || !step.dependsOn.every((d) => typeof d === 'string')) return '"step.dependsOn" must be an array of strings'
+      return null
+    }
+    case 'plan_reasoning':
+      return checkFields(obj, [['token', 'string']])
     case 'orchestrator_plan': {
       if (!Array.isArray(obj.steps)) return '"steps" must be an array'
       for (const [i, step] of (obj.steps as unknown[]).entries()) {
@@ -220,6 +241,10 @@ export type AgentTraceStepType = 'orchestrator' | 'worker' | 'reflection' | 'syn
 
 export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
   switch (event.type) {
+    case 'plan_started':
+    case 'plan_stage_changed':
+    case 'plan_subtask_added':
+    case 'plan_reasoning':
     case 'orchestrator_plan':
     case 'run_config':
       return 'orchestrator'

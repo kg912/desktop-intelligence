@@ -38,7 +38,7 @@ function app(obs: ObservabilityService) {
       sidecar.emit('runStarted', { runId, chatId: req.chatId })
       return { ok: true as const, runId }
     }),
-    respondHitl: vi.fn(), abortRun: vi.fn(), isAwaitingPlanApproval: vi.fn(() => false),
+    respondHitl: vi.fn(), abortRun: vi.fn(), quickPlan: vi.fn(), isAwaitingPlanApproval: vi.fn(() => false),
   })
   const coordinator = new MultiAgentRunCoordinator({
     sidecar: sidecar as unknown as CoordinatorDeps['sidecar'],

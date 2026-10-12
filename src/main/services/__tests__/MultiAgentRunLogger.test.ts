@@ -55,6 +55,7 @@ async function fullRun(root: string, opts: { enabled?: boolean } = {}) {
     })
     respondHitl = vi.fn(async () => {})
     abortRun = vi.fn(async () => {})
+    quickPlan = vi.fn(async () => {})
     isAwaitingPlanApproval = () => false
   })()
   const coordinator = new MultiAgentRunCoordinator({
@@ -175,9 +176,11 @@ describe('MultiAgentRunLogger (observability spec Phase 2)', () => {
     const dir = join(root, 'chat-1', 'run-1')
     expect(readMeta(dir)?.status).toBe('incomplete')
     for (const name of ['events.jsonl', 'agent-1.1.jsonl']) {
-      const lines = readFileSync(join(dir, name), 'utf8').split('\n').filter(Boolean)
-      expect(lines.length).toBeGreaterThan(0)
-      for (const line of lines) expect(() => JSON.parse(line)).not.toThrow()
+      // SIGKILL can land inside an append, so only the unterminated tail may be torn (readers skip it);
+      // every complete (newline-terminated) line must parse.
+      const complete = readFileSync(join(dir, name), 'utf8').split('\n').slice(0, -1).filter(Boolean)
+      expect(complete.length).toBeGreaterThan(0)
+      for (const line of complete) expect(() => JSON.parse(line)).not.toThrow()
     }
     // And it can still be rendered after the fact; status stays incomplete.
     expect((await renderRun(dir)).status).toBe('incomplete')

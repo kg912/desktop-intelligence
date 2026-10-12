@@ -25,6 +25,9 @@ const STEPS: AgentStep[] = [
   { id: '2.1', label: 'Draft day-by-day itinerary', stage: 'worker', role: 'ItinAgent', model: WORKER, phase: 2, dependsOn: ['1.1', '1.2', '1.3'] },
 ]
 
+const FALLBACK_STEPS: AgentStep[] = ['Analyze the task', 'Research supporting evidence', 'Review risks and recommendations']
+  .map((label, i) => ({ id: `1.${i + 1}`, label, stage: 'worker', role: 'Analyst', model: WORKER, phase: 1, dependsOn: [] }))
+
 const traces = new Map<string, AgentEvent[]>()
 const runIdsByChat = new Map<string, string[]>()
 
@@ -114,6 +117,7 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
   const toolAnswers = new Map<string, (approved: boolean) => void>()
   let aborted = false
   let currentRunId = ''
+  let quickPlan = false
 
   async function run(runId: string, chatId: string): Promise<void> {
     const started = Date.now()
@@ -176,7 +180,34 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       return ok
     }
 
-    await wait(300)
+    // The plan streams as the orchestrator writes it (UI Goal 5). `?slowplan` in the preview URL
+    // stalls it after three subtasks, to show the slow-plan banner and the quick plan.
+    const slow = typeof location !== 'undefined' && location.search.includes('slowplan')
+    emit('plan_started', { maxAgents: 4 })
+    emit('plan_stage_changed', { stage: 'reading', attempt: 0 })
+    for (const token of 'Constraints: by rail, December, 12 days.\nGroup the Alps by base town so each leg is under 2h.\nLodging books out before Christmas: needs its own subtask…'.match(/.{1,12}/gs) ?? []) {
+      emit('plan_reasoning', { token })
+      await wait(60)
+    }
+    emit('plan_stage_changed', { stage: 'splitting', attempt: 0 })
+    for (const [index, step] of STEPS.entries()) {
+      if (slow && index === 3) while (!quickPlan && !aborted) await wait(200)
+      if (quickPlan || aborted) break
+      await wait(450)
+      emit('plan_subtask_added', { attempt: 0, index, step: { id: step.id, label: step.label, role: step.role, dependsOn: step.dependsOn ?? [] } })
+    }
+    if (aborted) return
+    emit('plan_stage_changed', { stage: 'assigning', attempt: 0 })
+    await wait(250)
+    emit('plan_stage_changed', { stage: 'wiring', attempt: 0 })
+    await wait(250)
+    if (quickPlan) {
+      emit('orchestrator_plan', { steps: FALLBACK_STEPS, fallback: true, fallbackReason: 'You chose the quick 3-step plan.' })
+      emit('hitl_pause', { agentId: 'orchestrator', role: 'Orchestrator', model: DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, toolName: 'approve_plan', serverName: 'multi-agent', args: { steps: FALLBACK_STEPS } })
+      const ok = await new Promise<boolean>((r) => { planAnswer = r })
+      emit('hitl_resume', { agentId: 'orchestrator', approved: ok })
+      return emit('task_failed', { reason: ok ? 'The demo only runs the full plan' : 'Plan not approved', partialOutputs: {} })
+    }
     emit('orchestrator_plan', { steps: STEPS })
     emit('run_config', {
       models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER },
@@ -252,10 +283,12 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       const runId = `demo-${Date.now()}`
       currentRunId = runId
       aborted = false
+      quickPlan = false
       void run(runId, chatId)
       runIdsByChat.set(chatId, [...(runIdsByChat.get(chatId) ?? []), runId])
       return { ok: true, runId, runIds: runIdsByChat.get(chatId), config: { ...DEFAULT_MULTI_AGENT_CONFIG, budgetCapUsd: 0.65, models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER } } }
     },
+    useQuickMultiAgentPlan: async () => { quickPlan = true },
     respondMultiAgentPlan: async (_runId: string, approved: boolean) => planAnswer?.(approved),
     mcpRespondToPermission: async (response: { requestId: string; approved: boolean }) => toolAnswers.get(response.requestId)?.(response.approved),
     abortMultiAgentRun: async () => {

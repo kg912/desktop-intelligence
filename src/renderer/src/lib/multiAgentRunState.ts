@@ -2,7 +2,7 @@
 // §08 Frontend). applyAgentEvent() touches only what an event changes, so a
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
-import type { AgentEvent, AgentStep, HitlPauseEvent, OutputLimit, RunConfigEvent, RunTotals } from '../../../shared/types'
+import type { AgentEvent, AgentStep, HitlPauseEvent, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled'
 
@@ -74,12 +74,34 @@ export interface AgentView {
 
 export type RunPhase = 'planning' | 'preflight' | 'running' | 'synthesizing' | 'complete' | 'failed'
 
+export const PLAN_STAGES: PlanStage[] = ['reading', 'splitting', 'assigning', 'wiring']
+
+/** The orchestrator's plan while it is being written (UI Goal 5). */
+export interface PlanningView {
+  /** When the plan_started event arrived; the run's start before that. */
+  startedAt: number
+  maxAgents?: number
+  stage: PlanStage
+  /** When each stage was reached. */
+  stageAt: Partial<Record<PlanStage, number>>
+  /** Planner attempt the draft belongs to; a re-plan starts a new draft. */
+  attempt: number
+  /** Subtasks written so far (draft; the final plan is RunView.steps). */
+  draft: PlanSubtaskAddedEvent['step'][]
+  reasoning: string
+  /** Characters streamed (reasoning + draft), for the live token estimate. */
+  streamedChars: number
+  /** Set by orchestrator_plan when the fallback plan was used, and why. */
+  fallbackReason?: string
+}
+
 export interface RunView {
   runId: string
   phase: RunPhase
   steps: AgentStep[]
   agents: Record<string, AgentView>
   planPause?: HitlPauseEvent
+  planning: PlanningView
   /** What the run actually used (models per role and their source). */
   runConfig?: RunConfigEvent
   synthesis: string
@@ -103,6 +125,7 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
     synthesis: '',
     served: {},
     totals: { costUsd: 0, tokens: 0, budgetReached: false },
+    planning: { startedAt, stage: 'reading', stageAt: { reading: startedAt }, attempt: 0, draft: [], reasoning: '', streamedChars: 0 },
     startedAt,
     lastSeq: 0,
   }
@@ -122,6 +145,22 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
   if (event.runTotals) next.totals = event.runTotals
 
   switch (event.type) {
+    case 'plan_started':
+      return { ...next, planning: { ...next.planning, startedAt: event.ts, maxAgents: event.maxAgents, stageAt: { reading: event.ts } } }
+    case 'plan_stage_changed': {
+      const p = next.planning
+      const restart = event.attempt !== p.attempt && event.stage === 'splitting'
+      return { ...next, planning: { ...p, stage: event.stage, stageAt: { ...p.stageAt, [event.stage]: p.stageAt[event.stage] ?? event.ts },
+        ...(restart && { attempt: event.attempt, draft: [] }) } }
+    }
+    case 'plan_subtask_added': {
+      const p = next.planning
+      const draft = event.attempt === p.attempt ? [...p.draft] : []
+      draft[event.index] = event.step
+      return { ...next, planning: { ...p, attempt: event.attempt, draft, streamedChars: p.streamedChars + event.step.label.length + 40 } }
+    }
+    case 'plan_reasoning':
+      return { ...next, planning: { ...next.planning, reasoning: next.planning.reasoning + event.token, streamedChars: next.planning.streamedChars + event.token.length } }
     case 'orchestrator_plan': {
       const agents: Record<string, AgentView> = {}
       for (const step of event.steps) {
@@ -129,7 +168,9 @@ export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
           step, status: 'queued', liveText: '', streamedTokens: 0, tokenCount: 0, costUsd: 0, attempt: 0, reflections: [], timeline: [],
         }
       }
-      return { ...next, steps: event.steps, agents, ...(event.modelServed && { served: { ...next.served, orchestrator: event.modelServed } }) }
+      const planning = { ...next.planning, stage: 'wiring' as const, stageAt: { ...next.planning.stageAt, wiring: next.planning.stageAt.wiring ?? event.ts },
+        ...(event.fallback && { fallbackReason: event.fallbackReason ?? 'The planner never returned a usable plan.' }) }
+      return { ...next, steps: event.steps, agents, planning, ...(event.modelServed && { served: { ...next.served, orchestrator: event.modelServed } }) }
     }
     case 'run_config':
       return { ...next, runConfig: event }

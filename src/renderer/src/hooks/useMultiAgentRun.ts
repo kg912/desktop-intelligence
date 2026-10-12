@@ -20,6 +20,9 @@ export interface ActiveRun {
   recorded?: boolean
 }
 
+/** Run id of the placeholder shown between send and the sidecar's reply (the planning view, never an empty pane). */
+export const PENDING_RUN_PREFIX = 'pending:'
+
 /** Events for a run id the renderer has not learned yet (IPC reply vs first stream event race). */
 const MAX_EARLY_EVENTS = 500
 
@@ -69,6 +72,10 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
 
   const start = useCallback(async (chatId: string, task: string): Promise<boolean> => {
     setStartError(null)
+    // Planning starts now from the user's point of view: show it while the sidecar starts the run.
+    const provisional: ActiveRun = { chatId, task, view: emptyRunView(`${PENDING_RUN_PREFIX}${Date.now()}`), review: false, config: DEFAULT_MULTI_AGENT_CONFIG }
+    runRef.current = provisional
+    setRun(provisional)
     // Settings may have changed since mount — always start with the saved config.
     const config: MultiAgentConfig = await window.api
       .getMultiAgentConfig()
@@ -84,14 +91,19 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
       })
       .catch(() => { /* estimate falls back to "price unknown" */ })
 
-    const started = await window.api.startMultiAgentRun({ chatId, task, config })
+    const started = await window.api.startMultiAgentRun({ chatId, task, config }).catch((err: unknown) =>
+      ({ ok: false as const, reason: err instanceof Error ? err.message : String(err) }))
     if (!started.ok) {
+      if (runRef.current === provisional) {
+        runRef.current = null
+        setRun(null)
+      }
       setStartError(started.reason)
       return false
     }
     const buffered = early.current.filter((e) => e.runId === started.runId)
     early.current = early.current.filter((e) => e.runId !== started.runId)
-    const view = buffered.reduce(applyAgentEvent, emptyRunView(started.runId))
+    const view = buffered.reduce(applyAgentEvent, emptyRunView(started.runId, provisional.view.startedAt))
     const next: ActiveRun = { chatId, task, view, review: false, config: started.config ?? config, runIds: started.runIds, recorded: started.recorded }
     runRef.current = next
     setRun(next)
@@ -130,6 +142,15 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     })
   }, [])
 
+  /** Slow-plan escape hatch: stop the orchestrator and take the quick fallback plan (still needs approval). */
+  const quickPlan = useCallback(async (): Promise<void> => {
+    const current = runRef.current
+    if (!current || current.review || current.view.runId.startsWith(PENDING_RUN_PREFIX)) return
+    await window.api.useQuickMultiAgentPlan(current.view.runId).catch((err: unknown) => {
+      setStartError(err instanceof Error ? err.message : String(err))
+    })
+  }, [])
+
   const abort = useCallback(() => {
     const current = runRef.current
     if (!current || current.review) return
@@ -141,7 +162,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
   // Memoised so Layout's callbacks that depend on it (handleSend → the memo'd
   // InputBar) keep their identity across unrelated Layout renders.
   return useMemo(
-    () => ({ run, startError, setStartError, pricing, start, review, dismiss, approvePlan, abort }),
-    [run, startError, pricing, start, review, dismiss, approvePlan, abort],
+    () => ({ run, startError, setStartError, pricing, start, review, dismiss, approvePlan, abort, quickPlan }),
+    [run, startError, pricing, start, review, dismiss, approvePlan, abort, quickPlan],
   )
 }

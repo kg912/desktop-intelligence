@@ -10,6 +10,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, ReflectionView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting } from '../../lib/approvalQueue'
+import { PlanningStage, PlanningStepper } from './PlanningStage'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
@@ -75,6 +76,8 @@ interface Props {
   recorded?: boolean
   /** Opens the agent focus view (row full-screen button). */
   onOpenAgent?: (agentId: string) => void
+  /** Slow-plan escape hatch: use the quick fallback plan. */
+  onQuickPlan?: () => Promise<void> | void
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -90,6 +93,8 @@ export function MultiAgentSidebarView(props: Props) {
   )
 
   const models = view.runConfig?.models ?? config.models
+  // Planning (or a run that ended before it had a plan): the planning state, never an empty pane.
+  const planning = view.steps.length === 0 && (view.phase === 'planning' || view.phase === 'failed')
   return (
     <div className="flex h-full w-full text-ma-text" data-testid="agent-dock">
       {!props.hidePlanColumn && <section aria-label="Run plan" className="flex min-h-0 flex-none flex-col border-r-[0.5px] border-white/5" style={{ width: PLAN_COLUMN_WIDTH }}>
@@ -121,7 +126,7 @@ export function MultiAgentSidebarView(props: Props) {
         </div>
         {view.steps.length > 0 && <ConcurrencyTimeline view={view} live={live} now={now} />}
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          {view.steps.length === 0 && <p className="px-2 py-3 text-[12.5px] text-ma-mute">{view.phase === 'failed' ? view.failureReason : 'Orchestrator is planning…'}</p>}
+          {planning && <div className="-m-2"><PlanningStepper planning={view.planning} now={live ? now : (view.endedAt ?? now)} failed={view.phase === 'failed'} /></div>}
           {view.steps.map((step) => {
             const agent = view.agents[step.id]
             if (!agent) return null
@@ -158,7 +163,9 @@ export function MultiAgentSidebarView(props: Props) {
       </section>}
 
       <section aria-label="Agent traces" className="min-w-0 flex-1 overflow-y-auto p-3.5">
-        {view.phase === 'preflight' && !readOnly ? (
+        {planning ? (
+          <PlanningStage view={view} orchestratorModel={models.orchestrator} live={live} now={live ? now : (view.endedAt ?? now)} onQuickPlan={readOnly ? undefined : props.onQuickPlan} onAbort={props.onAbort} />
+        ) : view.phase === 'preflight' && !readOnly ? (
           <Preflight view={view} config={config} estimate={estimate} onApprove={props.onApprove} onCancel={props.onCancel} />
         ) : (
           <AgentCards view={view} now={now} config={config} requestsByAgent={requestsByAgent} onRespondPermission={onRespondPermission} focusAgentId={focusAgentId} onOpenAgent={props.onOpenAgent} />
@@ -277,6 +284,11 @@ function Preflight({ view, config, estimate, onApprove, onCancel }: {
     <div className="rounded-xl border-[0.5px] border-ma-amber/35 bg-ma-bg1 p-4" data-testid="preflight">
       <p className="text-[14px] font-medium">Review the plan</p>
       <p className="mt-0.5 text-[12.5px] text-ma-mute">Approve it before any agent starts.</p>
+      {view.planning.fallbackReason && (
+        <p className="mt-2.5 rounded-lg border-[0.5px] border-dashed border-[#e6b422]/50 bg-[#e6b422]/[0.05] px-3 py-2 text-[12.5px] text-[#e8c77f]" role="status" data-testid="fallback-plan">
+          This is the quick 3-step fallback plan, not one the orchestrator wrote. {view.planning.fallbackReason} Approve to run it, or cancel.
+        </p>
+      )}
       <ol className="mt-3 space-y-1.5">
         {view.steps.map((s) => (
           <li key={s.id} className="flex gap-2 text-[13px]">

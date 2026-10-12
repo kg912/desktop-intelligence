@@ -272,6 +272,57 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     await srtBackend.shutdown()
   })
 
+  it('UI Goal 5: the plan streams — started, stages, reasoning, each subtask as it is written, then the plan', async () => {
+    planOverride = () => ({ reasoning: 'Split research from analysis.', content: JSON.stringify([
+      { id: '1.1', label: 'Research the topic', role: 'Researcher', dependsOn: [] },
+      { id: '1.2', label: 'Analyze the implications', role: 'Analyzer', dependsOn: [] },
+    ]) })
+    try {
+      const events = await runToEnd(mgr, { onEvent: (e) => { if (e.type === 'hitl_pause' && e.serverName === 'multi-agent') void mgr.respondHitl({ runId: e.runId, agentId: 'orchestrator', approved: false }) } })
+      const planning = events.slice(0, events.findIndex((e) => e.type === 'orchestrator_plan') + 1)
+      const compact = planning.filter((e) => e.type !== 'plan_reasoning').map((e) =>
+        e.type === 'plan_stage_changed' ? `stage:${e.stage}` : e.type === 'plan_subtask_added' ? `subtask:${e.step.id}` : e.type)
+      expect(compact).toEqual(['plan_started', 'stage:reading', 'stage:splitting', 'subtask:1.1', 'subtask:1.2', 'stage:assigning', 'stage:wiring', 'orchestrator_plan'])
+      expect(planning.filter((e) => e.type === 'plan_reasoning').map((e) => (e as { token: string }).token).join('')).toBe('Split research from analysis.')
+      expect(planning.find((e) => e.type === 'plan_subtask_added')).toMatchObject({ step: { id: '1.1', label: 'Research the topic', role: 'Researcher', dependsOn: [] } })
+      expect(planning.at(-1)).not.toHaveProperty('fallback')
+    } finally {
+      planOverride = null
+    }
+  }, 60_000)
+
+  it('UI Goal 5: an orchestrator error is not silent — the fallback plan arrives with the reason, and still needs approval', async () => {
+    planOverride = () => ({ httpError: { status: 502, message: 'upstream unavailable' } })
+    try {
+      const events = await runToEnd(mgr, { onEvent: (e) => { if (e.type === 'hitl_pause' && e.serverName === 'multi-agent') void mgr.respondHitl({ runId: e.runId, agentId: 'orchestrator', approved: false }) } })
+      const plan = events.find((e) => e.type === 'orchestrator_plan') as Extract<AgentEvent, { type: 'orchestrator_plan' }>
+      expect(plan.fallback).toBe(true)
+      expect(plan.fallbackReason).toMatch(/^The orchestrator failed: OpenRouter HTTP 502: .*upstream unavailable/)
+      expect(events.at(-1)).toMatchObject({ type: 'task_failed', reason: 'Plan not approved' })
+    } finally {
+      planOverride = null
+    }
+  }, 60_000)
+
+  it('UI Goal 5: "Use quick 3-step plan" stops a slow planner and offers the fallback, saying the user chose it', async () => {
+    planOverride = () => ({ content: '[{"id": "1.1", "label": "Slow", "role": "R", "dependsOn": []}]', delayMs: 1_500 })
+    try {
+      let asked = false
+      const events = await runToEnd(mgr, {
+        onEvent: (e) => {
+          if (e.type === 'plan_started' && !asked) { asked = true; void mgr.quickPlan(e.runId) }
+          if (e.type === 'hitl_pause' && e.serverName === 'multi-agent') void mgr.respondHitl({ runId: e.runId, agentId: 'orchestrator', approved: false })
+        },
+      })
+      const plan = events.find((e) => e.type === 'orchestrator_plan') as Extract<AgentEvent, { type: 'orchestrator_plan' }>
+      expect(plan).toMatchObject({ fallback: true, fallbackReason: 'You chose the quick 3-step plan.' })
+      expect(plan.steps.map((st) => st.label)).toEqual(['Analyze the task', 'Research supporting evidence', 'Review risks and recommendations'])
+      await expect(mgr.quickPlan(events[0].runId)).rejects.toThrow() // no longer planning (or already gone)
+    } finally {
+      planOverride = null
+    }
+  }, 60_000)
+
   it('runs parallel agents end-to-end: tool pause does not block the other agent, reflection retries, provenance synthesis (D1–D4, D7)', async () => {
     fake.requests.length = 0
     plannerCalls = 0

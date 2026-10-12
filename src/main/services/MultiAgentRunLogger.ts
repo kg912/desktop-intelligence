@@ -505,7 +505,7 @@ export function findAnomalies(_meta: RunLogMeta, events: AgentEvent[], records: 
     for (const c of r.capped ?? []) out.push({ kind: 'capped', message: `${who(r)}: ${c.field} cut in the log (${c.originalChars} chars)`, ref })
   }
   for (const e of events) {
-    if (e.type === 'orchestrator_plan' && e.fallback) out.push({ kind: 'fallback_plan', message: 'the planner never returned a usable plan; the built-in fallback plan ran', ref: 'planner.md' })
+    if (e.type === 'orchestrator_plan' && e.fallback) out.push({ kind: 'fallback_plan', message: e.fallbackReason ? `the built-in fallback plan ran: ${e.fallbackReason}` : 'the planner never returned a usable plan; the built-in fallback plan ran', ref: 'planner.md' })
     if (e.type === 'agent_complete' && e.stoppedAtToolLimit) {
       out.push({ kind: 'tool_limit', message: `agent ${e.agentId} stopped at tool limit (attempt ${e.attempt ?? 0}): its answer came from the forced wrap-up round`, ref: `agent-${safeId(e.agentId)}.md` })
     }

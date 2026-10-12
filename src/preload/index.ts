@@ -388,6 +388,10 @@ const api = {
   abortMultiAgentRun: (runId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ABORT, runId),
 
+  /** Slow-plan escape hatch: use the quick fallback plan instead of waiting for the orchestrator. */
+  useQuickMultiAgentPlan: (runId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_QUICK_PLAN, runId),
+
   getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS),
 

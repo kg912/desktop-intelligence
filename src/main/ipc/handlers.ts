@@ -1447,6 +1447,10 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     getMultiAgentCoordinator().abort(String(runId))
   )
 
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_QUICK_PLAN, (_, runId: string) =>
+    getMultiAgentCoordinator().quickPlan(String(runId))
+  )
+
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>
     multiAgentSidecar.getStatus()
   )

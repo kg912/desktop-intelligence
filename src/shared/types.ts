@@ -477,6 +477,7 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_START:          'multi-agent:start',
   MULTI_AGENT_HITL_RESPOND:   'multi-agent:hitl-respond',
   MULTI_AGENT_ABORT:          'multi-agent:abort',
+  MULTI_AGENT_QUICK_PLAN:     'multi-agent:quick-plan',
   MULTI_AGENT_SIDECAR_STATUS: 'multi-agent:sidecar-status',
   MULTI_AGENT_GET_CONFIG: 'multi-agent:get-config',
   MULTI_AGENT_SAVE_CONFIG: 'multi-agent:save-config',
@@ -596,6 +597,8 @@ export interface OrchestratorPlanEvent extends AgentEventBase {
   steps: AgentStep[]
   /** The planner never returned a usable plan; these are the sidecar's built-in steps. */
   fallback?: boolean
+  /** Why the fallback was used (planner error, no usable plan, or the user chose the quick plan). */
+  fallbackReason?: string
   /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
   modelServed?: string
 }
@@ -813,7 +816,41 @@ export interface TaskFailedEvent extends AgentEventBase {
   partialOutputs?:  Record<string, string>
 }
 
+// ── Plan streaming (UI Goal 5): the orchestrator's plan as it is written ─────
+
+export type PlanStage = 'reading' | 'splitting' | 'assigning' | 'wiring'
+
+export interface PlanStartedEvent extends AgentEventBase {
+  type: 'plan_started'
+  maxAgents: number
+}
+
+export interface PlanStageChangedEvent extends AgentEventBase {
+  type: 'plan_stage_changed'
+  stage: PlanStage
+  /** Planner attempt (0-based); a re-plan restarts the draft. */
+  attempt: number
+}
+
+/** One complete subtask parsed out of the planner's streaming JSON. Draft only: orchestrator_plan is authoritative. */
+export interface PlanSubtaskAddedEvent extends AgentEventBase {
+  type: 'plan_subtask_added'
+  attempt: number
+  index: number
+  step: { id: string; label: string; role: string; dependsOn: string[] }
+}
+
+/** Orchestrator reasoning, when the model streams it. */
+export interface PlanReasoningEvent extends AgentEventBase {
+  type: 'plan_reasoning'
+  token: string
+}
+
 export type AgentEvent =
+  | PlanStartedEvent
+  | PlanStageChangedEvent
+  | PlanSubtaskAddedEvent
+  | PlanReasoningEvent
   | OrchestratorPlanEvent
   | RunConfigEvent
   | AgentStartEvent

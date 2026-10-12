@@ -23,6 +23,7 @@ class FakeSidecar extends EventEmitter {
   })
   respondHitl = vi.fn(async () => {})
   abortRun = vi.fn(async () => {})
+  quickPlan = vi.fn(async () => {})
   isAwaitingPlanApproval = vi.fn(() => this.awaitingPlan)
   push(event: Partial<AgentEvent> & { type: string; seq: number }): void {
     this.emit('event', { runId: this.runId, ts: 1, ...event })
@@ -308,6 +309,25 @@ describe('MultiAgentRunCoordinator events', () => {
     expect(message).toContain('Multi-agent run failed:** Run aborted by user')
     expect(message).toContain('[1.1]** Partial A')
     expect(h.db.saveTrace).toHaveBeenLastCalledWith('chat-1', expect.any(Array), 'failed', undefined)
+  })
+
+  it('Goal 5: plan reasoning is coalesced like other tokens; plan stage and subtask events are stored as they are', async () => {
+    h.sidecar.push({ type: 'plan_started', seq: 1, ts: 1_000, maxAgents: 4 } as never)
+    h.sidecar.push({ type: 'plan_stage_changed', seq: 2, ts: 1_000, stage: 'reading', attempt: 0 } as never)
+    h.sidecar.push({ type: 'plan_reasoning', seq: 3, ts: 1_010, token: 'Group ' } as never)
+    h.sidecar.push({ type: 'plan_reasoning', seq: 4, ts: 1_020, token: 'by region.' } as never)
+    h.sidecar.push({ type: 'plan_subtask_added', seq: 5, ts: 1_030, attempt: 0, index: 0, step: { id: '1.1', label: 'Route', role: 'R', dependsOn: [] } } as never)
+    h.sidecar.push({ type: 'task_failed', seq: 6, ts: 1_100, reason: 'x', partialOutputs: {} } as never)
+    await tick(20)
+    const trace = h.db.saveTrace.mock.calls.at(-1)![1] as AgentEvent[]
+    expect(trace.map((e) => [e.type, e.seq])).toEqual([['plan_started', 1], ['plan_stage_changed', 2], ['plan_reasoning', 3], ['plan_subtask_added', 5], ['task_failed', 6]])
+    expect(trace[2]).toMatchObject({ token: 'Group by region.' })
+  })
+
+  it('Goal 5: "Use quick 3-step plan" goes to the sidecar for a live run only', async () => {
+    await h.coordinator.quickPlan('run-1')
+    expect(h.sidecar.quickPlan).toHaveBeenCalledWith('run-1')
+    await expect(h.coordinator.quickPlan('nope')).rejects.toThrow('No such live run')
   })
 
   it('answers the plan only while the sidecar is waiting for it — and never with a tool result', async () => {

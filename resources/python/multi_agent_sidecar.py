@@ -200,6 +200,8 @@ class Run:
     # agentId → callId → {name, args, ok, attempt, result}: every tool call in full (capped at
     # RECORD_FIELD_CAP_CHARS), kept apart from the message history so compacting it loses no evidence.
     evidence: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # The user chose the quick fallback plan while the orchestrator was still planning (UI Goal 5).
+    quick_plan: bool = False
 
     @property
     def config(self) -> Config:
@@ -637,6 +639,8 @@ async def ask(
     synthesis: bool = False,
     loop_guard: bool = False,
     obs: dict[str, Any] | None = None,
+    stop: Callable[[], bool] | None = None,
+    request_reasoning: bool = True,
 ) -> tuple[dict[str, Any], int, float]:
     """One paid request. Never starts once the budget is reached (spec §06).
     obs: who is calling (role, agentId, attempt, toolRound, retry), for the call record."""
@@ -668,13 +672,15 @@ async def ask(
     # Reasoning is requested only where a trace shows it (workers), and never
     # for a model the catalogue says does not take the parameter.
     effort = run.config.reasoningEffort
-    reasoning_effort = effort if on_reasoning and effort != "off" and model not in run.request.noReasoning else None
+    # request_reasoning=False: forward reasoning the model sends anyway, but do not ask for it (the planner).
+    reasoning_effort = effort if on_reasoning and request_reasoning and effort != "off" and model not in run.request.noReasoning else None
 
     capture: dict[str, Any] | None = {} if run.request.observe else None
 
     def work() -> tuple[dict[str, Any], dict[str, Any]]:
         try:
-            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push, lambda: run.cancelled,
+            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push,
+                                      lambda: run.cancelled or (stop is not None and stop()),
                                       reasoning_effort, loop_guard, capture)
         finally:
             push("done")
@@ -819,6 +825,54 @@ def is_pure_chain(steps: list[dict[str, Any]]) -> bool:
     return len(steps) >= 2 and len({s["phase"] for s in steps}) == len(steps)
 
 
+def partial_plan_steps(text: str) -> list[dict[str, Any]]:
+    """The complete step objects of a plan array that is still streaming, in order. Objects whose
+    closing brace has not arrived yet are left out; strings may contain braces and brackets."""
+    start = text.find("[")
+    if start < 0:
+        return []
+    steps: list[dict[str, Any]] = []
+    depth, in_str, escaped, obj_start = 0, False, False, -1
+    for i in range(start + 1, len(text)):
+        ch = text[i]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[obj_start:i + 1])
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and str(obj.get("label", "")).strip():
+                    steps.append(obj)
+        elif ch == "]" and depth == 0:
+            break
+    return steps
+
+
+def draft_step(obj: dict[str, Any], index: int) -> dict[str, Any]:
+    """What the UI needs to draw a subtask the planner has written so far."""
+    deps = obj.get("dependsOn") if isinstance(obj.get("dependsOn"), list) else []
+    return {"id": str(obj.get("id") or "").strip()[:20] or f"s{index + 1}", "label": str(obj["label"]).strip()[:200],
+            "role": str(obj.get("role") or "").strip()[:60], "dependsOn": [str(d) for d in deps]}
+
+
+QUICK_PLAN_REASON = "You chose the quick 3-step plan."
+
+
 def fallback_plan(config: Config) -> list[dict[str, Any]]:
     labels = ["Analyze the task", "Research supporting evidence", "Review risks and recommendations"]
     return [{"id": f"1.{i + 1}", "label": labels[i], "stage": "worker", "role": "Analyst", "model": config.models.get("worker", ""),
@@ -842,8 +896,43 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     steps: list[dict[str, Any]] | None = None
     chain_checked = False
     served = ""
+    fallback_reason = ""
+    # The plan streams to the UI as it is written (UI Goal 5): stages, each complete subtask, any reasoning.
+    await run.emit("plan_started", maxAgents=config.maxAgents)
+    await run.emit("plan_stage_changed", stage="reading", attempt=0)
     for attempt in range(4):
-        reply, _, _ = await ask(run, model, messages, obs={"role": "planner", "attempt": attempt})
+        if run.quick_plan:
+            fallback_reason = QUICK_PLAN_REASON
+            break
+        text_so_far: list[str] = []
+        shown = 0
+
+        async def on_token(token: str, attempt: int = attempt) -> None:
+            nonlocal shown
+            before = "".join(text_so_far)
+            text_so_far.append(token)
+            text = before + token
+            if "[" in text and "[" not in before:
+                await run.emit("plan_stage_changed", stage="splitting", attempt=attempt)
+            found = partial_plan_steps(text)
+            for index in range(shown, len(found)):
+                await run.emit("plan_subtask_added", attempt=attempt, index=index, step=draft_step(found[index], index))
+            shown = len(found)
+
+        async def on_reasoning(token: str) -> None:
+            await run.emit("plan_reasoning", token=token)
+
+        try:
+            reply, _, _ = await ask(run, model, messages, on_token=on_token, on_reasoning=on_reasoning, request_reasoning=False,
+                                    stop=lambda: run.quick_plan, obs={"role": "planner", "attempt": attempt})
+        except (BudgetReached, asyncio.CancelledError):
+            raise
+        except Exception as exc:  # noqa: BLE001 — a planner error is shown with the fallback the user can approve or cancel
+            fallback_reason = f"The orchestrator failed: {exc}"
+            break
+        if run.quick_plan:
+            fallback_reason = QUICK_PLAN_REASON
+            break
         served = reply.get("model_served") or served
         text = str(reply.get("content") or "")
         try:
@@ -873,11 +962,18 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
             print(f"[plan] run {run.run_id}: chain correction → {outcome}", file=sys.stderr, flush=True)
         steps = candidate
         break
+    if steps is None and not fallback_reason:
+        fallback_reason = "The orchestrator did not return a usable plan after 4 attempts."
+    await run.emit("plan_stage_changed", stage="assigning", attempt=0)
+    await run.emit("plan_stage_changed", stage="wiring", attempt=0)
     fallback = steps is None
     steps = steps or fallback_plan(config)
     for s in steps:
         s.pop("chainReason", None)
-    await run.emit("orchestrator_plan", steps=steps, **({"fallback": True} if fallback else {}), **({"modelServed": served} if served else {}))
+    if fallback:  # never silent: the reason reaches the plan approval screen and the run log
+        print(f"[plan] run {run.run_id}: using the fallback plan — {fallback_reason}", file=sys.stderr, flush=True)
+    await run.emit("orchestrator_plan", steps=steps, **({"fallback": True, "fallbackReason": fallback_reason} if fallback else {}),
+                   **({"modelServed": served} if served else {}))
     await run.emit("run_config", models=config.models,
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
                    catalogueChecked=run.request.catalogueChecked, maxAgents=config.maxAgents, budgetCapUsd=config.budgetCapUsd,
@@ -1588,6 +1684,18 @@ async def hitl(run_id: str, response: HitlResponse) -> dict[str, bool]:
         raise HTTPException(409, "agent is not waiting for approval")
     future.set_result((response.approved, response.result or ""))
     await run.emit("hitl_resume", agentId=response.agentId, approved=response.approved, **run.attempt_of(response.agentId))
+    return {"ok": True}
+
+
+@app.post("/run/{run_id}/quick-plan")
+async def quick_plan(run_id: str) -> dict[str, bool]:
+    """Slow-plan escape hatch: stop the orchestrator and use the fallback plan (which still needs approval)."""
+    run = RUNS.get(run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    if run.finished or any(e.get("type") == "orchestrator_plan" for e in run.events):
+        raise HTTPException(409, "the run is no longer planning")
+    run.quick_plan = True
     return {"ok": True}
 
 

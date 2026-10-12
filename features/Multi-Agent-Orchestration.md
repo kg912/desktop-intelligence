@@ -165,7 +165,11 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 
 | `type` | payload (+ base) |
 |---|---|
-| `orchestrator_plan` | `steps: AgentStep[]` |
+| `plan_started` | `maxAgents` — planning began (UI Goal 5) |
+| `plan_stage_changed` | `stage ('reading' \| 'splitting' \| 'assigning' \| 'wiring'), attempt` |
+| `plan_subtask_added` | `attempt, index, step {id, label, role, dependsOn}` — a complete subtask parsed out of the planner's streaming JSON; draft only |
+| `plan_reasoning` | `token` — orchestrator reasoning when the model streams it (not requested) |
+| `orchestrator_plan` | `steps: AgentStep[]` (+ `fallback?, fallbackReason?` — the fallback plan is never silent) |
 | `agent_start` | `agentId, role, model` |
 | `agent_token` | `agentId, token` |
 | `agent_complete` | `agentId, output, tokenCount, costUsd` |
@@ -315,6 +319,9 @@ reflection max retries ──► best attempt passed on, "accepted with caveats"
 HITL pause times out   ──► auto-deny that tool, fail that agent, others continue      run continues
 budget cap hit         ──► no new agents; partial synthesis; "budget cap" badge       run completes
 abort                  ──► DELETE /run/{id}; clean kill; no orphaned process          app fine
+planner fails / slow   ──► orchestrator error or 4 unusable replies → fallback plan     user decides
+                           with fallbackReason shown at plan approval; after 45s the
+                           UI offers POST /run/{id}/quick-plan ("Use quick 3-step plan")
 app quits mid-run      ──► sidecar terminated cleanly on quit                         no orphans
 ```
 

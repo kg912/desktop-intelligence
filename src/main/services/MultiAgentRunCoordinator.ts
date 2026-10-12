@@ -34,7 +34,7 @@ import { currentDateTimeLine } from './SystemPromptService'
 import { BUILTIN_SERVER, McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext } from './McpServerManager'
 
-type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'agent_reasoning' | 'synthesis_token' }>
+type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'agent_reasoning' | 'synthesis_token' | 'plan_reasoning' }>
 
 /** Stored token/reasoning events are coalesced per agent and attempt into one per window. */
 export const COALESCE_WINDOW_MS = 250
@@ -60,6 +60,7 @@ export interface CoordinatorDeps {
     startRun(request: RunStartRequest): Promise<StartRunResult>
     respondHitl(response: { runId: string; agentId: string; approved: boolean; result?: string }): Promise<void>
     abortRun(runId: string): Promise<void>
+    quickPlan(runId: string): Promise<void>
     isAwaitingPlanApproval(runId: string): boolean
   }
   mcp: {
@@ -232,6 +233,12 @@ export class MultiAgentRunCoordinator {
     return this.deps.sidecar.abortRun(runId)
   }
 
+  /** Slow-plan escape hatch: stop the orchestrator; its fallback plan still goes through approval. */
+  quickPlan(runId: string): Promise<void> {
+    if (!this.runs.has(runId)) return Promise.reject(new Error('No such live run'))
+    return this.deps.sidecar.quickPlan(runId)
+  }
+
   /** The chat's live run, else its latest saved one; `runId` picks a specific (earlier) run. */
   getRun(chatId: string, runId?: string): MultiAgentRunRecord | null {
     const live = [...this.runs.values()].find((r) => r.chatId === chatId)
@@ -257,8 +264,8 @@ export class MultiAgentRunCoordinator {
     if (!run) return
     this.deps.sendEvent(event)
 
-    if (event.type === 'agent_token' || event.type === 'agent_reasoning' || event.type === 'synthesis_token') {
-      const key = event.type === 'synthesis_token' ? 'synthesis' : `${event.type}:${event.agentId}:${event.attempt ?? 0}`
+    if (event.type === 'agent_token' || event.type === 'agent_reasoning' || event.type === 'synthesis_token' || event.type === 'plan_reasoning') {
+      const key = event.type === 'synthesis_token' || event.type === 'plan_reasoning' ? event.type : `${event.type}:${event.agentId}:${event.attempt ?? 0}`
       const pending = run.pendingTokens.get(key)
       if (pending && event.ts - pending.ts < COALESCE_WINDOW_MS) {
         run.pendingTokens.set(key, { ...pending, token: pending.token + event.token })

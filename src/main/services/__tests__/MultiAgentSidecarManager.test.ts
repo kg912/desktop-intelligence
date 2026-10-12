@@ -82,7 +82,7 @@ function harness(): Harness {
     if (path === '/health') return json({ ok: true })
     if (path === '/run' && init.method === 'POST') return json({ runId: JSON.parse(String(init.body)).runId })
     if (path.endsWith('/stream')) return stream.response
-    if (path.endsWith('/hitl')) return json({ ok: true })
+    if (path.endsWith('/hitl') || path.endsWith('/quick-plan')) return json({ ok: true })
     if (init.method === 'DELETE') return json({ ok: true })
     return json({}, 404)
   })
@@ -259,6 +259,14 @@ describe('MultiAgentSidecarManager — event stream', () => {
     h.stream.push({ type: 'task_failed', seq: 1, reason: 'Run aborted by user' } as never)
     await tick(20)
     expect(h.events.filter((e) => e.type === 'task_failed')).toHaveLength(1)
+  })
+
+  it('quick plan (UI Goal 5): POSTs /run/<id>/quick-plan; a 409 says the run is no longer planning', async () => {
+    const runId = await startRun(h)
+    await h.mgr.quickPlan(runId)
+    expect(h.calls.some((c) => c.init.method === 'POST' && c.url.endsWith(`/run/${runId}/quick-plan`))).toBe(true)
+    h.fetchFn.mockImplementation(async () => json({}, 409))
+    await expect(h.mgr.quickPlan(runId)).rejects.toThrow('The run is no longer planning')
   })
 
   it('abort: falls back to a local terminal event when the sidecar cannot be reached', async () => {

@@ -23,7 +23,7 @@ function coordinator() {
       sidecar.emit('runStarted', { runId: 'run-1', chatId: req.chatId })
       return { ok: true as const, runId: 'run-1' }
     }),
-    respondHitl: vi.fn(), abortRun: vi.fn(), isAwaitingPlanApproval: vi.fn(() => false),
+    respondHitl: vi.fn(), abortRun: vi.fn(), quickPlan: vi.fn(), isAwaitingPlanApproval: vi.fn(() => false),
   })
   const c = new MultiAgentRunCoordinator({
     sidecar: sidecar as unknown as CoordinatorDeps['sidecar'],

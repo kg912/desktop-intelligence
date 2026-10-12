@@ -458,6 +458,12 @@ export class MultiAgentSidecarManager extends EventEmitter {
     if (!result.ok) throw new Error(`Sidecar HITL response failed (${result.status})`)
   }
 
+  /** Ask the planner to stop and use the fallback plan (UI Goal 5 slow-plan escape). */
+  async quickPlan(runId: string): Promise<void> {
+    const result = await this.request(`/run/${encodeURIComponent(runId)}/quick-plan`, { method: 'POST' })
+    if (!result.ok) throw new Error(result.status === 409 ? 'The run is no longer planning' : `Sidecar quick plan failed (${result.status})`)
+  }
+
   async abortRun(runId: string): Promise<void> {
     const run = this.runs.get(runId)
     if (!run || run.terminal) return

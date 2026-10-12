@@ -457,6 +457,24 @@
 }
 [data-testid="agent-focus-backdrop"] { background: rgba(0,0,0,0.35); }
 
+.ma-canvas {
+  background-color: #0c0c0c;
+  background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+/* Planning ghosts shimmer and active flow edges march — only while the run is live and the window is visible. */
+@keyframes ma-shimmer { from { background-position: -300px 0; } to { background-position: 300px 0; } }
+.ma-ghost {
+  background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(229,57,53,0.10) 50%, rgba(255,255,255,0.03) 100%) #0c0c0c;
+  background-size: 600px 100%;
+  animation: ma-shimmer 1.8s linear infinite;
+}
+@keyframes ma-flow { to { stroke-dashoffset: -16; } }
+.ma-flow { animation: ma-flow 0.9s linear infinite; }
+.ma-plan-active { box-shadow: 0 0 10px rgba(229,57,53,0.7); animation: ma-glow 1.4s ease-in-out infinite; }
+[data-animate="false"] .ma-ghost, [data-animate="false"] .ma-flow, [data-page-visible="false"] .ma-plan-active { animation: none; }
+@media (prefers-reduced-motion: reduce) { .ma-ghost, .ma-flow, .ma-plan-active { animation: none; } }
+
 .ma-strip { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms ease; }
 .ma-strip[data-open="true"] { grid-template-rows: 1fr; }
 @media (prefers-reduced-motion: reduce) { .ma-strip { transition: none; } }
