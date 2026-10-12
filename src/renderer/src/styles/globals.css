@@ -448,6 +448,10 @@
 .ma-ev[data-k="approval"] > .ma-k { border-color: rgba(226,169,59,.5); background: rgba(226,169,59,.10); }
 
 .ma-cursor { display: inline-block; width: 6px; height: 13px; background: #e53935; vertical-align: -2px; margin-left: 2px; animation: ma-blink 1s steps(2) infinite; }
+.ma-strip { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms ease; }
+.ma-strip[data-open="true"] { grid-template-rows: 1fr; }
+@media (prefers-reduced-motion: reduce) { .ma-strip { transition: none; } }
+
 .ma-glass-pill {
   border: 0.5px solid rgba(229, 57, 53, 0.55);
   background: rgba(229, 57, 53, 0.10);

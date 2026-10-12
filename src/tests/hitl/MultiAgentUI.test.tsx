@@ -70,6 +70,8 @@ const agentRequest = (agentId: string, role: string): McpToolPermissionRequest =
 })
 
 beforeEach(() => vi.clearAllMocks())
+/** Rows start collapsed (Goal 3); open one the way a user would. */
+const expand = (id: string) => fireEvent.click(within(screen.getByTestId(`agent-card-${id}`)).getByRole('button', { expanded: false }))
 
 describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
   it('pre-flight replaces the card column: plan with dependencies, cost range, worst case, approve/cancel, no Abort', () => {
@@ -155,7 +157,7 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     expect(screen.queryByText('Abort')).toBeNull()
   })
 
-  it('accordion: the working agent is open, a passed agent collapses to its header (no trace rendered), clicks toggle', () => {
+  it('accordion: every row starts collapsed, working or passed (no trace rendered); clicks toggle', () => {
     const v = view([
       { type: 'agent_start', agentId: '1.1', role: 'Researcher', model: 'm' },
       { type: 'agent_start', agentId: '1.2', role: 'Analyzer', model: 'm' },
@@ -163,7 +165,8 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
       { type: 'reflection_result', agentId: '1.1', score: 5, passed: true, reason: 'covers every cluster' },
     ])
     render(<MultiAgentSidebarView {...dockProps} view={v} />)
-    expect(screen.getByTestId('agent-card-1.2').dataset.open).toBe('true')
+    expect(screen.getByTestId('agent-card-1.2').dataset.open).toBe('false')
+    expect(screen.queryByTestId('agent-trace-1.2')).toBeNull()
     const passed = screen.getByTestId('agent-card-1.1')
     expect(passed.dataset.open).toBe('false')
     expect(within(passed).getByText('Pass 5/5')).toBeTruthy()
@@ -186,6 +189,7 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     render(<MultiAgentSidebarView {...dockProps} view={v} />)
     const card = screen.getByTestId('agent-card-1.1')
     expect(within(card).getByText('Retry 1 of 2')).toBeTruthy()
+    expand('1.1')
     const reasoning = within(card).getByTitle('Expand reasoning')
     expect(reasoning.className).toContain('line-clamp-3')
     fireEvent.click(reasoning)
@@ -201,7 +205,7 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     expect(gate.textContent).toContain('Split Hallstatt and Füssen')
   })
 
-  it('approval requests render inline in the agent\'s card: Approve, Deny, Trust this agent', () => {
+  it('an approval request slides out under its agent\'s row: Allow, Trust agent, Deny', () => {
     const v = view([
       { type: 'agent_start', agentId: '1.2', role: 'StayAgent', model: 'm' },
       { type: 'hitl_pause', agentId: '1.2', role: 'StayAgent', serverName: 'brave', toolName: 'web_search', args: {} },
@@ -209,13 +213,23 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     const requests = [agentRequest('1.2', 'StayAgent')]
     const { rerender } = render(<MultiAgentSidebarView {...dockProps} view={v} permissionRequests={requests} />)
     const card = screen.getByTestId('agent-card-1.2')
-    expect(within(card).getByText('Approval')).toBeTruthy()
+    expect(card.dataset.open).toBe('false')
+    expect(screen.getByTestId('agent-chip-1.2').textContent).toBe('needs approval')
     expect(within(screen.getByTestId('step-1.2')).getByText('Analyzer · needs approval')).toBeTruthy()
-    fireEvent.click(within(card).getByText('Trust StayAgent for this run'))
+    const strip = within(card).getByTestId('approval-q-1.2')
+    expect(within(strip).getByText('web_search')).toBeTruthy()
+    expect(within(strip).getByText('q: "hotels Füssen"')).toBeTruthy()
+    fireEvent.click(within(strip).getByText('Trust agent'))
     expect(dockProps.onRespondPermission).toHaveBeenCalledWith({ requestId: 'q-1.2', approved: true, alwaysAllow: false, userNote: '', agentTrust: 'trust' })
-    rerender(<MultiAgentSidebarView {...dockProps} view={v} permissionRequests={[{ ...requests[0], requestId: 'q2' }]} />)
-    fireEvent.click(within(screen.getByTestId('agent-card-1.2')).getByText('Deny'))
-    expect(dockProps.onRespondPermission).toHaveBeenLastCalledWith({ requestId: 'q2', approved: false, alwaysAllow: false, userNote: '' })
+    vi.useFakeTimers()
+    try {
+      rerender(<MultiAgentSidebarView {...dockProps} view={v} permissionRequests={[{ ...requests[0], requestId: 'q2' }]} />)
+      act(() => { vi.advanceTimersByTime(200) })
+      fireEvent.click(within(screen.getByTestId('approval-q2')).getByText('Deny'))
+      expect(dockProps.onRespondPermission).toHaveBeenLastCalledWith({ requestId: 'q2', approved: false, alwaysAllow: false, userNote: '' })
+      fireEvent.click(within(screen.getByTestId('approval-q2')).getByText('Allow'))
+      expect(dockProps.onRespondPermission).toHaveBeenCalledTimes(2) // one answer per request
+    } finally { vi.useRealTimers() }
   })
 
   it('read-only (a saved run): no Abort and no approvals', () => {
@@ -226,6 +240,8 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     render(<MultiAgentSidebarView {...dockProps} readOnly view={v} permissionRequests={[agentRequest('1.2', 'StayAgent')]} />)
     expect(screen.queryByText('Abort')).toBeNull()
     expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Allow')).toBeNull()
+    expect(screen.queryByTestId('approval-inbox')).toBeNull()
     expect(screen.getByText('read-only')).toBeTruthy()
   })
 
@@ -261,6 +277,7 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
       { type: 'tool_done', agentId: '1.1', attempt: 0, callId: 'c1', ok: true, durationMs: 1200, resultPreview: 'Hotel Müller', resultChars: 12 },
     ])
     render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    expand('1.1')
     expect(screen.getByTestId('agent-tools-1.1').textContent).toBe('Tools: brave_web_search, +2')
     expect(screen.getByTestId('agent-tools-1.1').title).toBe('builtin__brave_web_search, fs__read_file, fs__list')
     const trace = screen.getByTestId('agent-trace-1.1')
@@ -273,9 +290,11 @@ describe('MultiAgentSidebarView (the widened sidebar dock)', () => {
     const base = { type: 'run_config', models: DEFAULT_MULTI_AGENT_CONFIG.models, sources: {}, catalogueChecked: true, maxAgents: 4, budgetCapUsd: 0.5,
       reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium' }
     const { unmount } = render(<MultiAgentSidebarView {...dockProps} view={view([{ ...base, tools: [] }])} />)
+    expand('1.1')
     expect(screen.getByTestId('agent-tools-1.1').textContent).toBe('No tools')
     unmount()
     render(<MultiAgentSidebarView {...dockProps} view={view([base])} />)
+    expand('1.1')
     expect(screen.queryByTestId('agent-tools-1.1')).toBeNull()
   })
 
@@ -555,6 +574,7 @@ describe('Reasoning view and card fixes (Part E)', () => {
 
   it('collapsed: 3 lines; expanded: capped at 18 lines by CSS and scrolls inside; never clipped at the card edge', () => {
     render(<MultiAgentSidebarView {...dockProps} view={reasoningView('In this leg the Railjet takes two hours.')} />)
+    expand('1.1')
     const block = screen.getByTitle('Expand reasoning')
     expect(block.className).toContain('line-clamp-3')
     expect(block.className).toContain('min-w-0')
@@ -570,6 +590,7 @@ describe('Reasoning view and card fixes (Part E)', () => {
 
   it('while streaming, follows the end unless the user scrolled up', () => {
     const { rerender } = render(<MultiAgentSidebarView {...dockProps} view={reasoningView('step one')} />)
+    expand('1.1')
     fireEvent.click(screen.getByTitle('Expand reasoning'))
     const block = screen.getByTitle('Collapse reasoning')
     let height = 800
@@ -595,13 +616,14 @@ describe('Reasoning view and card fixes (Part E)', () => {
       { ...ev({ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 }), ts: Date.now() + 5_000 },
     ])
     render(<MultiAgentSidebarView {...dockProps} view={v} />)
-    const header = within(screen.getByTestId('agent-card-1.1')).getByRole('button', { expanded: true })
+    const header = within(screen.getByTestId('agent-card-1.1')).getByRole('button', { expanded: false })
     expect(header.textContent).toContain('0s')
     expect(header.textContent).not.toMatch(/-\d+s/)
   })
 
   it('a live card with no content shows plain "Working…" (no timeline marker) and the same chevron as other cards', () => {
     render(<MultiAgentSidebarView {...dockProps} view={view([{ type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 }])} />)
+    expand('1.1')
     const trace = screen.getByTestId('agent-trace-1.1')
     expect(screen.getByTestId('agent-empty-1.1').textContent).toBe('Working…')
     expect(trace.querySelector('.ma-ev')).toBeNull()
@@ -810,5 +832,123 @@ describe('steps accepted with caveats (reflection hardening Phase 7)', () => {
     render(<MultiAgentSidebarView {...dockProps} readOnly view={v} />)
     expect(within(screen.getByTestId('agent-card-1.2')).getByText('accepted with caveats')).toBeTruthy()
     expect(within(screen.getByTestId('agent-card-1.1')).getByText('Pass 4/5')).toBeTruthy()
+  })
+})
+
+describe('Goal 3 — collapsed rows with sequential permission slide-outs (designs/03-approval-queue.png)', () => {
+  const ids = ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8']
+  const eight = ids.map((id, i) => ({ id, label: `Task ${id}`, stage: 'worker', role: `Role${i}`, model: 'deepseek/flash', phase: i < 6 ? 1 : 2,
+    dependsOn: i < 6 ? [] : ['1.1', '1.2'] }))
+  const runOf8 = (extra: Array<Record<string, unknown>> = []) => {
+    seq = 0
+    return reduceRunEvents('run-1', [ev({ type: 'orchestrator_plan', steps: eight }), ...ids.slice(0, 6).map((id) => ev({ type: 'agent_start', agentId: id, role: 'R', model: 'm' })), ...extra.map(ev)])
+  }
+  const reqFor = (agentId: string, n: number, toolName = 'brave__web_search'): McpToolPermissionRequest => ({
+    serverName: toolName.split('__')[0], toolName, args: { q: `query ${agentId}.${n}` }, requestId: `r-${agentId}-${n}`, chatId: 'c',
+    agent: { runId: 'run-1', agentId, role: `Role ${agentId}`, model: 'deepseek/flash' }, timeoutMs: 300_000,
+  })
+
+  it('an 8-agent run with permissions required leaves every row collapsed, even while streaming', () => {
+    const v = runOf8(ids.slice(0, 6).map((id) => ({ type: 'agent_token', agentId: id, attempt: 0, token: 'a long streamed answer '.repeat(40) })))
+    render(<MultiAgentSidebarView {...dockProps} view={v} permissionRequests={[reqFor('1.1', 0), reqFor('1.2', 0)]} />)
+    for (const id of ids) {
+      expect(screen.getByTestId(`agent-card-${id}`).dataset.open).toBe('false')
+      expect(screen.queryByTestId(`agent-trace-${id}`)).toBeNull()
+    }
+  })
+
+  it('4 agents asking at once: exactly one strip per agent, the head of each queue, with "+N queued"', () => {
+    const requests = [reqFor('1.1', 0), reqFor('1.2', 0), reqFor('1.1', 1), reqFor('1.4', 0), reqFor('1.6', 0), reqFor('1.1', 2), reqFor('1.6', 1)]
+    render(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={requests} />)
+    for (const id of ['1.1', '1.2', '1.4', '1.6']) {
+      const card = screen.getByTestId(`agent-card-${id}`)
+      expect(card.dataset.approval).toBe('true')
+      expect(card.className).toContain('border-[#e6b422]/35')
+      expect(card.querySelectorAll('[data-testid^="approval-r-"]')).toHaveLength(1)
+    }
+    expect(screen.getByTestId('approval-r-1.1-0')).toBeTruthy()
+    expect(screen.queryByTestId('approval-r-1.1-1')).toBeNull()
+    expect(screen.getByTestId('queued-1.1').textContent).toBe('+2 queued')
+    expect(screen.getByTestId('queued-1.6').textContent).toBe('+1 queued')
+    expect(screen.queryByTestId('queued-1.2')).toBeNull()
+    for (const id of ['1.3', '1.5']) expect(screen.getByTestId(`agent-card-${id}`).dataset.approval).toBe('false')
+    expect(screen.getByTestId('approval-inbox-count').textContent).toBe('7 tool calls waiting on you across 4 agents')
+  })
+
+  it('resolving the head slides the strip shut, then the next request slides out', () => {
+    vi.useFakeTimers()
+    try {
+      const all = [reqFor('1.1', 0), reqFor('1.1', 1)]
+      const { rerender } = render(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={all} />)
+      const wrap = screen.getByTestId('approval-strip-wrap-1.1')
+      expect(wrap.dataset.open).toBe('true')
+      rerender(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={all.slice(1)} />)
+      expect(wrap.dataset.open).toBe('false')
+      expect(screen.getByTestId('approval-r-1.1-0')).toBeTruthy() // still the old content while it closes
+      act(() => { vi.advanceTimersByTime(180) })
+      expect(wrap.dataset.open).toBe('true')
+      expect(screen.getByTestId('approval-r-1.1-1')).toBeTruthy()
+      expect(screen.queryByTestId('queued-1.1')).toBeNull()
+      rerender(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={[]} />)
+      act(() => { vi.advanceTimersByTime(180) })
+      expect(wrap.dataset.open).toBe('false')
+      expect(screen.queryByTestId('approval-r-1.1-1')).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('"Trust <tool> for all" allows every waiting call of the most-requested tool for this chat (existing session allow list)', () => {
+    const requests = [reqFor('1.1', 0), reqFor('1.2', 0, 'fetch__get'), reqFor('1.4', 0), reqFor('1.1', 1)]
+    render(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={requests} />)
+    fireEvent.click(screen.getByText('Trust web_search for all'))
+    expect(dockProps.onRespondPermission.mock.calls.map((c) => c[0])).toEqual(['r-1.1-0', 'r-1.1-1', 'r-1.4-0'].map((requestId) =>
+      ({ requestId, approved: true, alwaysAllow: 'session', userNote: '' })))
+  })
+
+  it('Review next focuses the next waiting strip; J/K move and Y/N answer only while the list has focus', () => {
+    const requests = [reqFor('1.2', 0), reqFor('1.4', 0), reqFor('1.4', 1)]
+    render(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={requests} />)
+    const list = screen.getByTestId('agent-list')
+    fireEvent.keyDown(window, { key: 'y' }) // focus outside the list: ignored
+    expect(dockProps.onRespondPermission).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('Review next'))
+    expect(document.activeElement).toBe(document.getElementById('approval-strip-1.2'))
+    fireEvent.keyDown(list, { key: 'j' })
+    expect(document.activeElement).toBe(document.getElementById('approval-strip-1.4'))
+    expect(screen.getByTestId('approval-r-1.4-0').dataset.active).toBe('true')
+    fireEvent.keyDown(list, { key: 'n' })
+    expect(dockProps.onRespondPermission).toHaveBeenLastCalledWith({ requestId: 'r-1.4-0', approved: false, alwaysAllow: false, userNote: '' })
+    fireEvent.keyDown(list, { key: 'k' })
+    expect(document.activeElement).toBe(document.getElementById('approval-strip-1.2'))
+    fireEvent.keyDown(list, { key: 'y' })
+    expect(dockProps.onRespondPermission).toHaveBeenLastCalledWith({ requestId: 'r-1.2-0', approved: true, alwaysAllow: false, userNote: '' })
+  })
+
+  it('a blocked agent is dimmed and says what it waits on; a running tool shows in the chip with the tool-call count', () => {
+    const v = runOf8([
+      { type: 'tool_start', agentId: '1.3', attempt: 0, callId: 'c1', tool: 'brave_web_search', server: 'builtin', argsPreview: '{}' },
+      { type: 'tool_done', agentId: '1.3', attempt: 0, callId: 'c1', ok: true, durationMs: 10, resultPreview: 'x', resultChars: 1 },
+      { type: 'tool_start', agentId: '1.3', attempt: 0, callId: 'c2', tool: 'brave_web_search', server: 'builtin', argsPreview: '{}' },
+    ])
+    render(<MultiAgentSidebarView {...dockProps} view={v} />)
+    const blocked = screen.getByTestId('agent-card-1.7')
+    expect(blocked.className).toContain('opacity-[0.55]')
+    expect(screen.getByTestId('agent-meta-1.7').textContent).toBe('Role6 · waits on 1.1 1.2')
+    expect(screen.getByTestId('agent-chip-1.7').textContent).toBe('Queued')
+    expect(screen.getByTestId('agent-chip-1.3').textContent).toBe('running · brave_web_search')
+    expect(screen.getByTestId('agent-meta-1.3').textContent).toContain('2 tool calls')
+  })
+
+  it('bypass-permissions runs (no requests) show no strips and no inbox bar', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={[]} />)
+    expect(screen.queryByTestId('approval-inbox')).toBeNull()
+    expect(document.querySelectorAll('[data-testid^="approval-r-"]')).toHaveLength(0)
+    for (const id of ids) expect(screen.getByTestId(`approval-strip-wrap-${id}`).dataset.open).toBe('false')
+  })
+
+  it('the left column (Abort, cost and tokens, timeline) is unchanged', () => {
+    render(<MultiAgentSidebarView {...dockProps} view={runOf8()} permissionRequests={[reqFor('1.1', 0)]} />)
+    expect(screen.getByText('Abort')).toBeTruthy()
+    expect(screen.getByTestId('run-totals')).toBeTruthy()
+    expect(screen.getByTestId('concurrency-timeline')).toBeTruthy()
   })
 })

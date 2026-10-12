@@ -4,11 +4,12 @@
 // only — no motion.* here (M1 Pro scroll-jank issue).
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Network } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Maximize2, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, ReflectionView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
+import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting } from '../../lib/approvalQueue'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
@@ -72,6 +73,8 @@ interface Props {
   onShowRun?: (runId: string) => void
   /** false: this live run started with observability off and is not being logged. */
   recorded?: boolean
+  /** Opens the agent focus view (row full-screen button). */
+  onOpenAgent?: (agentId: string) => void
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -80,15 +83,11 @@ export function MultiAgentSidebarView(props: Props) {
   const now = useNow(live)
   useEscape(onClose)
 
-  const requestsByAgent = useMemo(() => {
-    const map = new Map<string, McpToolPermissionRequest[]>()
-    if (readOnly) return map
-    for (const r of permissionRequests) {
-      if (r.agent?.runId !== view.runId) continue
-      map.set(r.agent.agentId, [...(map.get(r.agent.agentId) ?? []), r])
-    }
-    return map
-  }, [permissionRequests, view.runId, readOnly])
+  // Per-agent FIFO queues; only the head of each is shown (Goal 3).
+  const requestsByAgent = useMemo(
+    () => (readOnly ? new Map<string, McpToolPermissionRequest[]>() : approvalQueues(permissionRequests, view.runId)),
+    [permissionRequests, view.runId, readOnly]
+  )
 
   const models = view.runConfig?.models ?? config.models
   return (
@@ -162,7 +161,7 @@ export function MultiAgentSidebarView(props: Props) {
         {view.phase === 'preflight' && !readOnly ? (
           <Preflight view={view} config={config} estimate={estimate} onApprove={props.onApprove} onCancel={props.onCancel} />
         ) : (
-          <AgentCards view={view} now={now} config={config} requestsByAgent={requestsByAgent} onRespondPermission={onRespondPermission} focusAgentId={focusAgentId} />
+          <AgentCards view={view} now={now} config={config} requestsByAgent={requestsByAgent} onRespondPermission={onRespondPermission} focusAgentId={focusAgentId} onOpenAgent={props.onOpenAgent} />
         )}
         {view.phase === 'failed' && view.failureReason && view.steps.length > 0 && (
           <p className="rounded-xl border-[0.5px] border-ma-red/35 bg-ma-red/[0.08] p-3 text-[12.5px] text-ma-redtext">Run failed: {view.failureReason}</p>
@@ -324,17 +323,22 @@ function Preflight({ view, config, estimate, onApprove, onCancel }: {
 
 // ── Agent cards ──────────────────────────────────────────────────────────────
 
-function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, focusAgentId }: {
+function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, focusAgentId, onOpenAgent }: {
   view: RunView
   now: number
   config: MultiAgentConfig
   requestsByAgent: Map<string, McpToolPermissionRequest[]>
   onRespondPermission: (r: McpToolPermissionResponse) => void
   focusAgentId: string | null
+  onOpenAgent?: (agentId: string) => void
 }) {
-  // User toggles override the default (working agents open, settled ones collapsed).
+  // Rows start collapsed and never open by themselves (no auto-expand for approvals or streaming).
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const toggle = useCallback((id: string, next: boolean) => setOpen((o) => ({ ...o, [id]: next })), [])
+  // The agent whose approval strip the keyboard acts on.
+  const [active, setActive] = useState<string | null>(null)
+  const order = useMemo(() => view.steps.map((s) => s.id), [view.steps])
+  const inbox = useMemo(() => inboxSummary(requestsByAgent), [requestsByAgent])
 
   useEffect(() => {
     if (!focusAgentId) return
@@ -342,42 +346,104 @@ function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, f
     requestAnimationFrame(() => document.getElementById(`agent-card-${focusAgentId}`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }))
   }, [focusAgentId])
 
+  const goTo = useCallback((agentId: string | null) => {
+    setActive(agentId)
+    if (!agentId) return
+    const strip = document.getElementById(`approval-strip-${agentId}`)
+    strip?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    strip?.focus({ preventScroll: true })
+  }, [])
+  const respondHead = (agentId: string | null, approved: boolean): void => {
+    const head = agentId ? requestsByAgent.get(agentId)?.[0] : undefined
+    if (head) onRespondPermission({ requestId: head.requestId, approved, alwaysAllow: false, userNote: '' })
+  }
+  const trustToolForAll = (): void => {
+    const top = inbox.topTool
+    if (!top) return
+    for (const queue of requestsByAgent.values()) {
+      for (const r of queue) {
+        if (r.serverName === top.serverName && r.toolName === top.toolName) {
+          onRespondPermission({ requestId: r.requestId, approved: true, alwaysAllow: 'session', userNote: '' })
+        }
+      }
+    }
+  }
+  // J/K move between waiting strips, Y allows, N denies — only while the list has focus.
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.metaKey || e.ctrlKey || e.altKey || inbox.total === 0) return
+    if ((e.target as HTMLElement).closest('input, textarea')) return
+    const key = e.key.toLowerCase()
+    const current = active && requestsByAgent.has(active) ? active : null
+    if (key === 'j' || key === 'k') goTo(nextWaiting(order, requestsByAgent, current, key === 'j' ? 1 : -1))
+    else if (key === 'y' || key === 'n') respondHead(current ?? nextWaiting(order, requestsByAgent, null), key === 'y')
+    else return
+    e.preventDefault()
+  }
+
   return (
-    <>
+    <div role="group" aria-label="Agents" tabIndex={-1} onKeyDown={onKeyDown} className="outline-none" data-testid="agent-list">
+      {inbox.total > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border-[0.5px] border-[#e6b422]/35 bg-[#e6b422]/[0.07] px-3.5 py-2.5" data-testid="approval-inbox">
+          <span className="h-2 w-2 flex-none rounded-full bg-[#e6b422]" />
+          <span className="text-[13px]" data-testid="approval-inbox-count">
+            <b className="font-semibold">{inbox.total} tool call{inbox.total === 1 ? '' : 's'}</b> waiting on you across {inbox.agents} agent{inbox.agents === 1 ? '' : 's'}
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[11px] text-ma-mute">J / K move · Y allow · N deny</span>
+            <button onClick={() => goTo(nextWaiting(order, requestsByAgent, active))}
+              className="h-7 rounded-lg border-[0.5px] border-[#e6b422]/50 px-2.5 text-[12px] text-[#e6b422] hover:bg-[#e6b422]/10">
+              Review next
+            </button>
+            {inbox.topTool && (
+              <button onClick={trustToolForAll} title={`Allow every ${bareTool(inbox.topTool.toolName)} call in this chat without asking`}
+                className="h-7 rounded-lg border-[0.5px] border-white/[0.12] px-2.5 text-[12px] text-ma-soft hover:bg-ma-bg3">
+                Trust {bareTool(inbox.topTool.toolName)} for all
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {view.steps.map((step) => {
         const agent = view.agents[step.id]
         if (!agent) return null
-        const requests = requestsByAgent.get(step.id) ?? []
-        const isOpen = open[step.id] ?? (isWorking(agent.status) || requests.length > 0)
+        const queue = requestsByAgent.get(step.id) ?? []
         return (
           <AgentCard
             key={step.id}
             agent={agent}
-            open={isOpen}
+            open={open[step.id] ?? false}
             now={isWorking(agent.status) ? now : 0}
             maxRetries={config.maxRetriesPerAgent}
             tools={view.runConfig?.tools}
             waitingOn={(step.dependsOn ?? []).filter((d) => view.agents[d]?.status !== 'done')}
-            requests={requests}
+            head={queue[0] ?? null}
+            queued={Math.max(0, queue.length - 1)}
+            active={active === step.id}
             onToggle={toggle}
             onRespondPermission={onRespondPermission}
+            onOpenAgent={onOpenAgent}
           />
         )
       })}
-    </>
+    </div>
   )
 }
 
 function stateTag(agent: AgentView, maxRetries: number, hasRequest: boolean): { label: string; tone: 'ok' | 'run' | 'wait' | 'fail' | 'idle' } {
   const lastGate = agent.reflections.at(-1)
+  if (hasRequest) return { label: 'needs approval', tone: 'wait' }
   switch (agent.status) {
     case 'done':
       if (agent.degraded) return { label: 'accepted with caveats', tone: 'wait' }
       return { label: lastGate ? `Pass ${lastGate.score}/5` : 'Done', tone: 'ok' }
-    case 'running': return { label: agent.attempt > 1 ? `Retry ${agent.attempt - 1} of ${maxRetries}` : 'Live', tone: 'run' }
+    case 'running': {
+      const tool = agent.timeline.findLast((t) => t.kind === 'tool' && !t.done)
+      if (tool && tool.kind === 'tool') return { label: `running · ${tool.tool}`, tone: 'run' }
+      return { label: agent.attempt > 1 ? `Retry ${agent.attempt - 1} of ${maxRetries}` : 'Live', tone: 'run' }
+    }
     case 'reflecting': return { label: 'Reviewing', tone: 'run' }
     case 'retrying': return { label: `Retry ${agent.attempt - 1} of ${maxRetries}`, tone: 'run' }
-    case 'paused': return { label: hasRequest ? 'Approval' : 'Tool call', tone: 'wait' }
+    case 'paused': return { label: 'Tool call', tone: 'wait' }
     case 'failed': return { label: agent.startedAt ? 'Failed' : 'Not started', tone: 'fail' }
     case 'cancelled': return { label: 'Stopped', tone: 'idle' }
     default: return { label: 'Queued', tone: 'idle' }
@@ -392,7 +458,7 @@ const TAG_TONE = {
   idle: 'text-ma-mute border-white/[0.09]',
 } as const
 
-const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, waitingOn, requests, onToggle, onRespondPermission }: {
+const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, waitingOn, head, queued, active, onToggle, onRespondPermission, onOpenAgent }: {
   agent: AgentView
   open: boolean
   now: number
@@ -400,20 +466,26 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
   /** Tools offered to the workers (run_config); undefined on older traces. */
   tools?: string[]
   waitingOn: string[]
-  requests: McpToolPermissionRequest[]
+  /** Head of this agent's approval queue, shown as the slide-out strip. */
+  head: McpToolPermissionRequest | null
+  /** Requests waiting behind the head. */
+  queued: number
+  active: boolean
   onToggle: (id: string, open: boolean) => void
   onRespondPermission: (r: McpToolPermissionResponse) => void
+  onOpenAgent?: (agentId: string) => void
 }) {
   const { step } = agent
-  const tag = stateTag(agent, maxRetries, requests.length > 0)
+  const tag = stateTag(agent, maxRetries, !!head)
   const elapsed = elapsedMs(agent, now || agent.startedAt || 0)
+  const toolCalls = agent.timeline.filter((t) => t.kind === 'tool').length
+  const blocked = agent.status === 'queued' && waitingOn.length > 0
   const meta = agent.status === 'queued'
-    ? [step.role, waitingOn.length ? `starts when ${waitingOn.join(', ')} pass` : 'queued']
-    : agent.status === 'paused' && requests.length
-      ? [step.role, 'waiting on you']
-      : [step.role, shortModel(step.model), agent.tokenCount ? `${formatTokens(agent.tokenCount)} tok` : agent.streamedTokens ? `~${formatTokens(agent.streamedTokens)} tok` : null,
-          agent.costUsd ? formatUsd(agent.costUsd) : null, elapsed !== null ? formatElapsed(elapsed) : null,
-          agent.compacted ? `context compacted ×${agent.compacted.events}` : null]
+    ? [step.role, waitingOn.length ? `waits on ${waitingOn.join(' ')}` : 'queued']
+    : [step.role, shortModel(step.model), agent.tokenCount ? `${formatTokens(agent.tokenCount)} tok` : agent.streamedTokens ? `~${formatTokens(agent.streamedTokens)} tok` : null,
+        toolCalls ? `${toolCalls} tool call${toolCalls === 1 ? '' : 's'}` : null,
+        agent.costUsd ? formatUsd(agent.costUsd) : null, elapsed !== null ? formatElapsed(elapsed) : null,
+        agent.compacted ? `context compacted ×${agent.compacted.events}` : null]
   const multiAttempt = agent.timeline.some((t) => t.attempt > 0)
 
   return (
@@ -422,19 +494,22 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
       data-testid={`agent-card-${step.id}`}
       data-status={agent.status}
       data-open={open}
-      className={cn('mb-3 overflow-hidden rounded-xl border-[0.5px] bg-ma-bg1', isWorking(agent.status) && agent.status !== 'paused' ? 'border-ma-red/35' : 'border-white/[0.09]')}
+      data-approval={!!head}
+      className={cn(
+        'mb-3 overflow-hidden rounded-xl border-[0.5px] bg-ma-bg1 transition-opacity',
+        head ? 'border-[#e6b422]/35' : isWorking(agent.status) && agent.status !== 'paused' ? 'border-ma-red/35' : 'border-white/[0.09]',
+        blocked && 'opacity-[0.55]'
+      )}
     >
-      <button onClick={() => onToggle(step.id, !open)} className="flex w-full items-center gap-2.5 px-3.5 py-[11px] text-left" aria-expanded={open}>
-        <span className="ma-dot" data-s={dotOf(agent)} />
-        <span className="min-w-0 flex-1">
-          <b className="block truncate text-[13.5px] font-medium">{step.id} {step.label}</b>
-          <span className="block truncate font-mono text-[11.5px] text-ma-mute">{meta.filter(Boolean).join(' · ')}</span>
-          {tools && (
-            <span className="block truncate font-mono text-[11px] text-ma-mute" data-testid={`agent-tools-${step.id}`} title={tools.join(', ') || undefined}>
-              {toolsLabel(tools)}
-            </span>
-          )}
-        </span>
+      {/* One fixed-height row: output never grows it. */}
+      <div className="flex items-center gap-2.5 px-3.5 py-[11px]">
+        <button onClick={() => onToggle(step.id, !open)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left" aria-expanded={open}>
+          <span className="ma-dot" data-s={head ? 'wait' : dotOf(agent)} />
+          <span className="min-w-0 flex-1">
+            <b className="block truncate text-[13.5px] font-medium">{step.id} {step.label}</b>
+            <span className="block truncate font-mono text-[11.5px] text-ma-mute" data-testid={`agent-meta-${step.id}`}>{meta.filter(Boolean).join(' · ')}</span>
+          </span>
+        </button>
         {agent.truncated && <CutOffChip limit={agent.truncated} testId={`cut-off-${step.id}`} />}
         {agent.stoppedAtToolLimit && (
           <span data-testid={`tool-limit-${step.id}`} title="The answer came from the forced last round, with tools turned off, after the tool round limit."
@@ -442,14 +517,30 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
             stopped at tool limit
           </span>
         )}
-        <span className={cn('inline-flex h-5 items-center rounded-[5px] border-[0.5px] px-[7px] font-mono text-[11.5px]', TAG_TONE[tag.tone])}>{tag.label}</span>
-        <ChevronDown className={cn('h-[18px] w-[18px] flex-none text-ma-mute transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.6} />
-      </button>
-      {/* Collapsed cards do not render their timelines. */}
+        <span className={cn('inline-flex h-5 max-w-[45%] flex-none items-center truncate rounded-[5px] border-[0.5px] px-[7px] font-mono text-[11.5px]', head ? APPROVAL_TONE : TAG_TONE[tag.tone])}
+          data-testid={`agent-chip-${step.id}`}>{tag.label}</span>
+        {onOpenAgent && (
+          <button onClick={() => onOpenAgent(step.id)} aria-label={`Open ${step.id} full screen`} title="Open full screen"
+            className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-[7px] border-[0.5px] border-white/10 text-ma-mute hover:bg-ma-bg3 hover:text-ma-text">
+            <Maximize2 className="h-3 w-3" strokeWidth={1.6} />
+          </button>
+        )}
+        <button onClick={() => onToggle(step.id, !open)} aria-label={open ? 'Collapse trace' : 'Expand trace'} tabIndex={-1}
+          className="flex-none text-ma-mute hover:text-ma-text">
+          <ChevronDown className={cn('h-[18px] w-[18px] transition-transform duration-200', open && 'rotate-180')} strokeWidth={1.6} />
+        </button>
+      </div>
+      <ApprovalStrip agentId={step.id} head={head} queued={queued} active={active} onRespond={onRespondPermission} />
+      {/* Collapsed cards do not render their timelines; only the user opens one. */}
       {open && (
         <div className="border-t-[0.5px] border-white/5 px-3.5 pb-3.5 pt-1" data-testid={`agent-trace-${step.id}`}>
+          {tools && (
+            <p className="truncate pt-2 font-mono text-[11px] text-ma-mute" data-testid={`agent-tools-${step.id}`} title={tools.join(', ') || undefined}>
+              {toolsLabel(tools)}
+            </p>
+          )}
           {/* Plain text, not a timeline node: there is no event to mark yet. */}
-          {agent.timeline.length === 0 && !agent.output && requests.length === 0 && !agent.failure && (
+          {agent.timeline.length === 0 && !agent.output && !agent.failure && (
             <p className="pt-2.5 text-[12px] text-ma-mute" data-testid={`agent-empty-${step.id}`}>{agent.status === 'queued' ? 'Nothing to show yet' : 'Working…'}</p>
           )}
           {agent.timeline.map((item, i) => (
@@ -459,7 +550,6 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
           {agent.status === 'reflecting' && (
             <div className="ma-ev" data-k="gate"><i className="ma-k" /><p className="text-[12px] text-ma-mute">Reflection gate · reviewing…</p></div>
           )}
-          {requests.map((r) => <ApprovalBlock key={r.requestId} request={r} onRespond={onRespondPermission} />)}
           {agent.degraded && <DegradedBlock degraded={agent.degraded} />}
           {agent.failure && (
             <div className="ma-ev" data-k="fail"><i className="ma-k" /><p className="text-[12.5px] text-[#ff8c88]">{agent.failure}</p></div>
@@ -469,6 +559,67 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
     </article>
   )
 })
+
+const APPROVAL_TONE = 'text-[#e6b422] border-[#e6b422]/50'
+/** Matches the .ma-strip height transition. */
+export const STRIP_SLIDE_MS = 180
+
+/**
+ * The existing yellow permission popup, sliding out beneath its agent's row. Shows only the head of
+ * the agent's queue; when the head is resolved the strip slides shut and the next one slides out.
+ */
+function ApprovalStrip({ agentId, head, queued, active, onRespond }: {
+  agentId: string
+  head: McpToolPermissionRequest | null
+  queued: number
+  active: boolean
+  onRespond: (r: McpToolPermissionResponse) => void
+}) {
+  const [shown, setShown] = useState(head)
+  const [open, setOpen] = useState(!!head)
+  const [sent, setSent] = useState<string | null>(null)
+  const headId = head?.requestId ?? null
+  useEffect(() => {
+    if (headId === (shown?.requestId ?? null)) { setOpen(!!head); return }
+    if (!shown) { setShown(head); setOpen(true); return }
+    // A different request (or none): close, then show the next once the strip has shut.
+    setOpen(false)
+    const t = setTimeout(() => { setShown(head); setOpen(!!head) }, STRIP_SLIDE_MS)
+    return () => clearTimeout(t)
+  }, [headId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const respond = (approved: boolean, agentTrust?: 'trust'): void => {
+    if (!shown || sent === shown.requestId) return
+    setSent(shown.requestId)
+    onRespond({ requestId: shown.requestId, approved, alwaysAllow: false, userNote: '', ...(agentTrust && { agentTrust }) })
+  }
+  const disabled = !shown || sent === shown.requestId || !open
+  const btn = 'h-[26px] flex-none rounded-[7px] px-2.5 text-[12px] disabled:opacity-50'
+  return (
+    <div className="ma-strip" data-open={open} data-testid={`approval-strip-wrap-${agentId}`}>
+      <div className="min-h-0 overflow-hidden">
+        {shown && (
+          <div
+            id={`approval-strip-${agentId}`}
+            tabIndex={-1}
+            data-testid={`approval-${shown.requestId}`}
+            data-active={active}
+            className={cn('flex items-center gap-3 border-l-2 border-t-[0.5px] border-l-[#e6b422] border-t-[#e6b422]/30 bg-[#e6b422]/[0.07] py-2.5 pl-3.5 pr-3.5 outline-none',
+              active && 'bg-[#e6b422]/[0.12]')}
+          >
+            <span className="flex-none font-mono text-[12px] text-[#e6b422]" title={`${shown.serverName} · ${shown.toolName}`}>{bareTool(shown.toolName)}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[#a9a9a9]" title={JSON.stringify(shown.args)}>{argsSummary(shown.args)}</span>
+            {queued > 0 && <span className="flex-none rounded-full bg-[#e6b422]/[0.12] px-2 py-0.5 font-mono text-[11px] text-[#e6b422]" data-testid={`queued-${agentId}`}>+{queued} queued</span>}
+            <button disabled={disabled} onClick={() => respond(true)} className={cn(btn, 'bg-[#e6b422] font-medium text-[#0a0a0a] hover:bg-[#f0c33a]')}>Allow</button>
+            <button disabled={disabled} onClick={() => respond(true, 'trust')} title={`Trust ${shown.agent?.role ?? 'this agent'} for the rest of the run`}
+              className={cn(btn, 'border-[0.5px] border-[#e6b422]/50 text-[#e6b422] hover:bg-[#e6b422]/10')}>Trust agent</button>
+            <button disabled={disabled} onClick={() => respond(false)} className={cn(btn, 'border-[0.5px] border-white/[0.12] text-ma-mute hover:bg-ma-bg3 hover:text-ma-text')}>Deny</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function DegradedBlock({ degraded }: { degraded: NonNullable<AgentView['degraded']> }) {
   return (
@@ -599,35 +750,6 @@ function TraceItem({ item, attemptLabel, streaming }: { item: TimelineItem; atte
       )
     }
   }
-}
-
-function ApprovalBlock({ request, onRespond }: { request: McpToolPermissionRequest; onRespond: (r: McpToolPermissionResponse) => void }) {
-  const [sent, setSent] = useState(false)
-  const role = request.agent?.role ?? 'Agent'
-  const tool = request.toolName.includes('__') ? request.toolName.split('__').slice(1).join('__') : request.toolName
-  const args = JSON.stringify(request.args)
-  const respond = (approved: boolean, agentTrust?: 'trust'): void => {
-    if (sent) return
-    setSent(true)
-    onRespond({ requestId: request.requestId, approved, alwaysAllow: false, userNote: '', ...(agentTrust && { agentTrust }) })
-  }
-  const button = 'h-7 rounded-[7px] border-[0.5px] px-3 text-[12.5px] disabled:opacity-50'
-  return (
-    <div className="ma-ev" data-k="approval" data-testid={`approval-${request.requestId}`}>
-      <i className="ma-k" />
-      <div className="text-[12px] text-ma-mute">Wants to run a tool</div>
-      <div className="mt-1.5 rounded-[9px] border-[0.5px] border-ma-amber/35 bg-ma-amber/10 px-3 py-2.5">
-        <p className="text-[12.5px] text-[#e8c77f]">
-          <b>{role}</b> wants to call <span className="font-mono">{tool}</span> on {request.serverName} with <span className="font-mono">{args.length > 160 ? `${args.slice(0, 159)}…` : args}</span>.
-        </p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button disabled={sent} onClick={() => respond(true)} className={cn(button, 'border-ma-red/35 bg-ma-red/[0.08] text-ma-redtext hover:bg-ma-red/[0.14]')}>Approve</button>
-          <button disabled={sent} onClick={() => respond(false)} className={cn(button, 'border-white/[0.09] text-ma-mute hover:bg-ma-bg3 hover:text-ma-text')}>Deny</button>
-          <button disabled={sent} onClick={() => respond(true, 'trust')} className={cn(button, 'border-white/[0.09] text-ma-mute hover:bg-ma-bg3 hover:text-ma-text')}>Trust {role} for this run</button>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 // ── Main chat: the synthesis, while a run is live ────────────────────────────

@@ -161,6 +161,21 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       await gate(agentId, score, reason)
     }
 
+    /** A tool call that needs the user's approval: tool_start → hitl_pause → permission request → resume → tool_done. */
+    const ask = async (agentId: string, role: string, callId: string, requestId: string, serverName: string, toolName: string, args: Record<string, unknown>): Promise<boolean> => {
+      emit('tool_start', { agentId, attempt: 0, callId, tool: toolName, server: serverName, argsPreview: JSON.stringify(args) })
+      emit('hitl_pause', { agentId, role, model: WORKER, toolName, serverName, args, attempt: 0 })
+      const request: McpToolPermissionRequest = {
+        serverName, toolName: `${serverName}__${toolName}`, args, requestId, chatId,
+        agent: { runId, agentId, role, model: WORKER }, timeoutMs: 300_000,
+      }
+      listeners.permissions.forEach((l) => l(request))
+      const ok = await new Promise<boolean>((r) => toolAnswers.set(requestId, r))
+      emit('hitl_resume', { agentId, approved: ok, attempt: 0 })
+      emit('tool_done', { agentId, attempt: 0, callId, ok, durationMs: 300, resultPreview: ok ? '8 results' : 'Tool request denied', resultChars: ok ? 5_300 : 19 })
+      return ok
+    }
+
     await wait(300)
     emit('orchestrator_plan', { steps: STEPS })
     emit('run_config', {
@@ -185,23 +200,19 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       emit('agent_start', { agentId: '1.2', role: 'TransAgent', model: WORKER, attempt: 0 })
       await stream('agent_reasoning', '1.2', 'Salzburg to Innsbruck is the long leg. The direct Railjet takes about two hours, so a base change on Dec 15 works. I should confirm Christmas Eve service before suggesting a late return to Vienna…', 1800)
       await tool('1.2', 't1', 'brave_web_search', '"ÖBB Salzburg Innsbruck Railjet 24 December timetable"', 3_900, 1200)
-      await tool('1.2', 't2', 'fetch', 'oebb.at/en/…/christmas-eve-service', 4_200, 900)
+      await ask('1.2', 'TransAgent', 't2', 'demo-q2', 'fetch', 'get', { url: 'https://www.oebb.at/en/christmas-eve-service' })
       await finish('1.2', 'Vienna → Salzburg Hbf runs every 30 minutes on the Railjet, about 2h22. Salzburg → Innsbruck takes 1h50 via Kufstein. On 24 December the last Railjet back to Vienna leaves Innsbruck at 17:14 [verified on oebb.at].', 9000, 4, 'Timetables backed by the ÖBB page; bus links marked unverified.')
     })()
     const stay = (async () => {
       await wait(160)
       emit('agent_start', { agentId: '1.3', role: 'StayAgent', model: WORKER, attempt: 0 })
       await stream('agent_reasoning', '1.3', 'Small towns book out before Christmas. Search family-run places near each station first.', 900)
-      emit('tool_start', { agentId: '1.3', attempt: 0, callId: 's1', tool: 'web_search', server: 'brave', argsPreview: '{"q":"family-run hotels Füssen near Hbf"}' })
-      emit('hitl_pause', { agentId: '1.3', role: 'StayAgent', model: WORKER, toolName: 'web_search', serverName: 'brave', args: { q: 'family-run hotels Füssen near Hbf' }, attempt: 0 })
-      const request: McpToolPermissionRequest = {
-        serverName: 'brave', toolName: 'brave__web_search', args: { q: 'family-run hotels Füssen near Hbf' }, requestId: 'demo-q1', chatId,
-        agent: { runId, agentId: '1.3', role: 'StayAgent', model: WORKER }, timeoutMs: 300_000,
-      }
-      listeners.permissions.forEach((l) => l(request))
-      const ok = await new Promise<boolean>((r) => toolAnswers.set('demo-q1', r))
-      emit('hitl_resume', { agentId: '1.3', approved: ok, attempt: 0 })
-      emit('tool_done', { agentId: '1.3', attempt: 0, callId: 's1', ok, durationMs: 300, resultPreview: ok ? '8 results' : 'Tool request denied', resultChars: ok ? 5_300 : 19 })
+      // Two calls in one reply: the second waits behind the first in 1.3's approval queue.
+      const [ok] = await Promise.all([
+        ask('1.3', 'StayAgent', 's1', 'demo-q1', 'brave', 'web_search', { q: 'family-run hotels Füssen near Hbf' }),
+        ask('1.3', 'StayAgent', 's2', 'demo-q1b', 'brave', 'web_search', { q: 'Hotel Sonne Füssen December availability' }),
+      ])
+      void ok
       await finish('1.3', 'Füssen: Hotel Sonne (family-run, 4 min from Hbf). Salzburg: Hotel Stein. Innsbruck: Weisses Kreuz. Book Füssen early, since the town is small.', 1500, 4, 'Specific, near stations, prices marked unverified.')
     })()
     await Promise.all([geo, trans, stay])
