@@ -15,3 +15,7 @@ Fonts: Inter and JetBrains Mono. The PNGs were rendered with a fallback monospac
 | 04-agent-focus.png | Goal 4: agent focus view |
 | 05-planning-state.png | Goal 5: orchestrator planning state |
 | 06-graph-view.png | Goal 6: graph view with HITL inbox |
+| 07-dock-fixed-option.png | Goal 7: the dock pinned at about 40% (a state of the same dock, not a separate mode) |
+| 08-dock-collapsed.png | Goal 7: collapsed dock, idle run |
+| 09-dock-auto-open.png | Goal 7: dock auto-opened for approvals |
+| 10-dock-behavior.png | Goal 7: dock states and behaviour rules |

@@ -12,7 +12,10 @@ export interface DagLayout {
 }
 export interface DagMetrics { nodeW: number; nodeH: number; colGap: number; rowGap: number; pad: number }
 
-export const GRAPH_METRICS: DagMetrics = { nodeW: 200, nodeH: 76, colGap: 72, rowGap: 16, pad: 24 }
+/** Regular density: cards with the model/token meta line (designs/08). */
+export const GRAPH_METRICS: DagMetrics = { nodeW: 200, nodeH: 80, colGap: 72, rowGap: 16, pad: 24 }
+/** Compact density for a short canvas (bottom dock open, designs/09): no meta line. */
+export const COMPACT_METRICS: DagMetrics = { ...GRAPH_METRICS, nodeH: 64, rowGap: 14 }
 
 /** Longest-path depth (0-based) of every node; unknown ids and self/cyclic edges are ignored. */
 export function dagDepths(nodes: DagInput[]): Map<string, number> {

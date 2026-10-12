@@ -9,7 +9,7 @@ import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, ReflectionView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
-import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting } from '../../lib/approvalQueue'
+import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
 import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
@@ -81,6 +81,8 @@ interface Props {
   onQuickPlan?: () => Promise<void> | void
   /** List (rows) or Graph (designs/06-graph-view.png). Both stay mounted once shown, so switching loses nothing. */
   viewMode?: 'list' | 'graph'
+  /** The chat this run belongs to (the Graph view's dock remembers its pin and height per chat). */
+  chatId?: string | null
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -106,7 +108,8 @@ export function MultiAgentSidebarView(props: Props) {
       {graphMounted && (
         <div className={cn('h-full w-full min-w-0', !graph && 'hidden')} data-testid="dock-graph">
           <GraphView view={view} config={config} readOnly={readOnly} now={now} estimate={estimate} queues={requestsByAgent}
-            onRespond={onRespondPermission} onApprovePlan={props.onApprove} onCancelPlan={props.onCancel} onAbort={props.onAbort} onOpenAgent={props.onOpenAgent} />
+            onRespond={onRespondPermission} onApprovePlan={props.onApprove} onCancelPlan={props.onCancel} onAbort={props.onAbort} onOpenAgent={props.onOpenAgent}
+            chatId={props.chatId} active={graph} />
         </div>
       )}
       <div className={cn('flex h-full w-full min-w-0', graph && 'hidden')} data-testid="dock-list">
@@ -384,17 +387,7 @@ function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, f
     const head = agentId ? requestsByAgent.get(agentId)?.[0] : undefined
     if (head) onRespondPermission({ requestId: head.requestId, approved, alwaysAllow: false, userNote: '' })
   }
-  const trustToolForAll = (): void => {
-    const top = inbox.topTool
-    if (!top) return
-    for (const queue of requestsByAgent.values()) {
-      for (const r of queue) {
-        if (r.serverName === top.serverName && r.toolName === top.toolName) {
-          onRespondPermission({ requestId: r.requestId, approved: true, alwaysAllow: 'session', userNote: '' })
-        }
-      }
-    }
-  }
+  const trustToolForAll = (): void => { for (const r of trustToolResponses(requestsByAgent, inbox.topTool)) onRespondPermission(r) }
   // J/K move between waiting strips, Y allows, N denies — only while the list has focus.
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.metaKey || e.ctrlKey || e.altKey || inbox.total === 0) return

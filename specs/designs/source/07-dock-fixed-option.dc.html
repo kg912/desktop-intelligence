@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Option 1 fixed dock</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'JetBrains Mono',ui-monospace,monospace}
+button{font-family:inherit;cursor:pointer}
+@keyframes flow{to{stroke-dashoffset:-16}}
+.flow{animation:flow 0.9s linear infinite}
+</style>
+</helmet>
+<div style="width:1240px;height:980px;box-sizing:border-box;background:#0a0a0a;font-family:'Inter',system-ui,sans-serif;color:#e8e8e8;display:flex;flex-direction:column;overflow:hidden;border:0.5px solid rgba(255,255,255,0.06)">
+
+  <!-- pane header -->
+  <div style="height:52px;flex-shrink:0;display:flex;align-items:center;padding:0 28px;border-bottom:0.5px solid rgba(255,255,255,0.05)">
+    <span style="font-size:15px;font-weight:500;color:#cfcfcf">Multi-agent</span>
+    <span style="flex:1"></span>
+    <div class="m" style="display:flex;gap:16px;font-size:11px;color:#8a8a8a"><span><span style="color:#4ade80">●</span> running</span><span><span style="color:#e6b422">●</span> needs you</span><span><span style="color:#5a5a5a">●</span> waiting</span></div>
+  </div>
+
+  <!-- graph canvas: ~60% -->
+  <div style="height:530px;flex-shrink:0;position:relative;background-color:#0c0c0c;background-image:radial-gradient(rgba(255,255,255,0.06) 1px,transparent 1px);background-size:22px 22px;overflow:hidden">
+    <div class="m" style="position:absolute;left:30px;top:16px;font-size:10.5px;color:#6a6a6a">PLAN</div>
+    <div class="m" style="position:absolute;left:220px;top:16px;font-size:10.5px;color:#6a6a6a">PHASE 1 · PARALLEL WORKERS</div>
+    <div class="m" style="position:absolute;left:520px;top:16px;font-size:10.5px;color:#6a6a6a">PHASE 2</div>
+    <div class="m" style="position:absolute;left:820px;top:16px;font-size:10.5px;color:#6a6a6a">PHASE 3</div>
+    <svg width="1240" height="530" style="position:absolute;left:0;top:0" aria-hidden="true">
+      <sc-for list="{{edges}}" as="e" hint-placeholder-count="14"><path d="{{e.d}}" fill="none" stroke="{{e.stroke}}" stroke-width="{{e.sw}}" stroke-dasharray="{{e.dash}}" class="{{e.cls}}"/></sc-for>
+    </svg>
+    <sc-for list="{{nodes}}" as="n" hint-placeholder-count="10">
+      <div style="position:absolute;left:{{n.left}}px;top:{{n.top}}px;width:{{n.w}}px;height:64px;box-sizing:border-box;background:#101010;border:0.5px solid {{n.border}};border-radius:10px;padding:8px 11px;box-shadow:{{n.shadow}};opacity:{{n.opacity}}">
+        <div style="display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;background:{{n.dot}}"></span><span class="m" style="font-size:11.5px;color:#fff">{{n.id}}</span><span style="flex:1"></span>
+          <sc-if value="{{n.hasBadge}}" hint-placeholder-val="{{ false }}"><span class="m" style="font-size:10.5px;color:#0a0a0a;background:#e6b422;border-radius:999px;padding:0 6px;font-weight:500">{{n.badge}}</span></sc-if>
+          <span class="m" style="font-size:10px;color:{{n.stateColor}}">{{n.state}}</span></div>
+        <div style="font-size:11.5px;color:#cfcfcf;margin-top:6px;line-height:1.3;height:30px;overflow:hidden">{{n.title}}</div>
+      </div>
+    </sc-for>
+    <div style="position:absolute;left:16px;bottom:14px;display:flex;align-items:flex-end;gap:10px">
+      <div class="m" style="display:flex;flex-direction:column;border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;background:#0f0f0f;font-size:13px;color:#bdbdbd"><span style="padding:3px 10px">+</span><span style="padding:3px 10px;border-top:0.5px solid rgba(255,255,255,0.08)">−</span><span style="padding:3px 10px;border-top:0.5px solid rgba(255,255,255,0.08);font-size:10px">fit</span></div>
+    </div>
+  </div>
+
+  <!-- fixed dock: ~40% -->
+  <div style="height:354px;flex-shrink:0;box-sizing:border-box;border-top:0.5px solid rgba(255,255,255,0.10);background:#0b0b0b;display:flex;flex-direction:column">
+    <div style="height:14px;display:flex;justify-content:center;align-items:center"><span style="width:44px;height:3px;border-radius:2px;background:rgba(255,255,255,0.14)"></span></div>
+    <div style="display:flex;align-items:center;gap:22px;padding:0 28px;height:34px;border-bottom:0.5px solid rgba(255,255,255,0.06);font-size:13px">
+      <span style="color:#fff;border-bottom:2px solid #e6b422;padding-bottom:9px;margin-bottom:-1px">Needs you <span class="m" style="font-size:11px;color:#e6b422">11</span></span>
+      <span style="color:#8a8a8a">Node 1.4</span>
+      <span style="color:#8a8a8a">Run log</span>
+      <span style="flex:1"></span>
+      <span class="m" style="font-size:11px;color:#6a6a6a">40% · drag to resize</span>
+    </div>
+    <div style="padding:14px 28px 0;display:flex;align-items:center;gap:12px">
+      <span style="font-size:12.5px;color:#cfcfcf"><b>11 tool calls</b> waiting across 4 agents</span>
+      <span style="flex:1"></span>
+      <span class="m" style="font-size:11px;color:#6a6a6a">J / K move · Y allow · N deny</span>
+      <button style="font-size:12px;color:#d8d8d8;background:transparent;border:0.5px solid rgba(255,255,255,0.14);border-radius:7px;padding:5px 10px">Trust brave_web_search for all</button>
+    </div>
+    <div style="padding:12px 28px 0;display:flex;gap:14px">
+      <sc-for list="{{cards}}" as="c" hint-placeholder-count="4">
+        <div style="flex:1;min-width:0;box-sizing:border-box;border:0.5px solid {{c.border}};border-left:2px solid #e6b422;border-radius:11px;background:rgba(230,180,34,0.06);padding:12px 13px;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:7px"><span class="m" style="font-size:12px;color:#fff">{{c.id}}</span><span style="font-size:11.5px;color:#9a9a9a;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{c.role}}</span>
+            <sc-if value="{{c.hasQueue}}" hint-placeholder-val="{{ true }}"><span class="m" style="font-size:10.5px;color:#e6b422;background:rgba(230,180,34,0.12);border-radius:999px;padding:1px 7px">{{c.queue}}</span></sc-if></div>
+          <div class="m" style="font-size:12px;color:#e6b422">{{c.tool}}</div>
+          <div class="m" style="font-size:11px;line-height:1.55;color:#bdbdbd;background:rgba(0,0,0,0.35);border-radius:7px;padding:8px 9px;height:50px;overflow:hidden">{{c.arg}}</div>
+          <div style="display:flex;gap:6px;margin-top:auto">
+            <button style="font-size:11.5px;color:#0a0a0a;background:#e6b422;border:none;border-radius:6px;padding:5px 10px;font-weight:500">Allow</button>
+            <button style="font-size:11.5px;color:#e6b422;background:transparent;border:0.5px solid rgba(230,180,34,0.5);border-radius:6px;padding:5px 9px">Trust agent</button>
+            <button style="font-size:11.5px;color:#9a9a9a;background:transparent;border:0.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:5px 9px">Deny</button>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- stats strip -->
+  <div class="m" style="height:44px;flex-shrink:0;box-sizing:border-box;border-top:0.5px solid rgba(255,255,255,0.06);background:#080808;display:flex;align-items:center;padding:0 28px;gap:30px;font-size:11.5px;color:#bdbdbd;white-space:nowrap;overflow:hidden">
+    <span>$0.31 <span style="color:#6a6a6a">/ $0.50</span></span><span>904.1k tok</span><span>3:12 elapsed</span><span>6 in parallel</span><span style="color:#e6b422">11 approvals waiting</span><span style="color:#6a6a6a">0 / 16 reflection checks</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1240,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const G='#4ade80', Y='#e6b422', D='#5a5a5a';
+    const top0=62, dy=77, nh=64;
+    const wy=[0,1,2,3,4,5].map(i=>top0+i*dy);
+    const mid=(top0+wy[5]+nh)/2-nh/2;
+    const W={left:220,w:200}, C={left:520,w:200}, S={left:820,w:180}, F={left:1060,w:130}, O={left:30,w:130};
+    const mk=(id,title,left,top,w,st)=>{
+      const m={run:{dot:G,state:'running',stateColor:G,border:'rgba(74,222,128,0.4)',opacity:1},
+               ap:{dot:Y,state:'approval',stateColor:Y,border:'rgba(230,180,34,0.6)',opacity:1},
+               wait:{dot:D,state:'waiting',stateColor:'#6a6a6a',border:'rgba(255,255,255,0.08)',opacity:0.6},
+               done:{dot:G,state:'done',stateColor:G,border:'rgba(74,222,128,0.4)',opacity:1}}[st];
+      return Object.assign({id,title,left,top,w},m,{shadow:'none',hasBadge:false,badge:''});
+    };
+    const nodes=[
+      mk('orch','Orchestrator · plan',O.left,mid,O.w,'done'),
+      mk('1.1','Map Kratos business segments, product lines',W.left,wy[0],W.w,'ap'),
+      mk('1.2','Compile 5+ year financials, latest quarter',W.left,wy[1],W.w,'ap'),
+      mk('1.3','Analyze defense demand, programs',W.left,wy[2],W.w,'run'),
+      mk('1.4','Assess competitive position, moat, rivals',W.left,wy[3],W.w,'ap'),
+      mk('1.6','Review management, governance, insiders',W.left,wy[4],W.w,'ap'),
+      mk('1.7','Analyze market behavior, sentiment',W.left,wy[5],W.w,'run'),
+      mk('1.5','Build valuation multiples, consensus',C.left,mid,C.w,'wait'),
+      mk('1.8','Synthesize final investment memo',S.left,mid,S.w,'wait'),
+      mk('out','Final synthesis',F.left,mid,F.w,'wait')
+    ];
+    const badges={'1.1':'3','1.2':'1','1.4':'2','1.6':'5'};
+    nodes.forEach(n=>{ if(badges[n.id]){n.hasBadge=true;n.badge=badges[n.id];} if(n.id==='1.4'){n.border='#e53935';n.shadow='0 0 0 3px rgba(229,57,53,0.18)';} });
+    const cy=t=>t+nh/2, my=mid+nh/2;
+    const path=(x1,y1,x2,y2)=>{const dx=(x2-x1)/2;return `M${x1} ${y1} C${x1+dx} ${y1} ${x2-dx} ${y2} ${x2} ${y2}`;};
+    const edges=[];
+    const add=(x1,y1,x2,y2,kind)=>{
+      const k={done:{stroke:'rgba(74,222,128,0.35)',sw:1.2,dash:'0',cls:''},
+               live:{stroke:'rgba(229,57,53,0.85)',sw:1.4,dash:'5 5',cls:'flow'},
+               hold:{stroke:'rgba(230,180,34,0.55)',sw:1.2,dash:'3 4',cls:''},
+               idle:{stroke:'rgba(255,255,255,0.14)',sw:1,dash:'3 4',cls:''}}[kind];
+      edges.push(Object.assign({d:path(x1,y1,x2,y2)},k));
+    };
+    wy.forEach(t=>add(O.left+O.w,my,W.left,cy(t),'done'));
+    [0,1,2,3].forEach(i=>add(W.left+W.w,cy(wy[i]),C.left,my,i===2?'live':'hold'));
+    [4,5].forEach(i=>add(W.left+W.w,cy(wy[i]),S.left,my,i===5?'live':'hold'));
+    add(C.left+C.w,my,S.left,my,'idle');
+    add(S.left+S.w,my,F.left,my,'idle');
+    const bd='rgba(230,180,34,0.4)';
+    const cards=[
+      {id:'1.1',role:'Business Analyst',tool:'brave_web_search',arg:'q: "Kratos Defense segment revenue mix 2026"',hasQueue:true,queue:'+2',border:bd},
+      {id:'1.2',role:'Financial Analyst',tool:'web_fetch',arg:'url: investors.kratosdefense.com/financial-information',hasQueue:false,queue:'',border:bd},
+      {id:'1.4',role:'Competitive Intel',tool:'python_sandbox',arg:'df.groupby("peer").agg(rev_cagr=...)  14 lines',hasQueue:true,queue:'+1',border:bd},
+      {id:'1.6',role:'Governance Analyst',tool:'brave_web_search',arg:'q: "Kratos insider selling Form 4 2026"',hasQueue:true,queue:'+4',border:bd}
+    ];
+    return { nodes, edges, cards };
+  }
+}
+</script>
+</body>
+</html>

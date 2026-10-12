@@ -180,6 +180,40 @@ export function multiAgentDemoApi(saveAnswer: (chatId: string, text: string) => 
       return ok
     }
 
+    // `?kratos`: the plan drawn in designs/08–09 (UI Goal 7) — eight agents in three phases, 11 calls
+    // waiting across 1.1 (3), 1.2 (1), 1.4 (2) and 1.6 (5) while 1.3 and 1.7 run. Answered calls resolve; agents keep running.
+    if (typeof location !== 'undefined' && location.search.includes('kratos')) {
+      const W = (id: string, label: string, role: string, phase: number, dependsOn: string[] = []): AgentStep => ({ id, label, stage: 'worker', role, model: WORKER, phase, dependsOn })
+      const plan = [
+        W('1.1', 'Map Kratos business segments, product lines', 'Business Analyst', 1), W('1.2', 'Compile 5+ year financials, latest quarter', 'Financial Analyst', 1),
+        W('1.3', 'Analyze defense demand, programs', 'Demand Analyst', 1), W('1.4', 'Assess competitive position, moat, rivals', 'Competitive Intel', 1),
+        W('1.6', 'Review management, governance, insiders', 'Governance Analyst', 1), W('1.7', 'Analyze market behavior, sentiment', 'Market & Risk', 1),
+        W('1.5', 'Build valuation multiples, consensus', 'Valuation Analyst', 2, ['1.1', '1.2', '1.3', '1.4']),
+        W('1.8', 'Synthesize final investment memo', 'Memo Writer', 3, ['1.5', '1.6', '1.7']),
+      ]
+      emit('orchestrator_plan', { steps: plan })
+      emit('run_config', {
+        models: { ...DEFAULT_MULTI_AGENT_CONFIG.models, worker: WORKER }, sources: { orchestrator: 'default', worker: 'active', reflection: 'default', synthesizer: 'default' },
+        catalogueChecked: true, maxAgents: 8, budgetCapUsd: 0.5, reflectionPassThreshold: 3, maxRetriesPerAgent: 2, reasoningEffort: 'medium', excludedServers: [],
+      })
+      emit('hitl_pause', { agentId: 'orchestrator', role: 'Orchestrator', model: DEFAULT_MULTI_AGENT_CONFIG.models.orchestrator, toolName: 'approve_plan', serverName: 'multi-agent', args: { steps: plan } })
+      if (!(await new Promise<boolean>((r) => { planAnswer = r }))) return emit('task_failed', { reason: 'Plan not approved', partialOutputs: {} })
+      emit('hitl_resume', { agentId: 'orchestrator', approved: true })
+      const calls: Record<string, Array<[string, string, Record<string, unknown>]>> = {
+        '1.1': [['brave', 'web_search', { q: 'Kratos Defense segment revenue mix 2026' }], ['brave', 'web_search', { q: 'Kratos unmanned systems backlog' }], ['fetch', 'get', { url: 'https://ir.kratosdefense.com/segments' }]],
+        '1.2': [['fetch', 'get', { url: 'investors.kratosdefense.com/financial-information' }]],
+        '1.4': [['python', 'sandbox', { code: 'df.groupby("peer").agg(rev_cagr=...)\nprint(df.head())\n# 14 lines' }], ['brave', 'web_search', { q: 'Kratos competitors hypersonics' }]],
+        '1.6': [...Array(5)].map((_, i): [string, string, Record<string, unknown>] => ['brave', 'web_search', { q: `Kratos insider selling Form 4 2026 (${i + 1})` }]),
+      }
+      for (const step of plan.slice(0, 6)) {
+        emit('agent_start', { agentId: step.id, role: step.role, model: WORKER, attempt: 0 })
+        void stream('agent_token', step.id, 'Reading sources and drafting notes…', 3000)
+        for (const [i, [server, tool, args]] of (calls[step.id] ?? []).entries()) void ask(step.id, step.role, `${step.id}-c${i}`, `kratos-${step.id}-${i}`, server, tool, args)
+        await wait(120)
+      }
+      return
+    }
+
     // The plan streams as the orchestrator writes it (UI Goal 5). `?slowplan` in the preview URL
     // stalls it after three subtasks, to show the slow-plan banner and the quick plan.
     const slow = typeof location !== 'undefined' && location.search.includes('slowplan')

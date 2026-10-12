@@ -1,21 +1,22 @@
-// Graph view of a multi-agent run with the human-in-the-loop inbox (UI Goal 6, designs/06-graph-view.png).
-// The graph is the run's own plan (layout from the dependency DAG); the inspector answers approvals from
-// the same request list as the List view and the focus view, so all three stay in sync.
+// Graph view of a multi-agent run with the human-in-the-loop inbox (UI Goals 6 and 7,
+// designs/06-graph-view.png, 08–10). The graph takes the whole pane; the inspector (Needs you, Node,
+// Run log) is a collapsible bottom dock whose behaviour lives in lib/graphDock.ts. Approvals are
+// answered from the same request list as the List view and the focus view, so all three stay in sync.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { cn } from '../../lib/utils'
 import type { AgentView, RunView } from '../../lib/multiAgentRunState'
 import { elapsedMs, formatElapsed, isRunActive } from '../../lib/multiAgentRunState'
 import { ORCH_ID, OUT_ID, columnLabels, planningNodes, runGraphNodes } from '../../lib/agentGraphNodes'
 import { layoutDag } from '../../lib/dagLayout'
-import { argsSummary, bareTool, nextWaiting } from '../../lib/approvalQueue'
-import { AgentGraphCanvas, usePageVisible } from './AgentGraphCanvas'
+import { argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
+import type { DockState, DockTab } from '../../lib/graphDock'
+import { DOCK_COLLAPSED_PX, clampDockHeight, dockHeight, dockReducer, initialDock, readSavedDock, writeSavedDock } from '../../lib/graphDock'
+import { AgentGraphCanvas, useElementSize, usePageVisible } from './AgentGraphCanvas'
 import { Preflight, formatTokens, isWorking, peakOverlap, shortModel } from './MultiAgentSidebarView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
-
-type Tab = 'needs' | 'node' | 'log'
 
 interface Props {
   view: RunView
@@ -30,9 +31,16 @@ interface Props {
   onCancelPlan: () => void
   onAbort: () => void
   onOpenAgent?: (agentId: string) => void
+  /** The dock's pinned state and height are remembered per chat. */
+  chatId?: string | null
+  /** false while the List view is showing (this view stays mounted): its shortcuts are off. */
+  active?: boolean
 }
 
-export function GraphView({ view, config, readOnly, now, estimate, queues, onRespond, onApprovePlan, onCancelPlan, onAbort, onOpenAgent }: Props) {
+/** Arrow keys on the dock's handle change its height by this fraction of the pane. */
+const RESIZE_KEY_STEP = 0.05
+
+export function GraphView({ view, config, readOnly, now, estimate, queues, onRespond, onApprovePlan, onCancelPlan, onAbort, onOpenAgent, chatId, active = true }: Props) {
   const live = isRunActive(view) && !readOnly
   const visible = usePageVisible()
   const models = view.runConfig?.models ?? config.models
@@ -45,163 +53,336 @@ export function GraphView({ view, config, readOnly, now, estimate, queues, onRes
   )
   const labels = useMemo(() => columnLabels(layoutDag(nodes).columns), [nodes])
   const order = useMemo(() => view.steps.map((s) => s.id), [view.steps])
-  const waitingTotal = [...queues.values()].reduce((n, q) => n + q.length, 0) + (view.phase === 'preflight' && !readOnly ? 1 : 0)
+  const preflight = view.phase === 'preflight' && !readOnly
+  const waitingTotal = [...queues.values()].reduce((n, q) => n + q.length, 0) + (preflight ? 1 : 0)
 
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('needs')
-  // With nothing chosen, the inbox focuses the first agent waiting on the user.
-  const focusAgent = selected && queues.has(selected) ? selected : nextWaiting(order, queues, null)
+  // The agent whose card J/K/Y/N act on.
+  const [activeCard, setActiveCard] = useState<string | null>(null)
   useEffect(() => { if (selected && !nodes.some((n) => n.id === selected)) setSelected(null) }, [nodes, selected])
+
+  const [dock, dispatch] = useReducer(dockReducer, chatId, (id) => initialDock(readSavedDock(id)))
+  useEffect(() => { dispatch({ type: 'approvals', count: waitingTotal, now: Date.now() }) }, [waitingTotal])
+  useEffect(() => {
+    if (dock.closeAt === null) return
+    const t = setTimeout(() => dispatch({ type: 'tick', now: Date.now() }), Math.max(0, dock.closeAt - Date.now()))
+    return () => clearTimeout(t)
+  }, [dock.closeAt])
+  // Per chat: another chat restores its own; a new chat (no id yet → id) keeps the dock as it is.
+  const pinned = dock.mode === 'pinned'
+  const savedFor = useRef(chatId)
+  useEffect(() => {
+    if (savedFor.current !== chatId) {
+      const from = savedFor.current
+      savedFor.current = chatId
+      if (from) { dispatch({ type: 'restore', saved: readSavedDock(chatId) }); return }
+    }
+    writeSavedDock(chatId, { pinned, fraction: dock.pinnedFraction })
+  }, [chatId, pinned, dock.pinnedFraction])
+
+  const pane = useRef<HTMLDivElement>(null)
+  const paneH = useElementSize(pane).h
+  const height = dockHeight(dock, paneH)
+
+  // Cmd/Ctrl+J toggles the dock; Esc closes a peek opened by selecting a node (before the dock-wide Esc).
+  useEffect(() => {
+    if (!active) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (document.querySelector('[aria-modal="true"]')) return
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        dispatch({ type: 'toggle' })
+      } else if (e.key === 'Escape' && !e.defaultPrevented && dock.mode === 'peek' && dock.peekFromSelect) {
+        e.preventDefault()
+        dispatch({ type: 'dismiss' })
+        setSelected(null)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [active, dock.mode, dock.peekFromSelect])
 
   const select = (id: string): void => {
     setSelected(id)
-    setTab(queues.has(id) ? 'needs' : 'node')
+    if (queues.has(id)) setActiveCard(id)
+    dispatch({ type: 'select', hasApprovals: queues.has(id) })
+  }
+  const onEmptyClick = (): void => {
+    if (dock.mode === 'peek' && dock.peekFromSelect) setSelected(null)
+    dispatch({ type: 'dismiss' })
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="graph-view">
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 border-r-[0.5px] border-white/5">
+      <div ref={pane} className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 min-w-0 flex-1">
           <AgentGraphCanvas nodes={nodes} columnLabels={labels} animate={live && visible} interactive
-            selectedId={selected ?? (tab === 'needs' ? focusAgent : null)} onSelect={select}
+            selectedId={selected ?? (dock.mode !== 'collapsed' && dock.tab === 'needs' ? activeCard : null)} onSelect={select} onEmptyClick={onEmptyClick}
             onOpen={(id) => { if (id !== ORCH_ID && id !== OUT_ID && view.agents[id]) onOpenAgent?.(id) }} />
         </div>
-        <aside className="flex w-[380px] max-w-[45%] flex-none flex-col px-[22px] py-5" aria-label="Inspector" data-testid="graph-inspector">
-          <div role="tablist" className="flex gap-[18px] border-b-[0.5px] border-white/[0.06] text-[13px]">
-            <TabButton active={tab === 'needs'} onClick={() => setTab('needs')} accent="yellow">
-              Needs you {waitingTotal > 0 && <span className="font-mono text-[11px] text-[#e6b422]" data-testid="needs-count">{waitingTotal}</span>}
-            </TabButton>
-            <TabButton active={tab === 'node'} onClick={() => setTab('node')}>Node{selected ? ` ${selected}` : ''}</TabButton>
-            <TabButton active={tab === 'log'} onClick={() => setTab('log')}>Run log</TabButton>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto py-3.5">
-            {tab === 'needs' && (
-              <NeedsYou view={view} config={config} readOnly={readOnly} estimate={estimate} queues={queues} order={order} focusAgent={focusAgent}
-                onRespond={onRespond} onReview={select} onApprovePlan={onApprovePlan} onCancelPlan={onCancelPlan} />
-            )}
-            {tab === 'node' && <NodePanel view={view} id={selected} now={now} models={models} />}
-            {tab === 'log' && <RunLog view={view} />}
-          </div>
-          <div className="flex items-center justify-between gap-3 border-t-[0.5px] border-white/[0.06] pt-3.5">
-            <span className="min-w-0 truncate text-[12px] text-ma-mute" data-testid="graph-selection">{selectionText(view, selected)}</span>
-            {selected && view.agents[selected] && onOpenAgent && (
-              <button onClick={() => onOpenAgent(selected)} className="h-7 flex-none rounded-[7px] border-[0.5px] border-white/[0.14] px-2.5 text-[12px] text-[#d8d8d8] hover:bg-white/5">Open full view</button>
-            )}
-          </div>
-        </aside>
+        <GraphDock dock={dock} dispatch={dispatch} height={height} paneH={paneH} waiting={waitingTotal} selected={selected}
+          latest={view.log.at(-1) ? `${formatElapsed(Math.max(0, view.log.at(-1)!.ts - view.startedAt))} · ${view.log.at(-1)!.text}` : ''}>
+          {dock.tab === 'needs' && (
+            <NeedsYou view={view} config={config} preflight={preflight} estimate={estimate} queues={queues} order={order}
+              activeCard={activeCard} setActiveCard={setActiveCard} selected={selected}
+              onRespond={onRespond} onApprovePlan={onApprovePlan} onCancelPlan={onCancelPlan} />
+          )}
+          {dock.tab === 'node' && <NodePanel view={view} id={selected} now={now} models={models} onOpenAgent={onOpenAgent} />}
+          {dock.tab === 'log' && <RunLog view={view} />}
+        </GraphDock>
       </div>
       <StatsStrip view={view} config={config} live={live} now={now} waiting={waitingTotal} onAbort={onAbort} />
     </div>
   )
 }
 
-function TabButton({ active, onClick, accent, children }: { active: boolean; onClick: () => void; accent?: 'yellow'; children: React.ReactNode }) {
+const TAB_LABEL: Record<DockTab, string> = { needs: 'Needs you', node: 'Node', log: 'Run log' }
+
+/** The bottom dock: a 44px bar when collapsed, else handle + tabs + the tab body (designs/08, 09, 07). */
+function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, children }: {
+  dock: DockState; dispatch: React.Dispatch<Parameters<typeof dockReducer>[1]>; height: number; paneH: number
+  waiting: number; selected: string | null; latest: string; children: React.ReactNode
+}) {
+  const open = dock.mode !== 'collapsed'
+  const [dragging, setDragging] = useState(false)
+  // The expand and collapse buttons replace each other: keep keyboard focus on whichever is shown.
+  const toggleBtn = useRef<HTMLButtonElement>(null)
+  const refocus = useRef(false)
+  useLayoutEffect(() => { if (refocus.current) { refocus.current = false; toggleBtn.current?.focus() } }, [open])
+  const toggle = (): void => { refocus.current = true; dispatch({ type: 'toggle' }) }
+  const fraction = paneH ? height / paneH : dock.pinnedFraction
+  const resizeTo = (px: number): void => { if (paneH) dispatch({ type: 'resize', fraction: clampDockHeight(px, paneH) / paneH }) }
+  const onHandleDown = (e: React.PointerEvent): void => {
+    const startY = e.clientY
+    const startH = height
+    setDragging(true)
+    const move = (ev: PointerEvent): void => resizeTo(startH - (ev.clientY - startY))
+    const up = (): void => { setDragging(false); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const onHandleKey = (e: React.KeyboardEvent): void => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+    e.preventDefault()
+    resizeTo(height + (e.key === 'ArrowUp' ? 1 : -1) * RESIZE_KEY_STEP * paneH)
+  }
+  const alert = !open && waiting > 0
+  const yellowTop = open && dock.tab === 'needs' && waiting > 0
+  const redTop = open && dock.mode === 'peek' && dock.peekFromSelect && dock.tab === 'node'
+  const count = (n: number | string, tone = 'text-ma-dim') => <span className={cn('font-mono text-[11px]', tone)}>{n}</span>
   return (
-    <button role="tab" aria-selected={active} onClick={onClick}
-      className={cn('-mb-px border-b-2 pb-2.5', active ? cn('text-white', accent === 'yellow' ? 'border-[#e6b422]' : 'border-ma-red') : 'border-transparent text-ma-mute hover:text-ma-soft')}>
-      {children}
-    </button>
+    <section aria-label="Run inspector" data-testid="graph-dock" data-mode={dock.mode} data-dragging={dragging}
+      onPointerDown={() => { if (open) dispatch({ type: 'touch' }) }} onKeyDown={() => { if (open) dispatch({ type: 'touch' }) }}
+      className={cn('ma-gdock relative flex flex-none flex-col overflow-hidden bg-[#0b0b0b]',
+        yellowTop ? 'border-t border-[#e6b422]/55 shadow-[0_-14px_40px_rgba(230,180,34,0.06)]'
+          : redTop ? 'border-t border-ma-red/70'
+          : alert ? 'ma-gdock-alert border-t border-[#e6b422]/55'
+          : 'border-t-[0.5px] border-white/10')}
+      style={{ height: open ? (paneH ? height : undefined) : DOCK_COLLAPSED_PX }}>
+      <div aria-live="polite" className="sr-only" data-testid="dock-announce">{dock.mode === 'auto' ? dock.announce : ''}</div>
+      {!open ? (
+        <div className="flex h-[44px] flex-none items-center gap-2.5 px-5" data-testid="dock-bar">
+          {(['needs', 'node', 'log'] as const).map((t) => (
+            <button key={t} onClick={() => dispatch({ type: 'tab', tab: t })} data-testid={`dock-chip-${t}`}
+              className={cn('flex flex-none items-center gap-[7px] rounded-lg border-[0.5px] px-2.5 py-[5px] text-[12.5px] hover:bg-white/5',
+                t === 'needs' && waiting > 0 ? 'border-[#e6b422]/50 text-[#e6b422]' : 'border-white/10 text-[#9a9a9a]')}>
+              {TAB_LABEL[t]}{t !== 'log' && ' '}
+              {t === 'needs' && count(waiting, waiting > 0 ? 'text-[#e6b422]' : 'text-ma-dim')}
+              {t === 'node' && count(selected ?? 'none selected')}
+            </button>
+          ))}
+          <span className="ml-3.5 min-w-0 flex-1 truncate font-mono text-[11px] text-ma-dim" data-testid="dock-latest">{latest}</span>
+          <span className="flex-none font-mono text-[10.5px] text-[#5a5a5a]">⌘J</span>
+          <button ref={toggleBtn} aria-label="Expand panel" aria-expanded={false} aria-controls="graph-dock-panel" onClick={toggle}
+            className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-[7px] border-[0.5px] border-white/[0.12] hover:bg-white/5">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#9a9a9a" strokeWidth="1.3" aria-hidden><path d="M2 8l4-4 4 4" /></svg>
+          </button>
+        </div>
+      ) : (
+        <>
+          <div role="separator" aria-orientation="horizontal" aria-label="Resize panel" tabIndex={0}
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}
+            onPointerDown={onHandleDown} onKeyDown={onHandleKey} data-testid="dock-handle"
+            className="group flex h-3.5 flex-none cursor-row-resize items-center justify-center outline-none">
+            <span className="h-[3px] w-11 rounded-sm bg-white/[0.14] group-hover:bg-white/30 group-focus-visible:bg-ma-red/70" />
+          </div>
+          <div className="flex h-[34px] flex-none items-center gap-[22px] border-b-[0.5px] border-white/[0.06] px-7 text-[13px]">
+            <div role="tablist" aria-label="Inspector" className="flex h-full items-center gap-[22px]">
+              {(['needs', 'node', 'log'] as const).map((t) => (
+                <button key={t} role="tab" id={`graph-dock-tab-${t}`} aria-selected={dock.tab === t} aria-controls="graph-dock-panel"
+                  onClick={() => dispatch({ type: 'tab', tab: t })}
+                  className={cn('-mb-px flex h-full items-center gap-1.5 border-b-2',
+                    dock.tab === t ? cn('text-white', t === 'needs' ? 'border-[#e6b422]' : 'border-ma-red') : 'border-transparent text-[#8a8a8a] hover:text-ma-soft')}>
+                  {TAB_LABEL[t]}{t === 'node' && selected ? ` ${selected}` : ''}{t === 'needs' && waiting > 0 && ' '}
+                  {t === 'needs' && waiting > 0 && <span className="font-mono text-[11px] text-[#e6b422]" data-testid="needs-count">{waiting}</span>}
+                </button>
+              ))}
+            </div>
+            <span className="flex-1" />
+            {dock.mode === 'auto' && !dock.touched && (
+              <span className="truncate rounded-full bg-[#e6b422]/10 px-[9px] py-0.5 font-mono text-[10.5px] text-[#e6b422]" data-testid="dock-auto-chip">auto-opened · closes when queue is empty</span>
+            )}
+            {dock.mode === 'peek' && dock.peekFromSelect && <span className="truncate font-mono text-[10.5px] text-ma-dim">Esc to close</span>}
+            {isPinned(dock) && <span className="truncate font-mono text-[10.5px] text-ma-dim" data-testid="dock-pin-label">{Math.round(fraction * 100)}% · drag to resize</span>}
+            <button aria-pressed={isPinned(dock)} onClick={() => dispatch({ type: 'pin', fraction })} data-testid="dock-pin"
+              className={cn('flex-none rounded-md border-[0.5px] px-[9px] py-[3px] font-mono text-[11px] hover:bg-white/5',
+                isPinned(dock) ? 'border-ma-red/50 text-[#ff8a85]' : 'border-white/[0.12] text-[#9a9a9a]')}>
+              {isPinned(dock) ? 'Pinned' : 'Pin'}
+            </button>
+            <button ref={toggleBtn} aria-label="Collapse panel" aria-expanded aria-controls="graph-dock-panel" onClick={toggle}
+              className="flex h-6 w-6 flex-none items-center justify-center rounded-md border-[0.5px] border-white/[0.12] hover:bg-white/5">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#9a9a9a" strokeWidth="1.3" aria-hidden><path d="M2 4l4 4 4-4" /></svg>
+            </button>
+          </div>
+          <div role="tabpanel" id="graph-dock-panel" aria-labelledby={`graph-dock-tab-${dock.tab}`} className="min-h-0 flex-1 overflow-y-auto" data-testid="dock-panel">
+            {children}
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 
-function selectionText(view: RunView, id: string | null): string {
-  if (!id) return 'Click a node to inspect it; double-click to open it'
-  if (id === ORCH_ID) return `Selected orchestrator · planned ${view.steps.length} agents`
-  if (id === OUT_ID) return 'Selected final synthesis'
-  const feeds = view.steps.filter((s) => s.dependsOn?.includes(id)).map((s) => s.id)
-  return `Selected ${id} · feeds ${feeds.length ? feeds.join(', ') : 'the final synthesis'}`
-}
+const isPinned = (d: DockState): boolean => d.mode === 'pinned'
 
-function NeedsYou({ view, config, readOnly, estimate, queues, order, focusAgent, onRespond, onReview, onApprovePlan, onCancelPlan }: {
-  view: RunView; config: MultiAgentConfig; readOnly: boolean; estimate: CostEstimate | null
-  queues: Map<string, McpToolPermissionRequest[]>; order: string[]; focusAgent: string | null
-  onRespond: (r: McpToolPermissionResponse) => void; onReview: (id: string) => void; onApprovePlan: () => void; onCancelPlan: () => void
+/** One card per agent with a waiting call (the head of its queue), in a wrapping grid (designs/09). */
+function NeedsYou({ view, config, preflight, estimate, queues, order, activeCard, setActiveCard, selected, onRespond, onApprovePlan, onCancelPlan }: {
+  view: RunView; config: MultiAgentConfig; preflight: boolean; estimate: CostEstimate | null
+  queues: Map<string, McpToolPermissionRequest[]>; order: string[]; activeCard: string | null; setActiveCard: (id: string | null) => void
+  selected: string | null; onRespond: (r: McpToolPermissionResponse) => void; onApprovePlan: () => void; onCancelPlan: () => void
 }) {
-  const preflight = view.phase === 'preflight' && !readOnly
-  const others = order.filter((id) => id !== focusAgent && queues.has(id))
-  if (!preflight && !focusAgent) return <p className="text-[12.5px] text-ma-mute" data-testid="needs-empty">Nothing needs you right now.</p>
+  const inbox = useMemo(() => inboxSummary(queues), [queues])
+  const agents = order.filter((id) => queues.has(id))
+  if (!preflight && agents.length === 0) return <p className="px-7 py-3.5 text-[12.5px] text-ma-mute" data-testid="needs-empty">Nothing needs you right now.</p>
+  const current = activeCard && queues.has(activeCard) ? activeCard : null
+  const goTo = (id: string | null): void => {
+    setActiveCard(id)
+    if (id) document.getElementById(`dock-card-${id}`)?.focus()
+  }
+  const respondHead = (id: string | null, approved: boolean): void => {
+    const head = id ? queues.get(id)?.[0] : undefined
+    if (head) onRespond({ requestId: head.requestId, approved, alwaysAllow: false, userNote: '' })
+  }
+  // J/K move between cards, Y allows, N denies — only while focus is inside the panel.
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.metaKey || e.ctrlKey || e.altKey || inbox.total === 0) return
+    const key = e.key.toLowerCase()
+    if (key === 'j' || key === 'k') goTo(nextWaiting(order, queues, current, key === 'j' ? 1 : -1))
+    else if (key === 'y' || key === 'n') respondHead(current ?? nextWaiting(order, queues, null), key === 'y')
+    else return
+    e.preventDefault()
+  }
   return (
-    <div className="flex flex-col gap-3">
-      {preflight && <Preflight view={view} config={config} estimate={estimate} onApprove={onApprovePlan} onCancel={onCancelPlan} />}
-      {focusAgent && <FocusedApproval key={queues.get(focusAgent)![0].requestId} agent={view.agents[focusAgent]} queue={queues.get(focusAgent)!} onRespond={onRespond} />}
-      {others.map((id) => {
-        const q = queues.get(id)!
-        return (
-          <div key={id} className="flex items-center gap-2.5 rounded-[10px] border-[0.5px] border-white/[0.07] bg-[#0f0f0f] px-3 py-2.5" data-testid={`needs-row-${id}`}>
-            <span className="h-[7px] w-[7px] flex-none rounded-full bg-[#e6b422]" />
-            <span className="font-mono text-[12px]">{id}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[#e6b422]">{bareTool(q[0].toolName)}</span>
-            {q.length > 1 && <span className="font-mono text-[10.5px] text-ma-mute">+{q.length - 1} queued</span>}
-            <button onClick={() => onReview(id)} className="h-6 rounded-md border-[0.5px] border-[#e6b422]/45 px-2 text-[11.5px] text-[#e6b422] hover:bg-[#e6b422]/10">Review</button>
-          </div>
-        )
-      })}
+    <div role="group" aria-label="Approvals" onKeyDown={onKeyDown} className="flex flex-col gap-3 px-7 pb-4 pt-3">
+      {preflight && <div className="max-w-[560px]"><Preflight view={view} config={config} estimate={estimate} onApprove={onApprovePlan} onCancel={onCancelPlan} /></div>}
+      {inbox.total > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[12.5px] text-[#cfcfcf]" data-testid="needs-summary">
+            <b className="font-semibold">{inbox.total} tool call{inbox.total === 1 ? '' : 's'}</b> waiting across {inbox.agents} agent{inbox.agents === 1 ? '' : 's'}
+          </span>
+          <span className="flex-1" />
+          <span className="font-mono text-[11px] text-ma-dim">J / K move · Y allow · N deny</span>
+          {inbox.topTool && (
+            <button onClick={() => { for (const r of trustToolResponses(queues, inbox.topTool)) onRespond(r) }}
+              title={`Allow every ${bareTool(inbox.topTool.toolName)} call in this chat without asking`}
+              className="rounded-[7px] border-[0.5px] border-white/[0.14] px-2.5 py-[5px] text-[12px] text-[#d8d8d8] hover:bg-white/5">
+              Trust {bareTool(inbox.topTool.toolName)} for all
+            </button>
+          )}
+        </div>
+      )}
+      {agents.length > 0 && (
+        <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]" data-testid="needs-cards">
+          {agents.map((id) => (
+            <ApprovalCard key={queues.get(id)![0].requestId} agent={view.agents[id]} queue={queues.get(id)!} selected={selected === id}
+              onFocus={() => setActiveCard(id)} onRespond={onRespond} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-/** The full permission card for the agent in focus; the rest of its queue shows as "next". */
-function FocusedApproval({ agent, queue, onRespond }: { agent?: AgentView; queue: McpToolPermissionRequest[]; onRespond: (r: McpToolPermissionResponse) => void }) {
+/** The head of one agent's queue: id and role, +N queued, tool, args or code (about 3 lines), Allow / Trust agent / Deny. */
+function ApprovalCard({ agent, queue, selected, onFocus, onRespond }: {
+  agent?: AgentView; queue: McpToolPermissionRequest[]; selected: boolean; onFocus: () => void; onRespond: (r: McpToolPermissionResponse) => void
+}) {
   const [sent, setSent] = useState(false)
   const head = queue[0]
+  const id = head.agent?.agentId ?? ''
   const code = typeof head.args.code === 'string' ? head.args.code : null
   const respond = (approved: boolean, agentTrust?: 'trust'): void => {
     if (sent) return
     setSent(true)
     onRespond({ requestId: head.requestId, approved, alwaysAllow: false, userNote: '', ...(agentTrust && { agentTrust }) })
   }
-  const btn = 'h-7 rounded-[7px] px-3 text-[12px] disabled:opacity-50'
+  const btn = 'rounded-md px-2.5 py-[5px] text-[11.5px] disabled:opacity-50'
   return (
-    <div className="rounded-xl border-[0.5px] border-l-2 border-[#e6b422]/45 border-l-[#e6b422] bg-[#e6b422]/[0.07] p-3.5" data-testid="needs-focused">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[12px] text-white">{head.agent?.agentId}</span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#cfcfcf]">{agent?.step.role ?? head.agent?.role}</span>
-        <span className="rounded-full bg-[#e6b422]/[0.12] px-2 py-0.5 font-mono text-[11px] text-[#e6b422]">1 of {queue.length}</span>
+    <div id={`dock-card-${id}`} tabIndex={-1} onFocus={onFocus} data-testid={`needs-card-${id}`}
+      className={cn('flex min-w-0 flex-col gap-2 rounded-[11px] border-[0.5px] border-l-2 border-[#e6b422]/40 border-l-[#e6b422] bg-[#e6b422]/[0.06] px-[13px] py-3 outline-none',
+        'focus-visible:shadow-[0_0_0_2px_rgba(230,180,34,0.45)]', selected && 'shadow-[0_0_0_2px_rgba(229,57,53,0.35)]')}>
+      <div className="flex items-center gap-[7px]">
+        <span className="font-mono text-[12px] text-white">{id}</span>
+        <span className="min-w-0 flex-1 truncate text-[11.5px] text-[#9a9a9a]">{agent?.step.role ?? head.agent?.role}</span>
+        {queue.length > 1 && <span className="flex-none rounded-full bg-[#e6b422]/[0.12] px-[7px] py-px font-mono text-[10.5px] text-[#e6b422]" title={`${queue.length - 1} more queued`}>+{queue.length - 1}</span>}
       </div>
-      <div className="mt-2.5 font-mono text-[12px] text-[#e6b422]">{bareTool(head.toolName)}</div>
-      <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-black/35 px-[11px] py-[9px] font-mono text-[11px] leading-relaxed text-[#bdbdbd]">{code ?? argsSummary(head.args)}</pre>
-      <div className="mt-3 flex flex-wrap gap-[7px]">
+      <div className="truncate font-mono text-[12px] text-[#e6b422]">{bareTool(head.toolName)}</div>
+      <pre className="line-clamp-3 h-[67px] overflow-hidden whitespace-pre-wrap break-words rounded-[7px] bg-black/35 px-[9px] py-2 font-mono text-[11px] leading-[1.55] text-[#bdbdbd]" data-testid="needs-card-args">
+        {code ?? argsSummary(head.args)}
+      </pre>
+      <div className="mt-auto flex flex-wrap gap-1.5">
         <button disabled={sent} onClick={() => respond(true)} className={cn(btn, 'bg-[#e6b422] font-medium text-[#0a0a0a] hover:bg-[#f0c33a]')}>Allow</button>
         <button disabled={sent} onClick={() => respond(true, 'trust')} title={`Trust ${head.agent?.role ?? 'this agent'} for the rest of the run`}
           className={cn(btn, 'border-[0.5px] border-[#e6b422]/50 text-[#e6b422] hover:bg-[#e6b422]/10')}>Trust agent</button>
-        <button disabled={sent} onClick={() => respond(false)} className={cn(btn, 'border-[0.5px] border-white/[0.12] text-ma-mute hover:bg-white/5 hover:text-ma-text')}>Deny</button>
+        <button disabled={sent} onClick={() => respond(false)} className={cn(btn, 'border-[0.5px] border-white/[0.12] text-[#9a9a9a] hover:bg-white/5 hover:text-ma-text')}>Deny</button>
       </div>
-      {queue[1] && <div className="mt-2.5 truncate font-mono text-[11px] text-ma-dim" data-testid="needs-next">next: {bareTool(queue[1].toolName)} · {argsSummary(queue[1].args)}</div>}
     </div>
   )
 }
 
-function NodePanel({ view, id, now, models }: { view: RunView; id: string | null; now: number; models: { orchestrator: string; synthesizer: string } }) {
-  if (!id) return <p className="text-[12.5px] text-ma-mute">Select a node in the graph.</p>
+function selectionText(view: RunView, id: string): string {
+  if (id === ORCH_ID) return `orchestrator · planned ${view.steps.length} agents`
+  if (id === OUT_ID) return 'final synthesis'
+  const feeds = view.steps.filter((s) => s.dependsOn?.includes(id)).map((s) => s.id)
+  return `${id} · feeds ${feeds.length ? feeds.join(', ') : 'the final synthesis'}`
+}
+
+function NodePanel({ view, id, now, models, onOpenAgent }: {
+  view: RunView; id: string | null; now: number; models: { orchestrator: string; synthesizer: string }; onOpenAgent?: (agentId: string) => void
+}) {
+  if (!id) return <p className="px-7 py-3.5 text-[12.5px] text-ma-mute">Click a node to inspect it; double-click to open it.</p>
   const row = (k: string, v: React.ReactNode) => <div className="flex justify-between gap-3 py-1"><span className="text-ma-mute">{k}</span><span className="min-w-0 truncate text-right font-mono text-ma-soft">{v}</span></div>
-  if (id === ORCH_ID) {
-    return (
-      <div className="text-[12.5px]" data-testid="node-panel">
-        <p className="mb-2 text-[13px] text-white">Orchestrator</p>
-        {row('Model', shortModel(models.orchestrator))}
-        {row('Agents planned', view.steps.length)}
-        {view.planning.fallbackReason && <p className="mt-2 text-[#e8c77f]">Fallback plan: {view.planning.fallbackReason}</p>}
+  // Wide and short: facts on the left, the latest output on the right.
+  const frame = (title: string, facts: React.ReactNode, body: React.ReactNode) => (
+    <div className="px-7 pb-4 pt-3 text-[12.5px]" data-testid="node-panel">
+      <div className="mb-2 flex items-center gap-3">
+        <p className="min-w-0 flex-1 truncate text-[13px] text-white">{title}</p>
+        <span className="min-w-0 truncate text-[12px] text-ma-mute" data-testid="graph-selection">{selectionText(view, id)}</span>
+        {view.agents[id] && onOpenAgent && (
+          <button onClick={() => onOpenAgent(id)} className="h-7 flex-none rounded-[7px] border-[0.5px] border-white/[0.14] px-2.5 text-[12px] text-[#d8d8d8] hover:bg-white/5">Open full view</button>
+        )}
       </div>
-    )
+      <div className="grid gap-x-8 [grid-template-columns:minmax(260px,520px)_minmax(0,1fr)]">
+        <div className="grid grid-cols-2 gap-x-6 self-start">{facts}</div>
+        <div className="min-w-0">{body}</div>
+      </div>
+    </div>
+  )
+  if (id === ORCH_ID) {
+    return frame('Orchestrator', <>{row('Model', shortModel(models.orchestrator))}{row('Agents planned', view.steps.length)}</>,
+      view.planning.fallbackReason && <p className="text-[#e8c77f]">Fallback plan: {view.planning.fallbackReason}</p>)
   }
   if (id === OUT_ID) {
-    return (
-      <div className="text-[12.5px]" data-testid="node-panel">
-        <p className="mb-2 text-[13px] text-white">Final synthesis</p>
-        {row('Model', shortModel(models.synthesizer))}
-        {row('State', view.phase)}
-        {view.synthesis && <p className="mt-2 line-clamp-[10] whitespace-pre-wrap text-ma-soft">{view.synthesis}</p>}
-      </div>
-    )
+    return frame('Final synthesis', <>{row('Model', shortModel(models.synthesizer))}{row('State', view.phase)}</>,
+      view.synthesis && <p className="line-clamp-[10] whitespace-pre-wrap text-ma-soft">{view.synthesis}</p>)
   }
   const agent = view.agents[id]
   if (!agent) return null
   const gate = agent.reflections.at(-1)
   const elapsed = elapsedMs(agent, isWorking(agent.status) ? now : agent.startedAt || 0)
   const text = agent.status === 'running' ? agent.liveText : agent.output
-  return (
-    <div className="text-[12.5px]" data-testid="node-panel">
-      <p className="mb-2 text-[13px] text-white">{id} {agent.step.label}</p>
+  return frame(`${id} ${agent.step.label}`, (
+    <>
       {row('Role', agent.step.role)}
       {row('Model', shortModel(agent.step.model) || 'active model')}
       {row('State', agent.status)}
@@ -209,19 +390,22 @@ function NodePanel({ view, id, now, models }: { view: RunView; id: string | null
       {row('Elapsed', elapsed === null ? '—' : formatElapsed(elapsed))}
       {row('Tool calls', agent.timeline.filter((t) => t.kind === 'tool').length)}
       {row('Waits on', agent.step.dependsOn?.length ? agent.step.dependsOn.join(', ') : '—')}
-      {gate && <p className={cn('mt-2', gate.passed ? 'text-[#7fdcb0]' : 'text-[#ff8c88]')}>Review {gate.score}/5 — {gate.reason}</p>}
-      {agent.failure && <p className="mt-2 text-[#ff8c88]">{agent.failure}</p>}
-      {text && <p className="mt-2 line-clamp-[8] whitespace-pre-wrap text-ma-soft" data-testid="node-output">{text}</p>}
-    </div>
-  )
+    </>
+  ), (
+    <>
+      {gate && <p className={cn('mb-2', gate.passed ? 'text-[#7fdcb0]' : 'text-[#ff8c88]')}>Review {gate.score}/5 — {gate.reason}</p>}
+      {agent.failure && <p className="mb-2 text-[#ff8c88]">{agent.failure}</p>}
+      {text ? <p className="line-clamp-[8] whitespace-pre-wrap text-ma-soft" data-testid="node-output">{text}</p> : !gate && !agent.failure && <p className="text-ma-dim">No output yet.</p>}
+    </>
+  ))
 }
 
 const LOG_TONE = { info: 'text-ma-soft', ok: 'text-[#7fdcb0]', wait: 'text-[#e8c77f]', fail: 'text-[#ff8c88]' } as const
 
 function RunLog({ view }: { view: RunView }) {
-  if (view.log.length === 0) return <p className="text-[12.5px] text-ma-mute">Nothing logged yet.</p>
+  if (view.log.length === 0) return <p className="px-7 py-3.5 text-[12.5px] text-ma-mute">Nothing logged yet.</p>
   return (
-    <ol className="flex flex-col gap-1.5 font-mono text-[11.5px]" data-testid="run-log">
+    <ol className="flex flex-col gap-1.5 px-7 pb-4 pt-3 font-mono text-[11.5px]" data-testid="run-log">
       {[...view.log].reverse().map((l, i) => (
         <li key={view.log.length - i} className="flex gap-2.5">
           <span className="flex-none text-ma-dim">{formatElapsed(Math.max(0, l.ts - view.startedAt))}</span>
@@ -242,7 +426,7 @@ function StatsStrip({ view, config, live, now, waiting, onAbort }: { view: RunVi
   const cap = view.runConfig?.budgetCapUsd ?? config.budgetCapUsd
   const m = view.runConfig?.models ?? config.models
   return (
-    <div className="flex min-h-[60px] flex-none flex-wrap items-center gap-x-8 gap-y-1 border-t-[0.5px] border-white/[0.06] bg-[#080808] px-6 py-2 font-mono text-[12px] text-[#bdbdbd] [&>span]:whitespace-nowrap" data-testid="graph-stats">
+    <div className="flex min-h-[44px] flex-none flex-wrap items-center gap-x-[30px] gap-y-1 border-t-[0.5px] border-white/[0.06] bg-[#080808] px-7 py-1.5 font-mono text-[11.5px] text-[#bdbdbd] [&>span]:whitespace-nowrap" data-testid="graph-stats">
       <span>{formatUsd(view.totals.costUsd)} <span className="text-ma-dim">/ {formatUsd(cap)}</span></span>
       <span>{formatTokens(view.totals.tokens)} tok</span>
       <span>{formatElapsed(Math.max(0, end - view.startedAt))} elapsed</span>

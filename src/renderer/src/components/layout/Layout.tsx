@@ -616,6 +616,7 @@ export function Layout() {
                     onAbort={multiAgent.abort}
                     onQuickPlan={multiAgent.quickPlan}
                     viewMode={agentView}
+                    chatId={activeChatId}
                     focusAgentId={focusAgentId}
                     onSelectAgent={selectAgent}
                     onClose={closeDock}

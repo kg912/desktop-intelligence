@@ -479,6 +479,15 @@
 .ma-strip[data-open="true"] { grid-template-rows: 1fr; }
 @media (prefers-reduced-motion: reduce) { .ma-strip { transition: none; } }
 
+/* Goal 7: the Graph view's bottom dock. Its height and the graph's re-fit animate over 180ms (CSS only);
+   the yellow "approvals waiting" bar pulses three times, then stays steady. */
+.ma-gdock { transition: height 180ms ease, border-color 180ms ease; }
+.ma-gdock[data-dragging="true"] { transition: none; }
+.ma-refit { transition: transform 180ms ease; }
+@keyframes ma-gdock-pulse { 50% { background-color: rgba(230,180,34,0.10); box-shadow: 0 -6px 24px rgba(230,180,34,0.14); } }
+.ma-gdock-alert { animation: ma-gdock-pulse 0.9s ease-in-out 3; }
+@media (prefers-reduced-motion: reduce) { .ma-gdock, .ma-refit { transition: none; } .ma-gdock-alert { animation: none; } }
+
 .ma-glass-pill {
   border: 0.5px solid rgba(229, 57, 53, 0.55);
   background: rgba(229, 57, 53, 0.10);

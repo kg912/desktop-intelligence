@@ -21,7 +21,7 @@ Read `CLAUDE.md` and `progress.md` before proceeding. Append rows to `progress.m
 
 ## Ground rules
 
-- A single `/goal` runs this whole spec. Work through Goals 1 to 6 in order without stopping between them. Each is independently shippable: finish it, verify it against its acceptance criteria, add its `progress.md` row, commit (no push), then start the next. Do not ask for confirmation between goals. The overall goal is done only when all six are complete and the final verification pass below is clean. If a goal is blocked, record why in `progress.md`, skip to the next goal that does not depend on it, and return to it at the end.
+- A single `/goal` runs this whole spec. Work through the goals you were asked to run, in order, without stopping between them (Goals 1 to 6 are already shipped and committed; the current run is Goal 7 only). Each is independently shippable: finish it, verify it against its acceptance criteria, add its `progress.md` row, commit (no push), then start the next. Do not ask for confirmation between goals. The overall goal is done only when all six are complete and the final verification pass below is clean. If a goal is blocked, record why in `progress.md`, skip to the next goal that does not depend on it, and return to it at the end.
 - Step 0 of every goal: read the actual source files first. This spec deliberately names no file paths it has not verified. Known anchors: `MultiAgentModeButton` in `InputBar.tsx`, the `AgentEvent` discriminated union, the Python sidecar at localhost:7823. Locate the run view, the agent accordion list, the "Viewing agent run" pill, the hover overlay and the plan pane by search before editing.
 - Design language (match existing, do not redesign): `#0a0a0a` backgrounds, `rgba(229,57,53,x)` red accents, `0.5px rgba(255,255,255,0.05)` hairlines, Inter plus JetBrains Mono, 13px mono for chrome, red left accent bar for active state. Permission UI keeps the existing yellow (`#e6b422` family).
 - No new animation libraries. CSS transitions only (Framer Motion was deliberately removed for M1 performance; no persistent rAF loops, shimmer and flow animations must stop when the run is idle or the tab is hidden).
@@ -123,6 +123,45 @@ Acceptance:
 - Toggling List and Graph mid-run loses no state and does not remount streaming.
 - Graph animation cost is bounded: edge flow animates only for edges that are active.
 
+## Goal 7: Graph view bottom dock (designs: `designs/07-dock-fixed-option.png`, `08-dock-collapsed.png`, `09-dock-auto-open.png`, `10-dock-behavior.png`)
+
+Added after Goals 1 to 6 shipped. Goals 1 to 6 are done and committed; only Goal 7 remains. Do not redo them.
+
+Problem: in Graph view the inspector (Needs you / Node / Run log) is a right-hand column that squeezes the graph to about 680px, so Phase 2, Phase 3 and Final synthesis are clipped. The graph is the main object, and the inspector matters only some of the time.
+
+Decision (approved): replace the right inspector column with a collapsible bottom dock. The graph takes the full pane width. `07-dock-fixed-option.png` shows the always-open 40% variant; it is NOT built as a separate mode. It is what the dock looks like when pinned at about 40%. `08` is the collapsed state, `09` is the auto-opened state, `10` is the behaviour spec.
+
+Existing code to change (verified from `progress.md` rows 400 to 409; confirm by reading): `src/renderer/src/components/chat/GraphView.tsx`, `AgentGraphCanvas.tsx`, `MultiAgentSidebarView.tsx`, `src/renderer/src/lib/multiAgentRunState.ts`, `agentGraphNodes.ts`, `dagLayout.ts`, `approvalQueue.ts`, `src/renderer/src/styles/globals.css`, tests in `src/tests/hitl/`. Reuse `approvalQueue.ts` for the per-agent permission queue; do not duplicate it.
+
+Do:
+- Remove the right inspector column. The canvas fills the pane width; the dock sits below it, above the stats strip.
+- Dock structure: a drag handle on top, then tabs Needs you (with count), Node <id> and Run log, then the tab body. Tab content is the existing content, re-laid-out for a wide, short area.
+- Needs you tab: one card per agent with a pending approval (the head of that agent's queue), laid out horizontally in a responsive grid (minimum card width about 260px, wraps to more rows and scrolls vertically when needed). Card: id and role, `+N queued` chip, tool name, args or code preview (about 3 lines), Allow, Trust agent, Deny. Header line: total waiting calls and agent count, J/K/Y/N hints, and the existing bulk "Trust <tool> for all". Trust and queue semantics are unchanged.
+- Dock states (see `10-dock-behavior.png`): collapsed = a 44px bar; auto-open = about 38% of the pane height; peek = about 30%; pinned = the user's own height. Clamp heights to a minimum of about 240px and a maximum of about 60% of the pane.
+- Collapsed bar content: tab chips with counts (Needs you n, Node id or "none selected", Run log), the latest log line, a Cmd+J hint and an expand button. When approvals are waiting while collapsed, the bar gets the yellow border and the count, pulsing three times and then staying steady.
+- Behaviour rules:
+  1. Auto-open only for approvals, once per batch. If the user collapses it while approvals wait, it stays collapsed (yellow bar) and only a new batch of approvals re-opens it.
+  2. Auto-close about 2 seconds after the queue empties, only if the user never touched the dock. A pinned dock never auto-closes.
+  3. Selecting a node opens the dock as a peek on the Node tab if it is collapsed. Esc or a click on empty canvas closes a peek that was opened by selection.
+  4. Run log never opens on its own.
+  5. Never steal focus. Opening and closing animates over about 180ms with CSS transitions.
+  6. Cmd+J toggles the dock. Pinned state and height persist per chat, using the same per-chat persistence as the List | Graph choice.
+- Graph refit: `AgentGraphCanvas` re-fits whenever its available height changes (ResizeObserver, throttled), animating the transform over about 180ms without remounting. Nodes have two densities chosen from the available height: regular (about 80px, with the model/token meta line) and compact (about 64px, no meta line), as drawn in `08` and `09`. The whole graph, including Phase 3 and Final synthesis, must stay visible at every dock state at a pane width of 1240px and above.
+- State: keep dock behaviour in a small pure module (for example `src/renderer/src/lib/graphDock.ts`: a reducer or state machine over `collapsed | auto | peek | pinned`, plus the batch ids for auto-open and user-collapse). The component only renders it.
+- Accessibility: tabs use `role="tablist"`/`tab`/`tabpanel`; the toggle has `aria-expanded`; auto-open announces "N approvals need you" via an `aria-live="polite"` region and does not move focus; handle is keyboard-resizable with arrow keys.
+- Performance: no new rAF loops, no animation while the run is idle, edge flow animation only on active edges (unchanged), ResizeObserver callbacks throttled.
+
+Acceptance:
+- With the dock in any state, the full graph is visible and not clipped at pane widths from 1000px up.
+- Idle run: dock collapsed; the graph uses nearly all the height; the bar shows counts and the latest log line.
+- First approval arrives: the dock opens once to the Needs you tab and the graph refits smoothly. Resolving all approvals closes it about 2 seconds later if untouched.
+- Collapsing while approvals wait keeps it collapsed with a yellow bar and count; a new batch re-opens it.
+- Pinned dock keeps its height across reloads of the same chat and never auto-closes.
+- Approvals resolved in the dock, the List view and the focus view stay in sync (single source of truth in the run store).
+- Matches `08` (collapsed) and `09` (auto-open) closely in layout, spacing and color when screenshotted in the running app at about 1240px pane width.
+
+Tests: Vitest for the pure dock module (auto-open once per batch, user-collapse suppression, auto-close timing with fake timers, pinned never auto-closes, peek on select and close on Esc, height clamping) and a component test that the right-hand inspector is gone and the tabs render in the dock.
+
 ## Verification discipline (every goal)
 
 - Check actual output files after the run before moving to the next goal.
@@ -130,7 +169,7 @@ Acceptance:
 - Verify on the machine the work is done on: no persistent rAF loop when idle (Animations track quiet in a Performance trace, or an equivalent check such as counting requestAnimationFrame callbacks while idle), no re-render regressions in `Layout`. A trace on the M1 Pro is a follow-up for the user, not a completion gate.
 - Screenshot each state in the running app and compare it against the matching PNG in `specs/designs/` before marking the goal done; fix visible differences in layout, spacing, color and copy.
 
-## Final verification pass (after Goal 6)
+## Final verification pass (after the last goal you were asked to run)
 
 - Run the full Vitest suite and the TypeScript build; both must pass.
 - Walk each acceptance list again against the running app and fix any gap.

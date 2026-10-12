@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recommended dock behavior</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'JetBrains Mono',ui-monospace,monospace}
+</style>
+</helmet>
+<div style="width:1240px;height:860px;box-sizing:border-box;background:#0a0a0a;font-family:'Inter',system-ui,sans-serif;color:#e8e8e8;padding:40px 48px;display:flex;flex-direction:column;gap:30px;border:0.5px solid rgba(255,255,255,0.06)">
+
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <span style="font-size:22px;font-weight:600">Recommended: collapsible bottom dock</span>
+    <span class="m" style="font-size:12px;color:#ff6b66;border:0.5px solid rgba(229,57,53,0.5);border-radius:6px;padding:2px 8px">Option 2, refined</span>
+  </div>
+
+  <!-- four states -->
+  <div style="display:flex;align-items:flex-start;gap:14px">
+    <sc-for list="{{frames}}" as="f" hint-placeholder-count="4">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px"><span class="m" style="font-size:11px;color:{{f.accent}}">{{f.n}}</span><span style="font-size:14px;font-weight:500">{{f.name}}</span><span class="m" style="font-size:11px;color:#6a6a6a;margin-left:auto">{{f.size}}</span></div>
+        <div style="height:250px;border:0.5px solid rgba(255,255,255,0.10);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;background:#0c0c0c">
+          <div style="flex:1;position:relative;background-image:radial-gradient(rgba(255,255,255,0.06) 1px,transparent 1px);background-size:14px 14px">
+            <div style="position:absolute;left:14px;top:50%;margin-top:-9px;width:34px;height:18px;border-radius:4px;border:0.5px solid rgba(74,222,128,0.4)"></div>
+            <div style="position:absolute;left:84px;top:14%;width:50px;height:14px;border-radius:4px;border:0.5px solid rgba(74,222,128,0.4)"></div>
+            <div style="position:absolute;left:84px;top:36%;width:50px;height:14px;border-radius:4px;border:0.5px solid rgba(74,222,128,0.4)"></div>
+            <div style="position:absolute;left:84px;top:58%;width:50px;height:14px;border-radius:4px;border:0.5px solid rgba(74,222,128,0.4)"></div>
+            <div style="position:absolute;left:84px;top:80%;width:50px;height:14px;border-radius:4px;border:0.5px solid rgba(74,222,128,0.4)"></div>
+            <div style="position:absolute;left:160px;top:50%;margin-top:-7px;width:44px;height:14px;border-radius:4px;border:0.5px solid rgba(255,255,255,0.14)"></div>
+            <div style="position:absolute;left:216px;top:50%;margin-top:-7px;width:24px;height:14px;border-radius:4px;border:0.5px solid rgba(255,255,255,0.14)"></div>
+          </div>
+          <div style="height:{{f.dockH}}px;flex-shrink:0;box-sizing:border-box;border-top:1px solid {{f.accent}};background:{{f.fill}};padding:6px 10px;display:flex;flex-direction:column;gap:6px;overflow:hidden">
+            <div class="m" style="font-size:9.5px;color:{{f.accent}};white-space:nowrap">{{f.tabs}}</div>
+            <sc-if value="{{f.hasBody}}" hint-placeholder-val="{{ true }}"><div style="display:flex;gap:5px;flex:1"><div style="flex:1;border-radius:5px;background:{{f.card}}"></div><div style="flex:1;border-radius:5px;background:{{f.card}}"></div><div style="flex:1;border-radius:5px;background:{{f.card}}"></div></div></sc-if>
+          </div>
+        </div>
+        <div style="font-size:12.5px;line-height:1.55;color:#bdbdbd"><span style="color:#fff">{{f.trigger}}</span> {{f.detail}}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- rules -->
+  <div style="border-top:0.5px solid rgba(255,255,255,0.07);padding-top:22px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 40px">
+    <sc-for list="{{rules}}" as="r" hint-placeholder-count="6">
+      <div style="display:flex;gap:12px;font-size:13px;line-height:1.55">
+        <span class="m" style="font-size:11px;color:#e53935;width:18px;flex-shrink:0;padding-top:2px">{{r.n}}</span>
+        <div><span style="color:#fff">{{r.title}}</span> <span style="color:#9a9a9a">{{r.body}}</span></div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1240,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const N='rgba(255,255,255,0.18)', Y='#e6b422', R='#e53935';
+    const frames=[
+      {n:'1',name:'Collapsed',size:'44px bar',accent:N,fill:'#0b0b0b',card:'transparent',dockH:30,hasBody:false,tabs:'Needs you 0 · Node · Run log · latest log line',trigger:'Default.',detail:'Idle run, nothing waiting. The graph gets all the height.'},
+      {n:'2',name:'Auto-open',size:'about 38%',accent:Y,fill:'rgba(230,180,34,0.05)',card:'rgba(230,180,34,0.10)',dockH:96,hasBody:true,tabs:'Needs you 11 · auto-opened',trigger:'First approval arrives.',detail:'Opens to the Needs you tab, graph refits to the space left.'},
+      {n:'3',name:'Peek',size:'about 30%',accent:R,fill:'#0b0b0b',card:'rgba(255,255,255,0.06)',dockH:80,hasBody:true,tabs:'Node 1.4 · selected',trigger:'You select a node.',detail:'Shows the Node tab. Esc or a click on empty canvas closes it.'},
+      {n:'4',name:'Pinned',size:'your height',accent:'rgba(255,255,255,0.4)',fill:'#0b0b0b',card:'rgba(255,255,255,0.06)',dockH:130,hasBody:true,tabs:'Run log · pinned',trigger:'You drag the handle or press Pin.',detail:'Stays exactly where you put it. Never auto-closes.'}
+    ];
+    const rules=[
+      {n:'1',title:'Auto-open is for approvals only.',body:'It opens once per batch. If you collapse it while approvals wait, it stays collapsed, the bar turns yellow with the count, and only a new batch re-opens it.'},
+      {n:'2',title:'Auto-close is gentle.',body:'It closes about 2 seconds after the queue empties, and only if you never touched it. A pinned dock never closes by itself.'},
+      {n:'3',title:'The collapsed bar is not dead space.',body:'It always shows tab counts and the latest log line, so checking on a run never needs an open panel.'},
+      {n:'4',title:'No surprises under your cursor.',body:'It slides over about 180 ms and the graph refits smoothly. Focus never moves unless you press a shortcut.'},
+      {n:'5',title:'Run log never opens on its own.',body:'It is a reference tab, not something that needs you.'},
+      {n:'6',title:'Keyboard and memory.',body:'Cmd+J toggles the dock. Pin state and height are remembered per chat.'}
+    ];
+    return { frames, rules };
+  }
+}
+</script>
+</body>
+</html>

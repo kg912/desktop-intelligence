@@ -2,7 +2,7 @@
 // The requests array (Layout's mcpPermissionRequests) is the single source of truth, in arrival
 // order; everything here is derived from it, so the list, focus view and graph cannot disagree.
 
-import type { McpToolPermissionRequest } from '../../../shared/types'
+import type { McpToolPermissionRequest, McpToolPermissionResponse } from '../../../shared/types'
 
 /** agentId → that agent's pending requests, oldest first (FIFO). Only requests of `runId`. */
 export function approvalQueues(requests: McpToolPermissionRequest[], runId: string): Map<string, McpToolPermissionRequest[]> {
@@ -41,6 +41,14 @@ export function inboxSummary(queues: Map<string, McpToolPermissionRequest[]>): I
   let topTool: InboxSummary['topTool'] = null
   for (const entry of counts.values()) if (!topTool || entry.count > topTool.count) topTool = entry
   return { total, agents: queues.size, topTool }
+}
+
+/** "Trust <tool> for all": every waiting call of `tool`, answered with the chat's allow list (alwaysAllow 'session'). */
+export function trustToolResponses(queues: Map<string, McpToolPermissionRequest[]>, tool: InboxSummary['topTool']): McpToolPermissionResponse[] {
+  if (!tool) return []
+  return [...queues.values()].flat()
+    .filter((r) => r.serverName === tool.serverName && r.toolName === tool.toolName)
+    .map((r) => ({ requestId: r.requestId, approved: true, alwaysAllow: 'session' as const, userNote: '' }))
 }
 
 /**
