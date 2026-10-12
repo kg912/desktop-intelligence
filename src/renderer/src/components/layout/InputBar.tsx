@@ -75,7 +75,7 @@ export function BypassPermissionsButton({
         : 'Permissions required — click to bypass'
       }
       className={cn(
-        'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+        'flex items-center gap-1.5 px-2 py-0.5 rounded-md whitespace-nowrap',
         'text-[10px] font-medium transition-all duration-150',
         'focus:outline-none',
         active
@@ -84,7 +84,7 @@ export function BypassPermissionsButton({
       )}
     >
       {active ? <ShieldOff className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
-      <span>{active ? 'Bypass Permissions' : 'Require Permissions'}</span>
+      <span className="ib-label">{active ? 'Bypass Permissions' : 'Require Permissions'}</span>
     </button>
   )
 }
@@ -121,7 +121,7 @@ export function MultiAgentModeButton({
         : 'Multi-agent mode off — click to enable'
       }
       className={cn(
-        'flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+        'flex items-center gap-1.5 px-2 py-0.5 rounded-md whitespace-nowrap',
         'text-[10px] font-medium transition-all duration-150',
         'focus:outline-none',
         on
@@ -131,7 +131,7 @@ export function MultiAgentModeButton({
       )}
     >
       <Network className="w-3 h-3" />
-      <span>Multi-Agent</span>
+      <span className="ib-label">Multi-Agent</span>
     </button>
   )
 }
@@ -212,6 +212,19 @@ export const InputBar = memo(function InputBar({
       }
       @media (prefers-reduced-motion: reduce) {
         .ma-breathe::after { animation: none; opacity: 0.7; }
+      }
+      /* The helper row adapts to the input bar's own width, not the window's:
+         the multi-agent panel narrows the chat column without resizing the window. */
+      .ib-cq { container-type: inline-size; }
+      @container (max-width: 600px) {
+        .ib-hint { display: none; }
+      }
+      @container (max-width: 420px) {
+        /* Icon-only toggles; the label stays as the accessible name. */
+        .ib-label {
+          position: absolute; width: 1px; height: 1px; overflow: hidden;
+          clip: rect(0 0 0 0); white-space: nowrap;
+        }
       }
       .ma-pulse {
         animation: ma-pulse-kf 1.8s ease-in-out infinite alternate;
@@ -513,34 +526,34 @@ export const InputBar = memo(function InputBar({
       </div>
 
       {/* Helper row */}
-      <div className="px-3 pb-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
+      <div className="px-3 pb-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
           <button
             onClick={() => setThinkingMode(thinkingMode === 'thinking' ? 'fast' : 'thinking')}
             title={thinkingMode === 'thinking' ? 'Thinking mode — click to switch to Fast' : 'Fast mode — click to switch to Thinking'}
             className={cn(
-              'flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all duration-150 focus:outline-none',
+              'flex items-center gap-1.5 px-2 py-0.5 rounded-md whitespace-nowrap text-[10px] font-medium transition-all duration-150 focus:outline-none',
               thinkingMode === 'thinking'
                 ? 'bg-accent-950/70 text-accent-400 border border-accent-800/50'
                 : 'text-content-muted hover:text-content-secondary'
             )}
           >
             {thinkingMode === 'thinking' ? <Brain className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
-            <span>{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
+            <span className="ib-label">{thinkingMode === 'thinking' ? 'Thinking' : 'Fast'}</span>
           </button>
           <BypassPermissionsButton active={bypassPermissions} onToggle={handleBypassToggle} />
           {isOpenRouter === true && (
             <MultiAgentModeButton active={multiAgentMode} onToggle={setMultiAgentMode} locked={modeLock} />
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           {mcpActivity && (
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-950/50 border border-accent-900/40 text-[10px] text-accent-400">
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full whitespace-nowrap truncate max-w-[220px] bg-accent-950/50 border border-accent-900/40 text-[10px] text-accent-400">
               <Plug className="w-2.5 h-2.5 animate-pulse" />
               {mcpActivity.serverName} · {mcpActivity.toolName}
             </span>
           )}
-          <p className="text-[10px] text-content-muted">
+          <p className="ib-hint whitespace-nowrap text-[10px] text-content-muted">
             <kbd className="font-mono">⏎</kbd> send &nbsp;·&nbsp;
             <kbd className="font-mono">⇧⏎</kbd> newline
           </p>
@@ -551,7 +564,7 @@ export const InputBar = memo(function InputBar({
 
   return (
     <div
-      className="flex-shrink-0 px-4 pb-4 pt-2"
+      className="ib-cq flex-shrink-0 px-4 pb-4 pt-2"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
