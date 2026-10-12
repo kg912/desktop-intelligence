@@ -51,12 +51,13 @@ export function planningNodes(planning: PlanningView, orchestratorModel: string)
   const writing = planning.stage === 'reading' || planning.stage === 'splitting'
   const more = writing && (planning.maxAgents === undefined || draft.length < planning.maxAgents)
   const ghost: GraphNode[] = more ? [{ id: GHOST_NEXT, label: '', title: '', meta: '', state: 'ghost', dependsOn: [ORCH_ID] }] : []
-  const feeding = leaves(draft)
+  // The ghost synthesis sits after the subtasks (or after the ghost one, before any exist).
+  const feeding = draft.length ? leaves(draft) : ghost.length ? [GHOST_NEXT] : [ORCH_ID]
   return [
     { id: ORCH_ID, label: 'orch', title: 'Orchestrator · plan', meta: short(orchestratorModel) || 'orchestrator', state: 'run', stateText: 'planning', dependsOn: [] },
     ...draft,
     ...ghost,
-    { id: OUT_ID, label: 'out', title: 'Final synthesis', meta: '', state: 'ghost', dependsOn: feeding.length ? feeding : [ORCH_ID] },
+    { id: OUT_ID, label: 'out', title: 'Final synthesis', meta: '', state: 'ghost', dependsOn: feeding },
   ]
 }
 

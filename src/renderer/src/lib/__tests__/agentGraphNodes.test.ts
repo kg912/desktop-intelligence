@@ -29,6 +29,13 @@ describe('planningNodes', () => {
     expect(nodes[2].meta).toBe('role pending')
   })
 
+  it('before any subtask: orchestrator → ghost subtask → ghost synthesis, three columns', () => {
+    seq = 0
+    const nodes = planningNodes(reduceRunEvents('r', [ev({ type: 'plan_started', maxAgents: 4 })]).planning, 'm')
+    expect(nodes.map((n) => [n.id, n.dependsOn])).toEqual([['orch', []], ['__next', ['orch']], ['out', ['__next']]])
+    expect(layoutDag(nodes).columns).toEqual([['orch'], ['__next'], ['out']])
+  })
+
   it('a re-plan restarts the draft; no ghost once the plan is being wired', () => {
     seq = 0
     const v = reduceRunEvents('r', [
