@@ -11,6 +11,7 @@ import type { AgentStatus, AgentView, ReflectionView, RunView, TimelineItem } fr
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting } from '../../lib/approvalQueue'
 import { PlanningStage, PlanningStepper } from './PlanningStage'
+import { GraphView } from './GraphView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
@@ -33,7 +34,7 @@ function clock(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-function useNow(active: boolean): number {
+export function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!active) return
@@ -78,6 +79,8 @@ interface Props {
   onOpenAgent?: (agentId: string) => void
   /** Slow-plan escape hatch: use the quick fallback plan. */
   onQuickPlan?: () => Promise<void> | void
+  /** List (rows) or Graph (designs/06-graph-view.png). Both stay mounted once shown, so switching loses nothing. */
+  viewMode?: 'list' | 'graph'
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -95,8 +98,18 @@ export function MultiAgentSidebarView(props: Props) {
   const models = view.runConfig?.models ?? config.models
   // Planning (or a run that ended before it had a plan): the planning state, never an empty pane.
   const planning = view.steps.length === 0 && (view.phase === 'planning' || view.phase === 'failed')
+  const graph = props.viewMode === 'graph'
+  const [graphMounted, setGraphMounted] = useState(graph)
+  useEffect(() => { if (graph) setGraphMounted(true) }, [graph])
   return (
-    <div className="flex h-full w-full text-ma-text" data-testid="agent-dock">
+    <div className="flex h-full w-full text-ma-text" data-testid="agent-dock" data-view={graph ? 'graph' : 'list'}>
+      {graphMounted && (
+        <div className={cn('h-full w-full min-w-0', !graph && 'hidden')} data-testid="dock-graph">
+          <GraphView view={view} config={config} readOnly={readOnly} now={now} estimate={estimate} queues={requestsByAgent}
+            onRespond={onRespondPermission} onApprovePlan={props.onApprove} onCancelPlan={props.onCancel} onAbort={props.onAbort} onOpenAgent={props.onOpenAgent} />
+        </div>
+      )}
+      <div className={cn('flex h-full w-full min-w-0', graph && 'hidden')} data-testid="dock-list">
       {!props.hidePlanColumn && <section aria-label="Run plan" className="flex min-h-0 flex-none flex-col border-r-[0.5px] border-white/5" style={{ width: PLAN_COLUMN_WIDTH }}>
         <div className="border-b-[0.5px] border-white/5 px-4 pb-3 pt-3.5">
           <div className="flex items-center justify-between font-semibold">
@@ -174,6 +187,7 @@ export function MultiAgentSidebarView(props: Props) {
           <p className="rounded-xl border-[0.5px] border-ma-red/35 bg-ma-red/[0.08] p-3 text-[12.5px] text-ma-redtext">Run failed: {view.failureReason}</p>
         )}
       </section>
+      </div>
     </div>
   )
 }
@@ -276,7 +290,7 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
 
 // ── Pre-flight ───────────────────────────────────────────────────────────────
 
-function Preflight({ view, config, estimate, onApprove, onCancel }: {
+export function Preflight({ view, config, estimate, onApprove, onCancel }: {
   view: RunView; config: MultiAgentConfig; estimate: CostEstimate | null; onApprove: () => void; onCancel: () => void
 }) {
   const cap = config.budgetCapUsd

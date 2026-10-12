@@ -507,6 +507,9 @@
 .ma-mpill-dot[data-s="ok"] { background: #43cf8f; animation: none; }
 .ma-mpill-dot[data-s="fail"] { background: transparent; border: 1.5px solid #e53935; animation: none; }
 @media (max-width: 900px) { .ma-mpill-sub { display: none; } }
+/* The chat column narrows when the dock widens (Graph view): the bar follows its own width, not the window's. */
+.ma-topbar-cq { container-type: inline-size; }
+@container (max-width: 560px) { .ma-mpill-sub { display: none; } }
 
 .ma-pop {
   /* Viewport-fixed; left/top/width come from placeOverlay() so it never runs off either edge. */

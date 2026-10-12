@@ -198,7 +198,7 @@ const GraphNodeCard = memo(function GraphNodeCard({ node, x, y, selected, onSele
       onDoubleClick={() => !ghost && onOpen?.(node.id)}
       onKeyDown={(e) => { if (!ghost && e.key === 'Enter') onSelect?.(node.id) }}
       className={cn(
-        'absolute box-border overflow-hidden rounded-[11px] border-[0.5px] bg-[#101010] px-[11px] py-[9px] outline-none transition-[box-shadow,opacity] duration-300',
+        'absolute box-border overflow-hidden rounded-[11px] border-[0.5px] bg-[#101010] px-[11px] py-[7px] outline-none transition-[box-shadow,opacity] duration-300',
         STATE_BORDER[node.state],
         selected && '!border-ma-red shadow-[0_0_0_3px_rgba(229,57,53,0.18)]',
         onSelect && !ghost && 'cursor-pointer focus-visible:shadow-[0_0_0_2px_rgba(229,57,53,0.5)]'
@@ -214,8 +214,8 @@ const GraphNodeCard = memo(function GraphNodeCard({ node, x, y, selected, onSele
             {node.badge ? <span className="rounded-full bg-[#e6b422] px-1.5 font-mono text-[10.5px] font-medium text-[#0a0a0a]" data-testid={`graph-badge-${node.id}`}>{node.badge}</span> : null}
             {node.stateText && <span className={cn('font-mono text-[10px]', STATE_TEXT[node.state])}>{node.stateText}</span>}
           </div>
-          <div className="mt-[5px] line-clamp-2 h-[30px] text-[11.5px] leading-[1.3] text-[#cfcfcf]">{node.title}</div>
-          <div className="mt-0.5 truncate font-mono text-[10px] text-ma-dim">{node.meta}</div>
+          <div className="mt-1 line-clamp-2 h-[30px] text-[11.5px] leading-[15px] text-[#cfcfcf]">{node.title}</div>
+          <div className="mt-px truncate font-mono text-[10px] leading-[13px] text-ma-dim">{node.meta}</div>
         </>
       )}
     </div>

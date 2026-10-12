@@ -4,7 +4,7 @@
  * run is live. Heavy children (chat list rendering, top bar) are stubbed; the
  * Sidebar, InputBar and multi-agent run hook are real.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { forwardRef } from 'react'
 
@@ -409,5 +409,48 @@ describe('Goal 5 — from send to the first plan event the planning state is on 
     await send('Plan a trip')
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('OpenRouter API key missing'))
     expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('chat')
+  })
+})
+
+describe('Goal 6 — List | Graph toggle, remembered per chat', () => {
+  const saved = () => {
+    const steps = [{ id: '1.1', label: 'Look', stage: 'worker', role: 'Scout', model: 'w', phase: 1, dependsOn: [] }]
+    overrides.getMultiAgentRun.mockImplementation((async (chatId: string) => chatId === 'agents'
+      ? { mode: 'multi-agent', runStatus: 'completed', agentGraph: steps, runId: 'r9', runIds: ['r9'],
+          executionTrace: [{ runId: 'r9', seq: 1, ts: 1, type: 'orchestrator_plan', steps }, { runId: 'r9', seq: 2, ts: 2, type: 'task_complete', finalOutput: 'x', totalCostUsd: 0, totalTokens: 0 }] }
+      : null) as any)
+  }
+  // This jsdom setup has no localStorage (the app's reads/writes are try/caught); an in-memory one stands in.
+  beforeEach(() => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) }, clear: () => store.clear() })
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('only agent chats get the toggle; Graph opens the dock in graph view and is remembered for that chat', async () => {
+    saved()
+    await renderLayout()
+    await openChat('regular title')
+    expect(topBarProps.onAgentViewMode).toBeUndefined()
+    await openChat('agents title')
+    await waitFor(() => expect(topBarProps.agentRun?.view.runId).toBe('r9'))
+    expect(topBarProps.agentViewMode).toBe('list')
+    await act(async () => { topBarProps.onAgentViewMode('graph') })
+    await waitFor(() => expect(screen.getByTestId('agent-dock').dataset.view).toBe('graph'))
+    expect(screen.getByTestId('sidebar-panel').dataset.mode).toBe('agents')
+    expect(localStorage.getItem('di.multiAgentView.agents')).toBe('graph')
+    expect(screen.getByTestId('graph-view')).toBeTruthy()
+    // Back to List: same choice saved, the dock stays.
+    await act(async () => { topBarProps.onAgentViewMode('list') })
+    expect(localStorage.getItem('di.multiAgentView.agents')).toBe('list')
+    expect(screen.getByTestId('agent-dock').dataset.view).toBe('list')
+  })
+
+  it('opening a chat restores its saved view', async () => {
+    saved()
+    localStorage.setItem('di.multiAgentView.agents', 'graph')
+    await renderLayout()
+    await openChat('agents title')
+    await waitFor(() => expect(topBarProps.agentViewMode).toBe('graph'))
   })
 })

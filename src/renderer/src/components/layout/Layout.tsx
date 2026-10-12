@@ -43,7 +43,9 @@ export function Layout() {
   const [savedRun, setSavedRun] = useState<{ chatId: string; view: RunView; runIds?: string[] } | null>(null)
   const [isOpenRouter,   setIsOpenRouter]   = useState(false)
   // The dock pushes the chat and shrinks with the window; it overlays only when the chat would drop below MIN_CHAT_WIDTH.
-  const dock            = useDockLayout()
+  // List | Graph run view, remembered per chat (Goal 6). Graph may widen the dock.
+  const [agentView, setAgentViewState] = useState<AgentViewMode>('list')
+  const dock            = useDockLayout(agentView === 'graph')
   const chatAreaRef     = useRef<ChatAreaHandle>(null)
   const lastSidebarMode = useRef<SidebarMode>('chat')
 
@@ -96,6 +98,11 @@ export function Layout() {
   useEffect(() => {
     setMultiAgentMode(chatMode === 'multi-agent')
   }, [activeChatId, chatMode, setMultiAgentMode])
+  // A chat's saved List/Graph choice; a chat with none keeps the current one (e.g. a chat just created from a new one).
+  useEffect(() => {
+    const saved = activeChatId ? readAgentView(activeChatId) : null
+    if (saved) setAgentViewState(saved)
+  }, [activeChatId])
 
   // ── useChat (streaming + DB persistence) ─────────────────────
   const {
@@ -192,6 +199,12 @@ export function Layout() {
   }, [])
 
   const closeFocusView = useCallback(() => setFocusViewAgent(null), [])
+  // Switching views keeps every run state (both views stay mounted); picking one opens the dock if there is a run to show.
+  const setAgentView = useCallback((mode: AgentViewMode) => {
+    setAgentViewState(mode)
+    if (activeChatId) writeAgentView(activeChatId, mode)
+    if (shownRun || reviewableChat === activeChatId) setSidebarMode('agents')
+  }, [activeChatId, shownRun, reviewableChat])
   // A different chat or run has nothing to focus on.
   useEffect(() => { setFocusViewAgent(null) }, [activeChatId, shownRun?.view.runId])
 
@@ -602,6 +615,7 @@ export function Layout() {
                     onCancel={() => multiAgent.approvePlan(false)}
                     onAbort={multiAgent.abort}
                     onQuickPlan={multiAgent.quickPlan}
+                    viewMode={agentView}
                     focusAgentId={focusAgentId}
                     onSelectAgent={selectAgent}
                     onClose={closeDock}
@@ -679,6 +693,8 @@ export function Layout() {
               onToggleAgentDock={() => setSidebarMode(dockOpen ? leaveDock : 'agents')}
               onOpenAgentRunView={() => setSidebarMode('agents')}
               onOpenAgentSettings={() => { if (!isStreaming && !navLocked) { setSettingsTab('agents'); setSettingsOpen(true) } }}
+              agentViewMode={agentView}
+              onAgentViewMode={useAgents ? setAgentView : undefined}
             />
 
             {/* The main area stays a chat: a floating pill to the dock and, while a run is live, the synthesis.
@@ -736,19 +752,32 @@ export function Layout() {
 /** Top of the floating run pill (10px) + its height (30px) − ChatArea's own 32px start, rounded up. */
 const AGENT_PILL_INSET = 16
 
+type AgentViewMode = 'list' | 'graph'
+const viewKey = (chatId: string): string => `di.multiAgentView.${chatId}`
+function readAgentView(chatId: string): AgentViewMode | null {
+  try {
+    const v = localStorage.getItem(viewKey(chatId))
+    return v === 'list' || v === 'graph' ? v : null
+  } catch { return null }
+}
+function writeAgentView(chatId: string, mode: AgentViewMode): void {
+  try { localStorage.setItem(viewKey(chatId), mode) } catch { /* a per-viewer convenience only */ }
+}
+
 const WIDTH_STEP = 16
-const measureDock = (): DockLayout => dockLayout(Math.floor(window.innerWidth / WIDTH_STEP) * WIDTH_STEP)
+const measureDock = (graph: boolean): DockLayout => dockLayout(Math.floor(window.innerWidth / WIDTH_STEP) * WIDTH_STEP, graph)
 
 /** dockLayout() for the window, on a 16 px grid; Layout re-renders only when the result changes, never per pixel. */
-function useDockLayout(): DockLayout {
-  const [dock, setDock] = useState(measureDock)
+function useDockLayout(graph: boolean): DockLayout {
+  const [dock, setDock] = useState(() => measureDock(graph))
   useEffect(() => {
     const onResize = (): void => {
-      const next = measureDock()
-      setDock((prev) => (prev.dockWidth === next.dockWidth && prev.overlay === next.overlay ? prev : next))
+      const next = measureDock(graph)
+      setDock((prev) => (prev.dockWidth === next.dockWidth && prev.overlay === next.overlay && prev.hidePlanColumn === next.hidePlanColumn ? prev : next))
     }
+    onResize()
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
+  }, [graph])
   return dock
 }

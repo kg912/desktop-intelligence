@@ -700,8 +700,11 @@ export const DOCK_TWO_COLUMN_WIDTH = 560
 /** The dock pushes the chat, shrinking to keep MIN_CHAT_WIDTH; it overlays only when even DOCK_MIN_WIDTH would not leave that. */
 export interface DockLayout { dockWidth: number; overlay: boolean; hidePlanColumn: boolean }
 
-export function dockLayout(windowWidth: number): DockLayout {
-  const dockWidth = Math.max(DOCK_MIN_WIDTH, Math.min(windowWidth - RAIL_WIDTH - MIN_CHAT_WIDTH, PANEL_WIDTH.agents))
+/** The Graph view (canvas + 380px inspector) may widen the dock up to this, still leaving MIN_CHAT_WIDTH. */
+export const GRAPH_DOCK_MAX_WIDTH = 1240
+
+export function dockLayout(windowWidth: number, graph = false): DockLayout {
+  const dockWidth = Math.max(DOCK_MIN_WIDTH, Math.min(windowWidth - RAIL_WIDTH - MIN_CHAT_WIDTH, graph ? GRAPH_DOCK_MAX_WIDTH : PANEL_WIDTH.agents))
   return {
     dockWidth,
     overlay: windowWidth - RAIL_WIDTH - DOCK_MIN_WIDTH < MIN_CHAT_WIDTH,

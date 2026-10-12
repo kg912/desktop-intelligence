@@ -952,3 +952,12 @@ describe('Goal 3 — collapsed rows with sequential permission slide-outs (desig
     expect(screen.getByTestId('concurrency-timeline')).toBeTruthy()
   })
 })
+
+describe('Graph view dock width (Goal 6)', () => {
+  it('Graph may widen the dock up to 1240px, always leaving the chat its 420px', () => {
+    expect(dockLayout(1600).dockWidth).toBe(760)
+    expect(dockLayout(1600, true).dockWidth).toBe(1600 - 44 - 420)
+    expect(dockLayout(2560, true).dockWidth).toBe(1240)
+    expect(dockLayout(1000, true)).toEqual(dockLayout(1000))
+  })
+})

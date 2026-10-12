@@ -430,3 +430,21 @@ describe('hover card placement', () => {
     } finally { spy.mockRestore(); setWidth(1024) }
   })
 })
+
+describe('List | Graph toggle (Goal 6)', () => {
+  it('sits next to the mode pill as a two-option radio group; picking one calls back', () => {
+    const onMode = vi.fn()
+    render(<ModelStoreProvider><TopBar activeChatId="c" onCompactComplete={vi.fn()} sidebarCollapsed={false} mode="multi-agent" agentRun={runOf(FINISHED)} agentViewMode="graph" onAgentViewMode={onMode} /></ModelStoreProvider>)
+    const toggle = screen.getByTestId('view-toggle')
+    expect(toggle.previousElementSibling?.querySelector('[data-testid=mode-pill]') ?? toggle.parentElement?.querySelector('[data-testid=mode-pill]')).toBeTruthy()
+    expect(screen.getByTestId('view-graph').getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByTestId('view-list').getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(screen.getByTestId('view-list'))
+    expect(onMode).toHaveBeenCalledWith('list')
+  })
+
+  it('is absent without a handler (regular chats)', () => {
+    render(<ModelStoreProvider><TopBar activeChatId="c" onCompactComplete={vi.fn()} sidebarCollapsed={false} mode="multi-agent" agentRun={null} /></ModelStoreProvider>)
+    expect(screen.queryByTestId('view-toggle')).toBeNull()
+  })
+})

@@ -36,11 +36,15 @@ interface TopBarProps {
   onToggleAgentDock?:             () => void
   onOpenAgentRunView?:            () => void
   onOpenAgentSettings?:           () => void
+  /** Multi-agent run view: List (agent rows) or Graph (designs/06-graph-view.png); remembered per chat. */
+  agentViewMode?:                 'list' | 'graph'
+  onAgentViewMode?:               (mode: 'list' | 'graph') => void
 }
 
 export function TopBar({
   activeChatId, onCompactComplete, sidebarCollapsed = false, onSidebarToggle, chatSystemInstructions, onUpdateChatSystemInstructions,
   mode, agentRun = null, agentDockOpen = false, onToggleAgentDock, onOpenAgentRunView, onOpenAgentSettings,
+  agentViewMode = 'list', onAgentViewMode,
 }: TopBarProps) {
   const {
     selectedModel,
@@ -319,9 +323,9 @@ export function TopBar({
       <div
         data-testid="top-bar"
         data-mode="multi-agent"
-        className={`drag-region flex-shrink-0 flex items-center justify-between h-[52px] border-b border-surface-border/50 relative bg-black ${barPadding}`}
+        className={`ma-topbar-cq drag-region flex-shrink-0 flex items-center justify-between gap-2 h-[52px] border-b border-surface-border/50 relative bg-black ${barPadding}`}
       >
-        <div className="no-drag flex items-center gap-1.5">
+        <div className="no-drag flex min-w-0 items-center gap-1.5">
           {sidebarToggle}
           <MultiAgentModeIndicator
             run={agentRun}
@@ -330,9 +334,22 @@ export function TopBar({
             onOpenRunView={() => onOpenAgentRunView?.()}
             onOpenSettings={() => onOpenAgentSettings?.()}
           />
+          {onAgentViewMode && (
+            <div role="radiogroup" aria-label="Run view" data-testid="view-toggle"
+              className="ml-2.5 flex flex-none overflow-hidden rounded-[9px] border-[0.5px] border-white/[0.12] font-mono text-[12px]">
+              {(['list', 'graph'] as const).map((v) => (
+                <button key={v} role="radio" aria-checked={agentViewMode === v} data-testid={`view-${v}`} onClick={() => onAgentViewMode(v)}
+                  className={agentViewMode === v
+                    ? 'border-l-2 border-ma-red bg-ma-red/[0.18] px-3.5 py-1 text-white'
+                    : 'px-3.5 py-1 text-ma-mute hover:text-ma-soft'}>
+                  {v === 'list' ? 'List' : 'Graph'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {sysPromptPopup}
-        <div className="no-drag flex items-center gap-1.5" data-testid="top-bar-actions">
+        <div className="no-drag flex flex-none items-center gap-1.5" data-testid="top-bar-actions">
           {chatActions}
         </div>
       </div>

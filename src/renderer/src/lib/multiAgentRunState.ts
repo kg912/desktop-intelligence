@@ -74,6 +74,33 @@ export interface AgentView {
 
 export type RunPhase = 'planning' | 'preflight' | 'running' | 'synthesizing' | 'complete' | 'failed'
 
+export interface RunLogEntry { ts: number; agentId?: string; tone: 'info' | 'ok' | 'wait' | 'fail'; text: string }
+export const RUN_LOG_MAX = 300
+
+/** One line for the run log, or null for token streams and other noise. */
+export function runLogLine(e: AgentEvent): RunLogEntry | null {
+  const at = (tone: RunLogEntry['tone'], text: string, agentId?: string): RunLogEntry => ({ ts: e.ts, tone, text, ...(agentId && { agentId }) })
+  switch (e.type) {
+    case 'plan_started': return at('info', `Planning started (up to ${e.maxAgents} agents)`)
+    case 'orchestrator_plan': return e.fallback ? at('wait', `Fallback plan: ${e.fallbackReason ?? 'no usable plan'}`) : at('ok', `Plan: ${e.steps.length} agent${e.steps.length === 1 ? '' : 's'}`)
+    case 'hitl_pause': return e.serverName === 'multi-agent' ? at('wait', 'Waiting for plan approval') : at('wait', `${e.agentId} asks to run ${e.toolName}`, e.agentId)
+    case 'hitl_resume': return e.agentId === 'orchestrator' ? at(e.approved ? 'ok' : 'fail', e.approved ? 'Plan approved' : 'Plan not approved')
+      : at(e.approved ? 'ok' : 'fail', `${e.agentId} ${e.approved ? 'allowed' : 'denied'}`, e.agentId)
+    case 'agent_start': return at('info', `${e.agentId} started`, e.agentId)
+    case 'tool_start': return at('info', `${e.agentId} → ${e.tool}`, e.agentId)
+    case 'tool_done': return e.ok ? null : at('fail', `${e.agentId} tool call not run`, e.agentId)
+    case 'agent_complete': return at('info', `${e.agentId} answered`, e.agentId)
+    case 'reflection_result': return at(e.passed ? 'ok' : 'fail', `${e.agentId} review ${e.score}/5${e.passed ? ' passed' : `: ${e.reason}`}`, e.agentId)
+    case 'retry': return at('wait', `${e.agentId} retry ${e.attempt}: ${e.reason}`, e.agentId)
+    case 'agent_degraded': return at('wait', `${e.agentId} accepted with caveats`, e.agentId)
+    case 'agent_failed': return at('fail', `${e.agentId} failed: ${e.reason}`, e.agentId)
+    case 'synthesis_start': return at('info', 'Final synthesis started')
+    case 'task_complete': return at('ok', 'Run complete')
+    case 'task_failed': return at('fail', `Run failed: ${e.reason}`)
+    default: return null
+  }
+}
+
 export const PLAN_STAGES: PlanStage[] = ['reading', 'splitting', 'assigning', 'wiring']
 
 /** The orchestrator's plan while it is being written (UI Goal 5). */
@@ -102,6 +129,8 @@ export interface RunView {
   agents: Record<string, AgentView>
   planPause?: HitlPauseEvent
   planning: PlanningView
+  /** Significant events, oldest first, capped at RUN_LOG_MAX (the graph inspector's Run log). */
+  log: RunLogEntry[]
   /** What the run actually used (models per role and their source). */
   runConfig?: RunConfigEvent
   synthesis: string
@@ -126,6 +155,7 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
     served: {},
     totals: { costUsd: 0, tokens: 0, budgetReached: false },
     planning: { startedAt, stage: 'reading', stageAt: { reading: startedAt }, attempt: 0, draft: [], reasoning: '', streamedChars: 0 },
+    log: [],
     startedAt,
     lastSeq: 0,
   }
@@ -140,6 +170,13 @@ function updateAgent(view: RunView, id: string, patch: (agent: AgentView) => Par
 }
 
 export function applyAgentEvent(view: RunView, event: AgentEvent): RunView {
+  const next = applyEvent(view, event)
+  if (next === view) return view
+  const line = runLogLine(event)
+  return line ? { ...next, log: next.log.length >= RUN_LOG_MAX ? [...next.log.slice(1 - RUN_LOG_MAX), line] : [...next.log, line] } : next
+}
+
+function applyEvent(view: RunView, event: AgentEvent): RunView {
   if (event.runId !== view.runId || event.seq <= view.lastSeq) return view
   let next: RunView = { ...view, lastSeq: event.seq }
   if (event.runTotals) next.totals = event.runTotals
