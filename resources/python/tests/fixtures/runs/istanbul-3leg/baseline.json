@@ -1,0 +1,119 @@
+{
+  "costUsd": 0.628392074,
+  "calls": {
+    "planner": 1,
+    "worker": 40,
+    "judge": 6,
+    "synthesizer": 1
+  },
+  "costByRole": {
+    "planner": 0.0017694,
+    "worker": 0.28937432399999996,
+    "judge": 0.32851800000000003,
+    "synthesizer": 0.00873035
+  },
+  "wallMs": 426693,
+  "agents": {
+    "1.1": {
+      "attempts": 2,
+      "costUsd": 0.11012274,
+      "startMs": 43665,
+      "endMs": 177881
+    },
+    "1.2": {
+      "attempts": 3,
+      "costUsd": 0.196014564,
+      "startMs": 43665,
+      "endMs": 268456
+    },
+    "1.3": {
+      "attempts": 3,
+      "costUsd": 0.106953258,
+      "startMs": 43666,
+      "endMs": 184897
+    },
+    "1.4": {
+      "attempts": 3,
+      "costUsd": 0.05951444400000001,
+      "startMs": 43666,
+      "endMs": 176699
+    },
+    "1.5": {
+      "attempts": 2,
+      "costUsd": 0.085629684,
+      "startMs": 43667,
+      "endMs": 145639
+    },
+    "2.1": {
+      "attempts": 1,
+      "costUsd": 0.059657634,
+      "startMs": 268458,
+      "endMs": 367091
+    }
+  },
+  "meanAgentCostUsd": 0.102982054,
+  "p90AgentCostUsd": 0.196014564,
+  "criticalPath": [
+    "1.2",
+    "2.1"
+  ],
+  "retries": 8,
+  "retryCostUsd": 0.111674952,
+  "claims": {
+    "attempt0": {
+      "failing": 24,
+      "byStatus": {
+        "verified": 92,
+        "quote_not_found": 24,
+        "unverified_declared": 25,
+        "source": 12
+      },
+      "byFailureClass": {
+        "mismatch": 24
+      },
+      "agentsPassed": [
+        "2.1"
+      ],
+      "agents": 6
+    },
+    "allAttempts": {
+      "byStatus": {
+        "verified": 283,
+        "quote_not_found": 27,
+        "unverified_declared": 54,
+        "quote_too_short": 1,
+        "source": 12
+      }
+    }
+  },
+  "promptTokens": 2185084,
+  "workerPromptTokens": 1768395,
+  "uniqueToolTokens": 250407,
+  "amplification": 7.062082928991602,
+  "cachedTokens": null,
+  "judge": {
+    "calls": 6,
+    "inputTokens": 400624,
+    "inputTokensPerCall": [
+      62704,
+      30292,
+      75212,
+      64736,
+      127631,
+      40049
+    ],
+    "outputTokens": 7480,
+    "reasoningTokens": 6872
+  },
+  "toolResults": {
+    "count": 89,
+    "medianChars": 12845
+  },
+  "approvals": {
+    "count": 89,
+    "waitMs": 277676,
+    "maxWaitMs": 45734,
+    "maxWaitAgent": "2.1",
+    "planWaitMs": 38107
+  }
+}

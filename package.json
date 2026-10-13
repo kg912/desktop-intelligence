@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.2.36",
+  "version": "3.2.37",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -17,11 +17,12 @@
     "spike:vec": "tsx scripts/spike-sqlite-vec.ts",
     "spike:sandbox-yf-hosts": "tsx scripts/spike-sandbox-yf-hosts.ts",
     "bench:microsandbox": "tsx scripts/bench-microsandbox.ts",
-    "test:sidecar:setup": "python3 -m venv node_modules/.cache/di-sidecar-venv && node_modules/.cache/di-sidecar-venv/bin/python -m pip install --disable-pip-version-check -q -r resources/python/requirements-multi-agent.txt",
+    "test:sidecar:setup": "python3 -m venv node_modules/.cache/di-sidecar-venv && node_modules/.cache/di-sidecar-venv/bin/python -m pip install --disable-pip-version-check -q -r resources/python/requirements-multi-agent.txt pytest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "postinstall": "install-electron && electron-builder install-app-deps",
     "prepackage": "rm -f node_modules/better-sqlite3/build/Release/.forge-meta && electron-builder install-app-deps",
-    "prepare": "husky"
+    "prepare": "husky",
+    "baseline": "tsx scripts/run-baseline.ts"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.65",

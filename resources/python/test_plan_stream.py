@@ -94,7 +94,10 @@ assert plan_of(run)["fallbackReason"] == "The orchestrator did not return a usab
 
 # Quick plan chosen mid-stream: the request stops at the next chunk and the fallback says the user chose it.
 holder = {}
-fake = FakePlanner(reply=json.dumps(PLAN), on_chunk=lambda: setattr(holder["run"], "quick_plan", True) if len(holder["run"].events) > 3 else None)
+# After the third chunk (a chunk count, not the event count: events are appended on the loop, so a thread
+# that streams fast could finish before more than 3 exist and the flag would never be set).
+sent_chunks = iter(range(10_000))
+fake = FakePlanner(reply=json.dumps(PLAN), on_chunk=lambda: setattr(holder["run"], "quick_plan", True) if next(sent_chunks) >= 3 else None)
 orig = s.Run.__init__
 def capture_init(self, *a, **k):
     orig(self, *a, **k)

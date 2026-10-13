@@ -476,6 +476,154 @@ export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallR
   }
 }
 
+// ── Baseline summary (spec multi-agent-reliability-and-cost.md Phase 0) ──────
+
+export type BaselineRole = 'planner' | 'worker' | 'judge' | 'synthesizer'
+const BASELINE_ROLE: Record<CallRecord['role'], BaselineRole> = { planner: 'planner', worker: 'worker', reflection: 'judge', synthesis: 'synthesizer' }
+/** Claim status → failure class, for runs recorded before the sidecar sent classes itself. */
+const STATUS_FAILURE_CLASS: Record<string, string> = {
+  quote_not_found: 'mismatch', call_not_found: 'wrong_call', call_failed: 'call_failed', quote_too_short: 'too_short', quote_too_long: 'too_long',
+}
+const CLAIM_OK = new Set(['verified', 'unverified_declared', 'source'])
+
+export interface RunBaseline {
+  costUsd: number
+  calls: Record<BaselineRole, number>
+  costByRole: Record<BaselineRole, number>
+  wallMs: number | null
+  /** Per agent: attempts, cost (worker + judge calls), ms from run start to its first and last event. */
+  agents: Record<string, { attempts: number; costUsd: number; startMs: number; endMs: number }>
+  meanAgentCostUsd: number
+  p90AgentCostUsd: number
+  /** From the last agent to finish back through the latest-finishing dependency; root first. */
+  criticalPath: string[]
+  retries: number
+  /** Worker calls on attempt ≥ 1. */
+  retryCostUsd: number
+  claims: {
+    attempt0: { failing: number; byStatus: Record<string, number>; byFailureClass: Record<string, number>; agentsPassed: string[]; agents: number }
+    allAttempts: { byStatus: Record<string, number> }
+  }
+  promptTokens: number
+  workerPromptTokens: number
+  /** Distinct tool result text, estimated like the sidecar (ceil(chars / 4)). */
+  uniqueToolTokens: number
+  /** workerPromptTokens / uniqueToolTokens. */
+  amplification: number
+  /** null: no call record carries the field (runs before cache logging). */
+  cachedTokens: number | null
+  judge: { calls: number; inputTokens: number; inputTokensPerCall: number[]; outputTokens: number; reasoningTokens: number }
+  toolResults: { count: number; medianChars: number }
+  /** hitl_pause → hitl_resume per tool call (includes tool execution until waitMs is logged); plan approval apart. */
+  approvals: { count: number; waitMs: number; maxWaitMs: number; maxWaitAgent: string | null; planWaitMs: number }
+}
+
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0
+}
+const count = (keys: string[]): Record<string, number> => keys.reduce<Record<string, number>>((o, k) => ({ ...o, [k]: (o[k] ?? 0) + 1 }), {})
+
+export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; records: CallRecord[] }): RunBaseline {
+  const { meta, events, records } = run
+  const model = records.filter((r) => r.kind === 'model')
+  const tools = records.filter((r) => r.kind === 'tool')
+  const cost = (rs: CallRecord[]): number => rs.reduce((s, r) => s + (r.usage?.costUsd ?? 0), 0)
+  const prompt = (rs: CallRecord[]): number => rs.reduce((s, r) => s + (r.usage?.promptTokens ?? 0), 0)
+  const roles: BaselineRole[] = ['planner', 'worker', 'judge', 'synthesizer']
+  const ofRole = (role: BaselineRole): CallRecord[] => model.filter((r) => BASELINE_ROLE[r.role] === role)
+  const t0 = meta.startedAt
+
+  const agents: RunBaseline['agents'] = {}
+  for (const e of events) {
+    const id = (e as { agentId?: string }).agentId
+    if (!id || id === 'orchestrator') continue
+    const a = (agents[id] ??= { attempts: 0, costUsd: 0, startMs: e.ts - t0, endMs: e.ts - t0 })
+    a.endMs = e.ts - t0
+  }
+  for (const [id, a] of Object.entries(agents)) {
+    const mine = model.filter((r) => r.agentId === id)
+    a.costUsd = cost(mine)
+    a.attempts = new Set(mine.map((r) => r.attempt)).size
+  }
+  const agentCosts = Object.values(agents).map((a) => a.costUsd).sort((a, b) => a - b)
+
+  const deps = new Map((eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []).map((s) => [s.id, s.dependsOn ?? []]))
+  const criticalPath: string[] = []
+  let at = Object.entries(agents).sort((a, b) => b[1].endMs - a[1].endMs)[0]?.[0]
+  while (at) {
+    criticalPath.unshift(at)
+    at = (deps.get(at) ?? []).filter((d) => agents[d]).sort((a, b) => agents[b].endMs - agents[a].endMs)[0]
+  }
+
+  const gates = eventsOf(events, 'reflection_result')
+  const first = gates.filter((e) => (e.attempt ?? 0) === 0)
+  const failing0 = first.flatMap((e) => Object.values(e.claimStatuses ?? {}).filter((st) => !CLAIM_OK.has(st)))
+
+  const unique = [...new Set(tools.map((r) => r.result ?? ''))]
+  const uniqueToolTokens = unique.reduce((s, t) => s + Math.ceil(t.length / 4), 0)
+  const workerPromptTokens = prompt(ofRole('worker'))
+  const cachedFields = model.map((r) => (r.usage as { cachedTokens?: number | null } | undefined)?.cachedTokens).filter((c) => c != null) as number[]
+  const judges = ofRole('judge')
+
+  const open = new Map<string, number>()
+  const waits: Array<{ agentId: string; ms: number }> = []
+  for (const e of events) {
+    if (e.type === 'hitl_pause') open.set(e.agentId, e.ts)
+    else if (e.type === 'hitl_resume' && open.has(e.agentId)) {
+      waits.push({ agentId: e.agentId, ms: e.ts - open.get(e.agentId)! })
+      open.delete(e.agentId)
+    }
+  }
+  const toolWaits = waits.filter((w) => w.agentId !== 'orchestrator')
+  const longest = [...toolWaits].sort((a, b) => b.ms - a.ms)[0]
+
+  return {
+    costUsd: cost(model),
+    calls: Object.fromEntries(roles.map((r) => [r, ofRole(r).length])) as Record<BaselineRole, number>,
+    costByRole: Object.fromEntries(roles.map((r) => [r, cost(ofRole(r))])) as Record<BaselineRole, number>,
+    wallMs: meta.endedAt ? meta.endedAt - meta.startedAt : null,
+    agents,
+    meanAgentCostUsd: agentCosts.reduce((s, c) => s + c, 0) / Math.max(1, agentCosts.length),
+    p90AgentCostUsd: agentCosts[Math.max(0, Math.ceil(0.9 * agentCosts.length) - 1)] ?? 0,
+    criticalPath,
+    retries: eventsOf(events, 'retry').length,
+    retryCostUsd: cost(ofRole('worker').filter((r) => r.attempt > 0)),
+    claims: {
+      attempt0: {
+        failing: failing0.length,
+        byStatus: count(first.flatMap((e) => Object.values(e.claimStatuses ?? {}))),
+        byFailureClass: count(first.flatMap((e) => Object.entries(e.claimStatuses ?? {})
+          .filter(([, st]) => !CLAIM_OK.has(st))
+          .map(([, st]) => STATUS_FAILURE_CLASS[st] ?? st))),
+        agentsPassed: first.filter((e) => !Object.values(e.claimStatuses ?? {}).some((st) => !CLAIM_OK.has(st))).map((e) => e.agentId).sort(),
+        agents: first.length,
+      },
+      allAttempts: { byStatus: count(gates.flatMap((e) => Object.values(e.claimStatuses ?? {}))) },
+    },
+    promptTokens: prompt(model),
+    workerPromptTokens,
+    uniqueToolTokens,
+    amplification: uniqueToolTokens ? workerPromptTokens / uniqueToolTokens : 0,
+    cachedTokens: cachedFields.length ? cachedFields.reduce((s, c) => s + c, 0) : null,
+    judge: {
+      calls: judges.length,
+      inputTokens: prompt(judges),
+      inputTokensPerCall: judges.map((r) => r.usage?.promptTokens ?? 0),
+      outputTokens: judges.reduce((s, r) => s + (r.usage?.completionTokens ?? 0), 0),
+      reasoningTokens: judges.reduce((s, r) => s + (r.usage?.reasoningTokens ?? 0), 0),
+    },
+    toolResults: { count: tools.length, medianChars: median(tools.map((r) => (r.result ?? '').length)) },
+    approvals: {
+      count: toolWaits.length,
+      waitMs: toolWaits.reduce((s, w) => s + w.ms, 0),
+      maxWaitMs: longest?.ms ?? 0,
+      maxWaitAgent: longest?.agentId ?? null,
+      planWaitMs: waits.filter((w) => w.agentId === 'orchestrator').reduce((s, w) => s + w.ms, 0),
+    },
+  }
+}
+
 /** Cost differences below this are float rounding (the sidecar rounds totals to 8 decimals). */
 const RECONCILE_USD = 1e-6
 

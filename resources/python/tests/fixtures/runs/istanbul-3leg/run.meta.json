@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "runId": "0f11f3fd-5cd6-4c0b-911b-738014c9a10a",
+  "chatId": "236ba2f3-d818-4470-a86a-c1870c4df1fc",
+  "chatTitle": "Research task: verify the domestic flight legs for a December 2026 Turkey trip,",
+  "task": "Research task: verify the domestic flight legs for a December 2026 Turkey trip, using the winter 2026-27 schedules, and tell me exactly which legs are workable and which are not.\n\nContext: two travellers, no car rental, no checked-bag surprises. The legs are:\n1. Fri Dec 18, 2026: Istanbul (IST, or SAW if that is the only option) to Cappadocia (Nevşehir NAV or Kayseri ASR).\n2. Tue Dec 22, 2026: Cappadocia (NAV or ASR) to İzmir (ADB). Earlier research claims a direct Kayseri–İzmir flight about six days a week. Another source says there is no easy direct route. Settle this.\n3. Thu Dec 24, 2026: İzmir (ADB) to Istanbul, morning departure, arriving by early afternoon at the latest. Preferably to IST, because the international flight leaves IST at 16:30 on Fri Dec 25.\n\nFor each leg report:\n- Airlines operating it in winter 2026-27 (Turkish Airlines, AJet, Pegasus, SunExpress, others) and which days of the week it runs. State clearly if it is seasonal or suspended in December.\n- Departure and arrival times for that exact date, and whether it is direct or connecting. For connections, give the connecting airport, layover length and total door-to-door time.\n- Domestic baggage allowance per fare class (checked and cabin), including the cheapest fare.\n- Whether the flight is realistic with a morning balloon landing at about 09:00 (leg 2), and with the 16:30 international departure the next day (leg 3).\n- Typical December cancellation or delay risk from snow at NAV/ASR, if there is data.\n- The ground transfer from the airport to Göreme (leg 1) and from ADB to Selçuk (legs 2 and 3), with realistic times and prices.\n\nAlso answer: if leg 2 cannot be done in under about 5 hours door to door on Dec 22, what is the best alternative to reach the Selçuk/Ephesus area, and what is the best Ephesus-free fallback for the last days?\n\nRules: cite the source and the retrieval date for every schedule claim (airline timetable pages, airport pages, or flight-search results for the exact dates). Do not fill gaps from memory; list anything you could not verify as unverified. Separate verified facts from inferences, and flag any conflict between sources.",
+  "startedAt": 1791823083746,
+  "endedAt": 1791823510439,
+  "status": "completed",
+  "config": {
+    "maxAgents": 6,
+    "maxToolRounds": 36,
+    "budgetCapUsd": 2,
+    "models": {
+      "orchestrator": "deepseek/deepseek-v4.1-flash",
+      "worker": "deepseek/deepseek-v4.1-flash",
+      "reflection": "google/gemini-3.8-flash",
+      "synthesizer": "z-ai/glm-5.3-flash"
+    },
+    "reflectionPassThreshold": 3,
+    "maxRetriesPerAgent": 2,
+    "hitlTimeoutMs": 300000,
+    "requirePermissions": true,
+    "reasoningEffort": "medium",
+    "onRetryExhausted": "degrade"
+  }
+}
