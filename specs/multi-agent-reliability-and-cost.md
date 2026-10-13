@@ -88,6 +88,7 @@ Motivated by `RLM.pdf` (prompt-as-environment beats lossy compaction) applied to
 `BraveSearchService.augmentAndFormatResults`:
 - Strip boilerplate from fetched page text: nav/footer blocks, repeated link lists, cookie banners (heuristic: drop lines shorter than 25 chars that repeat across pages, collapse whitespace), and cap each page to 2,500 chars centred on the best query-term density window; always keep the snippet.
 - Keep `[i] title\nurl\nbody` format; add snippet IDs (Phase 2).
+- *Decisions (Phase 7):* trimming is applied to the worker's VIEW in the sidecar at ingestion, not inside `augmentAndFormatResults`: trimming the text itself made 76 of 303 verified fixture claims stop verifying (timetable rows look like "repeated short lines"), while trimming only the view keeps the full result in the evidence store for quotes, the judge and `read_evidence`. The repeated-short-line rule is dropped (it removed quoted data and did not move the median). The page cap is 850 chars, not 2,500: five pages × 2,500 cannot meet a 5 KB median (2,500 gives ~10.9 KB). Electron's worker path now keeps Brave's snippet as the first body line, which the view always keeps. Consequence to watch live: 143 of 303 verified fixture quotes are inside the trimmed view; the others need `read_evidence`.
 - **Acceptance:** median result size on the fixture ≤ 5 KB; every claim in the fixture that verified before still verifies (golden test).
 
 ### Phase 8: OpenRouter parameters and cache logging (G8)

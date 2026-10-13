@@ -1098,12 +1098,54 @@ BRAVE_LABEL_RE = re.compile(r"^\[(\d+)\] ")
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
+def is_search_result(result: str) -> bool:
+    return all(BRAVE_LABEL_RE.match(b) for b in BRAVE_BLOCK_RE.split(result))
+
+
 def split_snippets(result: str, call_no: int) -> dict[str, str]:
     """snippet id (S<call_no>.<n>) → text, in order."""
     blocks = BRAVE_BLOCK_RE.split(result)
-    if all(BRAVE_LABEL_RE.match(b) for b in blocks):
+    if is_search_result(result):
         return {f"S{call_no}.{i + 1}": BRAVE_LABEL_RE.sub("", b, count=1) for i, b in enumerate(blocks)}
     return {f"S{call_no}.1": result}
+
+
+# The worker's view of a search result (spec A Phase 7): each page keeps its title, url and first body line (Brave's
+# own snippet on the worker path); the rest is whitespace-collapsed and cut to a window around the query terms.
+# The evidence store keeps the full result, so quotes, the judge and read_evidence see everything.
+VIEW_PAGE_CHARS = 850  # ≤ 5 KB median view on the Istanbul fixture (spec A Phase 7)
+VIEW_HEAD_LINE_CHARS = 400  # Brave's snippet is shorter; a page's first line can be a whole paragraph
+
+
+def view_page(text: str, sid: str, query: str) -> str:
+    lines = text.split("\n")
+    head = lines[:2] + [preview(line, VIEW_HEAD_LINE_CHARS) for line in lines[2:3]]
+    rest = re.sub(r"[ \t]+", " ", re.sub(r"\s*\n\s*", "\n", "\n".join(lines[3:]))).strip()
+    if len(rest) > VIEW_PAGE_CHARS:
+        low = rest.lower()
+        hits = sorted(m.start() for term in {w for w in WORD_RE.findall(query.lower()) if len(w) >= 3} for m in re.finditer(re.escape(term), low))
+        best, best_start, j = 0, 0, 0
+        for i, at in enumerate(hits):  # the window holding the most query-term hits
+            while at - hits[j] > VIEW_PAGE_CHARS:
+                j += 1
+            if i - j + 1 > best:
+                best, best_start = i - j + 1, hits[j]
+        start = max(0, min(best_start - 100, len(rest) - VIEW_PAGE_CHARS))
+        start = rest.rfind("\n", 0, start) + 1 if start else 0
+        cut = rest[start:start + VIEW_PAGE_CHARS]
+        rest = ("…" if start else "") + cut + f"… [{len(rest) - len(cut):,} chars trimmed; read_evidence(\"{sid}\") for the rest]"
+    return "\n".join(head + ([rest] if rest else []))
+
+
+def ingest_result(result: str, call_no: int, query: str, claim_format: str) -> tuple[dict[str, str], str]:
+    """(snippets for the evidence store — the full text, the worker's view of the result)."""
+    snippets = split_snippets(result, call_no)
+    if not is_search_result(result):
+        return snippets, "\n\n".join(f"[{sid}] {text}" for sid, text in snippets.items()) if claim_format == "snippet" else result
+    views = [(sid, view_page(text, sid, query)) for sid, text in snippets.items()]
+    if claim_format == "snippet":
+        return snippets, "\n\n".join(f"[{sid}] {view}" for sid, view in views)
+    return snippets, "\n\n".join(f"[{i + 1}] {view}" for i, (_, view) in enumerate(views))
 
 
 def best_quote(claim: str, texts: list[tuple[str, str]]) -> tuple[str, str]:
@@ -1825,11 +1867,11 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=ok,
                                    durationMs=int((time.monotonic() - began) * 1000),
                                    resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
-                    snippets = split_snippets(content, len(store) + 1) if ok else {}
+                    snippets, view = ingest_result(content, len(store) + 1, str(args.get("query") or ""), config.claimFormat) if ok else ({}, content)
                     store[call_id] = {"name": name, "args": raw_args, "ok": ok, "attempt": attempt, "result": store_result(content), "snippets": snippets}
-                    # A result that can back a claim carries its id (and, in snippet mode, each snippet its id) in the text.
-                    if ok and config.claimFormat == "snippet":
-                        content = "\n\n".join(f"[{sid}] {text}" for sid, text in snippets.items())
+                    # A result that can back a claim carries its id (and, in snippet mode, each snippet its id) in the text;
+                    # search results are trimmed in this view only (the store above keeps them in full).
+                    content = view
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": f"[callId: {call_id}]\n{content}" if ok else content})
                 _round += 1
         except BudgetReached:

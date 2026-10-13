@@ -164,7 +164,10 @@ async function fetchPageText(
  * times out, or is on the skip list.
  */
 export async function augmentAndFormatResults(
-  results: BraveSearchResult[]
+  results: BraveSearchResult[],
+  /** keepSnippet: put Brave's own snippet on the first body line above fetched page text (multi-agent workers,
+   *  spec A Phase 7 — the sidecar trims page text for the worker's view but always keeps that line). */
+  opts: { keepSnippet?: boolean } = {}
 ): Promise<string> {
   if (results.length === 0) return 'No results found.'
 
@@ -188,7 +191,7 @@ export async function augmentAndFormatResults(
 
       // Use fetched page text if available, fall back to Brave snippet
       const body = pageText
-        ? pageText
+        ? (opts.keepSnippet && r.description ? `${sanitise(r.description)}\n${pageText}` : pageText)
         : sanitise(r.description)
 
       return `[${i + 1}] ${sanitise(r.title)}\n${r.url}\n${body}`
@@ -232,6 +235,6 @@ export const braveWorkerTools = {
     if (!key) throw new Error('Brave Search is not configured')
     const query = String(args.query ?? '').trim()
     if (!query) throw new Error('brave_web_search needs a non-empty query')
-    return augmentAndFormatResults(await braveSearch(query, key, 5))
+    return augmentAndFormatResults(await braveSearch(query, key, 5), { keepSnippet: true })
   },
 }

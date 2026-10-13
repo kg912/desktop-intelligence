@@ -6,10 +6,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const settings = { braveSearchEnabled: true, braveSearchApiKey: 'brave-key' }
-vi.mock('electron', () => ({ net: { fetch: vi.fn(async () => { throw new Error('offline') }) } }))
+const netFetch = vi.hoisted(() => ({ impl: async (): Promise<unknown> => { throw new Error('offline') } }))
+vi.mock('electron', () => ({ net: { fetch: vi.fn((...a: unknown[]) => (netFetch.impl as (...x: unknown[]) => Promise<unknown>)(...a)) } }))
 vi.mock('../SettingsStore', () => ({ readSettings: () => settings }))
 
-import { braveWorkerTools } from '../BraveSearchService'
+import { augmentAndFormatResults, braveWorkerTools } from '../BraveSearchService'
 
 const fetchMock = vi.fn()
 beforeEach(() => {
@@ -38,6 +39,20 @@ describe('braveWorkerTools', () => {
     expect(url.searchParams.get('q')).toBe('hotels Füssen')
     expect(url.searchParams.get('count')).toBe('5')
     expect((fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers['X-Subscription-Token']).toBe('brave-key')
+  })
+
+  it('spec A Phase 7: with a fetched page, the worker result keeps Brave\'s snippet as the first body line; single chat does not', async () => {
+    const page = '<html><body><p>' + 'The castle is open daily from nine to six, and tickets must be booked online in advance. '.repeat(3) + '</p></body></html>'
+    netFetch.impl = async () => ({ ok: true, headers: { get: () => 'text/html; charset=utf-8' }, text: async () => page })
+    try {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ web: { results: [{ title: 'Castle', url: 'https://c.example', description: 'Opening hours' }] } }) })
+      const worker = await braveWorkerTools.call('brave_web_search', { query: 'castle hours' })
+      expect(worker.split('\n').slice(0, 4)).toEqual(['[1] Castle', 'https://c.example', 'Opening hours', expect.stringContaining('The castle is open daily')])
+      const single = await augmentAndFormatResults([{ title: 'Castle', url: 'https://c.example', description: 'Opening hours' }])
+      expect(single.split('\n')[2]).toContain('The castle is open daily')
+    } finally {
+      netFetch.impl = async () => { throw new Error('offline') }
+    }
   })
 
   it('refuses unknown built-ins, an empty query and a missing key', async () => {

@@ -279,6 +279,13 @@ lines with their snippet ids, at most 40), answered by the sidecar from the evid
 no Electron round trip, not new evidence (cite the snippet ids they show). Stubbed snippets stay citable;
 `compact_to_fit` only acts when the history still does not fit.
 
+**Search results in the worker's view (spec A Phase 7).** The worker path of Brave search puts
+Brave's own snippet as each page's first body line (single chat is unchanged). In the sidecar each
+search page keeps its title, url and first body line (≤ 400 chars); the rest is whitespace-collapsed
+and cut to 850 chars around the densest run of query terms, ending
+`… [N chars trimmed; read_evidence("S3.2") for the rest]`. Only the view is trimmed: the evidence
+store keeps the full result, so quote checks, the judge and `read_evidence` see everything.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same
