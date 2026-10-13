@@ -50,7 +50,7 @@ export interface RunSummary {
 
 export interface Anomaly {
   kind: 'length' | 'served_model_differs' | 'fallback_plan' | 'repetition' | 'retry' | 'error' | 'cancelled' | 'tool_denied' | 'tool_rejected' | 'reconciliation' | 'capped' | 'tool_limit'
-    | 'degraded' | 'context_compacted'
+    | 'degraded' | 'context_compacted' | 'plan_step_removed'
   message: string
   /** Link target inside the run directory, e.g. "agent-1.1.md#call-7". */
   ref?: string
@@ -497,6 +497,8 @@ export interface RunBaseline {
   p90AgentCostUsd: number
   /** From the last agent to finish back through the latest-finishing dependency; root first. */
   criticalPath: string[]
+  /** Plan steps dropped before the run (spec A Phase 4: final merge steps). */
+  removedSteps: string[]
   retries: number
   /** Worker calls on attempt ≥ 1. */
   retryCostUsd: number
@@ -587,6 +589,7 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
     meanAgentCostUsd: agentCosts.reduce((s, c) => s + c, 0) / Math.max(1, agentCosts.length),
     p90AgentCostUsd: agentCosts[Math.max(0, Math.ceil(0.9 * agentCosts.length) - 1)] ?? 0,
     criticalPath,
+    removedSteps: eventsOf(events, 'plan_step_removed').map((e) => e.stepId),
     retries: eventsOf(events, 'retry').length,
     retryCostUsd: cost(ofRole('worker').filter((r) => r.attempt > 0)),
     claims: {
@@ -662,6 +665,7 @@ export function findAnomalies(_meta: RunLogMeta, events: AgentEvent[], records: 
       const what = e.unreviewed ? 'accepted unreviewed (no usable verdict)' : `accepted with caveats: attempt ${e.attempt}, score ${e.score}/5, ${e.issues.length} open issue(s)`
       out.push({ kind: 'degraded', message: `agent ${e.agentId} ${what}`, ref: `agent-${safeId(e.agentId)}.md` })
     }
+    if (e.type === 'plan_step_removed') out.push({ kind: 'plan_step_removed', message: `plan step ${e.stepId} ("${e.label}") removed: ${e.reason}`, ref: 'planner.md' })
     if (e.type === 'context_compacted') {
       out.push({ kind: 'context_compacted', message: `agent ${e.agentId} (attempt ${e.attempt}): ${e.stubbed} tool result(s) compacted to fit the context window, ~${e.tokensFreed} tokens freed`, ref: `agent-${safeId(e.agentId)}.md` })
     }

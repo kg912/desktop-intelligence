@@ -851,6 +851,14 @@ export interface PlanSubtaskAddedEvent extends AgentEventBase {
   step: { id: string; label: string; role: string; dependsOn: string[] }
 }
 
+/** The planner's final merge step was dropped before the plan was shown: the synthesizer merges (spec A Phase 4). */
+export interface PlanStepRemovedEvent extends AgentEventBase {
+  type: 'plan_step_removed'
+  stepId: string
+  label: string
+  reason: string
+}
+
 /** Orchestrator reasoning, when the model streams it. */
 export interface PlanReasoningEvent extends AgentEventBase {
   type: 'plan_reasoning'
@@ -861,6 +869,7 @@ export type AgentEvent =
   | PlanStartedEvent
   | PlanStageChangedEvent
   | PlanSubtaskAddedEvent
+  | PlanStepRemovedEvent
   | PlanReasoningEvent
   | OrchestratorPlanEvent
   | RunConfigEvent

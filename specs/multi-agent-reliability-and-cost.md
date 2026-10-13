@@ -64,6 +64,7 @@ Interim fixes in Phase 1 stay as a fallback for models that ignore IDs.
 ### Phase 4: Remove the merge step (G4)
 - `PLANNER_SYSTEM` (L753): forbid a final "merge/combine/summarise" step; the synthesizer owns merging. Add a `plan_node` post-check that drops a step whose title matches `merge|combine|consolidate|synthes` and that depends on all others, logging `plan_step_removed`.
 - If the removed step was the only holder of a unique search task, the planner must have expressed it as a normal research step (add to the prompt with an example).
+- *Decisions (Phase 4):* "depends on all others" is transitive (every other step is an ancestor), so the stock-screen plan's 3.1 "…synthesize final recommendations" (fed by 2.1–2.4, which all depend on 1.1) is dropped too; the label test uses stems (`merg|combin|consolidat|synthes`) so "combining" and "merged" match; a one-step plan is never emptied. The synthesis system prompt now says merging, conflict resolution and the task's exclusions are its job. The reflection-hardening rule "add one merge step" for split screening is replaced.
 - **Acceptance:** `test_plan_no_merge.py`: fixture plan with a merge step is repaired; a plan whose last step does new research is kept. Baseline shows no 2.1-style stage.
 
 ### Phase 5: Patch-only repairs and model escalation (G5)

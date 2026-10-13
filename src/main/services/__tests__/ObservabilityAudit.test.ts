@@ -37,6 +37,7 @@ const SAMPLES: Record<AgentEvent['type'], Record<string, unknown>> = {
   plan_stage_changed: { stage: 'splitting', attempt: 0 },
   plan_subtask_added: { attempt: 0, index: 0, step: { id: '1.1', label: 'Research', role: 'Researcher', dependsOn: [] } },
   plan_reasoning: { token: 'Group by region.' },
+  plan_step_removed: { stepId: '2.1', label: 'Merge all findings', reason: 'a final merge step: the synthesizer merges every step\'s output' },
   orchestrator_plan: { steps: [{ id: '1.1', label: 'Research', stage: 'worker', role: 'Researcher', model: 'm/w', phase: 1, dependsOn: [] }] },
   run_config: { models: { worker: 'm/w' }, sources: { worker: 'saved' }, catalogueChecked: true, maxAgents: 2, budgetCapUsd: 1, reflectionPassThreshold: 3, maxRetriesPerAgent: 1, reasoningEffort: 'medium' },
   hitl_pause: { agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} },
@@ -142,7 +143,7 @@ describe('Phase 0 audit — the old multi-agent logger', () => {
 
   it('claim: stepType maps every AgentEvent type as documented', () => {
     const expected: Record<AgentEvent['type'], AgentTraceStepType> = {
-      plan_started: 'orchestrator', plan_stage_changed: 'orchestrator', plan_subtask_added: 'orchestrator', plan_reasoning: 'orchestrator',
+      plan_started: 'orchestrator', plan_stage_changed: 'orchestrator', plan_subtask_added: 'orchestrator', plan_reasoning: 'orchestrator', plan_step_removed: 'orchestrator',
       orchestrator_plan: 'orchestrator', run_config: 'orchestrator',
       hitl_pause: 'orchestrator', hitl_resume: 'orchestrator', // agentId "orchestrator" in SAMPLES
       agent_start: 'worker', agent_reasoning: 'worker', agent_token: 'worker', tool_start: 'worker', tool_done: 'worker',

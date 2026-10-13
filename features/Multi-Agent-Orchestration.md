@@ -177,6 +177,7 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `reflection_result` | `agentId, score (1–5), passed, reason` (+ `claimsChecked, claimsFailed, claimStatuses, evidenceMode, judgeInputChars`) |
 | `retry` | `agentId, attempt, reason` |
 | `agent_degraded` | `agentId, attempt, score, issues, claimStatuses, reason?, unreviewed?` — retries ran out, best attempt passed on |
+| `plan_step_removed` | `stepId, label, reason` — the planner's final merge step (label merges/combines/consolidates/synthesizes, every other step among its ancestors) was dropped before approval; the synthesizer merges and applies the task's exclusions (spec A Phase 4) |
 | `context_compacted` | `agentId, attempt, stubbed, tokensFreed` — oldest tool results stubbed so the next request fits |
 | `hitl_pause` | `agentId, role, toolName, serverName, args` |
 | `hitl_resume` | `agentId, approved` |

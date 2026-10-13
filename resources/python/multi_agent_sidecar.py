@@ -765,9 +765,12 @@ PLANNER_SYSTEM = (
     "You are the orchestrator of a team of AI agents that run in parallel. Split the user's task into the largest set of "
     "steps that can run at the same time. A step may depend on another step only if it needs that step's output, and "
     "then it must list that step's id in dependsOn. Research, comparison, and per-region or per-source work is parallel "
-    "by default. A final assembly step may depend on the others. If a step must evaluate many candidates against several criteria, "
-    "split it by sector, theme or criterion group into parallel steps and add one merge step that applies the exclusions and combines "
-    "the results. You may spawn a maximum of {max_agents} agents (steps). "
+    "by default. Do not add a final step that merges, combines, consolidates or summarises the others: the final synthesis does that "
+    "after every step, including applying the task's exclusions and resolving conflicts. If work must happen after other steps "
+    "(new research that needs their answers), make it a normal research step that depends only on the steps it needs, e.g. "
+    "{\"id\": \"2.1\", \"label\": \"Find rail options from Selcuk to the airport for the flight 1.2 found\", \"role\": \"Rail researcher\", "
+    "\"dependsOn\": [\"1.2\"]}. If a step must evaluate many candidates against several criteria, split it by sector, theme or "
+    "criterion group into parallel steps; the final synthesis combines them. You may spawn a maximum of {max_agents} agents (steps). "
     "Return ONLY a JSON array. Each element: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
     "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs]}."
 )
@@ -829,6 +832,30 @@ def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
     for s in steps:
         s["phase"] = depth_of(s["id"])
     return steps
+
+
+MERGE_LABEL_RE = re.compile(r"\b(merg|combin|consolidat|synthes)", re.I)
+MERGE_REMOVED_REASON = "a final merge step: the synthesizer merges every step's output"
+
+
+def drop_final_merge(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(kept, removed). A step is a final merge when its label merges/combines/consolidates/synthesizes and every
+    other step is among its ancestors (direct or transitive). The synthesizer owns merging (spec A Phase 4)."""
+    by_id = {st["id"]: st for st in steps}
+
+    def ancestors(step_id: str) -> set[str]:
+        seen: set[str] = set()
+        todo = list(by_id[step_id]["dependsOn"])
+        while todo:
+            dep = todo.pop()
+            if dep not in seen and dep in by_id:
+                seen.add(dep)
+                todo += by_id[dep]["dependsOn"]
+        return seen
+
+    removed = [st for st in steps if len(steps) > 1 and MERGE_LABEL_RE.search(st["label"]) and ancestors(st["id"]) == set(by_id) - {st["id"]}]
+    gone = {st["id"] for st in removed}
+    return [st for st in steps if st["id"] not in gone], removed
 
 
 def is_pure_chain(steps: list[dict[str, Any]]) -> bool:
@@ -978,6 +1005,11 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     await run.emit("plan_stage_changed", stage="assigning", attempt=0)
     await run.emit("plan_stage_changed", stage="wiring", attempt=0)
     fallback = steps is None
+    if steps:
+        steps, removed = drop_final_merge(steps)
+        for st in removed:
+            print(f"[plan] run {run.run_id}: dropped final merge step {st['id']} ({st['label']})", file=sys.stderr, flush=True)
+            await run.emit("plan_step_removed", stepId=st["id"], label=st["label"], reason=MERGE_REMOVED_REASON)
     steps = steps or fallback_plan(config)
     for s in steps:
         s.pop("chainReason", None)
@@ -1745,6 +1777,14 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
 
 # ── Synthesis ────────────────────────────────────────────────────────────────
 
+SYNTHESIS_SYSTEM = ("You synthesize a multi-agent team's work into one final answer for the user. "
+                    "Merging is your job (the plan has no merge step): combine the agents' results, resolve conflicts between them, and "
+                    "apply any exclusions or criteria the task states. "
+                    "Cite every factual contribution with its source agent marker exactly as given, e.g. [1.1]. "
+                    "Do not invent markers. If some agents failed, say what is missing. An agent output may end with its "
+                    "claim statuses: drop or explicitly caveat any claim marked failed-check, and present unverified claims as "
+                    "unverified. If an output is marked DEGRADED or UNREVIEWED, say that step's results were accepted with caveats.")
+
 async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     run: Run = state["run"]
     outputs: dict[str, str] = state["outputs"]
@@ -1758,11 +1798,7 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     sources = "\n\n".join(f"[{agent_id}] ({steps[agent_id]['role']}: {steps[agent_id]['label']})\n{text}" for agent_id, text in outputs.items())
     missing = "".join(f"\n- [{agent_id}] failed: {reason}" for agent_id, reason in failures.items())
     prompt = [
-        {"role": "system", "content": with_date(run, "You synthesize a multi-agent team's work into one final answer for the user. "
-                                      "Cite every factual contribution with its source agent marker exactly as given, e.g. [1.1]. "
-                                      "Do not invent markers. If some agents failed, say what is missing. An agent output may end with its "
-                                      "claim statuses: drop or explicitly caveat any claim marked failed-check, and present unverified claims as "
-                                      "unverified. If an output is marked DEGRADED or UNREVIEWED, say that step's results were accepted with caveats.")},
+        {"role": "system", "content": with_date(run, SYNTHESIS_SYSTEM)},
         {"role": "user", "content": f"Task: {run.request.task}\n\nAgent outputs:\n\n{sources}" + (f"\n\nFailed agents:{missing}" if missing else "")},
     ]
 

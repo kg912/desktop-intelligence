@@ -12,6 +12,7 @@ const KNOWN_TYPES = new Set<string>([
   'plan_started',
   'plan_stage_changed',
   'plan_subtask_added',
+  'plan_step_removed',
   'plan_reasoning',
   'orchestrator_plan',
   'run_config',
@@ -149,6 +150,9 @@ function validateVariant(obj: Record<string, unknown>): string | null {
     case 'context_compacted':
       return checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['stubbed', 'number'], ['tokensFreed', 'number']])
 
+    case 'plan_step_removed':
+      return checkFields(obj, [['stepId', 'string'], ['label', 'string'], ['reason', 'string']])
+
     case 'agent_degraded': {
       const err = checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['score', 'number']])
       if (err) return err
@@ -244,6 +248,7 @@ export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
     case 'plan_started':
     case 'plan_stage_changed':
     case 'plan_subtask_added':
+    case 'plan_step_removed':
     case 'plan_reasoning':
     case 'orchestrator_plan':
     case 'run_config':

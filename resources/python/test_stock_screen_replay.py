@@ -70,7 +70,9 @@ if __name__ == "__main__":
     assert kinds[-1] == "task_complete", [e for e in run.events if e["type"] in ("agent_failed", "task_failed")]
     assert "1.1" in by_agent("agent_degraded") or by_agent("reflection_result")["1.1"]["passed"]
     assert not [e for e in run.events if e["type"] == "agent_failed"]
-    assert {e["agentId"] for e in run.events if e["type"] == "agent_complete"} == {"1.1", "2.1", "2.2", "2.3", "2.4", "3.1"}
+    # Spec A Phase 4: 3.1 ("…synthesize final recommendations", fed by every step) is dropped; the synthesizer merges.
+    assert {e["agentId"] for e in run.events if e["type"] == "agent_complete"} == {"1.1", "2.1", "2.2", "2.3", "2.4"}
+    assert [(e["stepId"], e["reason"]) for e in run.events if e["type"] == "plan_step_removed"] == [("3.1", s.MERGE_REMOVED_REASON)]
     assert any(r == "synthesis" for r, _ in fake.requests) and "accepted with caveats" in run.events[-1]["finalOutput"]
     # Only callable tools reached Electron; the recorded filesystem/memory calls were rejected in the sidecar.
     assert approvals and all(a.startswith("builtin__") for a in approvals)
@@ -91,7 +93,8 @@ if __name__ == "__main__":
                 "support them, assertions with no marker, and rubric failures.") in system and "Score 1 (useless) to 5 (excellent)." in system
     assert "skip rubric item 4" in judges["1.1"] and "skip rubric item 4" not in judges["2.1"]
 
-    # Planner: told to split wide screening by sector/theme with a merge step; such a plan runs its sector steps in parallel.
+    # Planner: told to split wide screening by sector/theme; such a plan runs its sector steps in parallel and, since
+    # spec A Phase 4, its final merge step is dropped (the synthesizer merges and applies the exclusions).
     sectors = json.dumps([{"id": f"1.{i}", "label": f"Screen {name} names", "role": "Screener", "dependsOn": []}
                           for i, name in ((1, "semiconductor"), (2, "software"), (3, "healthcare"))]
                          + [{"id": "2.1", "label": "Merge the screens and apply the exclusions", "role": "Merger", "dependsOn": ["1.1", "1.2", "1.3"]}])
@@ -100,10 +103,11 @@ if __name__ == "__main__":
                                      {"content": "Done."} if role == "synthesis" else {"content": SHORT})
     run, fake, _ = orchestrate(plan_route, {**FIXTURE["config"], "budgetCapUsd": 10}, [], lambda _a: (True, ""))
     planner_system = next(b for r, b in fake.requests if r == "planner")["messages"][0]["content"]
-    assert ("If a step must evaluate many candidates against several criteria, split it by sector, theme or criterion group into "
-            "parallel steps and add one merge step that applies the exclusions and combines the results.") in planner_system
+    assert ("If a step must evaluate many candidates against several criteria, split it by sector, theme or "
+            "criterion group into parallel steps; the final synthesis combines them.") in planner_system
     [plan] = [e for e in run.events if e["type"] == "orchestrator_plan"]
-    assert [st["phase"] for st in plan["steps"]] == [1, 1, 1, 2] and plan["steps"][3]["dependsOn"] == ["1.1", "1.2", "1.3"]
+    assert [st["phase"] for st in plan["steps"]] == [1, 1, 1] and [st["id"] for st in plan["steps"]] == ["1.1", "1.2", "1.3"]
+    assert [e["stepId"] for e in run.events if e["type"] == "plan_step_removed"] == ["2.1"]
     starts = [i for i, e in enumerate(run.events) if e["type"] == "agent_start" and e["agentId"].startswith("1.")]
     first_done = next(i for i, e in enumerate(run.events) if e["type"] == "agent_complete")
     assert len(starts) == 3 and max(starts) < first_done  # all three sector screens were running at once

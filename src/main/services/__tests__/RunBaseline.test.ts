@@ -4,7 +4,7 @@
  */
 import { join } from 'path'
 import { describe, it, expect } from 'vitest'
-import { readRun, summariseRun } from '../MultiAgentRunLogger'
+import { findAnomalies, readRun, summariseRun } from '../MultiAgentRunLogger'
 
 const FIXTURE = join(__dirname, '../../../../resources/python/tests/fixtures/runs/istanbul-3leg')
 const within = (actual: number, expected: number, pct = 1): void => {
@@ -60,6 +60,7 @@ describe('summariseRun on the istanbul-3leg fixture', async () => {
   it('time: about 7 minutes, 1.2 the straggler on the critical path into the merge step', () => {
     within(s.wallMs!, 7 * 60_000, 2)
     expect(s.criticalPath).toEqual(['1.2', '2.1'])
+    expect(s.removedSteps).toEqual([]) // the recorded run kept its merge step (spec A Phase 4 drops it)
     within(s.agents['1.2'].endMs, 268_000)
     for (const id of ['1.1', '1.3', '1.4', '1.5']) expect(s.agents[id].endMs).toBeLessThanOrEqual(186_000)
     within(s.agents['2.1'].endMs - s.agents['1.2'].endMs, 99_000)
@@ -88,5 +89,14 @@ describe('summariseRun claim classes (spec A Phase 1)', () => {
     ] })
     expect(s.claims.attempt0.agentsPassed).toEqual(['1.1'])
     expect(s.claims.attempt0.byFailureClass).toEqual({ ellipsis_fragment_missing: 1, wrong_call: 1 })
+  })
+})
+
+describe('plan_step_removed (spec A Phase 4)', () => {
+  it('is listed in the summary and as a run anomaly', () => {
+    const meta = { schema: 1, runId: 'r', chatId: 'c', chatTitle: '', task: '', startedAt: 0, endedAt: 10, status: 'completed', config: {} } as never
+    const removed = { type: 'plan_step_removed', runId: 'r', seq: 1, ts: 1, stepId: '2.1', label: 'Merge all findings', reason: 'a final merge step: the synthesizer merges every step\'s output' } as never
+    expect(summariseRun({ meta, events: [removed], records: [] }).removedSteps).toEqual(['2.1'])
+    expect(findAnomalies(meta, [removed], [], 0, 0)).toEqual([{ kind: 'plan_step_removed', message: 'plan step 2.1 ("Merge all findings") removed: a final merge step: the synthesizer merges every step\'s output', ref: 'planner.md' }])
   })
 })
