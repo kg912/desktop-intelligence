@@ -154,6 +154,10 @@ export function MultiAgentSettingsPanel() {
             onChange={(id) => update('models', { ...config.models, [key]: id })} />
         </Field>
       ))}
+      <Field label="Escalation" help="A worker's attempts from its second repair on run on this model. Leave it on the worker model to keep one model.">
+        <ModelSelect label="Escalation model" value={config.models.escalation ?? ''} models={filtered} emptyLabel="Same as worker model"
+          onChange={(id) => update('models', { ...config.models, escalation: id })} />
+      </Field>
 
       <Checkbox className="col-span-2" label="Ask before every worker tool call, unless the agent is trusted for the run"
         checked={config.requirePermissions} onChange={(e) => update('requirePermissions', e.target.checked)} />

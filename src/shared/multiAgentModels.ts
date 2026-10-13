@@ -220,6 +220,7 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
       worker: model(c.models?.worker, d.models.worker),
       reflection: model(c.models?.reflection, d.models.reflection),
       synthesizer: model(c.models?.synthesizer, d.models.synthesizer),
+      ...(typeof c.models?.escalation === 'string' && c.models.escalation.trim() ? { escalation: c.models.escalation.trim() } : {}),
     },
     reflectionPassThreshold: clampInt(c.reflectionPassThreshold, 1, 5, d.reflectionPassThreshold),
     maxRetriesPerAgent: clampInt(c.maxRetriesPerAgent, 0, 5, d.maxRetriesPerAgent),

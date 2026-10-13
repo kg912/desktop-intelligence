@@ -1056,7 +1056,8 @@ def split_tool_name(name: str, allowed: set[str]) -> tuple[str, str]:
 # from its result, is declared unverified, or cites an earlier agent's output as its source.
 
 CLAIMS_MARK = "```claims"
-CLAIMS_BLOCK_RE = re.compile(r"```claims[ \t]*\n?(.*?)(?:```|$)", re.S)
+CLAIMS_BLOCK_RE = re.compile(r"```claims(?!_patch)[ \t]*\n?(.*?)(?:```|$)", re.S)
+PATCH_BLOCK_RE = re.compile(r"```claims_patch[ \t]*\n?(.*?)(?:```|$)", re.S)
 QUOTE_MIN_CHARS, QUOTE_MAX_CHARS = 12, 400
 # verified_fragments: a "..."-stitched quote whose fragments appear in order; *_repointed: the quote was not in the
 # cited result but in exactly one other result of this agent, so its callId was rewritten (spec A Phase 1).
@@ -1150,20 +1151,70 @@ def parse_claims(output: str) -> tuple[str, list[dict[str, Any]], list[str]]:
     claims: list[dict[str, Any]] = []
     errors: list[str] = []
     for index, item in enumerate(raw):
-        claim_id = str(item.get("id") or f"#{index + 1}")[:20] if isinstance(item, dict) else f"#{index + 1}"
-        if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
-            errors.append(f"Claim {claim_id} needs an \"id\" and a \"claim\".")
-        elif isinstance(item.get("snippets"), list) and item["snippets"]:
-            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "snippets": [str(x)[:20] for x in item["snippets"]][:10]})
-        elif item.get("callId") and isinstance(item.get("quote"), str):
-            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "callId": str(item["callId"]), "quote": item["quote"]})
-        elif item.get("unverified") is True:
-            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "unverified": True})
-        elif item.get("source"):
-            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "source": str(item["source"])[:20]})
-        else:  # cites nothing: a claim problem (no_citation), so it is checked and repaired like the others
-            claims.append({"id": claim_id, "claim": str(item["claim"])[:400]})
+        claim, error = parse_claim_item(item, index)
+        if claim:
+            claims.append(claim)
+        else:
+            errors.append(error)
     return prose, claims, errors
+
+
+def parse_claim_item(item: Any, index: int) -> tuple[dict[str, Any] | None, str]:
+    """(claim, "") or (None, error) for one entry of a claims block or a claims_patch replace list."""
+    claim_id = str(item.get("id") or f"#{index + 1}")[:20] if isinstance(item, dict) else f"#{index + 1}"
+    if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
+        return None, f"Claim {claim_id} needs an \"id\" and a \"claim\"."
+    text = str(item["claim"])[:400]
+    if isinstance(item.get("snippets"), list) and item["snippets"]:
+        return {"id": claim_id, "claim": text, "snippets": [str(x)[:20] for x in item["snippets"]][:10]}, ""
+    if item.get("callId") and isinstance(item.get("quote"), str):
+        return {"id": claim_id, "claim": text, "callId": str(item["callId"]), "quote": item["quote"]}, ""
+    if item.get("unverified") is True:
+        return {"id": claim_id, "claim": text, "unverified": True}, ""
+    if item.get("source"):
+        return {"id": claim_id, "claim": text, "source": str(item["source"])[:20]}, ""
+    return {"id": claim_id, "claim": text}, ""  # cites nothing: a claim problem (no_citation), checked and repaired like the others
+
+
+def parse_patch(output: str) -> tuple[dict[str, Any] | None, str]:
+    """(patch, "") from a ```claims_patch block, (None, "") when there is none, (None, error) when it is broken."""
+    blocks = list(PATCH_BLOCK_RE.finditer(output))
+    if not blocks:
+        return None, ""
+    try:
+        patch = json.loads(blocks[-1].group(1))
+    except ValueError as exc:
+        return None, f"The claims_patch block is not valid JSON ({exc})."
+    return (patch, "") if isinstance(patch, dict) else (None, "The claims_patch block must be a JSON object.")
+
+
+def apply_claims_patch(claims: list[dict[str, Any]], patch: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """(merged claims, errors). replace: full entries swapped in by id (a new id is appended); drop: ids withdrawn,
+    which stay in the report marked unverified, so their [cN] markers remain honest. The input is not mutated."""
+    merged = [dict(c) for c in claims]
+    errors: list[str] = []
+    replace, drop = patch.get("replace", []), patch.get("drop", [])
+    if not isinstance(replace, list):
+        errors.append('The claims_patch "replace" must be a list of claim entries.')
+        replace = []
+    for index, item in enumerate(replace):
+        claim, error = parse_claim_item(item, index)
+        if not claim:
+            errors.append(error)
+            continue
+        at = next((i for i, c in enumerate(merged) if c["id"] == claim["id"]), None)
+        if at is None:
+            merged.append(claim)
+        else:
+            merged[at] = claim
+    if not isinstance(drop, list):
+        errors.append('The claims_patch "drop" must be a list of claim ids.')
+        drop = []
+    for claim_id in map(str, drop):
+        at = next((i for i, c in enumerate(merged) if c["id"] == claim_id), None)
+        if at is not None:
+            merged[at] = {"id": claim_id, "claim": merged[at]["claim"], "unverified": True}
+    return merged, errors
 
 
 ELLIPSIS_RE = re.compile(r"\.\.\.|…")
@@ -1473,6 +1524,32 @@ def repair_turn(score: int, reason: str, issues: list[str]) -> str:
             "Reply with the full corrected answer and claims block.")
 
 
+def candidate_refs(claim: dict[str, Any], store: dict[str, dict[str, Any]]) -> list[str]:
+    """For a wrong_call claim: the snippet ids (or call ids, for results without snippets) whose text holds its quote."""
+    refs: list[str] = []
+    for call_id in claim.get("candidates", []):
+        snippets = store.get(call_id, {}).get("snippets") or {}
+        hits = [sid for sid, text in snippets.items() if quote_match(claim["quote"], text)]
+        refs += hits or [call_id]
+    return refs
+
+
+def patch_turn(failing: list[dict[str, Any]], statuses: dict[str, str], store: dict[str, dict[str, Any]]) -> str:
+    """Only some claims failed the mechanical check: re-send just those, with their class, and ask for a patch (spec A Phase 5)."""
+    lines = []
+    for c in failing:
+        status = statuses[c["id"]]
+        problem = CLAIM_PROBLEM[status].format(candidates="", missing=c.get("missing", ""))
+        if status == "quote_found_elsewhere":
+            problem = problem.split("; cite one of:")[0] + f"; candidate snippets: {', '.join(candidate_refs(c, store))}"
+        lines.append(f"- {c['id']} [{failure_class(c, status)}]: {problem}. Your entry: {json.dumps({k: c[k] for k in ('id', 'claim', 'callId', 'quote', 'snippets') if k in c}, ensure_ascii=False)}")
+    return ("Claims check: these claims failed; everything else in your report and its other claims are kept as they are.\n"
+            + "\n".join(lines) + "\n"
+            "Reply with ONLY a fenced claims_patch block and nothing else; do not rewrite the report:\n"
+            "```claims_patch\n{\"replace\": [<full corrected entries for these claims>], \"drop\": [<ids of claims you cannot back>]}\n```\n"
+            "A dropped claim stays in the report marked unverified.")
+
+
 def compact_to_fit(run: Run, model: str, messages: list[dict[str, Any]], store: dict[str, dict[str, Any]],
                    compacted: set[int]) -> tuple[int, int] | None:
     """Only when the next request would not fit the model's context window (plan_request's test:
@@ -1508,6 +1585,8 @@ def compact_to_fit(run: Run, model: str, messages: list[dict[str, Any]], store: 
 async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> str:
     config = run.config
     agent_id, role, model = step["id"], step["role"], step["model"]
+    # From the second repair on, a stronger model may take over (spec A Phase 5); default: the worker model.
+    escalation = config.models.get("escalation") or model
     allowed_tools = {str(t.get("name")) for t in run.request.tools}
     agent_tokens = 0
     agent_cost = 0.0
@@ -1537,6 +1616,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     # Every judged attempt with usable output (precheck passed), for 'degrade' on exhaustion.
     usable: list[dict[str, Any]] = []
     history: list[str] = []  # per attempt: its claim-check failures, shown to the judge
+    # Set after a patch-only repair turn: the report and claims the next reply's claims_patch applies to.
+    patch_base: dict[str, Any] | None = None
 
     async def exhausted(reason: str) -> str:
         """Retries are used up (or the attempt cannot continue): fail, or pass on the best usable attempt
@@ -1551,6 +1632,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
     for attempt in range(config.maxRetriesPerAgent + 1):
         run.attempts[agent_id] = attempt
+        if attempt >= 2:
+            model = escalation
 
         async def on_token(text: str, attempt: int = attempt) -> None:
             await run.emit("agent_token", agentId=agent_id, attempt=attempt, token=text)
@@ -1671,7 +1754,16 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         if not output:
             return await exhausted("no final answer (empty or only tool-call text, after one re-ask)")
         answer = output  # as written, claims block included: the conversation's last assistant turn on a repair
-        output, claims, parse_errors = parse_claims(output)
+        patch, patch_error = parse_patch(output) if patch_base else (None, "")
+        if patch is not None and patch_base:
+            # A patch reply: the report is kept as written, the patch merged into its claims.
+            output = patch_base["prose"]
+            claims, parse_errors = apply_claims_patch(patch_base["claims"], patch)
+        elif patch_error:
+            output, claims, parse_errors = patch_base["prose"], [dict(c) for c in patch_base["claims"]], [patch_error]
+        else:
+            output, claims, parse_errors = parse_claims(output)
+        parsed = [dict(c) for c in claims]  # before verify_claim fills/re-points them: what a later patch applies to
         await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
                        **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
                        **({"modelServed": served} if served else {}))
@@ -1712,8 +1804,17 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             return downstream_text(agent_id, output, claims, statuses, f"[{agent_id} UNREVIEWED: the reviewer was unavailable]")
         last_reason = f"score {score}/5: {reason}" if score else reason
         if attempt < config.maxRetriesPerAgent:
-            await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=reason)
-            messages += [{"role": "assistant", "content": answer}, {"role": "user", "content": repair_turn(score, reason, issues)}]
+            escalate = attempt + 1 >= 2 and escalation != model
+            await run.emit("retry", agentId=agent_id, attempt=attempt + 1, reason=reason, **({"escalated": True, "model": escalation} if escalate else {}))
+            failing = [c for c in claims if statuses[c["id"]] not in CLAIM_OK]
+            # Only some claims failed the mechanical check, the rest of the answer is fine: patch just those (spec A Phase 5).
+            if mechanical and judge == "claims check" and not parse_errors and failing and len(failing) < len(claims):
+                patch_base = {"prose": output, "claims": parsed}
+                turn = patch_turn(failing, statuses, store)
+            else:
+                patch_base = None
+                turn = repair_turn(score, reason, issues)
+            messages += [{"role": "assistant", "content": answer}, {"role": "user", "content": turn}]
     return await exhausted(f"reflection retry limit exceeded ({last_reason})")
 
 

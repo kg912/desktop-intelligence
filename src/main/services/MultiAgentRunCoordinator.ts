@@ -175,6 +175,14 @@ export class MultiAgentRunCoordinator {
       return { ok: false, reason: `Not in the OpenRouter catalogue: ${which} — choose another in Settings → Multi-Agent` }
     }
     const models = Object.fromEntries(MODEL_ROLES.map((role) => [role, resolved[role].model])) as MultiAgentConfig['models']
+    // Optional escalation model (spec A Phase 5): checked like a role model, priced, and sent only when set.
+    const escalation = payload.config.models.escalation?.trim()
+    if (escalation) {
+      if (catalogueChecked && !known.has(escalation)) {
+        return { ok: false, reason: `Not in the OpenRouter catalogue: escalation model "${escalation}" — choose another in Settings → Multi-Agent` }
+      }
+      models.escalation = escalation
+    }
     const missing = MODEL_ROLES.filter((role) => !models[role])
     if (missing.length) {
       return { ok: false, reason: `No OpenRouter model for: ${missing.join(', ')} — choose one in Settings` }

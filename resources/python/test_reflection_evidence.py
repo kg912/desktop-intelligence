@@ -47,12 +47,12 @@ class FakeOpenRouter:
         return [body for r, body in self.requests if r == role]
 
 
-def run_one_step(route, tool_result=lambda n: BIG, retries=2, request=None, observe=False, **config):
+def run_one_step(route, tool_result=lambda n: BIG, retries=2, request=None, observe=False, models=None, **config):
     """Full orchestrate() of a one-step plan. Returns (run, fake)."""
     fake = FakeOpenRouter(lambda role, body: {"content": json.dumps([{"id": "1.1", "label": "Read the file", "role": "Reader", "dependsOn": []}])}
                           if role == "planner" else route(role, body))
     s._stream_openrouter = fake
-    cfg = s.Config(maxAgents=1, budgetCapUsd=1, models={"orchestrator": "m/o", "worker": "m/w", "reflection": "m/r", "synthesizer": "m/s"},
+    cfg = s.Config(maxAgents=1, budgetCapUsd=1, models={"orchestrator": "m/o", "worker": "m/w", "reflection": "m/r", "synthesizer": "m/s", **(models or {})},
                    reflectionPassThreshold=3, maxRetriesPerAgent=retries, hitlTimeoutMs=60_000, **config)
     run = s.Run("r", s.RunRequest(runId="r", chatId="c", task="What is in the file?", config=cfg, tools=TOOLS, openRouterApiKey="k", observe=observe,
                                   currentDateTime="Current date and time: x.", **(request or {})))

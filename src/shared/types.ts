@@ -520,6 +520,8 @@ export interface MultiAgentConfig {
     worker:       string
     reflection:   string
     synthesizer:  string
+    /** Runs a worker's attempts from the second repair on (spec A Phase 5). Absent or '' = the worker model. */
+    escalation?:  string
   }
   reflectionPassThreshold: number   // 1–5, min score to pass without retry
   maxRetriesPerAgent:      number
@@ -743,6 +745,9 @@ export interface RetryEvent extends AgentEventBase {
   agentId: string
   attempt: number
   reason:  string
+  /** This attempt runs on the escalation model (spec A Phase 5). */
+  escalated?: boolean
+  model?:     string
 }
 
 /**

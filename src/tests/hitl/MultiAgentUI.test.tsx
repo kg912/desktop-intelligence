@@ -715,6 +715,19 @@ describe('Output limits (Part F)', () => {
     await waitFor(() => expect(saveMultiAgentConfig).toHaveBeenCalledWith(expect.objectContaining({ claimFormat: 'legacy' })))
   })
 
+  it('"Escalation" defaults to the worker model (spec A Phase 5)', async () => {
+    const saveMultiAgentConfig = vi.fn().mockResolvedValue(undefined)
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({ models: [{ id: 'e/strong', name: 'Strong', promptPrice: 1e-6, completionPrice: 2e-6, contextLength: 128000 }], error: null }),
+      getBackendSettings: vi.fn().mockResolvedValue({ provider: 'openrouter', openrouterModel: 'x/y' }),
+      saveMultiAgentConfig,
+    }
+    render(<MultiAgentSettingsPanel />)
+    expect(await screen.findByText('Same as worker model')).toBeTruthy()
+  })
+
   it('"Reviewer evidence" defaults to excerpts and saves full (spec A Phase 3)', async () => {
     const saveMultiAgentConfig = vi.fn().mockResolvedValue(undefined)
     ;(window as any).api = {

@@ -261,6 +261,15 @@ quotes exist, and sees the claim-check history of earlier attempts. Judge calls 
 `reasoning.effort: low` and at most 600 output tokens (a truncated, unusable verdict is retried once
 with twice that).
 
+**Patch repairs and escalation (spec A Phase 5).** When only some claims fail the mechanical check
+(and the answer otherwise parses), the repair turn lists just those claims with their failure class —
+for `wrong_call`, the candidate snippet ids that hold the quote — and asks for a ` ```claims_patch `
+block `{replace: [entries], drop: [ids]}`. The sidecar merges it into the previous claims and keeps
+the report as written; a dropped claim stays, marked unverified. A full answer instead of a patch is
+accepted as a full answer. From the second repair on (attempt ≥ 2) a worker runs on
+`models.escalation` when one is set (Settings → Multi-Agent → Escalation; the coordinator checks it
+against the catalogue and prices it); that `retry` event carries `escalated: true` and the model.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

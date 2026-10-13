@@ -148,6 +148,23 @@ describe('MultiAgentRunCoordinator.start', () => {
     expect(result).toMatchObject({ ok: true, config: { models } })
   })
 
+  it('spec A Phase 5: an escalation model is checked against the catalogue, priced and sent; unset sends none', async () => {
+    const ids = ['a/orch', 'b/work', 'c/refl', 'd/synth', 'e/strong']
+    const roles = { orchestrator: ids[0], worker: ids[1], reflection: ids[2], synthesizer: ids[3] }
+    const ok = setup({ catalogue: ids.map((id) => model(id)) })
+    await ok.coordinator.start({ chatId: 'c', task: 't', config: config({ ...roles, escalation: 'e/strong' }) })
+    const sent = ok.sidecar.startRun.mock.calls[0][0] as unknown as { config: MultiAgentConfig; pricing: Record<string, unknown> }
+    expect(sent.config.models).toEqual({ ...roles, escalation: 'e/strong' })
+    expect(Object.keys(sent.pricing).sort()).toEqual([...ids].sort())
+    const none = setup({ catalogue: ids.map((id) => model(id)) })
+    await none.coordinator.start({ chatId: 'c', task: 't', config: config(roles) })
+    expect((none.sidecar.startRun.mock.calls[0][0] as unknown as { config: MultiAgentConfig }).config.models).toEqual(roles)
+    const gone = setup({ catalogue: ids.map((id) => model(id)) })
+    expect(await gone.coordinator.start({ chatId: 'c', task: 't', config: config({ ...roles, escalation: 'gone/strong' }) }))
+      .toEqual({ ok: false, reason: expect.stringContaining('escalation model "gone/strong"') })
+    expect(gone.sidecar.startRun).not.toHaveBeenCalled()
+  })
+
   // Phase 3 flipped Test D: the Phase 0 baseline asserted a silent swap to the active model.
   it('Test D: a configured model missing from the catalogue is reported by role and the run does not start', async () => {
     const { coordinator, sidecar } = setup()

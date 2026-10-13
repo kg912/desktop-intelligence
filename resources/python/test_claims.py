@@ -68,7 +68,9 @@ if __name__ == "__main__":
     assert results[0]["claimStatuses"] == {"c1": "quote_not_found", "c2": "unverified_declared"}
     assert (results[0]["claimsChecked"], results[0]["claimsFailed"]) == (1, 1)
     assert results[0]["issues"] == ["Claim c1 (callId call_big): the quote is not in the cited tool result."]
-    assert len(fake.of("judge")) == 1 and "Claim c1 (callId call_big)" in json.dumps(fake.of("worker")[-1])
+    # Spec A Phase 5: one of two claims failed, so the repair is a patch turn naming just c1 with its class.
+    repair = fake.of("worker")[-1]["messages"][-1]["content"]
+    assert len(fake.of("judge")) == 1 and repair.startswith("Claims check: these claims failed") and "- c1 [mismatch]: the quote is not in the cited tool result." in repair
     assert results[1]["claimStatuses"] == {"c1": "verified", "c2": "unverified_declared"}
     judge = fake.of("judge")[0]["messages"]
     assert '- c1 | ALAB Q2 revenue $392.4M | verified | quote: "record   revenue of “$392.4 million”" | callId: call_big' in judge[1]["content"]

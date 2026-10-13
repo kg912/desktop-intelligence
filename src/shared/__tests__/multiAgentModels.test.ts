@@ -98,6 +98,11 @@ describe('sanitizeMultiAgentConfig', () => {
     expect(sanitizeMultiAgentConfig({ claimFormat: 'quotes' as never }).claimFormat).toBe('snippet')
     expect(sanitizeMultiAgentConfig({}).claimFormat).toBe('snippet')
   })
+  it('models.escalation is kept trimmed when set and left out when blank (spec A Phase 5)', () => {
+    const models = DEFAULT_MULTI_AGENT_CONFIG.models
+    expect(sanitizeMultiAgentConfig({ models: { ...models, escalation: ' e/strong ' } }).models.escalation).toBe('e/strong')
+    expect('escalation' in sanitizeMultiAgentConfig({ models: { ...models, escalation: '  ' } }).models).toBe(false)
+  })
   it('judgeEvidenceMode keeps excerpts or full, anything else falls back to excerpts (spec A Phase 3)', () => {
     expect(sanitizeMultiAgentConfig({ judgeEvidenceMode: 'full' }).judgeEvidenceMode).toBe('full')
     expect(sanitizeMultiAgentConfig({ judgeEvidenceMode: 'all' as never }).judgeEvidenceMode).toBe('excerpts')
