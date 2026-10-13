@@ -1550,6 +1550,85 @@ def patch_turn(failing: list[dict[str, Any]], statuses: dict[str, str], store: d
             "A dropped claim stays in the report marked unverified.")
 
 
+# ── Evidence stubs and evidence tools (spec A Phase 6) ──────────────────────
+# A consumed tool result (any before the most recent round) is replaced in the history by a stub; the worker
+# re-reads it with read_evidence / grep_evidence, answered here from the evidence store.
+
+EVIDENCE_TOOLS = [
+    {"name": "read_evidence", "description": "Re-read one of your earlier tool results, or one snippet of it, in full or a character range. "
+                                             "Older results are shown in the conversation only as short stubs.",
+     "parameters": {"type": "object", "properties": {"ref": {"type": "string", "description": "A snippet id like S3.2, or a callId"},
+                                                     "start": {"type": "integer"}, "length": {"type": "integer"}}, "required": ["ref"]}},
+    {"name": "grep_evidence", "description": "Search your earlier tool results for a pattern (regular expression, case-insensitive); "
+                                             "returns matching lines with their snippet ids.",
+     "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}, "callId": {"type": "string", "description": "Only this call's result"}},
+                    "required": ["pattern"]}},
+]
+EVIDENCE_TOOL_NAMES = {tool["name"] for tool in EVIDENCE_TOOLS}
+READ_EVIDENCE_DEFAULT_CHARS, READ_EVIDENCE_MAX_CHARS, GREP_MAX_LINES = 6_000, 20_000, 40
+CALL_HEADER_RE = re.compile(r"^\[callId: ([^\]]+)\]")
+
+
+def evidence_tool(name: str, raw_args: str, store: dict[str, dict[str, Any]]) -> str:
+    try:
+        args = json.loads(raw_args or "{}")
+        if not isinstance(args, dict):
+            raise ValueError
+    except ValueError:
+        return f"{name}: arguments must be a JSON object."
+    snippets = {sid: text for c in store.values() for sid, text in (c.get("snippets") or {}).items()}
+    if name == "read_evidence":
+        ref = str(args.get("ref") or "")
+        text = snippets.get(ref) if ref in snippets else store[ref]["result"] if ref in store else None
+        if text is None:
+            return f"No snippet or call {ref}. Known: {', '.join(list(snippets)[:60]) or '(none)'}."
+        start = max(0, int(args.get("start") or 0))
+        end = min(len(text), start + min(READ_EVIDENCE_MAX_CHARS, max(1, int(args.get("length") or READ_EVIDENCE_DEFAULT_CHARS))))
+        return f"[{ref}] (chars {start}–{end} of {len(text)})\n{text[start:end]}"
+    pattern = str(args.get("pattern") or "")
+    try:
+        regex = re.compile(pattern, re.I)
+    except re.error:
+        regex = re.compile(re.escape(pattern), re.I)
+    only = str(args.get("callId") or "")
+    hits = [f"[{sid}] {line.strip()[:300]}" for cid, c in store.items() if not only or cid == only
+            for sid, text in (c.get("snippets") or {}).items() for line in text.splitlines() if line.strip() and regex.search(line)]
+    return "\n".join(hits[:GREP_MAX_LINES]) + (f"\n… {len(hits) - GREP_MAX_LINES} more" if len(hits) > GREP_MAX_LINES else "") if hits else f"No match for {pattern}."
+
+
+def evidence_stub(call_id: str, entry: dict[str, Any]) -> str:
+    """What a consumed result shows in the history: enough to cite it and to decide whether to re-read it."""
+    ids = list(entry.get("snippets") or {})
+    titles = "; ".join(preview(text.split("\n", 1)[0].strip(), 60) for text in list((entry.get("snippets") or {}).values())[:5])
+    span = f"{ids[0]}–{ids[-1]}" if len(ids) > 1 else ids[0] if ids else "no snippets"
+    return (f"[callId: {call_id}] {entry['name']} {preview(entry['args'], 120)}: {len(ids)} snippets {span}, {len(entry['result']) / 1000:.1f} KB"
+            f" — titles: {titles or '(none)'} — an earlier result shown as a stub; use read_evidence(\"{ids[0] if ids else call_id}\") or grep_evidence to see its text]")
+
+
+def stub_consumed(messages: list[dict[str, Any]], store: dict[str, dict[str, Any]], stubbed: set[int]) -> int:
+    """Stub every tool result before the most recent round (the tool messages after the last assistant turn that called
+    tools). Returns the characters freed. Indices go into `stubbed` (shared with compact_to_fit, which skips them)."""
+    last_call = max((i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
+    freed = 0
+    for index, message in enumerate(messages[:last_call]):
+        if message.get("role") != "tool" or index in stubbed:
+            continue
+        content = str(message.get("content") or "")
+        header = CALL_HEADER_RE.match(content)
+        call_id = header.group(1) if header else str(message.get("tool_call_id"))
+        entry = store.get(call_id)
+        if entry is not None and entry["ok"]:
+            stub = evidence_stub(call_id, entry)
+        elif len(content) > 600:  # an evidence-tool output or a long failure text
+            stub = f"[{preview(content, 200)} — {len(content)} chars, an earlier result shown as a stub; read it again if needed]"
+        else:
+            continue
+        freed += len(content) - len(stub)
+        message["content"] = stub
+        stubbed.add(index)
+    return freed
+
+
 def compact_to_fit(run: Run, model: str, messages: list[dict[str, Any]], store: dict[str, dict[str, Any]],
                    compacted: set[int]) -> tuple[int, int] | None:
     """Only when the next request would not fit the model's context window (plan_request's test:
@@ -1599,8 +1678,11 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         context = "\n\nResults from the steps this one depends on (cite them by marker if you rely on them):\n" + "\n\n".join(f"[{k}] {v}" for k, v in prior.items())
     last_reason = ""
     # Say exactly what is available, so the agent never guesses at tools it does not have.
-    tools_line = (f"Your tools: {', '.join(sorted(allowed_tools))}. Call them by these exact names, only when you need evidence."
+    tools_line = (f"Your tools: {', '.join(sorted(allowed_tools))}. Call them by these exact names, only when you need evidence. "
+                  "Earlier tool results are shown as short stubs once you have read them; read_evidence and grep_evidence "
+                  "re-read them (free, no approval), and their snippet ids stay citable."
                   if allowed_tools else "You have no tools in this run. Do not attempt tool calls; work from what you know.")
+    offered = (run.request.tools + EVIDENCE_TOOLS) if run.request.tools else None
     # One conversation for every attempt: a repair continues it with the verdict as a new turn,
     # so tool results and the last answer are kept (Phase 4).
     messages: list[dict[str, Any]] = [
@@ -1654,11 +1736,12 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                 last_round = limit is not None and _round >= limit - 1
                 if last_round and messages[-1].get("content") not in (TOOL_BUDGET_USED, NO_ANSWER_NUDGE):
                     messages.append({"role": "user", "content": TOOL_BUDGET_USED})
+                stub_consumed(messages, store, compacted)
                 freed = compact_to_fit(run, model, messages, store, compacted)
                 if freed:
                     await run.emit("context_compacted", agentId=agent_id, attempt=attempt, stubbed=freed[0], tokensFreed=freed[1])
                 stream = DsmlTokenFilter(on_token)
-                reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else (run.request.tools or None),
+                reply, tokens, cost = await ask(run, model, messages, tools=None if last_round else offered,
                                                 on_token=stream, on_reasoning=on_reasoning, loop_guard=True,
                                                 obs={"role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
                                                      "retry": int(no_answer_retried)})
@@ -1705,6 +1788,15 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     began = time.monotonic()
                     started_at = now_ms()
                     ok = False
+                    if name in EVIDENCE_TOOL_NAMES:  # answered here from the store: no approval, not new evidence
+                        content = evidence_tool(name, raw_args, store)
+                        run.record({"kind": "tool", "role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
+                                    "callId": call_id, "name": name, "args": raw_args, "result": content, "approved": True, "denied": False, "error": None,
+                                    "timing": {"startedAt": started_at, "endedAt": now_ms(), "ms": int((time.monotonic() - began) * 1000)}})
+                        await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=True, durationMs=int((time.monotonic() - began) * 1000),
+                                       resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
+                        messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": content})
+                        continue
 
                     def record_tool(result: str | None, approved: bool, denied: bool, error: str | None) -> None:
                         run.record({"kind": "tool", "role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,

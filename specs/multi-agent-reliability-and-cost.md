@@ -80,6 +80,7 @@ Motivated by `RLM.pdf` (prompt-as-environment beats lossy compaction) applied to
 - Add worker-internal tools `read_evidence(snippetId | callId, range?)` and `grep_evidence(pattern, callId?)`, served by the sidecar from `Run.evidence` (no Electron round trip, no approval).
 - After a tool result is consumed (one round later), replace its body in the message history by a stub: `[S3.*] 5 snippets, 12.8 KB — titles: …; use read_evidence`. Keep the last round's results in full.
 - `compact_to_fit` becomes the last resort, not the default.
+- *Decisions (Phase 6):* "consumed" is structural — every tool result before the most recent round (the tool messages after the last assistant turn that called tools) — so the live loop and the fixture replay share `stub_consumed()`. Evidence-tool outputs are not stored as evidence (they copy it); long ones are stubbed too once consumed. The replay rebuilds each recorded worker request as a prefix of its agent's final history; it cannot simulate the re-reads a real model would add, so the live ratio is unverified.
 - **Acceptance:** fixture replay: total worker prompt tokens ≤ 3× unique tool text (from ~7×); claims verify identically (the evidence store is unchanged). Guard: a worker that never calls `read_evidence` must still be able to cite the current round's snippets.
 - Risk: more round trips on cheap tool calls; mitigate with `maxToolRounds` unchanged and the stub listing enough to avoid re-reads. RLM reports high cost variance; track p90 cost in the baseline, not only the mean.
 

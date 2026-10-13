@@ -68,18 +68,30 @@ if __name__ == "__main__":
     except s.ContextExceeded as exc:
         assert "even with every tool result compacted" in str(exc)
 
-    # End to end: two 8,400-char results overflow a small window before the answer; the oldest is stubbed,
-    # the run continues, and a quote from beyond the stub's first 300 chars still verifies from the store.
-    calls = iter([{"tool_calls": [{"id": "call_r1", "type": "function", "function": {"name": "fs__read_file", "arguments": '{"path": "/1"}'}}]},
-                  {"tool_calls": [{"id": "call_r2", "type": "function", "function": {"name": "fs__read_file", "arguments": '{"path": "/2"}'}}]},
-                  answer({"id": "c1", "claim": "Line 300 exists", "callId": "call_r1", "quote": "first file line 0300"})])
+    # End to end: two 8,400-char results from ONE round overflow a small window before the answer; the oldest is
+    # compacted, the run continues, and a quote from beyond the stub's first 300 chars still verifies from the store.
+    # (Spec A Phase 6: results from earlier rounds are evidence stubs first; compaction is the last resort.)
+    both = {"tool_calls": [{"id": "call_r1", "type": "function", "function": {"name": "fs__read_file", "arguments": '{"path": "/1"}'}},
+                           {"id": "call_r2", "type": "function", "function": {"name": "fs__read_file", "arguments": '{"path": "/2"}'}}]}
+    claim = answer({"id": "c1", "claim": "Line 300 exists", "callId": "call_r1", "quote": "first file line 0300"})
+    window = {"pricing": {"m/w": s.Pricing(prompt=0, completion=0, contextLength=4_500)}}
+    calls = iter([both, claim])
     run, fake = run_one_step(lambda role, body: {"content": '{"score": 5, "reason": "ok", "issues": []}'} if role == "judge"
                              else next(calls) if role == "worker" else {"content": "done [1.1]"},
-                             tool_result=lambda n: R1 if n == 1 else R2, request={"pricing": {"m/w": s.Pricing(prompt=0, completion=0, contextLength=4_500)}})
+                             tool_result=lambda n: R1 if n == 1 else R2, request=window)
     [note] = events(run, "context_compacted")
     assert (note["agentId"], note["attempt"], note["stubbed"]) == ("1.1", 0, 1) and note["tokensFreed"] > 1_500, note
     final = fake.of("worker")[-1]["messages"]
     assert [m["content"].startswith("[call_r1 fs__read_file") for m in final if m["role"] == "tool"] == [True, False]
-    assert fake.of("worker")[1]["messages"][3]["content"] == "[callId: call_r1]\n[S1.1] " + R1  # the earlier request was never touched
     assert events(run, "reflection_result")[0]["claimStatuses"] == {"c1": "verified"} and run.events[-1]["type"] == "task_complete"
+    # The same two results from two rounds: the first is an evidence stub before the answer; no compaction needed.
+    calls = iter([{"tool_calls": [both["tool_calls"][0]]}, {"tool_calls": [both["tool_calls"][1]]}, claim])
+    run, fake = run_one_step(lambda role, body: {"content": '{"score": 5, "reason": "ok", "issues": []}'} if role == "judge"
+                             else next(calls) if role == "worker" else {"content": "done [1.1]"},
+                             tool_result=lambda n: R1 if n == 1 else R2, request=window)
+    assert not events(run, "context_compacted")
+    tools = [m["content"] for m in fake.of("worker")[-1]["messages"] if m["role"] == "tool"]
+    assert tools[0].startswith("[callId: call_r1] fs__read_file") and "use read_evidence" in tools[0] and tools[1].startswith("[callId: call_r2]\n[S2.1] ")
+    assert fake.of("worker")[1]["messages"][3]["content"] == "[callId: call_r1]\n[S1.1] " + R1  # the earlier request was never touched
+    assert events(run, "reflection_result")[0]["claimStatuses"] == {"c1": "verified"}
     print("ok")

@@ -902,7 +902,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     expect(sent.find((e) => e.type === 'run_config')).toMatchObject({ tools: ['builtin__brave_web_search'] })
     const workerPrompts = fake.requests.filter((r) => systemOf(r.body).includes('Scout agent'))
     expect(systemOf(workerPrompts[0].body)).toContain('Your tools: builtin__brave_web_search.')
-    expect(workerPrompts[0].body.tools?.map((t) => t.function.name)).toEqual(['builtin__brave_web_search'])
+    // Spec A Phase 6: the sidecar's own evidence tools follow the run's tools (answered from the evidence store).
+    expect(workerPrompts[0].body.tools?.map((t) => t.function.name)).toEqual(['builtin__brave_web_search', 'read_evidence', 'grep_evidence'])
     // Event order for the worker: start → tool_start → approval pause → resume → tool_done → answer.
     const order = sent.filter((e) => 'agentId' in e && e.agentId === '1.1' && e.type !== 'agent_token' && e.type !== 'agent_reasoning').map((e) => e.type)
     expect(order.slice(0, 6)).toEqual(['agent_start', 'tool_start', 'hitl_pause', 'hitl_resume', 'tool_done', 'agent_complete'])

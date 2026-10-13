@@ -270,6 +270,15 @@ accepted as a full answer. From the second repair on (attempt ≥ 2) a worker ru
 `models.escalation` when one is set (Settings → Multi-Agent → Escalation; the coordinator checks it
 against the catalogue and prices it); that `retry` event carries `escalated: true` and the model.
 
+**Evidence stubs (spec A Phase 6).** Before each worker request, every tool result older than the
+most recent round (the tool messages after the last assistant turn that called tools) is replaced by a
+stub: `[callId: …] tool args: N snippets S3.1–S3.5, 12.8 KB — titles: …; use read_evidence("S3.1") or
+grep_evidence…]`. Workers that have tools also get `read_evidence {ref, start?, length?}` (a snippet or a
+call's result, default 6,000 chars, at most 20,000) and `grep_evidence {pattern, callId?}` (matching
+lines with their snippet ids, at most 40), answered by the sidecar from the evidence store — no approval,
+no Electron round trip, not new evidence (cite the snippet ids they show). Stubbed snippets stay citable;
+`compact_to_fit` only acts when the history still does not fit.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same
