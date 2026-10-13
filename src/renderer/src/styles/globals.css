@@ -519,6 +519,13 @@
 /* The chat column narrows when the dock widens (Graph view): the bar follows its own width, not the window's. */
 .ma-topbar-cq { container-type: inline-size; }
 @container (max-width: 560px) { .ma-mpill-sub { display: none; } }
+/* Graph dock header follows the dock's width, not the window's: the auto-opened chip shortens, then goes;
+   tabs never wrap, and scroll sideways (no bar) only when they alone do not fit. Pin and collapse never shrink.
+   Widths are the row's content box (minus px-7), sized for the widest tabs: "Needs you 11" + "Node 1.6". */
+.ma-gdock-head { container-type: inline-size; }
+@container (max-width: 660px) { .ma-gdock-auto-full { display: none; } .ma-gdock-auto::before { content: 'auto-opened'; } }
+@container (max-width: 480px) { .ma-gdock-auto { display: none; } }
+@container (max-width: 380px) { .ma-gdock-tabs { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; } .ma-gdock-tabs::-webkit-scrollbar { display: none; } }
 
 .ma-pop {
   /* Viewport-fixed; left/top/width come from placeOverlay() so it never runs off either edge. */

@@ -535,6 +535,9 @@ export function Layout() {
       // Sending a multi-agent task opens the dock at once (planning shows while the run starts);
       // it stays open after the run ends, and closes again only if the run could not start.
       setSidebarMode('agents')
+      // A new run always starts in List, batched with the dock opening so Graph never flashes.
+      // Not saved: the chat's stored List/Graph choice is left as the user last picked it.
+      setAgentViewState('list')
       if (!(await multiAgent.start(effectiveChatId, text))) setSidebarMode((m) => (m === 'agents' ? 'chat' : m))
       return
     }

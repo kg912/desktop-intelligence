@@ -43,7 +43,8 @@ vi.mock('../../renderer/src/components/layout/ChatArea', () => ({
 }))
 // The stub records its props so the top-bar mode / run wiring can be checked.
 let topBarProps: Record<string, any> = {}
-vi.mock('../../renderer/src/components/layout/TopBar', () => ({ TopBar: (props: Record<string, any>) => { topBarProps = props; return <div data-testid="top-bar" /> } }))
+let topBarRenders: Record<string, any>[] = []
+vi.mock('../../renderer/src/components/layout/TopBar', () => ({ TopBar: (props: Record<string, any>) => { topBarProps = props; topBarRenders.push(props); return <div data-testid="top-bar" /> } }))
 vi.mock('../../renderer/src/components/settings/SettingsPage', () => ({ SettingsPage: () => <div data-testid="settings-page" /> }))
 vi.mock('../../renderer/src/components/chat/CompactingGate', () => ({ CompactingGate: () => null }))
 
@@ -452,5 +453,40 @@ describe('Goal 6 — List | Graph toggle, remembered per chat', () => {
     await renderLayout()
     await openChat('agents title')
     await waitFor(() => expect(topBarProps.agentViewMode).toBe('graph'))
+  })
+
+  it('every new run starts in List, from its first render; Graph picked mid-run sticks until the next send', async () => {
+    const push = async (seq: number, body: Record<string, unknown>, runId = 'run-1') => {
+      await act(async () => {
+        emit({ runId, seq, ts: seq, ...body } as AgentEvent)
+        await new Promise((r) => requestAnimationFrame(() => r(null)))
+      })
+    }
+    const step = { id: '1.1', label: 'Find hotels', stage: 'worker', role: 'R', model: 'w', phase: 1 }
+    overrides.getMultiAgentRun.mockResolvedValue(null)
+    localStorage.setItem('di.multiAgentView.agents', 'graph')
+    await renderLayout()
+    await openChat('agents title')
+    await waitFor(() => expect(topBarProps.agentViewMode).toBe('graph'))
+    topBarRenders = []
+    await send('Plan a trip')
+    await waitFor(() => expect(screen.getByTestId('agent-dock').dataset.view).toBe('list'))
+    const withRun = topBarRenders.filter((p) => p.agentRun)
+    expect(withRun.length).toBeGreaterThan(0)
+    expect(withRun.every((p) => p.agentViewMode === 'list')).toBe(true)
+    // The stored choice is not overwritten by the reset.
+    expect(localStorage.getItem('di.multiAgentView.agents')).toBe('graph')
+
+    await act(async () => { topBarProps.onAgentViewMode('graph') })
+    await push(1, { type: 'orchestrator_plan', steps: [step] })
+    await push(2, { type: 'agent_start', agentId: '1.1', role: 'R', model: 'w', attempt: 0 })
+    expect(screen.getByTestId('agent-dock').dataset.view).toBe('graph')
+    await push(3, { type: 'task_complete', finalOutput: 'Done', totalCostUsd: 0, totalTokens: 0 })
+    expect(screen.getByTestId('agent-dock').dataset.view).toBe('graph')
+
+    overrides.startMultiAgentRun.mockResolvedValueOnce({ ok: true, runId: 'run-2' })
+    await send('Plan another trip')
+    await waitFor(() => expect(overrides.startMultiAgentRun).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('agent-dock').dataset.view).toBe('list')
   })
 })

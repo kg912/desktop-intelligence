@@ -206,12 +206,12 @@ function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, c
             className="group flex h-3.5 flex-none cursor-row-resize items-center justify-center outline-none">
             <span className="h-[3px] w-11 rounded-sm bg-white/[0.14] group-hover:bg-white/30 group-focus-visible:bg-ma-red/70" />
           </div>
-          <div className="flex h-[34px] flex-none items-center gap-[22px] border-b-[0.5px] border-white/[0.06] px-7 text-[13px]">
-            <div role="tablist" aria-label="Inspector" className="flex h-full items-center gap-[22px]">
+          <div className="ma-gdock-head flex h-[34px] flex-none items-center gap-[22px] border-b-[0.5px] border-white/[0.06] px-7 text-[13px]">
+            <div role="tablist" aria-label="Inspector" className="ma-gdock-tabs flex h-full items-center gap-[22px]">
               {(['needs', 'node', 'log'] as const).map((t) => (
                 <button key={t} role="tab" id={`graph-dock-tab-${t}`} aria-selected={dock.tab === t} aria-controls="graph-dock-panel"
                   onClick={() => dispatch({ type: 'tab', tab: t })}
-                  className={cn('-mb-px flex h-full items-center gap-1.5 border-b-2',
+                  className={cn('-mb-px flex h-full flex-none items-center gap-1.5 whitespace-nowrap border-b-2',
                     dock.tab === t ? cn('text-white', t === 'needs' ? 'border-[#e6b422]' : 'border-ma-red') : 'border-transparent text-[#8a8a8a] hover:text-ma-soft')}>
                   {TAB_LABEL[t]}{t === 'node' && selected ? ` ${selected}` : ''}{t === 'needs' && waiting > 0 && ' '}
                   {t === 'needs' && waiting > 0 && <span className="font-mono text-[11px] text-[#e6b422]" data-testid="needs-count">{waiting}</span>}
@@ -220,7 +220,8 @@ function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, c
             </div>
             <span className="flex-1" />
             {dock.mode === 'auto' && !dock.touched && (
-              <span className="truncate rounded-full bg-[#e6b422]/10 px-[9px] py-0.5 font-mono text-[10.5px] text-[#e6b422]" data-testid="dock-auto-chip">auto-opened · closes when queue is empty</span>
+              <span className="ma-gdock-auto truncate rounded-full bg-[#e6b422]/10 px-[9px] py-0.5 font-mono text-[10.5px] text-[#e6b422]" data-testid="dock-auto-chip"
+                title="auto-opened · closes when queue is empty"><span className="ma-gdock-auto-full">auto-opened · closes when queue is empty</span></span>
             )}
             {dock.mode === 'peek' && dock.peekFromSelect && <span className="truncate font-mono text-[10.5px] text-ma-dim">Esc to close</span>}
             {isPinned(dock) && <span className="truncate font-mono text-[10.5px] text-ma-dim" data-testid="dock-pin-label">{Math.round(fraction * 100)}% · drag to resize</span>}
