@@ -230,7 +230,13 @@ removed from the answer and never streamed to the card.
 parse and a **mechanical quote check** against the agent's evidence store — formatting-only
 normalisation (entities, tags, curly quotes/dashes, emphasis, thousands separators, whitespace,
 case), no fuzzy matching; statuses `verified · unverified_declared · source · quote_not_found ·
-call_not_found · call_failed · quote_too_short · quote_too_long`; (c) the judge. A mechanical
+call_not_found · call_failed · quote_too_short · quote_too_long`, plus (spec A Phase 1)
+`verified_fragments` (a `...`-stitched quote whose pieces appear in order; length limits apply to
+their total), `verified_repointed` / `verified_fragments_repointed` (the quote is in exactly one
+other result of the agent, so its callId is rewritten) and `quote_found_elsewhere` (in several:
+the repair turn lists the candidates, nothing is guessed). Failing claims carry a class in
+`claimFailureClasses` (`ellipsis_fragment_missing · wrong_call · mismatch · too_short · too_long ·
+call_failed`); (c) the judge. A mechanical
 failure skips the judge and goes straight to a repair turn; on the last allowed attempt the judge
 still runs (for a score) but the attempt cannot pass.
 

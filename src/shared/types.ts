@@ -673,6 +673,8 @@ export interface ReflectionResultEvent extends AgentEventBase, AgentAttempt {
   claimsFailed?: number
   /** Claim id → check status (see AgentDegradedEvent.claimStatuses). */
   claimStatuses?: Record<string, string>
+  /** Failing claims only: claim id → ellipsis_fragment_missing | wrong_call | mismatch | too_short | too_long | call_failed. */
+  claimFailureClasses?: Record<string, string>
 }
 
 /**
@@ -749,8 +751,11 @@ export interface AgentDegradedEvent extends AgentEventBase {
   attempt:       number
   score:         number
   issues:        string[]
-  /** Claim id → verified | unverified_declared | source | quote_not_found | call_not_found | call_failed | quote_too_short | quote_too_long. */
+  /** Claim id → verified | verified_fragments | verified_repointed | verified_fragments_repointed | unverified_declared | source
+   *  | quote_not_found | quote_found_elsewhere | call_not_found | call_failed | quote_too_short | quote_too_long. */
   claimStatuses: Record<string, string>
+  /** Failing claims only: claim id → ellipsis_fragment_missing | wrong_call | mismatch | too_short | too_long | call_failed. */
+  claimFailureClasses?: Record<string, string>
   /** Why retrying stopped (e.g. "reflection retry limit exceeded (…)", "gate unavailable"). */
   reason?:       string
   unreviewed?:   boolean

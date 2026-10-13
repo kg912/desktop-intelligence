@@ -399,7 +399,7 @@ function RightRail({ view, agent, queue, config }: { view: RunView; agent: Agent
           <div className="mt-2 flex flex-wrap gap-1.5">
             {claims.map(([id, status]) => (
               <span key={id} className={cn('rounded-[5px] border-[0.5px] px-1.5 font-mono text-[11px]',
-                status === 'verified' ? 'border-ma-ok/30 text-ma-ok' : /fail|not_found|too_/.test(status) ? 'border-ma-red/35 text-[#ff8c88]' : 'border-white/10 text-ma-mute')}>
+                status.startsWith('verified') ? 'border-ma-ok/30 text-ma-ok' : /fail|not_found|too_|elsewhere/.test(status) ? 'border-ma-red/35 text-[#ff8c88]' : 'border-white/10 text-ma-mute')}>
                 {id} · {status}
               </span>
             ))}

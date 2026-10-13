@@ -51,7 +51,8 @@ if __name__ == "__main__":
     assert check("call_big", 'RECORD REVENUE of "$392.4 million", up 12% - a new high') == "verified"
     assert check("html", "revenue was **$1234567** — up 3%") == "verified"
     assert check("call_big", 'record revenue of "$392.5 million"') == "quote_not_found"  # no fuzzy matching
-    assert check("nope", GOOD["quote"]) == "call_not_found"
+    assert check("nope", GOOD["quote"]) == "verified_repointed"  # spec A Phase 1: the quote is in exactly one other result
+    assert check("nope", "a quote that is in no result at all") == "call_not_found"
     assert check("denied", "Tool request denied") == "call_failed"
     assert check("call_big", "  row 00001 ") == "quote_too_short"
     assert check("call_big", ROWS[:500]) == "quote_too_long"

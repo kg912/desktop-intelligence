@@ -1015,9 +1015,12 @@ def split_tool_name(name: str, allowed: set[str]) -> tuple[str, str]:
 CLAIMS_MARK = "```claims"
 CLAIMS_BLOCK_RE = re.compile(r"```claims[ \t]*\n?(.*?)(?:```|$)", re.S)
 QUOTE_MIN_CHARS, QUOTE_MAX_CHARS = 12, 400
-CLAIM_OK = {"verified", "unverified_declared", "source"}
+# verified_fragments: a "..."-stitched quote whose fragments appear in order; *_repointed: the quote was not in the
+# cited result but in exactly one other result of this agent, so its callId was rewritten (spec A Phase 1).
+CLAIM_OK = {"verified", "verified_fragments", "verified_repointed", "verified_fragments_repointed", "unverified_declared", "source"}
 CLAIM_PROBLEM = {
     "quote_not_found": "the quote is not in the cited tool result",
+    "quote_found_elsewhere": "the quote is not in the cited tool result but is in several others; cite one of: {candidates}",
     "call_not_found": "no tool call with that callId",
     "call_failed": "the cited tool call failed or was denied",
     "quote_too_short": f"the quote is under {QUOTE_MIN_CHARS} characters, which is not evidence",
@@ -1077,32 +1080,87 @@ def parse_claims(output: str) -> tuple[str, list[dict[str, Any]], list[str]]:
     return prose, claims, errors
 
 
+ELLIPSIS_RE = re.compile(r"\.\.\.|…")
+FAILURE_CLASS = {"call_not_found": "wrong_call", "quote_found_elsewhere": "wrong_call", "call_failed": "call_failed",
+                 "quote_too_short": "too_short", "quote_too_long": "too_long"}
+
+
+def quote_fragments(quote: str) -> list[str]:
+    """Normalised pieces of a quote stitched with "..." or "…"; a leading or trailing ellipsis makes no piece."""
+    return [f for f in (normalise_quote(part) for part in ELLIPSIS_RE.split(quote)) if f]
+
+
+def quote_match(quote: str, result: str) -> str | None:
+    """"whole" if the quote is in the result, "fragments" if its pieces are, in order; else None."""
+    text, frags = normalise_quote(result), quote_fragments(quote)
+    if normalise_quote(quote) in text or (len(frags) == 1 and frags[0] in text):
+        return "whole"
+    pos = 0
+    for frag in frags if len(frags) > 1 else ():
+        at = text.find(frag, pos)
+        if at < 0:
+            return None
+        pos = at + len(frag)
+    return "fragments" if len(frags) > 1 else None
+
+
 def verify_claim(claim: dict[str, Any], store: dict[str, dict[str, Any]]) -> str:
-    """Deterministic check of one claim against the agent's evidence store; no model call."""
+    """Deterministic check of one claim against the agent's evidence store; no model call. A quote found only
+    in exactly one other successful result re-points the claim (claim["callId"] rewritten, "repointedFrom" kept);
+    found in several, the candidates go in claim["candidates"] and nothing is guessed. Lengths apply to the
+    fragments' total."""
     if claim.get("unverified"):
         return "unverified_declared"
     if claim.get("source"):
         return "source"
+    size = sum(len(f) for f in quote_fragments(claim["quote"]))
     call = store.get(claim["callId"])
+    if QUOTE_MIN_CHARS <= size <= QUOTE_MAX_CHARS:
+        found = quote_match(claim["quote"], call["result"]) if call is not None and call["ok"] else None
+        if found:
+            return "verified" if found == "whole" else "verified_fragments"
+        others = {cid: m for cid, c in store.items() if cid != claim["callId"] and c["ok"] and (m := quote_match(claim["quote"], c["result"]))}
+        if len(others) == 1:
+            [(cid, m)] = others.items()
+            claim["repointedFrom"], claim["callId"] = claim["callId"], cid
+            return "verified_repointed" if m == "whole" else "verified_fragments_repointed"
+        if others:
+            claim["candidates"] = list(others)
+            return "quote_found_elsewhere"
     if call is None:
         return "call_not_found"
     if not call["ok"]:
         return "call_failed"
-    quote = normalise_quote(claim["quote"])
-    if len(quote) < QUOTE_MIN_CHARS:
+    if size < QUOTE_MIN_CHARS:
         return "quote_too_short"
-    if len(quote) > QUOTE_MAX_CHARS:
+    if size > QUOTE_MAX_CHARS:
         return "quote_too_long"
-    return "verified" if quote in normalise_quote(call["result"]) else "quote_not_found"
+    return "quote_not_found"
+
+
+def failure_class(claim: dict[str, Any], status: str) -> str | None:
+    """ellipsis_fragment_missing | wrong_call | mismatch | too_short | too_long | call_failed; None for a passing claim."""
+    if status in CLAIM_OK:
+        return None
+    if status == "quote_not_found":
+        return "ellipsis_fragment_missing" if len(quote_fragments(claim.get("quote", ""))) > 1 else "mismatch"
+    return FAILURE_CLASS[status]
+
+
+def failure_classes(claims: list[dict[str, Any]], statuses: dict[str, str]) -> dict[str, str]:
+    return {c["id"]: cls for c in claims if (cls := failure_class(c, statuses[c["id"]]))}
 
 
 def claim_problems(claims: list[dict[str, Any]], statuses: dict[str, str]) -> list[str]:
-    return [f"Claim {c['id']} (callId {c.get('callId')}): {CLAIM_PROBLEM[statuses[c['id']]]}." for c in claims if statuses[c["id"]] not in CLAIM_OK]
+    return [f"Claim {c['id']} (callId {c.get('callId')}): {CLAIM_PROBLEM[statuses[c['id']]].format(candidates=', '.join(c.get('candidates', [])))}."
+            for c in claims if statuses[c["id"]] not in CLAIM_OK]
 
 
 def excerpt(result: str, quote: str) -> str | None:
     """±EXCERPT_RADIUS_CHARS of the cited result around the quote, or None if it is not there."""
     norm_result, norm_quote = normalise_quote(result), normalise_quote(quote)
+    if norm_quote not in norm_result:  # a stitched quote: centre on its first piece
+        norm_quote = next(iter(quote_fragments(quote)), "")
     at = norm_result.find(norm_quote) if norm_quote else -1
     if at < 0:
         return None
@@ -1240,7 +1298,8 @@ CLAIM_LABEL = {"verified": "verified", "unverified_declared": "unverified"}
 def downstream_text(agent_id: str, output: str, claims: list[dict[str, Any]], statuses: dict[str, str], header: str = "") -> str:
     """What dependants and synthesis see: the prose, a one-line claim status appendix, and for a step
     accepted with caveats a header line naming them."""
-    labels = [f"{c['id']} " + (f"from {c['source']}" if statuses[c["id"]] == "source" else CLAIM_LABEL.get(statuses[c["id"]], "failed-check"))
+    labels = [f"{c['id']} " + (f"from {c['source']}" if statuses[c["id"]] == "source" else
+                               "verified" if statuses[c["id"]].startswith("verified") else CLAIM_LABEL.get(statuses[c["id"]], "failed-check"))
               for c in claims]
     return (f"{header}\n" if header else "") + output + (f"\n\nClaims ({agent_id}): " + "; ".join(labels) if labels else "")
 
@@ -1328,7 +1387,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             raise AgentFailed(reason)
         best = max(usable, key=lambda a: (a["score"], a["attempt"]))
         await run.emit("agent_degraded", agentId=agent_id, attempt=best["attempt"], score=best["score"], issues=best["issues"],
-                       claimStatuses=best["statuses"], reason=reason)
+                       claimStatuses=best["statuses"], claimFailureClasses=failure_classes(best["claims"], best["statuses"]), reason=reason)
         header = f"[{agent_id} DEGRADED: score {best['score']}/5; open issues: {'; '.join(best['issues'][:5]) or 'none listed'}]"
         return downstream_text(agent_id, best["output"], best["claims"], best["statuses"], header)
 
@@ -1478,7 +1537,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                        issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}),
                        **{k: judge_info[k] for k in ("evidenceMode", "judgeInputChars") if k in judge_info},
                        claimsChecked=sum(1 for c in claims if "callId" in c), claimsFailed=sum(1 for s in statuses.values() if s not in CLAIM_OK),
-                       claimStatuses=statuses)
+                       claimStatuses=statuses, claimFailureClasses=failure_classes(claims, statuses))
         if passed:
             return downstream_text(agent_id, output, claims, statuses)
         if not precheck(output):
@@ -1486,7 +1545,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         if reason == "gate unavailable" and not mechanical and config.onRetryExhausted == "degrade":
             # No verdict is not a rejection: accept as unreviewed rather than re-asking the worker.
             await run.emit("agent_degraded", agentId=agent_id, attempt=attempt, score=0, issues=issues, claimStatuses=statuses,
-                           reason="gate unavailable", unreviewed=True)
+                           claimFailureClasses=failure_classes(claims, statuses), reason="gate unavailable", unreviewed=True)
             return downstream_text(agent_id, output, claims, statuses, f"[{agent_id} UNREVIEWED: the reviewer was unavailable]")
         last_reason = f"score {score}/5: {reason}" if score else reason
         if attempt < config.maxRetriesPerAgent:

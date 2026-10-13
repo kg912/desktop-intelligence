@@ -482,9 +482,9 @@ export type BaselineRole = 'planner' | 'worker' | 'judge' | 'synthesizer'
 const BASELINE_ROLE: Record<CallRecord['role'], BaselineRole> = { planner: 'planner', worker: 'worker', reflection: 'judge', synthesis: 'synthesizer' }
 /** Claim status → failure class, for runs recorded before the sidecar sent classes itself. */
 const STATUS_FAILURE_CLASS: Record<string, string> = {
-  quote_not_found: 'mismatch', call_not_found: 'wrong_call', call_failed: 'call_failed', quote_too_short: 'too_short', quote_too_long: 'too_long',
+  quote_not_found: 'mismatch', quote_found_elsewhere: 'wrong_call', call_not_found: 'wrong_call', call_failed: 'call_failed', quote_too_short: 'too_short', quote_too_long: 'too_long',
 }
-const CLAIM_OK = new Set(['verified', 'unverified_declared', 'source'])
+const CLAIM_OK = new Set(['verified', 'verified_fragments', 'verified_repointed', 'verified_fragments_repointed', 'unverified_declared', 'source'])
 
 export interface RunBaseline {
   costUsd: number
@@ -595,7 +595,7 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
         byStatus: count(first.flatMap((e) => Object.values(e.claimStatuses ?? {}))),
         byFailureClass: count(first.flatMap((e) => Object.entries(e.claimStatuses ?? {})
           .filter(([, st]) => !CLAIM_OK.has(st))
-          .map(([, st]) => STATUS_FAILURE_CLASS[st] ?? st))),
+          .map(([id, st]) => e.claimFailureClasses?.[id] ?? STATUS_FAILURE_CLASS[st] ?? st))),
         agentsPassed: first.filter((e) => !Object.values(e.claimStatuses ?? {}).some((st) => !CLAIM_OK.has(st))).map((e) => e.agentId).sort(),
         agents: first.length,
       },

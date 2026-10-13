@@ -21,6 +21,7 @@ export interface ReflectionView {
   claimsChecked?: number
   claimsFailed?: number
   claimStatuses?: Record<string, string>
+  claimFailureClasses?: Record<string, string>
 }
 
 /** Retries ran out and the best attempt was passed on with its open issues (or accepted unreviewed). */
@@ -29,6 +30,7 @@ export interface DegradedView {
   score: number
   issues: string[]
   claimStatuses: Record<string, string>
+  claimFailureClasses?: Record<string, string>
   reason?: string
   unreviewed?: boolean
 }
@@ -269,6 +271,7 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
           ...(event.claimsChecked !== undefined && { claimsChecked: event.claimsChecked }),
           ...(event.claimsFailed !== undefined && { claimsFailed: event.claimsFailed }),
           ...(event.claimStatuses !== undefined && { claimStatuses: event.claimStatuses }),
+          ...(event.claimFailureClasses !== undefined && { claimFailureClasses: event.claimFailureClasses }),
         }
         return {
           reflections: [...a.reflections, gate],
@@ -291,6 +294,7 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
         output: a.timeline.find((t): t is Extract<TimelineItem, { kind: 'output' }> => t.kind === 'output' && t.attempt === event.attempt)?.text ?? a.output,
         degraded: {
           attempt: event.attempt, score: event.score, issues: event.issues, claimStatuses: event.claimStatuses,
+          ...(event.claimFailureClasses !== undefined && { claimFailureClasses: event.claimFailureClasses }),
           ...(event.reason !== undefined && { reason: event.reason }), ...(event.unreviewed && { unreviewed: true }),
         },
       }))

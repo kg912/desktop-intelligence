@@ -76,3 +76,17 @@ describe('summariseRun on the istanbul-3leg fixture', async () => {
     expect(s.p90AgentCostUsd).toBeGreaterThan(s.meanAgentCostUsd)
   })
 })
+
+describe('summariseRun claim classes (spec A Phase 1)', () => {
+  it('uses the sidecar failure classes when sent, and counts every verified_* status as passing', () => {
+    const meta = { schema: 1, runId: 'r', chatId: 'c', chatTitle: '', task: '', startedAt: 0, endedAt: 10, status: 'completed', config: {} } as never
+    const gate = (agentId: string, claimStatuses: Record<string, string>, claimFailureClasses?: Record<string, string>) =>
+      ({ type: 'reflection_result', runId: 'r', seq: 1, ts: 5, agentId, attempt: 0, score: 1, passed: false, reason: '', claimStatuses, claimFailureClasses }) as never
+    const s = summariseRun({ meta, records: [], events: [
+      gate('1.1', { c1: 'verified_fragments', c2: 'verified_repointed', c3: 'verified_fragments_repointed' }),
+      gate('1.2', { c1: 'quote_not_found', c2: 'quote_found_elsewhere' }, { c1: 'ellipsis_fragment_missing', c2: 'wrong_call' }),
+    ] })
+    expect(s.claims.attempt0.agentsPassed).toEqual(['1.1'])
+    expect(s.claims.attempt0.byFailureClass).toEqual({ ellipsis_fragment_missing: 1, wrong_call: 1 })
+  })
+})

@@ -234,6 +234,19 @@ describe('reflection hardening events (Phase 7)', () => {
     }])
   })
 
+  it('claim failure classes (spec A Phase 1) ride on the gate and on a degraded step', () => {
+    seq = 0
+    const v = reduceRunEvents('r', [...start(),
+      ev({ type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'A [c1] [c2]', tokenCount: 1, costUsd: 0 }),
+      ev({ type: 'reflection_result', agentId: '1.1', attempt: 0, score: 1, passed: false, reason: 'Claims check: 1 problem(s)', model: 'claims check',
+        claimStatuses: { c1: 'verified_fragments', c2: 'quote_found_elsewhere' }, claimFailureClasses: { c2: 'wrong_call' } }),
+      ev({ type: 'agent_degraded', agentId: '1.1', attempt: 0, score: 1, issues: [], claimStatuses: { c1: 'verified_fragments', c2: 'quote_found_elsewhere' },
+        claimFailureClasses: { c2: 'wrong_call' } }),
+    ])
+    expect(v.agents['1.1'].reflections[0].claimFailureClasses).toEqual({ c2: 'wrong_call' })
+    expect(v.agents['1.1'].degraded?.claimFailureClasses).toEqual({ c2: 'wrong_call' })
+  })
+
   it('agent_degraded: the step is done with caveats, and its answer is the chosen attempt, not the last one', () => {
     seq = 0
     const v = reduceRunEvents('r', [...start(),
