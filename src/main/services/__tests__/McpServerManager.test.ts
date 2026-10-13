@@ -827,6 +827,29 @@ describe('McpServerManager multi-agent tool proxy (spec §07 HITL expansion)', (
     expect(onRequest).toHaveBeenCalledTimes(1)
   })
 
+  it('spec A Phase 9: reports how each call was approved and how long the user took', async () => {
+    const mgr = await running()
+    let delay = 0
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      setTimeout(() => mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: 'session', userNote: '' }), delay)
+    })
+    delay = 40
+    const asked = await mgr.callToolForMultiAgent('fs', 'read', {}, ctx())
+    expect(asked.approval?.mode).toBe('asked')
+    expect(asked.approval!.waitMs).toBeGreaterThanOrEqual(35)
+    // "Allow for this chat" (session allow-list): later calls are trusted, no wait.
+    expect((await mgr.callToolForMultiAgent('fs', 'read', {}, ctx())).approval).toEqual({ mode: 'trusted', waitMs: 0 })
+    // No prompt required at all: auto.
+    const auto = await running({ requiresApproval: false })
+    expect((await auto.callToolForMultiAgent('fs', 'read', {}, ctx({ requirePermissions: false }))).approval).toEqual({ mode: 'auto', waitMs: 0 })
+    auto.setBypassPermissions(true)
+    expect((await auto.callToolForMultiAgent('fs', 'read', {}, ctx())).approval).toEqual({ mode: 'auto', waitMs: 0 })
+    // A denial carries it too.
+    const deny = await running()
+    deny.on('permissionRequest', (r: McpToolPermissionRequest) => deny.resolvePermission({ requestId: r.requestId, approved: false, alwaysAllow: false, userNote: 'no' }))
+    await expect(deny.callToolForMultiAgent('fs', 'read', {}, ctx())).rejects.toMatchObject({ userNote: 'no', approval: { mode: 'asked' } })
+  })
+
   it('built-in tools (builtin__brave_web_search) go through the same layers: prompt, trust, block, no MCP server needed', async () => {
     const mgr = newMgr() // no MCP server is configured or running
     const search = vi.fn(async () => 'results')
@@ -837,7 +860,7 @@ describe('McpServerManager multi-agent tool proxy (spec §07 HITL expansion)', (
       mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: false, userNote: '', ...answer })
     })
     // requirePermissions on: prompted with the agent identity, then executed.
-    expect(await mgr.callBuiltinForMultiAgent('brave_web_search', { query: 'q' }, ctx(), search)).toEqual({ text: 'results', images: [], userNote: '' })
+    expect(await mgr.callBuiltinForMultiAgent('brave_web_search', { query: 'q' }, ctx(), search)).toEqual({ text: 'results', images: [], userNote: '', approval: { mode: 'asked', waitMs: expect.any(Number) } })
     expect(requests[0]).toMatchObject({ serverName: 'builtin', toolName: 'brave_web_search', args: { query: 'q' }, agent: { agentId: '1.2', role: 'Analyzer' } })
     // requirePermissions off: built-ins have no per-server approval, so no prompt.
     await mgr.callBuiltinForMultiAgent('brave_web_search', { query: 'q' }, ctx({ requirePermissions: false }), search)

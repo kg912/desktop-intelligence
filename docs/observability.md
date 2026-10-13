@@ -96,6 +96,8 @@ panel renders whatever was captured.
 | `tool_limit` | A worker's answer came from the forced wrap-up round (tools off) after its `maxToolRounds` were used: "stopped at tool limit" |
 | `degraded` | An agent's retries ran out and its best attempt was passed on with open issues, or it was accepted unreviewed because the judge gave no usable verdict ("accepted with caveats") |
 | `context_compacted` | A worker's oldest tool results were stubbed so the next request would fit the model's context window (the full results stay in the evidence store) |
+| `plan_step_removed` | The planner's final merge step was dropped before approval; the synthesizer merges (spec A Phase 4) |
+| `approval_wait` | A person took more than 20 s to answer a worker's tool approval, and that agent is on the critical path. Uses Electron's `waitMs` (spec A Phase 9); older runs fall back to pause → resume, which also holds the tool's own time, and say so |
 | `reconciliation` | The call records and the run's own totals disagree |
 
 ## Reading an agent file

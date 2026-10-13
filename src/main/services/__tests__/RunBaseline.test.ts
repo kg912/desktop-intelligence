@@ -115,3 +115,31 @@ describe('cache figures (spec A Phase 8)', () => {
     expect(s.agents['1.2']).toMatchObject({ cachedTokens: null, cacheHitRate: null })
   })
 })
+
+describe('approval observability (spec A Phase 9)', () => {
+  it('the fixture: the 45.7 s wait on 2.1 (critical path) is flagged; shorter or off-path pauses are not', async () => {
+    const run = await readRun(FIXTURE)
+    const flagged = findAnomalies(run.meta, run.events, run.records, 0, 0).filter((a) => a.kind === 'approval_wait')
+    expect(flagged).toEqual([{ kind: 'approval_wait', message: 'agent 2.1 waited 45.7 s for approval of brave_web_search on the critical path (pause to resume; no separate wait was logged)', ref: 'agent-2.1.md' }])
+  })
+
+  it('uses the logged wait (not tool time) when Electron reported it, and splits the summary by mode', () => {
+    const meta = { schema: 1, runId: 'r', chatId: 'c', chatTitle: '', task: '', startedAt: 0, endedAt: 100_000, status: 'completed', config: {} } as never
+    const ev = (seq: number, e: Record<string, unknown>) => ({ runId: 'r', seq, ts: seq * 1000, ...e }) as never
+    const events = [
+      ev(1, { type: 'orchestrator_plan', steps: [{ id: '1.1', label: 'A', role: 'R', dependsOn: [] }] }),
+      ev(2, { type: 'agent_start', agentId: '1.1', role: 'R', model: 'm', attempt: 0 }),
+      ev(3, { type: 'hitl_pause', agentId: '1.1', role: 'R', toolName: 'brave_web_search', serverName: 'builtin', args: {} }),
+      ev(60, { type: 'hitl_resume', agentId: '1.1', approved: true, approvalMode: 'asked', waitMs: 50_000, toolMs: 7_000 }),
+      ev(61, { type: 'tool_done', agentId: '1.1', callId: 'a', ok: true, durationMs: 57_000, resultPreview: '', resultChars: 1, approvalMode: 'asked', waitMs: 50_000, toolMs: 7_000 }),
+      ev(62, { type: 'hitl_pause', agentId: '1.1', role: 'R', toolName: 'brave_web_search', serverName: 'builtin', args: {} }),
+      ev(92, { type: 'hitl_resume', agentId: '1.1', approved: true, approvalMode: 'trusted', waitMs: 0, toolMs: 30_000 }),
+      ev(93, { type: 'tool_done', agentId: '1.1', callId: 'b', ok: true, durationMs: 30_000, resultPreview: '', resultChars: 1, approvalMode: 'trusted', waitMs: 0, toolMs: 30_000 }),
+      ev(94, { type: 'agent_complete', agentId: '1.1', attempt: 0, output: 'x', tokenCount: 1, costUsd: 0 }),
+    ]
+    // A 30 s TOOL is not an approval wait; the 50 s person wait is.
+    expect(findAnomalies(meta, events, [], 0, 0).filter((a) => a.kind === 'approval_wait').map((a) => a.message))
+      .toEqual(['agent 1.1 waited 50.0 s for approval of brave_web_search on the critical path'])
+    expect(summariseRun({ meta, events, records: [] }).approvals).toMatchObject({ count: 2, waitMs: 50_000, toolMs: 37_000, byMode: { asked: 1, trusted: 1 }, maxWaitMs: 50_000, maxWaitAgent: '1.1' })
+  })
+})

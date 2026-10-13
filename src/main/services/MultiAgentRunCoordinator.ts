@@ -20,6 +20,7 @@ import { randomUUID } from 'crypto'
 import type {
   AgentEvent,
   AgentStep,
+  HitlResponse,
   MultiAgentConfig,
   MultiAgentRunRecord,
   MultiAgentStartPayload,
@@ -32,7 +33,7 @@ import type { ModelPricing, ModelRole, OpenRouterModelInfo } from '../../shared/
 import type { RunStartRequest } from './MultiAgentSidecarManager'
 import { currentDateTimeLine } from './SystemPromptService'
 import { BUILTIN_SERVER, McpDeniedError, buildApprovedToolResult } from './McpServerManager'
-import type { LMStudioTool, McpToolResult, MultiAgentToolContext } from './McpServerManager'
+import type { LMStudioTool, McpToolResult, MultiAgentToolContext, ToolApproval } from './McpServerManager'
 
 type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'agent_reasoning' | 'synthesis_token' | 'plan_reasoning' }>
 
@@ -58,7 +59,7 @@ export interface CoordinatorDeps {
     on(event: 'runStarted', listener: (info: { runId: string; chatId: string }) => void): unknown
     on(event: 'obsRecord', listener: (info: { runId: string; chatId: string; record: unknown }) => void): unknown
     startRun(request: RunStartRequest): Promise<StartRunResult>
-    respondHitl(response: { runId: string; agentId: string; approved: boolean; result?: string }): Promise<void>
+    respondHitl(response: HitlResponse): Promise<void>
     abortRun(runId: string): Promise<void>
     quickPlan(runId: string): Promise<void>
     isAwaitingPlanApproval(runId: string): boolean
@@ -354,9 +355,13 @@ export class MultiAgentRunCoordinator {
   }
 
   private async proxyToolCall(run: RunContext, pause: Extract<AgentEvent, { type: 'hitl_pause' }>): Promise<void> {
-    const reply = (approved: boolean, result: string): Promise<void> =>
+    const started = Date.now()
+    // Spec A Phase 9: how the call was approved, the person's wait, and the rest of the time (the tool itself).
+    const timing = (approval: ToolApproval | undefined): Pick<HitlResponse, 'approvalMode' | 'waitMs' | 'toolMs'> =>
+      approval ? { approvalMode: approval.mode, waitMs: approval.waitMs, toolMs: Math.max(0, Date.now() - started - approval.waitMs) } : {}
+    const reply = (approved: boolean, result: string, approval?: ToolApproval): Promise<void> =>
       this.deps.sidecar
-        .respondHitl({ runId: run.runId, agentId: pause.agentId, approved, result })
+        .respondHitl({ runId: run.runId, agentId: pause.agentId, approved, result, ...timing(approval) })
         .catch((err) => console.warn(`[MultiAgent] ${pause.agentId} moved on before its tool result arrived:`, err))
     const ctx: MultiAgentToolContext = {
       chatId: run.chatId,
@@ -371,13 +376,13 @@ export class MultiAgentRunCoordinator {
       const result = pause.serverName === BUILTIN_SERVER
         ? await this.deps.mcp.callBuiltinForMultiAgent(pause.toolName, pause.args, ctx, () => this.deps.builtin.call(pause.toolName, pause.args))
         : await this.deps.mcp.callToolForMultiAgent(pause.serverName, pause.toolName, pause.args, ctx)
-      await reply(true, sanitizeToolResult(buildApprovedToolResult(result.text, result.userNote)))
+      await reply(true, sanitizeToolResult(buildApprovedToolResult(result.text, result.userNote)), result.approval)
     } catch (err) {
       const reason =
         err instanceof McpDeniedError
           ? err.userNote || 'denied by user'
           : err instanceof Error ? err.message : 'MCP tool execution failed'
-      await reply(false, reason)
+      await reply(false, reason, err instanceof McpDeniedError ? err.approval : undefined)
     }
   }
 

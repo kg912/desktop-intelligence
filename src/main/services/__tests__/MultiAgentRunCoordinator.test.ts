@@ -211,6 +211,35 @@ describe('MultiAgentRunCoordinator events', () => {
     expect(h.sidecar.respondHitl).toHaveBeenCalledWith({ runId: 'run-1', agentId: '1.2', approved: true, result: 'tool-output' })
   })
 
+  it('spec A Phase 9: a trusted call reports approvalMode trusted and ~0 wait', async () => {
+    h.mcp.callToolForMultiAgent.mockResolvedValueOnce({ text: 'tool-output', images: [], userNote: '', approval: { mode: 'trusted', waitMs: 0 } } as never)
+    h.sidecar.push({ type: 'hitl_pause', seq: 1, agentId: '1.2', role: 'Analyzer', model: 'w/m', serverName: 'fs', toolName: 'read', args: {} } as never)
+    await tick(5)
+    const reply = (h.sidecar.respondHitl.mock.calls.at(-1) as unknown as [Record<string, unknown>])[0]
+    expect(reply).toMatchObject({ approved: true, result: 'tool-output', approvalMode: 'trusted', waitMs: 0 })
+    expect(reply.toolMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('spec A Phase 9: an asked call reports the user wait separately from tool execution', async () => {
+    // The permission layer took 60 ms of user time; the tool itself took another ~40 ms.
+    h.mcp.callToolForMultiAgent.mockImplementationOnce(async () => {
+      await tick(100)
+      return { text: 'tool-output', images: [], userNote: '', approval: { mode: 'asked', waitMs: 60 } } as never
+    })
+    h.sidecar.push({ type: 'hitl_pause', seq: 1, agentId: '1.2', role: 'Analyzer', model: 'w/m', serverName: 'fs', toolName: 'read', args: {} } as never)
+    await tick(150)
+    const reply = (h.sidecar.respondHitl.mock.calls.at(-1) as unknown as [{ approvalMode: string; waitMs: number; toolMs: number }])[0]
+    expect(reply.approvalMode).toBe('asked')
+    expect(reply.waitMs).toBe(60)
+    expect(reply.toolMs).toBeGreaterThanOrEqual(30)
+    expect(reply.toolMs).toBeLessThan(100)
+    // A denial says how it was decided too.
+    h.mcp.callToolForMultiAgent.mockRejectedValueOnce(new McpDeniedError('not that file', { mode: 'asked', waitMs: 25 }))
+    h.sidecar.push({ type: 'hitl_pause', seq: 2, agentId: '1.2', role: 'Analyzer', serverName: 'fs', toolName: 'read', args: {} } as never)
+    await tick(5)
+    expect(h.sidecar.respondHitl).toHaveBeenLastCalledWith(expect.objectContaining({ approved: false, result: 'not that file', approvalMode: 'asked', waitMs: 25 }))
+  })
+
   it('reports a denial (with the user note) and tool errors back as not approved', async () => {
     h.mcp.callToolForMultiAgent.mockRejectedValueOnce(new McpDeniedError('not that file'))
     h.sidecar.push({ type: 'hitl_pause', seq: 1, agentId: '1.1', role: 'R', serverName: 'fs', toolName: 'read', args: {} } as never)

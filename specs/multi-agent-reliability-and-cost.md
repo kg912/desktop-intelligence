@@ -106,6 +106,7 @@ Motivated by `RLM.pdf` (prompt-as-environment beats lossy compaction) applied to
 - On `hitl_pause`/`hitl_resume` record `approvalMode: "trusted" | "asked" | "auto"` and split `waitMs` from `toolMs`. Persist in `call_record`/trace.
 - `MultiAgentRunLogger.findAnomalies`: flag a pause longer than 20 s on the critical path.
 - No change to the approval UX. "Trust tool for all" already exists.
+- *Decisions (Phase 9):* the modes map to the existing permission layers: bypass-all and "no prompt required" → `auto`; agent trust and the chat's session allow-list ("trust tool for all") → `trusted`; the dialog → `asked`. `toolMs` is the coordinator's total minus the reported wait. The plan approval pause is summarised (`planWaitMs`) but not flagged. Runs recorded before this phase have no `waitMs`; the 20 s check then uses pause → resume and says so (the Istanbul fixture's 2.1 wait is flagged that way).
 - **Acceptance:** Vitest for the coordinator: a trusted call logs `trusted` and ~0 wait; an asked call logs the user wait separately from tool execution.
 
 ### Phase 10: Planner slicing (G10)

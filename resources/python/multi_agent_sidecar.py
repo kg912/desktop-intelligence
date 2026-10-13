@@ -154,6 +154,10 @@ class HitlResponse(BaseModel):
     agentId: str
     approved: bool
     result: str = ""
+    # Spec A Phase 9, sent by Electron for worker tool calls: how it was approved, the person's wait, the tool's own time.
+    approvalMode: Literal["trusted", "asked", "auto"] | None = None
+    waitMs: int | None = Field(default=None, ge=0)
+    toolMs: int | None = Field(default=None, ge=0)
 
 
 class BudgetReached(Exception):
@@ -214,6 +218,8 @@ class Run:
     evidence: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     # The user chose the quick fallback plan while the orchestrator was still planning (UI Goal 5).
     quick_plan: bool = False
+    # agentId → {approvalMode, waitMs, toolMs} of its last answered tool approval (spec A Phase 9).
+    approval_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def config(self) -> Config:
@@ -1912,11 +1918,15 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                         messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": content})
                         continue
 
+                    approval: dict[str, Any] = {}
+
                     def record_tool(result: str | None, approved: bool, denied: bool, error: str | None) -> None:
                         run.record({"kind": "tool", "role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
                                     "callId": call_id, "name": name, "args": raw_args, "result": result,
                                     "approved": approved, "denied": denied, "error": error,
-                                    "timing": {"startedAt": started_at, "endedAt": now_ms(), "ms": int((time.monotonic() - began) * 1000)}})
+                                    **({"approvalMode": approval["approvalMode"]} if "approvalMode" in approval else {}),
+                                    "timing": {"startedAt": started_at, "endedAt": now_ms(), "ms": int((time.monotonic() - began) * 1000),
+                                               **{k: approval[k] for k in ("waitMs", "toolMs") if k in approval}}})
 
                     try:
                         args = json.loads(raw_args)
@@ -1934,11 +1944,12 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                             store[call_id] = {"name": name, "args": raw_args, "ok": False, "attempt": attempt, "result": f"Tool request denied: {exc}"}
                             raise
                         ok = approved
+                        approval = run.approval_meta.pop(agent_id, {})
                         content = result if approved else f"Tool request denied: {result or 'denied by user'}"
                         record_tool(content, approved, not approved, None)
                     await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=ok,
                                    durationMs=int((time.monotonic() - began) * 1000),
-                                   resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
+                                   resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content), **approval)
                     snippets, view = ingest_result(content, len(store) + 1, str(args.get("query") or ""), config.claimFormat) if ok else ({}, content)
                     store[call_id] = {"name": name, "args": raw_args, "ok": ok, "attempt": attempt, "result": store_result(content), "snippets": snippets}
                     # A result that can back a claim carries its id (and, in snippet mode, each snippet its id) in the text;
@@ -2215,8 +2226,10 @@ async def hitl(run_id: str, response: HitlResponse) -> dict[str, bool]:
     future = run.approvals.get(response.agentId)
     if not future or future.done():
         raise HTTPException(409, "agent is not waiting for approval")
+    meta = {k: v for k, v in {"approvalMode": response.approvalMode, "waitMs": response.waitMs, "toolMs": response.toolMs}.items() if v is not None}
+    run.approval_meta[response.agentId] = meta
     future.set_result((response.approved, response.result or ""))
-    await run.emit("hitl_resume", agentId=response.agentId, approved=response.approved, **run.attempt_of(response.agentId))
+    await run.emit("hitl_resume", agentId=response.agentId, approved=response.approved, **run.attempt_of(response.agentId), **meta)
     return {"ok": True}
 
 

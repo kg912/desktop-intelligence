@@ -71,10 +71,16 @@ export interface McpToolResult {
   text:    string
   images:  Array<{ mimeType: string; data: string }>
   userNote: string
+  /** Multi-agent calls only (spec A Phase 9): which layer approved it and how long a person took to decide. */
+  approval?: ToolApproval
 }
 
+/** auto: no prompt was required (bypass-all, or neither the run nor the server asks); trusted: agent trust or the
+ *  session allow-list; asked: the permission dialog, waitMs being the person's time to answer it. */
+export interface ToolApproval { mode: 'trusted' | 'asked' | 'auto'; waitMs: number }
+
 export class McpDeniedError extends Error {
-  constructor(public readonly userNote: string) {
+  constructor(public readonly userNote: string, public readonly approval?: ToolApproval) {
     super('Tool call denied by user')
     this.name = 'McpDeniedError'
   }
@@ -403,7 +409,7 @@ export class McpServerManager extends EventEmitter {
     inFlight.set(ctx.agentId, (inFlight.get(ctx.agentId) ?? 0) + 1)
     this.activeMultiAgentWorkers.set(serverName, inFlight)
     try {
-      return await this._executeTool(entry, toolName, args, perm.userNote)
+      return { ...(await this._executeTool(entry, toolName, args, perm.userNote)), approval: perm.approval }
     } finally {
       const left = (inFlight.get(ctx.agentId) ?? 1) - 1
       if (left > 0) inFlight.set(ctx.agentId, left)
@@ -424,7 +430,7 @@ export class McpServerManager extends EventEmitter {
     run:      () => Promise<string>,
   ): Promise<McpToolResult> {
     const perm = await this._authorizeForMultiAgent(BUILTIN_SERVER, toolName, args, ctx, false)
-    return { text: await run(), images: [], userNote: perm.userNote }
+    return { text: await run(), images: [], userNote: perm.userNote, approval: perm.approval }
   }
 
   /** Throws McpDeniedError unless a layer approves (order in callToolForMultiAgent's doc). */
@@ -434,22 +440,25 @@ export class McpServerManager extends EventEmitter {
     args:             Record<string, unknown>,
     ctx:              MultiAgentToolContext,
     requiresApproval: boolean,
-  ): Promise<{ approved: boolean; userNote: string }> {
+  ): Promise<{ approved: boolean; userNote: string; approval: ToolApproval }> {
     const trust = this.agentTrust.get(agentKey(ctx.runId, ctx.agentId))
     let perm: { approved: boolean; userNote: string }
+    let approval: ToolApproval = { mode: 'auto', waitMs: 0 }
     if (this.bypassAllPermissions) perm = { approved: true, userNote: '' }
-    else if (trust === 'block') perm = { approved: false, userNote: `${ctx.role} is blocked for this run` }
-    else if (trust === 'trust') perm = { approved: true, userNote: '' }
-    else if (this.sessionAllowList.has(`${ctx.chatId}__${serverName}__${toolName}`)) perm = { approved: true, userNote: '' }
+    else if (trust === 'block') { perm = { approved: false, userNote: `${ctx.role} is blocked for this run` }; approval = { mode: 'trusted', waitMs: 0 } }
+    else if (trust === 'trust') { perm = { approved: true, userNote: '' }; approval = { mode: 'trusted', waitMs: 0 } }
+    else if (this.sessionAllowList.has(`${ctx.chatId}__${serverName}__${toolName}`)) { perm = { approved: true, userNote: '' }; approval = { mode: 'trusted', waitMs: 0 } }
     else if (!ctx.requirePermissions && !requiresApproval) perm = { approved: true, userNote: '' }
     else {
+      const asked = Date.now()
       perm = await this._awaitPermissionDialog(serverName, toolName, args, ctx.chatId, {
         agent: { runId: ctx.runId, agentId: ctx.agentId, role: ctx.role, model: ctx.model },
         timeoutMs: ctx.hitlTimeoutMs,
       })
+      approval = { mode: 'asked', waitMs: Date.now() - asked }
     }
-    if (!perm.approved) throw new McpDeniedError(perm.userNote)
-    return perm
+    if (!perm.approved) throw new McpDeniedError(perm.userNote, approval)
+    return { ...perm, approval }
   }
 
   /** Drop a finished run's agent trust decisions (they are run-scoped). */

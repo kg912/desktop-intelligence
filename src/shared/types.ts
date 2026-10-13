@@ -752,6 +752,10 @@ export interface ToolDoneEvent extends AgentEventBase {
   /** ≤ 1,200 chars; denied/rejected calls carry the reason. */
   resultPreview: string
   resultChars:   number
+  /** Spec A Phase 9 (worker tool calls): how it was approved, the person's wait, the tool's own time. Absent on older runs. */
+  approvalMode?: 'trusted' | 'asked' | 'auto'
+  waitMs?:       number
+  toolMs?:       number
 }
 
 export interface RetryEvent extends AgentEventBase {
@@ -818,6 +822,10 @@ export interface HitlResumeEvent extends AgentEventBase, AgentAttempt {
   type:     'hitl_resume'
   agentId:  string
   approved: boolean
+  /** Spec A Phase 9 (worker tool calls): how it was approved, the person's wait, the tool's own time. Absent on older runs. */
+  approvalMode?: 'trusted' | 'asked' | 'auto'
+  waitMs?:       number
+  toolMs?:       number
 }
 
 export interface SynthesisStartEvent extends AgentEventBase {
@@ -931,6 +939,10 @@ export interface HitlResponse {
   approved: boolean
   /** Electron-owned MCP result; never supplied by the renderer. */
   result?: string
+  /** Spec A Phase 9: how a worker tool call was approved, the person's wait, and the tool's own time. */
+  approvalMode?: 'trusted' | 'asked' | 'auto'
+  waitMs?: number
+  toolMs?: number
 }
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'error'

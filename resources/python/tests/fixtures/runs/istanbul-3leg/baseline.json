@@ -125,6 +125,8 @@
   "approvals": {
     "count": 89,
     "waitMs": 277676,
+    "toolMs": null,
+    "byMode": {},
     "maxWaitMs": 45734,
     "maxWaitAgent": "2.1",
     "planWaitMs": 38107

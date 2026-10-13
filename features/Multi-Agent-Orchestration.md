@@ -297,6 +297,14 @@ cache automatically. Call records carry `cachedTokens`, `cacheWriteTokens`, `cac
 recorded call's stream reports none, the generation endpoint is asked once. `runTotals.cachedTokens` and
 the baseline summary (total, per-agent hit rate) show them.
 
+**Approval observability (spec A Phase 9).** For every worker tool call Electron reports how it was
+approved — `auto` (bypass-all, or neither the run nor the server asks), `trusted` (agent trust or the
+chat's session allow-list), `asked` (the permission dialog) — the person's `waitMs` and the tool's own
+`toolMs` (total minus the wait). They ride on the `/hitl` reply into `hitl_resume`, `tool_done` and the
+tool's call record (`approvalMode`, `timing.waitMs/toolMs`). The run log flags `approval_wait` above
+20 s on the critical path; the baseline summary splits wait from tool time and counts calls by mode.
+The approval UX is unchanged.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

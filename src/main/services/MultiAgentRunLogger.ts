@@ -50,7 +50,7 @@ export interface RunSummary {
 
 export interface Anomaly {
   kind: 'length' | 'served_model_differs' | 'fallback_plan' | 'repetition' | 'retry' | 'error' | 'cancelled' | 'tool_denied' | 'tool_rejected' | 'reconciliation' | 'capped' | 'tool_limit'
-    | 'degraded' | 'context_compacted' | 'plan_step_removed'
+    | 'degraded' | 'context_compacted' | 'plan_step_removed' | 'approval_wait'
   message: string
   /** Link target inside the run directory, e.g. "agent-1.1.md#call-7". */
   ref?: string
@@ -94,6 +94,8 @@ export interface CallRecord {
   result?: string | null
   approved?: boolean
   denied?: boolean
+  /** Spec A Phase 9: how the tool call was approved (timing then also carries waitMs and toolMs). */
+  approvalMode?: 'trusted' | 'asked' | 'auto'
 }
 
 interface ActiveRun {
@@ -520,8 +522,9 @@ export interface RunBaseline {
   cachedTokens: number | null
   judge: { calls: number; inputTokens: number; inputTokensPerCall: number[]; outputTokens: number; reasoningTokens: number }
   toolResults: { count: number; medianChars: number }
-  /** hitl_pause → hitl_resume per tool call (includes tool execution until waitMs is logged); plan approval apart. */
-  approvals: { count: number; waitMs: number; maxWaitMs: number; maxWaitAgent: string | null; planWaitMs: number }
+  /** Per worker tool approval: the person's wait (Electron's waitMs; on older runs hitl_pause → hitl_resume, which also
+   *  holds tool execution), the tools' own time when logged, calls by approval mode; plan approval apart. */
+  approvals: { count: number; waitMs: number; toolMs: number | null; byMode: Record<string, number>; maxWaitMs: number; maxWaitAgent: string | null; planWaitMs: number }
 }
 
 const median = (xs: number[]): number => {
@@ -529,6 +532,43 @@ const median = (xs: number[]): number => {
   return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0
 }
 const count = (keys: string[]): Record<string, number> => keys.reduce<Record<string, number>>((o, k) => ({ ...o, [k]: (o[k] ?? 0) + 1 }), {})
+
+/** One approval pause: the person's wait (Electron's waitMs when logged, else pause → resume) and the tool's time. */
+export interface PauseWait { agentId: string; tool: string; ms: number; toolMs: number | null; mode: string | null; measured: boolean }
+
+export function pauseWaits(events: AgentEvent[]): PauseWait[] {
+  const open = new Map<string, Ev<'hitl_pause'>>()
+  const out: PauseWait[] = []
+  for (const e of events) {
+    if (e.type === 'hitl_pause') open.set(e.agentId, e)
+    else if (e.type === 'hitl_resume' && open.has(e.agentId)) {
+      const pause = open.get(e.agentId)!
+      open.delete(e.agentId)
+      out.push({ agentId: e.agentId, tool: pause.toolName, ms: e.waitMs ?? e.ts - pause.ts, toolMs: e.toolMs ?? null, mode: e.approvalMode ?? null, measured: e.waitMs != null })
+    }
+  }
+  return out
+}
+
+/** From the agent that finished last back through its latest-finishing dependency; root first. */
+export function criticalPathOf(events: AgentEvent[]): string[] {
+  const end = new Map<string, number>()
+  for (const e of events) {
+    const id = (e as { agentId?: string }).agentId
+    if (id && id !== 'orchestrator') end.set(id, e.ts)
+  }
+  const deps = new Map((eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []).map((s) => [s.id, s.dependsOn ?? []]))
+  const path: string[] = []
+  let at = [...end.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  while (at) {
+    path.unshift(at)
+    at = (deps.get(at) ?? []).filter((d) => end.has(d)).sort((a, b) => end.get(b)! - end.get(a)!)[0]
+  }
+  return path
+}
+
+/** A person's wait above this, on the critical path, is worth a look (spec A Phase 9). */
+const APPROVAL_WAIT_ANOMALY_MS = 20_000
 
 export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; records: CallRecord[] }): RunBaseline {
   const { meta, events, records } = run
@@ -559,13 +599,7 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
   }
   const agentCosts = Object.values(agents).map((a) => a.costUsd).sort((a, b) => a - b)
 
-  const deps = new Map((eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []).map((s) => [s.id, s.dependsOn ?? []]))
-  const criticalPath: string[] = []
-  let at = Object.entries(agents).sort((a, b) => b[1].endMs - a[1].endMs)[0]?.[0]
-  while (at) {
-    criticalPath.unshift(at)
-    at = (deps.get(at) ?? []).filter((d) => agents[d]).sort((a, b) => agents[b].endMs - agents[a].endMs)[0]
-  }
+  const criticalPath = criticalPathOf(events)
 
   const gates = eventsOf(events, 'reflection_result')
   const first = gates.filter((e) => (e.attempt ?? 0) === 0)
@@ -577,17 +611,10 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
   const cachedFields = model.map((r) => r.usage?.cachedTokens).filter((c): c is number => c != null)
   const judges = ofRole('judge')
 
-  const open = new Map<string, number>()
-  const waits: Array<{ agentId: string; ms: number }> = []
-  for (const e of events) {
-    if (e.type === 'hitl_pause') open.set(e.agentId, e.ts)
-    else if (e.type === 'hitl_resume' && open.has(e.agentId)) {
-      waits.push({ agentId: e.agentId, ms: e.ts - open.get(e.agentId)! })
-      open.delete(e.agentId)
-    }
-  }
+  const waits = pauseWaits(events)
   const toolWaits = waits.filter((w) => w.agentId !== 'orchestrator')
   const longest = [...toolWaits].sort((a, b) => b.ms - a.ms)[0]
+  const toolTimes = toolWaits.map((w) => w.toolMs).filter((ms): ms is number => ms != null)
 
   return {
     costUsd: cost(model),
@@ -629,6 +656,8 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
     approvals: {
       count: toolWaits.length,
       waitMs: toolWaits.reduce((s, w) => s + w.ms, 0),
+      toolMs: toolTimes.length ? toolTimes.reduce((s, ms) => s + ms, 0) : null,
+      byMode: count(toolWaits.flatMap((w) => (w.mode ? [w.mode] : []))),
       maxWaitMs: longest?.ms ?? 0,
       maxWaitAgent: longest?.agentId ?? null,
       planWaitMs: waits.filter((w) => w.agentId === 'orchestrator').reduce((s, w) => s + w.ms, 0),
@@ -678,6 +707,12 @@ export function findAnomalies(_meta: RunLogMeta, events: AgentEvent[], records: 
     if (e.type === 'context_compacted') {
       out.push({ kind: 'context_compacted', message: `agent ${e.agentId} (attempt ${e.attempt}): ${e.stubbed} tool result(s) compacted to fit the context window, ~${e.tokensFreed} tokens freed`, ref: `agent-${safeId(e.agentId)}.md` })
     }
+  }
+  const critical = new Set(criticalPathOf(events))
+  for (const w of pauseWaits(events)) {
+    if (w.agentId === 'orchestrator' || !critical.has(w.agentId) || w.ms <= APPROVAL_WAIT_ANOMALY_MS) continue
+    out.push({ kind: 'approval_wait', ref: `agent-${safeId(w.agentId)}.md`,
+      message: `agent ${w.agentId} waited ${(w.ms / 1000).toFixed(1)} s for approval of ${w.tool} on the critical path${w.measured ? '' : ' (pause to resume; no separate wait was logged)'}` })
   }
   const done = events.find((e): e is Ev<'task_complete'> => e.type === 'task_complete')
   if (done && (Math.abs(done.totalCostUsd - costUsd) > RECONCILE_USD || done.totalTokens !== tokens)) {
