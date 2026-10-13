@@ -214,6 +214,7 @@ const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig
   onRetryExhausted: 'degrade',
   claimFormat: 'snippet',
   judgeEvidenceMode: 'excerpts',
+  dataCollection: 'allow',
   ...overrides,
 })
 
@@ -732,13 +733,13 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
   it('sends no reasoning parameter when the effort is off or the catalogue says the model lacks it', async () => {
     // Spec A Phase 3: the judge asks for effort "low" on its own (reasoningEffort is the workers' setting),
     // unless the catalogue says the judge model takes no reasoning parameter.
-    const judge = (r: { body: Record<string, unknown> }): boolean => systemOf(r.body as never).includes('strict reviewer')
+    // Spec A Phase 8: every role has its own effort (planner medium, judge low, synthesizer medium); reasoningEffort is the workers'.
+    const effortOf = (name: string): unknown[] => [...new Set(fake.requests.filter((r) => systemOf(r.body).includes(name)).map((r) => JSON.stringify(r.body.reasoning)))]
     await tracedRun({ config: baseConfig({ reasoningEffort: 'off' }) })
-    expect(fake.requests.filter((r) => !judge(r)).every((r) => r.body.reasoning === undefined)).toBe(true)
-    expect(fake.requests.filter(judge).map((r) => r.body.reasoning)).toEqual([{ effort: 'low' }])
-    await tracedRun({ noReasoning: ['fake/worker'] })
-    expect(fake.requests.filter((r) => !judge(r)).every((r) => r.body.reasoning === undefined)).toBe(true)
-    await tracedRun({ noReasoning: ['fake/worker', 'fake/reviewer'] })
+    expect(effortOf('Scout agent')).toEqual([undefined])
+    expect(effortOf('strict reviewer')).toEqual([JSON.stringify({ effort: 'low' })])
+    expect(effortOf('orchestrator of a team')).toEqual([JSON.stringify({ effort: 'medium' })])
+    await tracedRun({ noReasoning: ['fake/worker', 'fake/reviewer', 'fake/planner', 'fake/synth'] })
     expect(fake.requests.every((r) => r.body.reasoning === undefined)).toBe(true)
   }, 60_000)
 
@@ -960,49 +961,54 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
   const scoutRequests = (): Body[] => fake.requests.filter((r) => systemOf(r.body).includes('Scout agent')).map((r) => r.body)
   const synthRequest = (): Body => fake.requests.find((r) => systemOf(r.body).includes('synthesize'))!.body
 
-  it('Part F: no fixed caps — priced requests are bounded by the remaining context window, far above 32,768 / 2,000', async () => {
+  // Spec A Phase 8 replaced "no fixed caps": each role has a max_tokens cap; the window still binds when it is smaller.
+  it('Part F + spec A Phase 8: priced requests are bounded by the role cap when the context window allows more', async () => {
     const price = { prompt: 1e-9, completion: 1e-9, contextLength: 200_000 }
     const pricing = { 'fake/planner': price, 'fake/worker': price, 'fake/reviewer': price, 'fake/synth': price }
     fake.pricing = pricing
     try {
       const events = await limitRun({ pricing })
       expect(events.at(-1)?.type).toBe('task_complete')
-      // window − 1.25 × the prompt estimate (exact formula asserted in resources/python/test_plan_request.py;
-      // the sidecar measures Python's json.dumps, a few chars longer than JSON.stringify).
-      for (const body of [scoutRequests()[0], synthRequest()]) {
-        const prompt = Math.ceil(JSON.stringify(body.messages).length / 4)
-        expect(body.max_tokens!).toBeLessThanOrEqual(200_000 - Math.ceil(prompt * 1.25))
-        expect(body.max_tokens!).toBeGreaterThan(200_000 - Math.ceil(prompt * 1.25) - 50)
-      }
+      // The window (200,000 − 1.25 × prompt) is far above both caps, so the caps bind: worker 12,000, synthesizer 16,000.
+      expect([scoutRequests()[0].max_tokens, synthRequest().max_tokens]).toEqual([12_000, 16_000])
     } finally {
       fake.pricing = {}
     }
   }, 60_000)
 
-  it('Part F: unpriced models get no max_tokens at all', async () => {
+  it('Part F + spec A Phase 8: unpriced models get only their role cap as max_tokens', async () => {
     const events = await limitRun({})
     expect(events.at(-1)?.type).toBe('task_complete')
     expect(fake.requests.length).toBeGreaterThan(3)
-    // Only the judge's own cap (spec A Phase 3: a verdict needs at most 600 tokens) is sent.
-    expect(fake.requests.filter((r) => 'max_tokens' in r.body).map((r) => [systemOf(r.body).includes('strict reviewer'), r.body.max_tokens])).toEqual([[true, 600]])
+    const role = (body: Record<string, unknown>): string => {
+      const system = systemOf(body as never)
+      return system.includes('orchestrator of a team') ? 'planner' : system.includes('strict reviewer') ? 'judge' : system.includes('synthesize') ? 'synthesizer' : 'worker'
+    }
+    const caps = new Map(fake.requests.map((r) => [role(r.body), r.body.max_tokens]))
+    expect(Object.fromEntries(caps)).toEqual({ planner: 4_000, worker: 12_000, judge: 600, synthesizer: 16_000 })
   }, 60_000)
 
   it('Part F: finish_reason "length" marks the agent and the synthesis as cut off, saying which limit', async () => {
-    const price = { prompt: 1e-6, completion: 1e-5, contextLength: 1_000_000 } // budget binds before the window
+    // Budget binds: $10 at 1e-3 per completion token allows < 10,000 tokens, under the worker (12,000) and synthesis (16,000) caps.
+    const price = { prompt: 1e-6, completion: 1e-3, contextLength: 1_000_000 }
     const pricing = { 'fake/worker': price, 'fake/synth': price }
     fake.pricing = pricing
+    const cut = { scout: () => ({ content: 'Day 1: Vienna. Day 2: Salzburg. Day 3: Hallst', finishReason: 'length' as const }),
+                  synth: { content: 'Itinerary: Vienna [1.1], Salzburg [1.1], Hallst', finishReason: 'length' as const } }
     try {
-      const events = await limitRun({
-        pricing,
-        scout: () => ({ content: 'Day 1: Vienna. Day 2: Salzburg. Day 3: Hallst', finishReason: 'length' }),
-        synth: { content: 'Itinerary: Vienna [1.1], Salzburg [1.1], Hallst', finishReason: 'length' },
-      })
+      const events = await limitRun({ pricing, ...cut })
       expect(events.find((e) => e.type === 'agent_complete')).toMatchObject({ agentId: '1.1', truncated: 'budget' })
       expect(events.at(-1)).toMatchObject({ type: 'task_complete', truncated: 'budget' })
-      // Unpriced (no max_tokens sent): the model's own window ended it.
+      // Spec A Phase 8: when the budget allows more, the role's max_tokens cap is what ended it.
+      const cheap = { prompt: 1e-6, completion: 1e-5, contextLength: 1_000_000 }
+      fake.pricing = { 'fake/worker': cheap, 'fake/synth': cheap }
+      const capped = await limitRun({ pricing: fake.pricing, ...cut })
+      expect(capped.find((e) => e.type === 'agent_complete')).toMatchObject({ agentId: '1.1', truncated: 'max_tokens' })
+      expect(capped.at(-1)).toMatchObject({ type: 'task_complete', truncated: 'max_tokens' })
+      // Unpriced: only the role cap is sent, so it is the limit named (was "context" when nothing was sent).
       fake.pricing = {}
-      const unpriced = await limitRun({ scout: () => ({ content: 'Day 1: Vienna. Day 2: Salzburg. Day 3: Hallst', finishReason: 'length' }) })
-      expect(unpriced.find((e) => e.type === 'agent_complete')).toMatchObject({ truncated: 'context' })
+      const unpriced = await limitRun({ scout: cut.scout })
+      expect(unpriced.find((e) => e.type === 'agent_complete')).toMatchObject({ truncated: 'max_tokens' })
       expect(unpriced.at(-1)).not.toHaveProperty('truncated')
     } finally {
       fake.pricing = {}

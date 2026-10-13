@@ -98,6 +98,20 @@ describe('sanitizeMultiAgentConfig', () => {
     expect(sanitizeMultiAgentConfig({ claimFormat: 'quotes' as never }).claimFormat).toBe('snippet')
     expect(sanitizeMultiAgentConfig({}).claimFormat).toBe('snippet')
   })
+  it('dataCollection and the config-file role overrides are kept when well-formed (spec A Phase 8)', () => {
+    expect(sanitizeMultiAgentConfig({}).dataCollection).toBe('allow')
+    expect(sanitizeMultiAgentConfig({}).reasoningEffort).toBe('low')
+    expect(sanitizeMultiAgentConfig({ dataCollection: 'deny' }).dataCollection).toBe('deny')
+    const c = sanitizeMultiAgentConfig({
+      maxTokensByRole: { worker: 9000, judge: 3.5, planner: 4 } as never,
+      reasoningByRole: { planner: 'off', judge: 'extreme', worker: 'high' } as never,
+      providerPrefs: { judge: { sort: 'latency' }, worker: 'fast' } as never,
+    })
+    expect(c.maxTokensByRole).toEqual({ worker: 9000 })
+    expect(c.reasoningByRole).toEqual({ planner: 'off' })
+    expect(c.providerPrefs).toEqual({ judge: { sort: 'latency' } })
+    expect('maxTokensByRole' in sanitizeMultiAgentConfig({})).toBe(false)
+  })
   it('models.escalation is kept trimmed when set and left out when blank (spec A Phase 5)', () => {
     const models = DEFAULT_MULTI_AGENT_CONFIG.models
     expect(sanitizeMultiAgentConfig({ models: { ...models, escalation: ' e/strong ' } }).models.escalation).toBe('e/strong')
@@ -114,9 +128,9 @@ describe('sanitizeMultiAgentConfig', () => {
     } as Partial<MultiAgentConfig>)
     expect(c).toMatchObject({ maxAgents: 8, budgetCapUsd: 0.5, reflectionPassThreshold: 1, maxRetriesPerAgent: 5, hitlTimeoutMs: 10_000 })
   })
-  it('accepts the four reasoning efforts and falls back to medium otherwise', () => {
+  it('accepts the four reasoning efforts and falls back to the default (low since spec A Phase 8) otherwise', () => {
     for (const effort of ['off', 'low', 'medium', 'high'] as const) expect(sanitizeMultiAgentConfig({ reasoningEffort: effort }).reasoningEffort).toBe(effort)
-    expect(sanitizeMultiAgentConfig({ reasoningEffort: 'max' as never }).reasoningEffort).toBe('medium')
+    expect(sanitizeMultiAgentConfig({ reasoningEffort: 'max' as never }).reasoningEffort).toBe('low')
   })
 
   it('rejects garbage types and trims model ids', () => {

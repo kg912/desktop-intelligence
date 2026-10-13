@@ -286,6 +286,17 @@ and cut to 850 chars around the densest run of query terms, ending
 `… [N chars trimmed; read_evidence("S3.2") for the rest]`. Only the view is trimmed: the evidence
 store keeps the full result, so quote checks, the judge and `read_evidence` see everything.
 
+**OpenRouter parameters and caching (spec A Phase 8).** Every request carries `provider:
+{require_parameters: true, data_collection}` (+ `sort: "price"` for the judge, + per-role
+`providerPrefs`), its role's `max_tokens` cap (applied inside the budget planner, so it also shrinks the
+reservation; a "length" finish caused by it is reported as `max_tokens`) and its role's reasoning effort
+(never for a model the catalogue marks as taking none). Worker and judge calls carry
+`session_id: "<runId>:<agentId>"`. `cache_policy(model)`: Anthropic, Qwen and Gemini before 2.5 get
+`cache_control` breakpoints on the system prompt and the last message (wire copy only); other families
+cache automatically. Call records carry `cachedTokens`, `cacheWriteTokens`, `cacheDiscountUsd`; when a
+recorded call's stream reports none, the generation endpoint is asked once. `runTotals.cachedTokens` and
+the baseline summary (total, per-agent hit rate) show them.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same
@@ -343,6 +354,8 @@ Pre-existing rows backfill `mode = 'single'` and `run_status = 'idle'` from thei
 | `models.{orchestrator,worker,reflection,synthesizer}` | from settings | one OpenRouter model id per slot |
 | `reflectionPassThreshold` | 3 | min reflection score (1–5) to pass without retry |
 | `maxRetriesPerAgent` | 2 | repair turns per agent; a retry continues the agent's conversation with the reviewer's feedback |
+| `dataCollection` | `allow` | `deny`: OpenRouter `provider.data_collection: "deny"` on every request (Settings toggle; fewer providers) |
+| `maxTokensByRole` / `reasoningByRole` / `providerPrefs` | see below | config-file only (spec A Phase 8): per-role max_tokens (planner 4,000, worker 12,000, judge 600, synthesizer 16,000), efforts (planner medium, judge low, synthesizer medium; workers use `reasoningEffort`, default `low`), extra `provider` fields merged per role |
 | `judgeEvidenceMode` | `excerpts` | `excerpts`: ±250 chars around each cited quote; `full`: every result when it fits (Settings → Reviewer evidence) |
 | `claimFormat` | `snippet` | `snippet`: claims cite snippet ids and the quote is filled in; `legacy`: claims carry callId + quote (Settings → Claim citations) |
 | `onRetryExhausted` | `degrade` | `degrade`: pass the best attempt on with its caveats; `fail`: fail that agent (dependants cascade) |

@@ -108,7 +108,8 @@ class Config(BaseModel):
     maxRetriesPerAgent: int = Field(ge=0, le=5)
     hitlTimeoutMs: int = Field(ge=1_000)
     requirePermissions: bool = True
-    reasoningEffort: Literal["off", "low", "medium", "high"] = "medium"
+    # The workers' reasoning effort (Settings → Worker reasoning); spec A Phase 8 default "low".
+    reasoningEffort: Literal["off", "low", "medium", "high"] = "low"
     # The judge gets every tool result in full up to this many (estimated) tokens, else excerpts.
     # Clamped to half the judge model's context window when that is known.
     judgeEvidenceMaxTokens: int = Field(default=100_000, ge=0)
@@ -118,6 +119,12 @@ class Config(BaseModel):
     claimFormat: Literal["snippet", "legacy"] = "snippet"
     # "excerpts" (default): the judge sees ±EXCERPT_RADIUS_CHARS around each cited quote; "full": every result when it fits (spec A Phase 3).
     judgeEvidenceMode: Literal["excerpts", "full"] = "excerpts"
+    # OpenRouter provider routing (spec A Phase 8). "deny": only providers that do not collect prompts (Settings toggle).
+    dataCollection: Literal["allow", "deny"] = "allow"
+    # Config-file overrides by role (planner | worker | judge | synthesizer) of ROLE_MAX_TOKENS, ROLE_REASONING, provider prefs.
+    maxTokensByRole: dict[str, int] = Field(default_factory=dict)
+    reasoningByRole: dict[str, Literal["off", "low", "medium", "high"]] = Field(default_factory=dict)
+    providerPrefs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class RunRequest(BaseModel):
@@ -189,6 +196,7 @@ class Run:
     task: asyncio.Task[None] | None = None
     total_cost: float = 0.0
     total_tokens: int = 0
+    total_cached: int = 0  # prompt tokens served from the provider's cache, where reported
     budget_reached: bool = False
     # Worst-case cost of requests in flight — parallel workers share the allowance.
     reserved: float = 0.0
@@ -212,7 +220,8 @@ class Run:
         return self.request.config
 
     def totals(self) -> dict[str, Any]:
-        return {"costUsd": round(self.total_cost, 8), "tokens": self.total_tokens, "budgetReached": self.budget_reached}
+        return {"costUsd": round(self.total_cost, 8), "tokens": self.total_tokens, "budgetReached": self.budget_reached,
+                **({"cachedTokens": self.total_cached} if self.total_cached else {})}
 
     async def emit(self, event_type: str, **payload: Any) -> None:
         if self.finished:
@@ -295,7 +304,7 @@ class Run:
             self.reserved = 0.0
         self.budget_changed.notify_all()
 
-    def plan_request(self, model: str, messages: list[dict[str, Any]], *, synthesis: bool) -> tuple[int | None, float, float, str | None]:
+    def plan_request(self, model: str, messages: list[dict[str, Any]], *, synthesis: bool, cap: int | None = None) -> tuple[int | None, float, float, str | None]:
         """(max_tokens, worst-case cost, shortfall, binding limit) keeping total spend —
         including other in-flight requests' reservations — within the cap. max_tokens is
         the smaller of the budget allowance and the model's remaining context window;
@@ -305,8 +314,8 @@ class Run:
         the others. shortfall > 0 means even MIN_REQUEST_TOKENS do not fit. The binding
         limit ("budget" | "context") explains a finish_reason of "length"."""
         p = self.price(model)
-        if not p or p.completion == 0:
-            return None, 0.0, 0.0, None
+        if not p or p.completion == 0:  # unpriced: only the role's cap bounds it (spec A Phase 8)
+            return cap, 0.0, 0.0, "max_tokens" if cap is not None else None
         uncommitted = self.config.budgetCapUsd - self.total_cost - (0.0 if synthesis else self.synthesis_reserve())
         allowance = uncommitted - self.reserved
         if not synthesis:
@@ -319,6 +328,8 @@ class Run:
             room = p.contextLength - math.ceil(prompt_tokens * 1.25)
             if room < tokens:
                 tokens, bound = room, "context"
+        if cap is not None and cap < tokens:  # the role's max_tokens (spec A Phase 8); also shrinks the reservation
+            tokens, bound = cap, "max_tokens"
         shortfall = max(0.0, prompt_cost + MIN_REQUEST_TOKENS * p.completion - (uncommitted - self.reserved))
         if not shortfall:  # the equal share may be tiny, but a minimal request still fits
             tokens = max(tokens, MIN_REQUEST_TOKENS)
@@ -423,6 +434,7 @@ def _stream_openrouter(
     reasoning_effort: str | None = None,
     loop_guard: bool = False,
     capture: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """on_delta(kind, text): kind is "content" or "reasoning". Reasoning is
     returned only as reasoning_details (for tool round-trips), never in content.
@@ -445,6 +457,7 @@ def _stream_openrouter(
         payload["tool_choice"] = "auto"
     if reasoning_effort:
         payload["reasoning"] = {"effort": reasoning_effort}
+    payload.update(extra or {})  # provider routing, session_id (spec A Phase 8)
     body = json.dumps(payload).encode()
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -632,6 +645,52 @@ class DsmlTokenFilter:
         self.pending = ""
 
 
+# ── Per-role request parameters (spec A Phase 8) ──────────────────────────────
+ROLE_OF_OBS = {"planner": "planner", "worker": "worker", "reflection": "judge", "synthesis": "synthesizer"}
+# Worker and synthesizer above the spec's 8k / 12k: in the Istanbul run 4 of 40 worker calls produced more than 8k
+# completion tokens (up to 22.8k, mostly reasoning) and the synthesis 12.9k. These bound reservations, not answers.
+ROLE_MAX_TOKENS = {"planner": 4_000, "worker": 12_000, "judge": 600, "synthesizer": 16_000}
+ROLE_REASONING = {"planner": "medium", "judge": "low", "synthesizer": "medium"}  # the worker's comes from Settings
+# Families that need explicit cache_control breakpoints; the rest (OpenAI, DeepSeek, Z.AI, Moonshot, Gemini 2.5+) cache automatically.
+CACHE_EXPLICIT_RE = re.compile(r"^(anthropic/|qwen/|google/gemini-(1|2\.0))")
+
+
+def role_max_tokens(config: Config, role: str) -> int:
+    return config.maxTokensByRole.get(role, ROLE_MAX_TOKENS[role])
+
+
+def role_effort(config: Config, role: str) -> str:
+    return config.reasoningEffort if role == "worker" else config.reasoningByRole.get(role, ROLE_REASONING[role])
+
+
+def provider_prefs(config: Config, role: str) -> dict[str, Any]:
+    return {"require_parameters": True, "data_collection": config.dataCollection, **({"sort": "price"} if role == "judge" else {}),
+            **config.providerPrefs.get(role, {})}
+
+
+def cache_policy(model: str) -> str:
+    return "explicit" if CACHE_EXPLICIT_RE.match(model) else "automatic"
+
+
+def with_cache_breakpoints(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A wire copy with cache_control on the system prompt and on the last message, so the growing prefix is cached."""
+    marked = [dict(m) for m in messages]
+    for index in {0, len(marked) - 1}:
+        if index < len(marked) and isinstance(marked[index].get("content"), str) and marked[index].get("role") in ("system", "user", "tool"):
+            marked[index]["content"] = [{"type": "text", "text": marked[index]["content"], "cache_control": {"type": "ephemeral"}}]
+    return marked
+
+
+def fetch_generation(api_key: str, generation_id: str) -> dict[str, Any]:
+    """OpenRouter's stats for one generation (cache backfill); {} on any failure."""
+    try:
+        request = Request(f"{OPENROUTER_BASE_URL}/generation?id={generation_id}", headers={"Authorization": f"Bearer {api_key}"})
+        with urlopen(request, timeout=5) as response:  # nosec B310 — fixed URL
+            return json.loads(response.read()).get("data") or {}
+    except Exception:  # noqa: BLE001 — a missing backfill only leaves the cache fields empty
+        return {}
+
+
 async def ask(
     run: Run,
     model: str,
@@ -644,20 +703,21 @@ async def ask(
     loop_guard: bool = False,
     obs: dict[str, Any] | None = None,
     stop: Callable[[], bool] | None = None,
-    request_reasoning: bool = True,
     effort: str | None = None,
     max_tokens_cap: int | None = None,
 ) -> tuple[dict[str, Any], int, float]:
     """One paid request. Never starts once the budget is reached (spec §06).
     obs: who is calling (role, agentId, attempt, toolRound, retry), for the call record.
-    effort: a reasoning effort to request for this call (the judge); max_tokens_cap: an upper bound on max_tokens."""
+    effort / max_tokens_cap: override the role's reasoning effort and max_tokens bound (ROLE_REASONING, ROLE_MAX_TOKENS)."""
+    role = ROLE_OF_OBS.get((obs or {}).get("role", "worker"), "worker")
     if run.cancelled:
         raise asyncio.CancelledError()
     if run.budget_reached and not synthesis:
         raise BudgetReached()
+    cap = max_tokens_cap if max_tokens_cap is not None else role_max_tokens(run.config, role)
     async with run.budget_changed:
         while True:
-            max_tokens, worst_case, shortfall, bound = run.plan_request(model, messages, synthesis=synthesis)
+            max_tokens, worst_case, shortfall, bound = run.plan_request(model, messages, synthesis=synthesis, cap=cap)
             if max_tokens is None or max_tokens >= MIN_REQUEST_TOKENS:
                 run.reserved += worst_case
                 break
@@ -676,23 +736,21 @@ async def ask(
     def push(kind: str, text: str = "") -> None:
         loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
 
-    # Reasoning is requested only where a trace shows it (workers), and never
-    # for a model the catalogue says does not take the parameter.
-    worker_effort = run.config.reasoningEffort
-    # request_reasoning=False: forward reasoning the model sends anyway, but do not ask for it (the planner).
-    reasoning_effort = worker_effort if on_reasoning and request_reasoning and worker_effort != "off" and model not in run.request.noReasoning else None
-    if effort is not None:  # an explicit effort for this call; never sent to a model that takes no reasoning parameter
-        reasoning_effort = None if effort == "off" or model in run.request.noReasoning else effort
-    if max_tokens_cap is not None:
-        max_tokens = max_tokens_cap if max_tokens is None else min(max_tokens, max_tokens_cap)
+    # Each role's effort (spec A Phase 8), never sent to a model the catalogue says does not take the parameter.
+    wanted = effort if effort is not None else role_effort(run.config, role)
+    reasoning_effort = None if wanted == "off" or model in run.request.noReasoning else wanted
+    agent_id = (obs or {}).get("agentId")
+    extra: dict[str, Any] = {"provider": provider_prefs(run.config, role),
+                             **({"session_id": f"{run.run_id}:{agent_id}"} if role in ("worker", "judge") and agent_id else {})}
+    wire = with_cache_breakpoints(messages) if cache_policy(model) == "explicit" else messages
 
     capture: dict[str, Any] | None = {} if run.request.observe else None
 
     def work() -> tuple[dict[str, Any], dict[str, Any]]:
         try:
-            return _stream_openrouter(run.request.openRouterApiKey, model, messages, tools, max_tokens, push,
+            return _stream_openrouter(run.request.openRouterApiKey, model, wire, tools, max_tokens, push,
                                       lambda: run.cancelled or (stop is not None and stop()),
-                                      reasoning_effort, loop_guard, capture)
+                                      reasoning_effort, loop_guard, capture, extra=extra)
         finally:
             push("done")
 
@@ -717,6 +775,17 @@ async def ask(
     if message.get("finish_reason") == "length":
         # Never silent: which limit ended it. Unpriced models had no max_tokens, so the model's own window did.
         message["truncated"] = bound or "context"
+    details = usage.get("prompt_tokens_details") or {}
+    if capture is not None and details.get("cached_tokens") is None and capture.get("generationId"):
+        # The stream had no cache figures: ask OpenRouter's generation endpoint (only when the call is recorded).
+        stats = await loop.run_in_executor(run.executor, fetch_generation, run.request.openRouterApiKey, str(capture["generationId"]))
+        if stats:
+            usage = {**usage, "prompt_tokens_details": {**details, "cached_tokens": stats.get("native_tokens_cached")},
+                     **({"cache_discount": stats["cache_discount"]} if stats.get("cache_discount") is not None else {})}
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+    if cached:
+        message["cached_tokens"] = int(cached)
+        run.total_cached += int(cached)
     if capture is not None:
         run.record(call_record(model, obs, {**capture, "usage": usage}, cost=cost, truncated=message.get("truncated")))
     return message, tokens, cost
@@ -751,6 +820,10 @@ def call_record(model: str, obs: dict[str, Any] | None, capture: dict[str, Any],
             "reasoningTokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
             "costUsd": cost if cost is not None else usage.get("cost"),
             "generationId": capture.get("generationId"),
+            # Prompt caching (spec A Phase 8); None when OpenRouter did not report it.
+            "cachedTokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+            "cacheWriteTokens": (usage.get("prompt_tokens_details") or {}).get("cache_write_tokens"),
+            "cacheDiscountUsd": usage.get("cache_discount"),
         },
         "timing": {"startedAt": started, "firstTokenAt": capture.get("firstTokenAt"), "endedAt": ended,
                    "ms": ended - started if started else None},
@@ -961,7 +1034,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
             await run.emit("plan_reasoning", token=token)
 
         try:
-            reply, _, _ = await ask(run, model, messages, on_token=on_token, on_reasoning=on_reasoning, request_reasoning=False,
+            reply, _, _ = await ask(run, model, messages, on_token=on_token, on_reasoning=on_reasoning,
                                     stop=lambda: run.quick_plan, obs={"role": "planner", "attempt": attempt})
         except (BudgetReached, asyncio.CancelledError):
             raise
@@ -1453,8 +1526,7 @@ def judge_evidence_limit(run: Run, model: str) -> int:
     return min(limit, p.contextLength // 2) if p and p.contextLength else limit
 
 
-JUDGE_MAX_TOKENS = 600  # the verdict is a short JSON object; a truncated one is retried once with twice the room
-JUDGE_EFFORT = "low"
+JUDGE_MAX_TOKENS = ROLE_MAX_TOKENS["judge"]  # the verdict is a short JSON object; a truncated one is retried once with twice the room
 
 
 def judge_messages(run: Run, step: dict[str, Any], output: str, prior: dict[str, str], store: dict[str, dict[str, Any]],
@@ -1523,9 +1595,9 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
     sizes = {"evidenceMode": mode, "judgeInputChars": sum(len(m["content"]) for m in messages), "evidenceChars": evidence_chars}
     if info is not None:
         info.update(sizes)
-    cap = JUDGE_MAX_TOKENS
+    cap = role_max_tokens(config, "judge")
     for _try in range(2):  # one retry on an unusable reply
-        verdict, _, _ = await ask(run, model, messages, effort=JUDGE_EFFORT, max_tokens_cap=cap,
+        verdict, _, _ = await ask(run, model, messages, effort=role_effort(config, "judge"), max_tokens_cap=cap,
                                   obs={"role": "reflection", "agentId": step["id"], "attempt": run.attempts.get(step["id"], 0), "retry": _try, **sizes})
         if verdict.get("model_served") and served is not None:
             served["model"] = verdict["model_served"]

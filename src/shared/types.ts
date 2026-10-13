@@ -535,7 +535,17 @@ export interface MultiAgentConfig {
   claimFormat:             'snippet' | 'legacy'
   /** 'excerpts': the judge sees ±250 chars around each cited quote; 'full': every tool result when it fits (spec A Phase 3). */
   judgeEvidenceMode:       'excerpts' | 'full'
+  /** OpenRouter provider.data_collection for every request: 'deny' uses only providers that do not store prompts. */
+  dataCollection:          'allow' | 'deny'
+  /** Config-file only overrides by role (spec A Phase 8): planner | worker | judge | synthesizer. */
+  maxTokensByRole?:        Partial<Record<MultiAgentRole, number>>
+  /** Planner, judge and synthesizer efforts (the workers' is reasoningEffort). */
+  reasoningByRole?:        Partial<Record<Exclude<MultiAgentRole, 'worker'>, ReasoningEffort>>
+  /** Extra OpenRouter `provider` fields merged per role, e.g. { judge: { sort: 'latency' } }. */
+  providerPrefs?:          Partial<Record<MultiAgentRole, Record<string, unknown>>>
 }
+
+export type MultiAgentRole = 'planner' | 'worker' | 'judge' | 'synthesizer'
 
 export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high'
 
@@ -570,10 +580,11 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   maxRetriesPerAgent:      2,
   hitlTimeoutMs:           300000,
   requirePermissions:      true,
-  reasoningEffort:         'medium',
+  reasoningEffort:         'low',
   onRetryExhausted:        'degrade',
   claimFormat:             'snippet',
   judgeEvidenceMode:       'excerpts',
+  dataCollection:          'allow',
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */
@@ -582,6 +593,8 @@ export interface RunTotals {
   tokens:        number
   /** True once no further paid work may start (spend + synthesis reserve ≥ cap). */
   budgetReached: boolean
+  /** Prompt tokens served from the provider's cache so far, where OpenRouter reported them (spec A Phase 8). */
+  cachedTokens?: number
 }
 
 // AgentEvent base envelope — every event carries these so the trace can be ordered and replayed.
@@ -639,8 +652,9 @@ export interface AgentCompleteEvent extends AgentEventBase, AgentAttempt {
   modelServed?: string
 }
 
-/** Which limit ended a generation early: the run's budget cap or the model's context window. */
-export type OutputLimit = 'budget' | 'context'
+/** Which limit ended a generation early: the run's budget cap, the model's context window, or the role's
+ *  max_tokens cap (spec A Phase 8). */
+export type OutputLimit = 'budget' | 'context' | 'max_tokens'
 
 /**
  * One agent failed (retry limit, HITL timeout, model error, budget). The run

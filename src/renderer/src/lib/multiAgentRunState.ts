@@ -374,6 +374,7 @@ export const servedDiffers = (requested: string, served: string | undefined): se
 export const CUT_OFF_LABEL: Record<OutputLimit, string> = {
   budget:  'Cut off: budget cap',
   context: 'Cut off: context window',
+  max_tokens: 'Cut off: output cap',
 }
 
 export function elapsedMs(agent: AgentView, now: number): number | null {

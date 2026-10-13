@@ -100,3 +100,18 @@ describe('plan_step_removed (spec A Phase 4)', () => {
     expect(findAnomalies(meta, [removed], [], 0, 0)).toEqual([{ kind: 'plan_step_removed', message: 'plan step 2.1 ("Merge all findings") removed: a final merge step: the synthesizer merges every step\'s output', ref: 'planner.md' }])
   })
 })
+
+describe('cache figures (spec A Phase 8)', () => {
+  it('sums cached tokens and gives each agent its cache hit rate; older records leave them null', () => {
+    const meta = { schema: 1, runId: 'r', chatId: 'c', chatTitle: '', task: '', startedAt: 0, endedAt: 10, status: 'completed', config: {} } as never
+    const call = (seq: number, agentId: string, prompt: number, cached: number | undefined) => ({
+      schema: 1, runId: 'r', chatId: 'c', seq, kind: 'model', role: 'worker', agentId, attempt: 0, timing: { startedAt: 1, endedAt: 2, ms: 1 },
+      usage: { promptTokens: prompt, completionTokens: 1, reasoningTokens: null, costUsd: 0, generationId: null, ...(cached !== undefined && { cachedTokens: cached }) },
+    }) as never
+    const start = (agentId: string) => ({ type: 'agent_start', runId: 'r', seq: 1, ts: 1, agentId, role: 'R', model: 'm', attempt: 0 }) as never
+    const s = summariseRun({ meta, events: [start('1.1'), start('1.2')], records: [call(1, '1.1', 1000, 0), call(2, '1.1', 3000, 3000), call(3, '1.2', 500, undefined)] })
+    expect(s.cachedTokens).toBe(3000)
+    expect(s.agents['1.1']).toMatchObject({ cachedTokens: 3000, cacheHitRate: 0.75 })
+    expect(s.agents['1.2']).toMatchObject({ cachedTokens: null, cacheHitRate: null })
+  })
+})

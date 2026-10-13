@@ -14,7 +14,7 @@ import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
-import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
+import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig, OutputLimit } from '../../../../shared/types'
 
 const PLAN_COLUMN_WIDTH = 248
 
@@ -703,11 +703,17 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean 
   )
 }
 
-function CutOffChip({ limit, testId }: { limit: 'budget' | 'context'; testId: string }) {
+const CUT_OFF_TITLE: Record<OutputLimit, string> = {
+  budget: 'The answer reached the output the remaining budget allows.',
+  context: "The answer filled the model's context window.",
+  max_tokens: "The answer reached its role's output cap (max_tokens).",
+}
+
+function CutOffChip({ limit, testId }: { limit: OutputLimit; testId: string }) {
   return (
     <span
       data-testid={testId}
-      title={limit === 'budget' ? 'The answer reached the output the remaining budget allows.' : "The answer filled the model's context window."}
+      title={CUT_OFF_TITLE[limit]}
       className="inline-flex h-5 flex-none items-center rounded-[5px] border-[0.5px] border-ma-amber/30 bg-ma-amber/10 px-[7px] font-mono text-[11.5px] text-ma-amber"
     >
       {CUT_OFF_LABEL[limit]}

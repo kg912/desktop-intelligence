@@ -20,7 +20,7 @@ class FakePlanner:
 
     def __call__(self, _key, model, messages, tools, _max_tokens, on_delta, cancelled, reasoning_effort=None, *_a, **_k):
         self.calls += 1
-        assert reasoning_effort is None  # the planner never asks for reasoning
+        assert reasoning_effort == "medium"  # spec A Phase 8: the planner asks for medium (was: never asked)
         if self.error:
             raise self.error
         if self.reasoning:

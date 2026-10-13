@@ -161,6 +161,8 @@ export function MultiAgentSettingsPanel() {
 
       <Checkbox className="col-span-2" label="Ask before every worker tool call, unless the agent is trusted for the run"
         checked={config.requirePermissions} onChange={(e) => update('requirePermissions', e.target.checked)} />
+      <Checkbox className="col-span-2" label="Only use OpenRouter providers that do not store prompts (fewer providers; a model may become unavailable)"
+        checked={config.dataCollection === 'deny'} onChange={(e) => update('dataCollection', e.target.checked ? 'deny' : 'allow')} />
 
       <div className="col-span-2 flex items-center gap-3.5">
         <button onClick={() => void save()} disabled={saving}

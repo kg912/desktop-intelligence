@@ -206,6 +206,21 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number): n
  * the spec's ranges (§08 Settings): 1–8 agents, 1–50 tool rounds or null (unlimited), threshold 1–5, 0–5 retries,
  * a non-negative budget, and a HITL timeout between 10 s and 1 h.
  */
+const ROLE_KEYS = ['planner', 'worker', 'judge', 'synthesizer'] as const
+
+/** Config-file only per-role overrides (spec A Phase 8): kept when well-formed, dropped otherwise. */
+function roleOverrides(c: Partial<MultiAgentConfig>): Pick<MultiAgentConfig, 'maxTokensByRole' | 'reasoningByRole' | 'providerPrefs'> {
+  const pick = <T>(obj: unknown, keys: readonly string[], ok: (v: unknown) => v is T): Record<string, T> | undefined => {
+    if (!obj || typeof obj !== 'object') return undefined
+    const out = Object.fromEntries(keys.flatMap((k) => (ok((obj as Record<string, unknown>)[k]) ? [[k, (obj as Record<string, T>)[k]]] : [])))
+    return Object.keys(out).length ? out : undefined
+  }
+  const tokens = pick(c.maxTokensByRole, ROLE_KEYS, (v): v is number => Number.isInteger(v) && (v as number) >= 16)
+  const effort = pick(c.reasoningByRole, ['planner', 'judge', 'synthesizer'], (v): v is ReasoningEffort => (['off', 'low', 'medium', 'high'] as unknown[]).includes(v))
+  const prefs = pick(c.providerPrefs, ROLE_KEYS, (v): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v))
+  return { ...(tokens && { maxTokensByRole: tokens }), ...(effort && { reasoningByRole: effort }), ...(prefs && { providerPrefs: prefs }) }
+}
+
 export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null | undefined): MultiAgentConfig {
   const d = DEFAULT_MULTI_AGENT_CONFIG
   const c = input ?? {}
@@ -232,5 +247,7 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
     onRetryExhausted: c.onRetryExhausted === 'fail' || c.onRetryExhausted === 'degrade' ? c.onRetryExhausted : d.onRetryExhausted,
     claimFormat: c.claimFormat === 'legacy' || c.claimFormat === 'snippet' ? c.claimFormat : d.claimFormat,
     judgeEvidenceMode: c.judgeEvidenceMode === 'full' || c.judgeEvidenceMode === 'excerpts' ? c.judgeEvidenceMode : d.judgeEvidenceMode,
+    dataCollection: c.dataCollection === 'deny' || c.dataCollection === 'allow' ? c.dataCollection : d.dataCollection,
+    ...roleOverrides(c),
   }
 }

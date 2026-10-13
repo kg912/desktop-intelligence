@@ -79,7 +79,11 @@ export interface CallRecord {
     looped?: string | null
     truncated?: string | null
   }
-  usage?: { promptTokens: number | null; completionTokens: number | null; reasoningTokens: number | null; costUsd: number | null; generationId: string | null }
+  usage?: {
+    promptTokens: number | null; completionTokens: number | null; reasoningTokens: number | null; costUsd: number | null; generationId: string | null
+    /** Prompt caching (spec A Phase 8); absent on older records, null when OpenRouter did not report it. */
+    cachedTokens?: number | null; cacheWriteTokens?: number | null; cacheDiscountUsd?: number | null
+  }
   timing: { startedAt: number | null; firstTokenAt?: number | null; endedAt: number; ms: number | null }
   error?: { kind: string; message: string; httpStatus: number | null } | null
   capped?: Array<{ field: string; originalChars: number }> | null
@@ -354,7 +358,7 @@ function renderModelCall(r: CallRecord): string {
     `| Model requested | \`${cell(r.model)}\` |`,
     `| Model served | \`${cell(r.modelServed ?? '')}\` |`,
     `| Finish reason | ${cell(res?.finishReason ?? '')}${res?.truncated ? ` (limit: ${res.truncated})` : ''}${res?.looped ? ` (repetition guard: ${res.looped})` : ''} |`,
-    `| Tokens | ${r.usage?.promptTokens ?? ''} prompt / ${r.usage?.completionTokens ?? ''} completion${r.usage?.reasoningTokens ? ` (${r.usage.reasoningTokens} reasoning)` : ''} |`,
+    `| Tokens | ${r.usage?.promptTokens ?? ''} prompt${r.usage?.cachedTokens ? ` (${r.usage.cachedTokens} cached)` : ''} / ${r.usage?.completionTokens ?? ''} completion${r.usage?.reasoningTokens ? ` (${r.usage.reasoningTokens} reasoning)` : ''} |`,
     `| Cost | ${usd(r.usage?.costUsd)} |`,
     `| Started | ${iso(r.timing.startedAt)} |`,
     `| First token | ${iso(r.timing.firstTokenAt)} |`,
@@ -492,7 +496,7 @@ export interface RunBaseline {
   costByRole: Record<BaselineRole, number>
   wallMs: number | null
   /** Per agent: attempts, cost (worker + judge calls), ms from run start to its first and last event. */
-  agents: Record<string, { attempts: number; costUsd: number; startMs: number; endMs: number }>
+  agents: Record<string, { attempts: number; costUsd: number; startMs: number; endMs: number; cachedTokens: number | null; cacheHitRate: number | null }>
   meanAgentCostUsd: number
   p90AgentCostUsd: number
   /** From the last agent to finish back through the latest-finishing dependency; root first. */
@@ -540,13 +544,18 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
   for (const e of events) {
     const id = (e as { agentId?: string }).agentId
     if (!id || id === 'orchestrator') continue
-    const a = (agents[id] ??= { attempts: 0, costUsd: 0, startMs: e.ts - t0, endMs: e.ts - t0 })
+    const a = (agents[id] ??= { attempts: 0, costUsd: 0, startMs: e.ts - t0, endMs: e.ts - t0, cachedTokens: null, cacheHitRate: null })
     a.endMs = e.ts - t0
   }
   for (const [id, a] of Object.entries(agents)) {
     const mine = model.filter((r) => r.agentId === id)
     a.costUsd = cost(mine)
     a.attempts = new Set(mine.map((r) => r.attempt)).size
+    const cachedMine = mine.map((r) => r.usage?.cachedTokens).filter((c): c is number => c != null)
+    if (cachedMine.length) {
+      a.cachedTokens = cachedMine.reduce((s, c) => s + c, 0)
+      a.cacheHitRate = a.cachedTokens / Math.max(1, prompt(mine))
+    }
   }
   const agentCosts = Object.values(agents).map((a) => a.costUsd).sort((a, b) => a - b)
 
@@ -565,7 +574,7 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
   const unique = [...new Set(tools.map((r) => r.result ?? ''))]
   const uniqueToolTokens = unique.reduce((s, t) => s + Math.ceil(t.length / 4), 0)
   const workerPromptTokens = prompt(ofRole('worker'))
-  const cachedFields = model.map((r) => (r.usage as { cachedTokens?: number | null } | undefined)?.cachedTokens).filter((c) => c != null) as number[]
+  const cachedFields = model.map((r) => r.usage?.cachedTokens).filter((c): c is number => c != null)
   const judges = ofRole('judge')
 
   const open = new Map<string, number>()

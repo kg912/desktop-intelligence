@@ -26,7 +26,7 @@ async function main(): Promise<number> {
     ['Wall time', s.wallMs == null ? '—' : `${(s.wallMs / 1000).toFixed(1)} s`],
     ['Critical path', s.criticalPath.join(' → ')],
     ...Object.entries(s.agents).map(([id, a]): [string, string] =>
-      [`  agent ${id}`, `${a.attempts} attempt(s), ${usd(a.costUsd)}, ends at ${(a.endMs / 1000).toFixed(1)} s`]),
+      [`  agent ${id}`, `${a.attempts} attempt(s), ${usd(a.costUsd)}, ends at ${(a.endMs / 1000).toFixed(1)} s${a.cacheHitRate == null ? '' : `, cache hit ${pct(a.cacheHitRate)}`}`]),
     ['Agent cost mean / p90', `${usd(s.meanAgentCostUsd)} / ${usd(s.p90AgentCostUsd)}`],
     ['Retries', `${s.retries} (worker retry cost ${usd(s.retryCostUsd)}, ${pct(s.retryCostUsd / s.costUsd)})`],
     ['Attempt-0 claims failing', `${s.claims.attempt0.failing}; classes ${JSON.stringify(s.claims.attempt0.byFailureClass)}`],
