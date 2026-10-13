@@ -55,9 +55,10 @@ Interim fixes in Phase 1 stay as a fallback for models that ignore IDs.
 
 ### Phase 3: Judge on excerpts, cheaper (G3)
 `reflect` (L1166), `excerpt` (L1103), `EXCERPT_RADIUS_CHARS`:
-- Default `judgeEvidenceMode` to `excerpts` regardless of size; `full` only when the user sets it. Keep ±800 chars per cited snippet (now the snippet plus neighbours).
+- Default `judgeEvidenceMode` to `excerpts` regardless of size; `full` only when the user sets it. Keep ±800 chars per cited snippet (now the snippet plus neighbours). *(Changed in Phase 3 to ±250, see the decision below.)*
 - Judge `reasoning.effort` defaults to `low`; add a `max_tokens` cap (e.g. 600) since output is a JSON verdict.
 - Judge prompt additions: it receives the claim, the quote, the excerpt, and the failure-class history of the attempt; it must not re-verify quote existence.
+- *Decision (Phase 3):* ±800 chars cannot meet the 80% target on the fixture (72% in characters, recorded `judgeInputChars` vs the new input; the non-excerpt part — prose, claims table, earlier outputs, task, index — is already 13% of the old input). The radius is ±250 with whitespace collapsed and overlapping windows of one call merged (80.5%). Input is measured in characters on both sides because the recorded inputs run ~2.8 chars per real token, so a chars/4 estimate would flatter the result. "Still flagged" cannot be replayed without a model: the test asserts both catches' claim, quote and supporting text reach the excerpts-mode judge.
 - **Acceptance:** replaying the fixture's judge calls: input tokens fall by ≥ 80%; the two real catches from the run (1.5 c7, 1.2 c2) are still flagged (`test_reflection_evidence.py` extended with these as fixtures). Judge cost share of run ≤ 25% in the baseline summary.
 
 ### Phase 4: Remove the merge step (G4)

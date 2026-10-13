@@ -87,11 +87,13 @@ if __name__ == "__main__":
     run, fake = run_one_step(scripted([answer(UNVERIFIED)]), tool_result=lambda n: RESULT)
     assert [r["model"] for r in events(run, "reflection_result")] == ["m/r"] and events(run, "reflection_result")[0]["passed"]
 
-    # Forced excerpts: the judge gets ±800 chars of the cited result around the quote, not the rest.
+    # Excerpts (the default since spec A Phase 3): the judge gets ±EXCERPT_RADIUS_CHARS (250) of the cited result around the quote, not the rest.
     run, fake = run_one_step(scripted([answer(GOOD)]), tool_result=lambda n: RESULT, judgeEvidenceMaxTokens=100)
     content = fake.of("judge")[0]["messages"][1]["content"]
     assert events(run, "reflection_result")[0]["evidenceMode"] == "excerpts"
-    assert ROWS[14_300:15_000] in content and LINE in content and ROWS[15_000:15_700] in content
+    assert s.EXCERPT_RADIUS_CHARS == 250
+    assert ROWS[14_760:15_000] in content and LINE in content and ROWS[15_000:15_200] in content
+    assert ROWS[14_700:15_000] not in content and ROWS[15_000:15_300] not in content
     assert ROWS[:13_000] not in content and "row 00010 " not in content and "row 00799 " not in content
 
     # No claims block twice: one repair turn (no judge), then the last attempt is judged and cannot pass.

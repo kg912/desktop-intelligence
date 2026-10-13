@@ -98,6 +98,11 @@ describe('sanitizeMultiAgentConfig', () => {
     expect(sanitizeMultiAgentConfig({ claimFormat: 'quotes' as never }).claimFormat).toBe('snippet')
     expect(sanitizeMultiAgentConfig({}).claimFormat).toBe('snippet')
   })
+  it('judgeEvidenceMode keeps excerpts or full, anything else falls back to excerpts (spec A Phase 3)', () => {
+    expect(sanitizeMultiAgentConfig({ judgeEvidenceMode: 'full' }).judgeEvidenceMode).toBe('full')
+    expect(sanitizeMultiAgentConfig({ judgeEvidenceMode: 'all' as never }).judgeEvidenceMode).toBe('excerpts')
+    expect(sanitizeMultiAgentConfig({}).judgeEvidenceMode).toBe('excerpts')
+  })
   it('clamps every numeric field to the spec ranges', () => {
     const c = sanitizeMultiAgentConfig({
       maxAgents: 99, budgetCapUsd: -1, reflectionPassThreshold: 0, maxRetriesPerAgent: 12, hitlTimeoutMs: 5,

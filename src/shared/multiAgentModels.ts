@@ -230,5 +230,6 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
       : d.reasoningEffort,
     onRetryExhausted: c.onRetryExhausted === 'fail' || c.onRetryExhausted === 'degrade' ? c.onRetryExhausted : d.onRetryExhausted,
     claimFormat: c.claimFormat === 'legacy' || c.claimFormat === 'snippet' ? c.claimFormat : d.claimFormat,
+    judgeEvidenceMode: c.judgeEvidenceMode === 'full' || c.judgeEvidenceMode === 'excerpts' ? c.judgeEvidenceMode : d.judgeEvidenceMode,
   }
 }

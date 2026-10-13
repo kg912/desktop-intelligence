@@ -250,10 +250,15 @@ failure skips the judge and goes straight to a repair turn; on the last allowed 
 still runs (for a score) but the attempt cannot pass.
 
 **Evidence.** Every tool call is kept in full in a per-agent evidence store on the run, apart from
-the message history. The judge gets every result (`full`) when the estimate fits
-`judgeEvidenceMaxTokens` (100k, at most half its context window) and the remaining budget, otherwise
-`excerpts` (an index of calls plus ±800 chars around each cited quote). Its prompt says which, and
-it judges whether each quote supports its claim and whether the prose makes unmarked assertions.
+the message history. Since spec A Phase 3 the judge works on `excerpts` by default: an index of calls
+plus ±250 chars around each cited quote, overlapping windows of one call merged into a single block
+labelled with all its claims, whitespace collapsed. `judgeEvidenceMode: 'full'` (Settings → Reviewer
+evidence) gives every result when the estimate fits `judgeEvidenceMaxTokens` (100k, at most half its
+context window) and the remaining budget, else excerpts. Its prompt says which; it judges whether each
+quote supports its claim and whether the prose makes unmarked assertions, is told not to re-check that
+quotes exist, and sees the claim-check history of earlier attempts. Judge calls request
+`reasoning.effort: low` and at most 600 output tokens (a truncated, unusable verdict is retried once
+with twice that).
 
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
@@ -312,6 +317,7 @@ Pre-existing rows backfill `mode = 'single'` and `run_status = 'idle'` from thei
 | `models.{orchestrator,worker,reflection,synthesizer}` | from settings | one OpenRouter model id per slot |
 | `reflectionPassThreshold` | 3 | min reflection score (1–5) to pass without retry |
 | `maxRetriesPerAgent` | 2 | repair turns per agent; a retry continues the agent's conversation with the reviewer's feedback |
+| `judgeEvidenceMode` | `excerpts` | `excerpts`: ±250 chars around each cited quote; `full`: every result when it fits (Settings → Reviewer evidence) |
 | `claimFormat` | `snippet` | `snippet`: claims cite snippet ids and the quote is filled in; `legacy`: claims carry callId + quote (Settings → Claim citations) |
 | `onRetryExhausted` | `degrade` | `degrade`: pass the best attempt on with its caveats; `fail`: fail that agent (dependants cascade) |
 | `hitlTimeoutMs` | 300000 | auto-deny a HITL pause after 5 min, fail that agent, continue others |

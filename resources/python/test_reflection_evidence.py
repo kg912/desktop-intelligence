@@ -86,9 +86,10 @@ def events(run, kind):
 if __name__ == "__main__":
     # 1. Phase 0 pinned that the judge saw ~600-char previews (a needle at 15,000 of 20,000 never reached it).
     # Phase 2 flipped it: within judgeEvidenceMaxTokens the judge gets every result in full, and is told so.
+    # Spec A Phase 3: only when the user chose judgeEvidenceMode "full"; excerpts are the default (test_judge_excerpts.py).
     judge = verdicts(5)
     run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
-                             observe=True)
+                             observe=True, judgeEvidenceMode="full")
     [judge_body] = fake.of("judge")
     assert NEEDLE in json.dumps(judge_body) and BIG in judge_body["messages"][1]["content"]
     assert s.EVIDENCE_MODE_SENTENCE["full"] in judge_body["messages"][0]["content"]
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     # Over judgeEvidenceMaxTokens: excerpts mode — an index line per call, never the full result, and the judge is told.
     judge = verdicts(5)
     run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
-                             judgeEvidenceMaxTokens=1_000)
+                             judgeEvidenceMaxTokens=1_000, judgeEvidenceMode="full")
     [judge_body] = fake.of("judge")
     assert NEEDLE not in json.dumps(judge_body) and s.EVIDENCE_MODE_SENTENCE["excerpts"] in judge_body["messages"][0]["content"]
     assert '- call_big · fs__read_file · {"path": "/big.txt"} · ok · 20000 chars' in judge_body["messages"][1]["content"]
@@ -112,7 +113,7 @@ if __name__ == "__main__":
     # Full mode that the remaining budget cannot pay for falls back to excerpts instead of waiting.
     judge = verdicts(5)
     run, fake = run_one_step(lambda role, body: judge() if role == "judge" else worker_reply(body) if role == "worker" else {"content": "done [1.1]"},
-                             request={"pricing": {"m/r": s.Pricing(prompt=3e-4, completion=1e-6)}})
+                             request={"pricing": {"m/r": s.Pricing(prompt=3e-4, completion=1e-6)}}, judgeEvidenceMode="full")
     assert events(run, "reflection_result")[0]["evidenceMode"] == "excerpts" and NEEDLE not in json.dumps(fake.of("judge")[0])
 
     # Half the judge's context window caps the full-evidence budget.

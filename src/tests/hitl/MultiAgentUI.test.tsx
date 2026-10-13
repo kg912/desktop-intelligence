@@ -714,6 +714,23 @@ describe('Output limits (Part F)', () => {
     fireEvent.click(screen.getByText('Save multi-agent defaults'))
     await waitFor(() => expect(saveMultiAgentConfig).toHaveBeenCalledWith(expect.objectContaining({ claimFormat: 'legacy' })))
   })
+
+  it('"Reviewer evidence" defaults to excerpts and saves full (spec A Phase 3)', async () => {
+    const saveMultiAgentConfig = vi.fn().mockResolvedValue(undefined)
+    ;(window as any).api = {
+      ...(window as any).api,
+      getMultiAgentConfig: vi.fn().mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, sidecarPort: 7823 }),
+      getMultiAgentCatalogue: vi.fn().mockResolvedValue({ models: [], error: null }),
+      getBackendSettings: vi.fn().mockResolvedValue({ provider: 'openrouter', openrouterModel: 'x/y' }),
+      saveMultiAgentConfig,
+    }
+    render(<MultiAgentSettingsPanel />)
+    const select = (await screen.findByLabelText('Reviewer evidence')) as HTMLSelectElement
+    expect(select.value).toBe('excerpts')
+    fireEvent.change(select, { target: { value: 'full' } })
+    fireEvent.click(screen.getByText('Save multi-agent defaults'))
+    await waitFor(() => expect(saveMultiAgentConfig).toHaveBeenCalledWith(expect.objectContaining({ judgeEvidenceMode: 'full' })))
+  })
 })
 
 describe('run history in the dock header', () => {

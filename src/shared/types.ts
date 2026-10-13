@@ -531,6 +531,8 @@ export interface MultiAgentConfig {
   onRetryExhausted:        'degrade' | 'fail'
   /** 'snippet': claims cite [S<call>.<n>] snippet ids and the sidecar fills the quote; 'legacy': claims carry callId + quote. */
   claimFormat:             'snippet' | 'legacy'
+  /** 'excerpts': the judge sees ±250 chars around each cited quote; 'full': every tool result when it fits (spec A Phase 3). */
+  judgeEvidenceMode:       'excerpts' | 'full'
 }
 
 export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high'
@@ -569,6 +571,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   reasoningEffort:         'medium',
   onRetryExhausted:        'degrade',
   claimFormat:             'snippet',
+  judgeEvidenceMode:       'excerpts',
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */

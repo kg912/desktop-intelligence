@@ -213,6 +213,7 @@ const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig
   reasoningEffort: 'medium',
   onRetryExhausted: 'degrade',
   claimFormat: 'snippet',
+  judgeEvidenceMode: 'excerpts',
   ...overrides,
 })
 
@@ -694,7 +695,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
   }
 
   it('streams reasoning, two tool calls and the answer in order, and keeps reasoning out of output and synthesis', async () => {
-    const events = await tracedRun()
+    // Full evidence so the reviewer's input carries the whole result (excerpts are the default since spec A Phase 3).
+    const events = await tracedRun({ config: baseConfig({ judgeEvidenceMode: 'full' }) })
     expect(events.at(-1)?.type).toBe('task_complete')
     const traced = events.filter((e) => 'agentId' in e && e.agentId === '1.1' && !e.type.startsWith('hitl'))
     const collapsed = traced.map((e) => e.type).filter((t, i, all) => !(i > 0 && all[i - 1] === t && (t === 'agent_reasoning' || t === 'agent_token')))
@@ -728,9 +730,15 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
   }, 60_000)
 
   it('sends no reasoning parameter when the effort is off or the catalogue says the model lacks it', async () => {
+    // Spec A Phase 3: the judge asks for effort "low" on its own (reasoningEffort is the workers' setting),
+    // unless the catalogue says the judge model takes no reasoning parameter.
+    const judge = (r: { body: Record<string, unknown> }): boolean => systemOf(r.body as never).includes('strict reviewer')
     await tracedRun({ config: baseConfig({ reasoningEffort: 'off' }) })
-    expect(fake.requests.every((r) => r.body.reasoning === undefined)).toBe(true)
+    expect(fake.requests.filter((r) => !judge(r)).every((r) => r.body.reasoning === undefined)).toBe(true)
+    expect(fake.requests.filter(judge).map((r) => r.body.reasoning)).toEqual([{ effort: 'low' }])
     await tracedRun({ noReasoning: ['fake/worker'] })
+    expect(fake.requests.filter((r) => !judge(r)).every((r) => r.body.reasoning === undefined)).toBe(true)
+    await tracedRun({ noReasoning: ['fake/worker', 'fake/reviewer'] })
     expect(fake.requests.every((r) => r.body.reasoning === undefined)).toBe(true)
   }, 60_000)
 
@@ -974,7 +982,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     const events = await limitRun({})
     expect(events.at(-1)?.type).toBe('task_complete')
     expect(fake.requests.length).toBeGreaterThan(3)
-    expect(fake.requests.filter((r) => 'max_tokens' in r.body)).toEqual([])
+    // Only the judge's own cap (spec A Phase 3: a verdict needs at most 600 tokens) is sent.
+    expect(fake.requests.filter((r) => 'max_tokens' in r.body).map((r) => [systemOf(r.body).includes('strict reviewer'), r.body.max_tokens])).toEqual([[true, 600]])
   }, 60_000)
 
   it('Part F: finish_reason "length" marks the agent and the synthesis as cut off, saying which limit', async () => {

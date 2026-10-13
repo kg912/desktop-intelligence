@@ -116,6 +116,12 @@ export function MultiAgentSettingsPanel() {
           <option value="legacy">Quotes (legacy)</option>
         </Select>
       </Field>
+      <Field label="Reviewer evidence" htmlFor="ma-judge-evidence" help="Excerpts: the reviewer sees the text around each cited quote (much cheaper). Full results: every tool result, when it fits the reviewer's budget.">
+        <Select id="ma-judge-evidence" value={config.judgeEvidenceMode} onChange={(e) => update('judgeEvidenceMode', e.target.value as MultiAgentConfig['judgeEvidenceMode'])}>
+          <option value="excerpts">Excerpts</option>
+          <option value="full">Full results</option>
+        </Select>
+      </Field>
       <Field label="Approval timeout (minutes)" htmlFor="ma-timeout" help="Unanswered tool approvals are auto-denied after this.">
         <NumberInput id="ma-timeout" min={1} max={60} value={Math.round(config.hitlTimeoutMs / 60_000)}
           onChange={(e) => update('hitlTimeoutMs', Math.min(60, Math.max(1, Number(e.target.value) || 5)) * 60_000)} />
