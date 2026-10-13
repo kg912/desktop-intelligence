@@ -212,6 +212,7 @@ const baseConfig = (overrides: Partial<MultiAgentConfig> = {}): MultiAgentConfig
   requirePermissions: true,
   reasoningEffort: 'medium',
   onRetryExhausted: 'degrade',
+  claimFormat: 'snippet',
   ...overrides,
 })
 
@@ -907,7 +908,8 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     // (reflection hardening Phase 3) the model's copy is headed by the call id, so the worker can cite it.
     const start = sent.find((e) => e.type === 'tool_start') as Extract<AgentEvent, { type: 'tool_start' }>
     const toolMessage = workerPrompts[1].body.messages.find((m) => m.role === 'tool')
-    expect(toolMessage?.content).toBe(`[callId: ${start.callId}]\nHotel Müller — 300 m from the castle`)
+    // Spec A Phase 2: in snippet mode the result is one labelled snippet (S<n-th call>.1).
+    expect(toolMessage?.content).toBe(`[callId: ${start.callId}]\n[S1.1] Hotel Müller — 300 m from the castle`)
     expect(sent.find((e) => e.type === 'tool_done')).toMatchObject({ ok: true, resultPreview: 'Hotel Müller — 300 m from the castle', resultChars: 36 })
     // The card row: the renderer pairs tool_done with tool_start by callId and attempt (MultiAgentUI.test renders it).
     expect(sent.find((e) => e.type === 'tool_done')).toMatchObject({ callId: start.callId, attempt: start.attempt, agentId: '1.1' })

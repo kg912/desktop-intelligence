@@ -226,6 +226,15 @@ in the prose `[c1]`, `[c2]`…:
 Successful tool results reach the worker headed `[callId: …]` so it can cite them. The block is
 removed from the answer and never streamed to the card.
 
+**Snippet ids (default, `claimFormat: 'snippet'`; spec A Phase 2).** Each successful result is split
+into snippets (one per Brave `[n] title / url / body` block, otherwise the whole result), labelled
+`[S<call>.<n>]` in the tool message and kept in the evidence store. The contract asks for
+`{id, claim, snippets: ["S3.2"]}` instead of a copied quote; the sidecar fills `callId` and `quote` with
+the snippet sentence sharing the most words with the claim (ties: the first; ≤ 400 chars). An unknown id
+is `snippet_not_found` (repair turn naming it); a claim citing nothing is `no_citation`. The
+`callId` + `quote` form is still accepted in snippet mode (models that ignore ids), and `legacy` mode
+keeps the old contract and unlabelled results.
+
 **Gate order** for every answer: (a) deterministic precheck (empty, short, refusal); (b) claims
 parse and a **mechanical quote check** against the agent's evidence store — formatting-only
 normalisation (entities, tags, curly quotes/dashes, emphasis, thousands separators, whitespace,
@@ -303,6 +312,7 @@ Pre-existing rows backfill `mode = 'single'` and `run_status = 'idle'` from thei
 | `models.{orchestrator,worker,reflection,synthesizer}` | from settings | one OpenRouter model id per slot |
 | `reflectionPassThreshold` | 3 | min reflection score (1–5) to pass without retry |
 | `maxRetriesPerAgent` | 2 | repair turns per agent; a retry continues the agent's conversation with the reviewer's feedback |
+| `claimFormat` | `snippet` | `snippet`: claims cite snippet ids and the quote is filled in; `legacy`: claims carry callId + quote (Settings → Claim citations) |
 | `onRetryExhausted` | `degrade` | `degrade`: pass the best attempt on with its caveats; `fail`: fail that agent (dependants cascade) |
 | `hitlTimeoutMs` | 300000 | auto-deny a HITL pause after 5 min, fail that agent, continue others |
 | `requirePermissions` | `true` | HITL default for multi-agent runs (defaults to safe/on) |

@@ -110,6 +110,12 @@ export function MultiAgentSettingsPanel() {
           <option value="fail">Fail the step</option>
         </Select>
       </Field>
+      <Field label="Claim citations" htmlFor="ma-claim-format" help="Snippet ids: agents cite labelled pieces of their tool results and the quote is filled in for them. Quotes: agents copy a quote and its call id (the older format).">
+        <Select id="ma-claim-format" value={config.claimFormat} onChange={(e) => update('claimFormat', e.target.value as MultiAgentConfig['claimFormat'])}>
+          <option value="snippet">Snippet ids</option>
+          <option value="legacy">Quotes (legacy)</option>
+        </Select>
+      </Field>
       <Field label="Approval timeout (minutes)" htmlFor="ma-timeout" help="Unanswered tool approvals are auto-denied after this.">
         <NumberInput id="ma-timeout" min={1} max={60} value={Math.round(config.hitlTimeoutMs / 60_000)}
           onChange={(e) => update('hitlTimeoutMs', Math.min(60, Math.max(1, Number(e.target.value) || 5)) * 60_000)} />

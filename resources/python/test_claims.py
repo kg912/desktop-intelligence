@@ -39,8 +39,10 @@ if __name__ == "__main__":
     assert prose == PROSE and errors == [] and [c["id"] for c in claims] == ["c1", "c2", "c3"], (prose, claims, errors)
     assert s.parse_claims(PROSE) == (PROSE, [], ["No claims block: end the answer with a ```claims JSON array (use [] if it makes no factual claims)."])
     assert s.parse_claims(PROSE + "\n```claims\n[{oops\n```")[2][0].startswith("The claims block is not valid JSON")
-    assert s.parse_claims(PROSE + '\n```claims\n[{"id": "c9", "claim": "x"}, 3]\n```')[2] == [
-        'Claim c9 needs a callId and a quote, "unverified": true, or a "source".', 'Claim #2 needs an "id" and a "claim".']
+    # Spec A Phase 2: a claim that cites nothing is a claim with status no_citation (repaired like the others), not a parse error.
+    _, cited_nothing, errors = s.parse_claims(PROSE + '\n```claims\n[{"id": "c9", "claim": "x"}, 3]\n```')
+    assert cited_nothing == [{"id": "c9", "claim": "x"}] and errors == ['Claim #2 needs an "id" and a "claim".']
+    assert s.verify_claim(cited_nothing[0], {}) == "no_citation"
 
     # Normalisation is formatting only: spacing, curly quotes, dashes, &nbsp;, tags, emphasis, separators, case.
     store = {"call_big": {"name": "fs__read_file", "args": "{}", "ok": True, "attempt": 0, "result": RESULT},
@@ -76,7 +78,7 @@ if __name__ == "__main__":
 
     # The worker sees each tool result headed by its callId; the claims block never reaches the card.
     worker_tool = next(m for m in fake.of("worker")[1]["messages"] if m["role"] == "tool")
-    assert worker_tool["content"] == "[callId: call_big]\n" + RESULT
+    assert worker_tool["content"] == "[callId: call_big]\n[S1.1] " + RESULT  # spec A Phase 2: one snippet, labelled
     tokens = "".join(e["token"] for e in run.events if e["type"] == "agent_token" and e["attempt"] == 1)
     complete = [e for e in events(run, "agent_complete") if e["attempt"] == 1][0]
     assert tokens == complete["output"] == PROSE, (tokens, complete["output"])

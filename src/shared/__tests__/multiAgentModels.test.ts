@@ -93,6 +93,11 @@ describe('sanitizeMultiAgentConfig', () => {
   it('fills defaults for missing input', () => {
     expect(sanitizeMultiAgentConfig(undefined)).toEqual(DEFAULT_MULTI_AGENT_CONFIG)
   })
+  it('claimFormat keeps snippet or legacy, anything else falls back to snippet (spec A Phase 2)', () => {
+    expect(sanitizeMultiAgentConfig({ claimFormat: 'legacy' }).claimFormat).toBe('legacy')
+    expect(sanitizeMultiAgentConfig({ claimFormat: 'quotes' as never }).claimFormat).toBe('snippet')
+    expect(sanitizeMultiAgentConfig({}).claimFormat).toBe('snippet')
+  })
   it('clamps every numeric field to the spec ranges', () => {
     const c = sanitizeMultiAgentConfig({
       maxAgents: 99, budgetCapUsd: -1, reflectionPassThreshold: 0, maxRetriesPerAgent: 12, hitlTimeoutMs: 5,

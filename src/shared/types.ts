@@ -529,6 +529,8 @@ export interface MultiAgentConfig {
   reasoningEffort:         ReasoningEffort
   /** When an agent's retries run out: 'degrade' passes its best attempt on with its open issues; 'fail' fails the step. */
   onRetryExhausted:        'degrade' | 'fail'
+  /** 'snippet': claims cite [S<call>.<n>] snippet ids and the sidecar fills the quote; 'legacy': claims carry callId + quote. */
+  claimFormat:             'snippet' | 'legacy'
 }
 
 export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high'
@@ -566,6 +568,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   requirePermissions:      true,
   reasoningEffort:         'medium',
   onRetryExhausted:        'degrade',
+  claimFormat:             'snippet',
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */

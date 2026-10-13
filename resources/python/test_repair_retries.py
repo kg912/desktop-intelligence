@@ -80,6 +80,6 @@ if __name__ == "__main__":
     assert (note["agentId"], note["attempt"], note["stubbed"]) == ("1.1", 0, 1) and note["tokensFreed"] > 1_500, note
     final = fake.of("worker")[-1]["messages"]
     assert [m["content"].startswith("[call_r1 fs__read_file") for m in final if m["role"] == "tool"] == [True, False]
-    assert fake.of("worker")[1]["messages"][3]["content"] == "[callId: call_r1]\n" + R1  # the earlier request was never touched
+    assert fake.of("worker")[1]["messages"][3]["content"] == "[callId: call_r1]\n[S1.1] " + R1  # the earlier request was never touched
     assert events(run, "reflection_result")[0]["claimStatuses"] == {"c1": "verified"} and run.events[-1]["type"] == "task_complete"
     print("ok")

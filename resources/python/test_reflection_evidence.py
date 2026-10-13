@@ -97,7 +97,8 @@ if __name__ == "__main__":
     assert result["evidenceMode"] == "full" and result["judgeInputChars"] == input_chars, result
     [record] = [e["record"] for e in run.events if e["type"] == "obs_record" and e["record"].get("role") == "reflection"]
     assert (record["evidenceMode"], record["judgeInputChars"], record["evidenceChars"]) == ("full", input_chars, 20_000), record
-    assert run.evidence["1.1"]["call_big"] == {"name": "fs__read_file", "args": '{"path": "/big.txt"}', "ok": True, "attempt": 0, "result": BIG}
+    assert run.evidence["1.1"]["call_big"] == {"name": "fs__read_file", "args": '{"path": "/big.txt"}', "ok": True, "attempt": 0, "result": BIG,
+                                           "snippets": {"S1.1": BIG}}  # spec A Phase 2
 
     # Over judgeEvidenceMaxTokens: excerpts mode — an index line per call, never the full result, and the judge is told.
     judge = verdicts(5)

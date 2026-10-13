@@ -114,6 +114,8 @@ class Config(BaseModel):
     judgeEvidenceMaxTokens: int = Field(default=100_000, ge=0)
     # Retries exhausted: "degrade" passes the best attempt on with its open issues; "fail" fails the step (the old behaviour).
     onRetryExhausted: Literal["degrade", "fail"] = "degrade"
+    # "snippet": claims cite [S<call>.<n>] ids and the sidecar fills the quote; "legacy": claims carry callId + quote (spec A Phase 2).
+    claimFormat: Literal["snippet", "legacy"] = "snippet"
 
 
 class RunRequest(BaseModel):
@@ -1025,6 +1027,8 @@ CLAIM_PROBLEM = {
     "call_failed": "the cited tool call failed or was denied",
     "quote_too_short": f"the quote is under {QUOTE_MIN_CHARS} characters, which is not evidence",
     "quote_too_long": f"the quote is over {QUOTE_MAX_CHARS} characters; quote only the supporting words",
+    "snippet_not_found": "snippet {missing} does not exist; cite only ids shown as [S…] in your tool results",
+    "no_citation": "it cites nothing; give its snippets, or mark it \"unverified\": true, or give its \"source\"",
 }
 CLAIMS_CONTRACT = (
     "End your answer with a fenced claims block listing every factual claim, and mark each claim in the prose with its id, "
@@ -1036,6 +1040,45 @@ CLAIMS_CONTRACT = (
     "  {\"id\": \"c2\", \"claim\": \"ALAB 2-quarter 13F trend\", \"unverified\": true}\n]\n```\n"
     "Use [] when the answer makes no factual claims."
 )
+SNIPPET_CLAIMS_CONTRACT = (
+    "End your answer with a fenced claims block listing every factual claim, and mark each claim in the prose with its id, "
+    "e.g. [c1]. Each entry is one of: {\"id\", \"claim\", \"snippets\": [\"S3.2\"]} — the ids of the tool-result snippets that support it "
+    "(each snippet of a successful tool result starts with its id, e.g. [S3.2]); do not copy quotes, they are filled in from the snippets; "
+    "{\"id\", \"claim\", \"unverified\": true} when no tool result supports it; "
+    "or {\"id\", \"claim\", \"source\": \"1.1\"} for something taken from an earlier agent's output. Example:\n"
+    "```claims\n[\n  {\"id\": \"c1\", \"claim\": \"ALAB Q2 2026 revenue $392.4M\", \"snippets\": [\"S3.2\"]},\n"
+    "  {\"id\": \"c2\", \"claim\": \"ALAB 2-quarter 13F trend\", \"unverified\": true}\n]\n```\n"
+    "Use [] when the answer makes no factual claims."
+)
+# One snippet per Brave result block ("[n] title\nurl\nbody", blank-line separated); any other result is one snippet.
+BRAVE_BLOCK_RE = re.compile(r"\n\n(?=\[\d+\] )")
+BRAVE_LABEL_RE = re.compile(r"^\[(\d+)\] ")
+SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def split_snippets(result: str, call_no: int) -> dict[str, str]:
+    """snippet id (S<call_no>.<n>) → text, in order."""
+    blocks = BRAVE_BLOCK_RE.split(result)
+    if all(BRAVE_LABEL_RE.match(b) for b in blocks):
+        return {f"S{call_no}.{i + 1}": BRAVE_LABEL_RE.sub("", b, count=1) for i, b in enumerate(blocks)}
+    return {f"S{call_no}.1": result}
+
+
+def best_quote(claim: str, texts: list[tuple[str, str]]) -> tuple[str, str]:
+    """(callId, quote): the sentence of the cited snippets sharing the most words with the claim (ties: the first),
+    cut to QUOTE_MAX_CHARS. Deterministic."""
+    words = set(WORD_RE.findall(claim.casefold()))
+    best = (-1, "", "")
+    for call_id, text in texts:
+        for sentence in SENTENCE_RE.split(text):
+            score = len(words & set(WORD_RE.findall(sentence.casefold())))
+            if sentence.strip() and score > best[0]:
+                best = (score, call_id, sentence.strip())
+    return best[1], best[2][:QUOTE_MAX_CHARS]
+
+
+def claims_contract(config: "Config") -> str:
+    return SNIPPET_CLAIMS_CONTRACT if config.claimFormat == "snippet" else CLAIMS_CONTRACT
 _QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'", "\u201c": '"', "\u201d": '"',
                          "\u201e": '"', "\u2033": '"', "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",
                          "\u2015": "-", "\u2212": "-"})
@@ -1069,19 +1112,21 @@ def parse_claims(output: str) -> tuple[str, list[dict[str, Any]], list[str]]:
         claim_id = str(item.get("id") or f"#{index + 1}")[:20] if isinstance(item, dict) else f"#{index + 1}"
         if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
             errors.append(f"Claim {claim_id} needs an \"id\" and a \"claim\".")
+        elif isinstance(item.get("snippets"), list) and item["snippets"]:
+            claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "snippets": [str(x)[:20] for x in item["snippets"]][:10]})
         elif item.get("callId") and isinstance(item.get("quote"), str):
             claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "callId": str(item["callId"]), "quote": item["quote"]})
         elif item.get("unverified") is True:
             claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "unverified": True})
         elif item.get("source"):
             claims.append({"id": claim_id, "claim": str(item["claim"])[:400], "source": str(item["source"])[:20]})
-        else:
-            errors.append(f"Claim {claim_id} needs a callId and a quote, \"unverified\": true, or a \"source\".")
+        else:  # cites nothing: a claim problem (no_citation), so it is checked and repaired like the others
+            claims.append({"id": claim_id, "claim": str(item["claim"])[:400]})
     return prose, claims, errors
 
 
 ELLIPSIS_RE = re.compile(r"\.\.\.|…")
-FAILURE_CLASS = {"call_not_found": "wrong_call", "quote_found_elsewhere": "wrong_call", "call_failed": "call_failed",
+FAILURE_CLASS = {"call_not_found": "wrong_call", "quote_found_elsewhere": "wrong_call", "snippet_not_found": "wrong_call", "no_citation": "no_citation", "call_failed": "call_failed",
                  "quote_too_short": "too_short", "quote_too_long": "too_long"}
 
 
@@ -1113,6 +1158,18 @@ def verify_claim(claim: dict[str, Any], store: dict[str, dict[str, Any]]) -> str
         return "unverified_declared"
     if claim.get("source"):
         return "source"
+    if claim.get("snippets"):
+        texts = []
+        for sid in claim["snippets"]:
+            hit = next(((cid, c["snippets"][sid]) for cid, c in store.items() if sid in (c.get("snippets") or {})), None)
+            if hit is None:
+                claim["missing"] = sid
+                return "snippet_not_found"
+            texts.append(hit)
+        claim["callId"], claim["quote"] = best_quote(claim["claim"], texts)
+        return "verified"
+    if "quote" not in claim:
+        return "no_citation"
     size = sum(len(f) for f in quote_fragments(claim["quote"]))
     call = store.get(claim["callId"])
     if QUOTE_MIN_CHARS <= size <= QUOTE_MAX_CHARS:
@@ -1152,7 +1209,10 @@ def failure_classes(claims: list[dict[str, Any]], statuses: dict[str, str]) -> d
 
 
 def claim_problems(claims: list[dict[str, Any]], statuses: dict[str, str]) -> list[str]:
-    return [f"Claim {c['id']} (callId {c.get('callId')}): {CLAIM_PROBLEM[statuses[c['id']]].format(candidates=', '.join(c.get('candidates', [])))}."
+    def ref(c: dict[str, Any]) -> str:
+        return f"snippets {', '.join(c['snippets'])}" if c.get("snippets") else f"callId {c.get('callId')}"
+    return [f"Claim {c['id']} ({ref(c)}): "
+            f"{CLAIM_PROBLEM[statuses[c['id']]].format(candidates=', '.join(c.get('candidates', [])), missing=c.get('missing', ''))}."
             for c in claims if statuses[c["id"]] not in CLAIM_OK]
 
 
@@ -1240,7 +1300,8 @@ async def reflect(run: Run, step: dict[str, Any], output: str, prior: dict[str, 
 
     table = "\n".join(f"- {c['id']} | {c['claim']} | {statuses.get(c['id'], '?')} | "
                       + (f"quote: {json.dumps(c['quote'], ensure_ascii=False)} | callId: {c['callId']}" if "callId" in c else
-                         f"source: {c['source']}" if "source" in c else "declared unverified")
+                         f"source: {c['source']}" if "source" in c else "declared unverified" if c.get("unverified") else
+                         f"snippets: {', '.join(c.get('snippets') or [])} (not found)" if c.get("snippets") else "no evidence cited")
                       for c in claims) or "(no claims listed)"
 
     def judge_messages(mode: str) -> list[dict[str, Any]]:
@@ -1373,7 +1434,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                       "Mark any claim you could not verify with a tool as unverified. "
                                       "If a criterion cannot be verified with your tools, report it as unverified with the reason. Never report an "
                                       "unverifiable criterion as met or as failed, and do not eliminate an item only because data is missing; flag it instead."
-                                      "\n\n" + CLAIMS_CONTRACT)},
+                                      "\n\n" + claims_contract(config))},
         {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}"},
     ]
     compacted: set[int] = set()  # indices of tool messages already replaced by a stub
@@ -1492,8 +1553,11 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     await run.emit("tool_done", agentId=agent_id, attempt=attempt, callId=call_id, ok=ok,
                                    durationMs=int((time.monotonic() - began) * 1000),
                                    resultPreview=preview(content, RESULT_PREVIEW_CHARS), resultChars=len(content))
-                    store[call_id] = {"name": name, "args": raw_args, "ok": ok, "attempt": attempt, "result": store_result(content)}
-                    # A result that can back a claim carries its id in the text, so the worker can cite it.
+                    snippets = split_snippets(content, len(store) + 1) if ok else {}
+                    store[call_id] = {"name": name, "args": raw_args, "ok": ok, "attempt": attempt, "result": store_result(content), "snippets": snippets}
+                    # A result that can back a claim carries its id (and, in snippet mode, each snippet its id) in the text.
+                    if ok and config.claimFormat == "snippet":
+                        content = "\n\n".join(f"[{sid}] {text}" for sid, text in snippets.items())
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": f"[callId: {call_id}]\n{content}" if ok else content})
                 _round += 1
         except BudgetReached:
@@ -1536,7 +1600,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
                        issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}),
                        **{k: judge_info[k] for k in ("evidenceMode", "judgeInputChars") if k in judge_info},
-                       claimsChecked=sum(1 for c in claims if "callId" in c), claimsFailed=sum(1 for s in statuses.values() if s not in CLAIM_OK),
+                       claimsChecked=sum(1 for c in claims if "callId" in c or c.get("snippets")), claimsFailed=sum(1 for s in statuses.values() if s not in CLAIM_OK),
                        claimStatuses=statuses, claimFailureClasses=failure_classes(claims, statuses))
         if passed:
             return downstream_text(agent_id, output, claims, statuses)
