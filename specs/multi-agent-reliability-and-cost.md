@@ -111,6 +111,7 @@ Motivated by `RLM.pdf` (prompt-as-environment beats lossy compaction) applied to
 
 ### Phase 10: Planner slicing (G10)
 `PLANNER_SYSTEM`: slice research on one axis (by entity *or* by topic, never both); mark a step `dependsOn` another when its premise is a conditional on that step's answer; planner output may carry `condition` text (Spec B makes it executable; here it only sets `dependsOn`).
+- *Decisions (Phase 10):* without a live planner the check is structural: each step declares `axis` ("entity" | "topic"), mixed axes and an unanchored conditional label ("if / unless / in case …" with no dependsOn) trigger one correction turn, like the chain correction; step ids named in `condition` become dependencies. The test replays the run's own prompt with its recorded plan (labelled with the axes it took) as the planner's first answer and a re-sliced plan as its second. Whether a live planner follows the rule is NOT VERIFIED.
 - **Acceptance:** `test_plan_slicing.py` on the fixture prompt: no two steps share a topic across entities; the "if leg 2 exceeds 5 h" step depends on the leg-2 step.
 
 ## 3. Data and event changes (summary)

@@ -849,10 +849,35 @@ PLANNER_SYSTEM = (
     "(new research that needs their answers), make it a normal research step that depends only on the steps it needs, e.g. "
     "{\"id\": \"2.1\", \"label\": \"Find rail options from Selcuk to the airport for the flight 1.2 found\", \"role\": \"Rail researcher\", "
     "\"dependsOn\": [\"1.2\"]}. If a step must evaluate many candidates against several criteria, split it by sector, theme or "
-    "criterion group into parallel steps; the final synthesis combines them. You may spawn a maximum of {max_agents} agents (steps). "
+    "criterion group into parallel steps; the final synthesis combines them. "
+    "Slice research on one axis: by entity (e.g. each leg, city or company) or by topic (e.g. baggage, prices, risks), never both; "
+    "a topic that every entity needs is part of each entity step, not a step of its own. "
+    "If a step only matters depending on another step's answer (\"if leg 2 takes more than 5 hours…\"), it depends on that step: "
+    "list it in dependsOn and state the condition in \"condition\". You may spawn a maximum of {max_agents} agents (steps). "
     "Return ONLY a JSON array. Each element: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
-    "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs]}."
+    "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs], "
+    "\"axis\": \"entity\" or \"topic\", and \"condition\" only when the step is conditional}."
 )
+
+SLICING_CORRECTION = "Fix the plan's slicing, then reply with ONLY the JSON array:"
+CONDITIONAL_RE = re.compile(r"\b(?:if|unless|in case)\b[^:;.]*", re.I)
+STEP_ID_RE = re.compile(r"\b\d+\.\d+\b")
+
+
+def slicing_problems(steps: list[dict[str, Any]]) -> list[str]:
+    """Spec A Phase 10: research sliced on two axes, and conditional steps that wait for nothing."""
+    problems = []
+    by_axis = {axis: [st["id"] for st in steps if st.get("axis") == axis] for axis in ("entity", "topic")}
+    if by_axis["entity"] and by_axis["topic"]:
+        problems.append(f"Steps {', '.join(by_axis['entity'])} are sliced by entity and {', '.join(by_axis['topic'])} by topic. "
+                        "Slice research on one axis: fold each topic into the entity steps, or split only by topic.")
+    for st in steps:
+        clause = CONDITIONAL_RE.search(st["label"])
+        if clause and not st["dependsOn"]:
+            problems.append(f"Step {st['id']} is conditional (\"{clause.group(0).strip()}\") but depends on no step. "
+                            "Add the step whose answer decides it to dependsOn and state the condition in \"condition\".")
+    return problems
+
 
 CHAIN_CORRECTION = (
     "In that plan every step waits for the previous one, so no two agents can work at the same time. Either split the "
@@ -891,11 +916,15 @@ def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
             "dependsOn": [str(d) for d in deps],
             "phase": max(1, int(item.get("phase", 1) or 1)) if legacy else 0,
             "chainReason": str(item.get("chainReason") or "").strip()[:200],
+            **({"axis": str(item["axis"]).strip().lower()} if str(item.get("axis") or "").strip().lower() in ("entity", "topic") else {}),
+            **({"condition": str(item["condition"]).strip()[:300]} if str(item.get("condition") or "").strip() else {}),
         })
     ids = {s["id"] for s in steps}
     if legacy:
         for s in steps:
             s["dependsOn"] = [o["id"] for o in steps if o["phase"] < s["phase"]]
+    for s in steps:  # a step id named in a condition is a dependency (spec A Phase 10)
+        s["dependsOn"] += STEP_ID_RE.findall(s.get("condition", ""))
     for s in steps:  # unknown ids and self-references cannot be waited on
         s["dependsOn"] = list(dict.fromkeys(d for d in s["dependsOn"] if d in ids and d != s["id"]))
     by_id = {s["id"]: s for s in steps}
@@ -1012,6 +1041,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     ]
     steps: list[dict[str, Any]] | None = None
     chain_checked = False
+    slicing_checked = False
     served = ""
     fallback_reason = ""
     # The plan streams to the UI as it is written (UI Goal 5): stages, each complete subtask, any reasoning.
@@ -1072,6 +1102,12 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
             chain_checked = True
             print(f"[plan] run {run.run_id}: pure chain of {len(candidate)} steps — asking once for a parallel split", file=sys.stderr, flush=True)
             messages += [{"role": "assistant", "content": text}, {"role": "user", "content": CHAIN_CORRECTION}]
+            continue
+        problems = [] if slicing_checked else slicing_problems(candidate)
+        if problems:  # one correction only; the next answer is accepted either way
+            slicing_checked = True
+            print(f"[plan] run {run.run_id}: slicing correction — {len(problems)} problem(s)", file=sys.stderr, flush=True)
+            messages += [{"role": "assistant", "content": text}, {"role": "user", "content": SLICING_CORRECTION + "\n" + "\n".join(f"- {p}" for p in problems)}]
             continue
         if chain_checked:
             reason = next((s["chainReason"] for s in candidate if s.get("chainReason")), "")

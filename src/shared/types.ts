@@ -508,6 +508,9 @@ export interface AgentStep {
   dependsOn?: string[]
   /** Display only: longest dependency depth + 1 (steps with no dependencies are phase 1). */
   phase: number
+  /** Spec A Phase 10: how the planner sliced this step, and the condition on another step's answer, if any. */
+  axis?: 'entity' | 'topic'
+  condition?: string
 }
 
 export interface MultiAgentConfig {

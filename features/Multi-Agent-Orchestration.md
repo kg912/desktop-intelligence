@@ -305,6 +305,14 @@ tool's call record (`approvalMode`, `timing.waitMs/toolMs`). The run log flags `
 20 s on the critical path; the baseline summary splits wait from tool time and counts calls by mode.
 The approval UX is unchanged.
 
+**Planner slicing (spec A Phase 10).** The planner slices research on one axis — by entity (each leg,
+city, company) or by topic (baggage, prices, risks), never both — and marks each step's `axis`. A step
+that only matters depending on another step's answer lists that step in `dependsOn` and carries
+`condition` text; a step id named in `condition` is added to `dependsOn` automatically (Spec B makes
+conditions executable). `slicing_problems()` flags mixed axes and a label with an "if / unless / in case"
+clause that depends on nothing; the planner gets one correction turn (`SLICING_CORRECTION`), and its next
+answer is kept either way.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same
