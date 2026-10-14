@@ -234,14 +234,14 @@ const GraphEdges = memo(function GraphEdges({ nodes, byId, layout, m: M }: { nod
 })
 
 const STATE_DOT: Record<NodeState, string> = {
-  done: 'bg-[#4ade80]', run: 'bg-[#4ade80]', approval: 'bg-[#e6b422]', wait: 'bg-ma-dim', fail: 'border-[1.5px] border-ma-red', draft: 'bg-[#4ade80]', ghost: 'bg-transparent',
+  done: 'bg-[#4ade80]', run: 'bg-[#4ade80]', approval: 'bg-[#e6b422]', wait: 'bg-ma-dim', fail: 'border-[1.5px] border-ma-red', draft: 'bg-[#4ade80]', ghost: 'bg-transparent', skipped: 'bg-ma-dim',
 }
 const STATE_BORDER: Record<NodeState, string> = {
   done: 'border-[#4ade80]/40', run: 'border-[#4ade80]/40', approval: 'border-[#e6b422]/60', wait: 'border-white/[0.08] opacity-60',
-  fail: 'border-ma-red/60', draft: 'border-[#4ade80]/45', ghost: 'ma-ghost border-dashed border-ma-red/40',
+  fail: 'border-ma-red/60', draft: 'border-[#4ade80]/45', ghost: 'ma-ghost border-dashed border-ma-red/40', skipped: 'border-dashed border-white/[0.12] opacity-50',
 }
 const STATE_TEXT: Record<NodeState, string> = {
-  done: 'text-[#4ade80]', run: 'text-[#4ade80]', approval: 'text-[#e6b422]', wait: 'text-ma-dim', fail: 'text-[#ff8c88]', draft: 'text-ma-dim', ghost: 'text-ma-dim',
+  done: 'text-[#4ade80]', run: 'text-[#4ade80]', approval: 'text-[#e6b422]', wait: 'text-ma-dim', fail: 'text-[#ff8c88]', draft: 'text-ma-dim', ghost: 'text-ma-dim', skipped: 'text-ma-dim',
 }
 
 const GraphNodeCard = memo(function GraphNodeCard({ node, x, y, m: M, selected, onSelect, onOpen }: {

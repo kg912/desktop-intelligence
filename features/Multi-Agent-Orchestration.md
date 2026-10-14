@@ -173,6 +173,7 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `assess_start` | `wave, open` — the assess node began (spec B Phase 2) |
 | `assess_decision` | `wave, decision (done \| follow_up \| ask_user), reason, steps, unclosable, costUsd, durationMs, model, rules, forced?, estimatedUsd?, autoRun?, question?` |
 | `wave_start` | `n, steps` — a follow-up wave's validated steps |
+| `agent_skipped` | `agentId, reason, condition, basis (condition \| no_basis)` — a conditional step was not run (spec B Phase 3) |
 | `ledger_update` | `ledger {checklistId: {status, claimIds, conflict?}}, counts` — after every step ends; no model call (spec B Phase 1) |
 | `agent_start` | `agentId, role, model` |
 | `agent_token` | `agentId, token` |
@@ -344,6 +345,14 @@ mean worker spend of the finished steps per step (conditional steps at 50%); at 
 toolName `approve_followup`); `ask_user` pauses with the question (toolName `ask_user`) and a timeout finishes the
 run. A later wave's verified claims settle a requirement. Every requirement still open at the end goes to the
 synthesizer as a mandatory caveat (with the unclosable reason), and an answer to `ask_user` goes to it too.
+
+**Conditional steps (spec B Phase 3).** A step with `condition` (Spec A parses it and adds the step ids it names to
+`dependsOn`) runs only after its dependencies end, and only if one yes/no call (`CONDITION_SYSTEM`, the assess
+model, role `condition`, 300-token cap, low effort) over their verified and declared claims answers yes. No claims
+→ skipped with `no_basis` and no call; an answer that is neither yes nor no runs the step. A skipped step emits
+`agent_skipped`, counts as done for its dependants, and they and the synthesizer get `[2.1 SKIPPED: reason]`; its
+requirements read `missing` in the ledger. The UI shows it dimmed with the reason. The pre-flight estimate
+counts a conditional step at 50% (both bounds) and says how many there are.
 
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat

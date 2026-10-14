@@ -668,11 +668,11 @@ class DsmlTokenFilter:
 
 
 # ── Per-role request parameters (spec A Phase 8) ──────────────────────────────
-ROLE_OF_OBS = {"planner": "planner", "worker": "worker", "reflection": "judge", "synthesis": "synthesizer", "assess": "assess"}
+ROLE_OF_OBS = {"planner": "planner", "worker": "worker", "reflection": "judge", "synthesis": "synthesizer", "assess": "assess", "condition": "condition"}
 # Worker and synthesizer above the spec's 8k / 12k: in the Istanbul run 4 of 40 worker calls produced more than 8k
 # completion tokens (up to 22.8k, mostly reasoning) and the synthesis 12.9k. These bound reservations, not answers.
-ROLE_MAX_TOKENS = {"planner": 4_000, "worker": 12_000, "judge": 600, "synthesizer": 16_000, "assess": 800}
-ROLE_REASONING = {"planner": "medium", "judge": "low", "synthesizer": "medium", "assess": "low"}  # the worker's comes from Settings
+ROLE_MAX_TOKENS = {"planner": 4_000, "worker": 12_000, "judge": 600, "synthesizer": 16_000, "assess": 800, "condition": 300}
+ROLE_REASONING = {"planner": "medium", "judge": "low", "synthesizer": "medium", "assess": "low", "condition": "low"}  # the worker's comes from Settings
 # Families that need explicit cache_control breakpoints; the rest (OpenAI, DeepSeek, Z.AI, Moonshot, Gemini 2.5+) cache automatically.
 CACHE_EXPLICIT_RE = re.compile(r"^(anthropic/|qwen/|google/gemini-(1|2\.0))")
 
@@ -686,7 +686,7 @@ def role_effort(config: Config, role: str) -> str:
 
 
 def provider_prefs(config: Config, role: str) -> dict[str, Any]:
-    return {"require_parameters": True, "data_collection": config.dataCollection, **({"sort": "price"} if role in ("judge", "assess") else {}),
+    return {"require_parameters": True, "data_collection": config.dataCollection, **({"sort": "price"} if role in ("judge", "assess", "condition") else {}),
             **config.providerPrefs.get(role, {})}
 
 
@@ -2262,6 +2262,51 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     return await exhausted(f"reflection retry limit exceeded ({last_reason})")
 
 
+# ── Conditional steps (spec B Phase 3) ──────────────────────────────────────
+
+CONDITION_SYSTEM = ("You are a strict checker that answers yes or no. Given a condition and the verified findings of the steps it "
+                    "depends on, answer yes if the findings show the condition holds, no if they show it does not. "
+                    "Reply with ONLY yes or no.")
+
+
+class StepSkipped(Exception):
+    """A conditional step's condition did not hold (or could not be judged): it is not run, and dependants go on."""
+
+    def __init__(self, reason: str, basis: str):
+        super().__init__(reason)
+        self.reason, self.basis = reason, basis
+
+
+async def check_condition(run: Run, step: dict[str, Any]) -> None:
+    """Raises StepSkipped unless the step's condition holds according to its dependencies' claims. No claims → skipped
+    with no call (no_basis); an answer that is neither yes nor no runs the step (research is not dropped on a guess)."""
+    condition = step["condition"]
+    claims = [f"{dep} {c['id']} ({run.step_results[dep]['statuses'].get(c['id'], '')}): {preview(c['claim'], 300)}"
+              for dep in step["dependsOn"] for c in run.step_results.get(dep, {}).get("claims", [])
+              if run.step_results[dep]["statuses"].get(c["id"]) in CLAIM_OK]
+    if not claims:
+        deps = ", ".join(step["dependsOn"]) or "no dependency"
+        raise StepSkipped(f"no_basis: {deps} made no claims to judge the condition by", "no_basis")
+    model = run.config.models.get("assess") or run.config.models.get("reflection", "")
+    messages = [{"role": "system", "content": CONDITION_SYSTEM},
+                {"role": "user", "content": f"Condition: {condition}\n\nFindings:\n" + "\n".join(f"- {c}" for c in claims[:40])}]
+    reply, _, _ = await ask(run, model, messages, obs={"role": "condition", "agentId": step["id"]})
+    answer = WORD_RE.findall(str(reply.get("content") or "").lower()[:40])
+    if answer[:1] == ["no"]:
+        raise StepSkipped(f"condition not met: {condition}", "condition")
+
+
+async def run_step(run: Run, step: dict[str, Any], prior: dict[str, str]) -> str:
+    if step.get("condition"):
+        try:
+            await check_condition(run, step)
+        except StepSkipped as skipped:
+            run.step_results[step["id"]] = {"output": "", "claims": [], "statuses": {}, "skipped": skipped.reason}
+            await run.emit("agent_skipped", agentId=step["id"], reason=skipped.reason, condition=step["condition"], basis=skipped.basis)
+            raise
+    return await run_worker(run, step, prior)
+
+
 async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
     """Ready-queue scheduler: a step starts as soon as every step it depends on
     has passed, up to maxAgents at once — never waiting for a whole phase."""
@@ -2297,7 +2342,7 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
             for step in ready[: max(0, run.config.maxAgents - len(running))]:
                 del pending[step["id"]]
                 prior = {d: outputs[d] for d in step["dependsOn"]}
-                running[asyncio.create_task(run_worker(run, step, prior))] = step
+                running[asyncio.create_task(run_step(run, step, prior))] = step
                 run.active_workers = len(running)
             if not running:
                 for step_id in list(pending):  # unreachable for a validated acyclic plan
@@ -2310,8 +2355,9 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
                 if task.cancelled():
                     raise asyncio.CancelledError()
                 error = task.exception()
-                if error is None:
-                    outputs[step["id"]] = task.result()
+                if error is None or isinstance(error, StepSkipped):
+                    # A skipped step counts as done for its dependants, which (like the synthesizer) are told why it has nothing.
+                    outputs[step["id"]] = task.result() if error is None else f"[{step['id']} SKIPPED: {error.reason}]"
                     await update_ledger(run, steps)
                 else:
                     await fail(step["id"], str(error) or type(error).__name__)

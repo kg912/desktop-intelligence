@@ -63,7 +63,7 @@ export interface CallRecord {
   chatId: string
   seq: number
   kind: 'model' | 'tool'
-  role: 'planner' | 'worker' | 'reflection' | 'synthesis' | 'assess'
+  role: 'planner' | 'worker' | 'reflection' | 'synthesis' | 'assess' | 'condition'
   agentId: string | null
   attempt: number
   toolRound?: number
@@ -308,7 +308,7 @@ export async function readRun(dir: string): Promise<{ meta: RunLogMeta; events: 
 
 // ── Rendering ───────────────────────────────────────────────────────────────
 
-const ROLES = ['planner', 'worker', 'reflection', 'assess', 'synthesis'] as const
+const ROLES = ['planner', 'worker', 'reflection', 'assess', 'condition', 'synthesis'] as const
 
 function fence(body: string, lang = ''): string {
   const longest = Math.max(2, ...(body.match(/`+/g) ?? []).map((m) => m.length))
@@ -485,7 +485,7 @@ export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallR
 // ── Baseline summary (spec multi-agent-reliability-and-cost.md Phase 0) ──────
 
 export type BaselineRole = 'planner' | 'worker' | 'judge' | 'assess' | 'synthesizer'
-const BASELINE_ROLE: Record<CallRecord['role'], BaselineRole> = { planner: 'planner', worker: 'worker', reflection: 'judge', assess: 'assess', synthesis: 'synthesizer' }
+const BASELINE_ROLE: Record<CallRecord['role'], BaselineRole> = { planner: 'planner', worker: 'worker', reflection: 'judge', assess: 'assess', condition: 'assess', synthesis: 'synthesizer' }
 /** Claim status → failure class, for runs recorded before the sidecar sent classes itself. */
 const STATUS_FAILURE_CLASS: Record<string, string> = {
   quote_not_found: 'mismatch', quote_found_elsewhere: 'wrong_call', call_not_found: 'wrong_call', call_failed: 'call_failed', quote_too_short: 'too_short', quote_too_long: 'too_long',

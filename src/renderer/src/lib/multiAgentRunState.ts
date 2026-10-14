@@ -4,7 +4,7 @@
 
 import type { AgentEvent, AgentStep, AssessDecisionEvent, ChecklistItem, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
 
-export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled'
+export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled' | 'skipped'
 
 export interface ReflectionView {
   attempt: number
@@ -59,6 +59,8 @@ export interface AgentView {
   reflections: ReflectionView[]
   timeline: TimelineItem[]
   failure?: string
+  /** Spec B Phase 3: why a conditional step was not run. */
+  skipReason?: string
   pause?: HitlPauseEvent
   /** The answer hit an output limit. */
   truncated?: OutputLimit
@@ -114,6 +116,7 @@ export function runLogLine(e: AgentEvent): RunLogEntry | null {
     case 'retry': return at('wait', `${e.agentId} retry ${e.attempt}: ${e.reason}`, e.agentId)
     case 'agent_degraded': return at('wait', `${e.agentId} accepted with caveats`, e.agentId)
     case 'agent_failed': return at('fail', `${e.agentId} failed: ${e.reason}`, e.agentId)
+    case 'agent_skipped': return at('info', `${e.agentId} skipped: ${e.reason}`, e.agentId)
     case 'synthesis_start': return at('info', 'Final synthesis started')
     case 'task_complete': return at('ok', 'Run complete')
     case 'task_failed': return at('fail', `Run failed: ${e.reason}`)
@@ -196,7 +199,7 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
   }
 }
 
-const isFinished = (status: AgentStatus): boolean => status === 'done' || status === 'failed' || status === 'cancelled'
+const isFinished = (status: AgentStatus): boolean => status === 'done' || status === 'failed' || status === 'cancelled' || status === 'skipped'
 
 function updateAgent(view: RunView, id: string, patch: (agent: AgentView) => Partial<AgentView>): RunView {
   const agent = view.agents[id]
@@ -339,6 +342,8 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
         // The rejected attempt's output must not linger as if it were the answer.
         status: 'retrying', attempt: a.attempt + 1, liveText: '', streamedTokens: 0, output: undefined, endedAt: undefined, truncated: undefined, stoppedAtToolLimit: undefined,
       }))
+    case 'agent_skipped':
+      return updateAgent(next, event.agentId, () => ({ status: 'skipped', skipReason: event.reason, pause: undefined, endedAt: event.ts }))
     case 'agent_failed':
       return updateAgent(next, event.agentId, () => ({ status: 'failed', failure: event.reason, pause: undefined, endedAt: event.ts }))
     case 'agent_degraded':

@@ -4,7 +4,7 @@
 
 import type { AgentView, PlanningView, RunView } from './multiAgentRunState'
 
-export type NodeState = 'done' | 'run' | 'approval' | 'wait' | 'fail' | 'draft' | 'ghost'
+export type NodeState = 'done' | 'run' | 'approval' | 'wait' | 'fail' | 'draft' | 'ghost' | 'skipped'
 export type EdgeKind = 'done' | 'live' | 'hold' | 'idle'
 
 export interface GraphNode {
@@ -26,7 +26,7 @@ export const OUT_ID = 'out'
 /** Edge look from the state of the node the data comes from (and goes to). */
 export function edgeKind(from: NodeState, to: NodeState): EdgeKind {
   if (to === 'ghost' || from === 'ghost' || from === 'draft' || to === 'draft') return 'idle'
-  if (from === 'done') return 'done'
+  if (from === 'done' || from === 'skipped') return 'done'
   if (from === 'approval') return 'hold'
   if (from === 'run' && to !== 'done') return 'live'
   return 'idle'
@@ -67,6 +67,7 @@ function agentState(agent: AgentView, pending: number): { state: NodeState; stat
     case 'running': case 'retrying': return { state: 'run', stateText: agent.status === 'retrying' ? 'retrying' : 'running' }
     case 'reflecting': return { state: 'run', stateText: 'reviewing' }
     case 'done': return { state: 'done', stateText: agent.degraded ? 'caveats' : 'done' }
+    case 'skipped': return { state: 'skipped', stateText: 'skipped' }
     case 'failed': case 'cancelled': return { state: 'fail', stateText: agent.status === 'failed' ? 'failed' : 'stopped' }
     default: return { state: 'wait', stateText: 'waiting' }
   }
@@ -76,7 +77,7 @@ export function runGraphNodes(view: RunView, pending: Map<string, number>, model
   const steps = view.steps.map((s): GraphNode => {
     const agent = view.agents[s.id]
     const deps = s.dependsOn ?? []
-    const waitingOn = deps.filter((d) => view.agents[d]?.status !== 'done')
+    const waitingOn = deps.filter((d) => view.agents[d]?.status !== 'done' && view.agents[d]?.status !== 'skipped')
     const { state, stateText } = agent ? agentState(agent, pending.get(s.id) ?? 0) : { state: 'wait' as const, stateText: 'waiting' }
     const used = agent ? agent.tokenCount || agent.streamedTokens : 0
     return {

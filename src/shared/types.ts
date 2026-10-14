@@ -700,6 +700,16 @@ export interface AssessDecisionEvent extends AgentEventBase {
   question?: string
 }
 
+/** Spec B Phase 3: a conditional step was not run. basis: the yes/no check said no ("condition"), or its dependencies
+ *  made no claims to judge it by ("no_basis"). Dependants treat it as done. */
+export interface AgentSkippedEvent extends AgentEventBase {
+  type: 'agent_skipped'
+  agentId: string
+  reason: string
+  condition: string
+  basis: 'condition' | 'no_basis'
+}
+
 export interface WaveStartEvent extends AgentEventBase {
   type: 'wave_start'
   n: number
@@ -985,6 +995,7 @@ export type AgentEvent =
   | AssessStartEvent
   | AssessDecisionEvent
   | WaveStartEvent
+  | AgentSkippedEvent
   | RunConfigEvent
   | AgentStartEvent
   | AgentTokenEvent

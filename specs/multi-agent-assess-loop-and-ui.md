@@ -50,6 +50,7 @@ New node between `workers` and `synthesize`; conditional edge back to `workers` 
 ### Phase 3: Conditional steps (B4)
 - Plan schema: `step.condition?: {on: stepId, predicate: string}`. Evaluated when `on` passes the gate, by a single cheap yes/no model call with the dependency's claims (no call if the dependency produced no claims → skip with reason `no_basis`). Result `run` or `skipped {reason}`.
 - `workers_node` treats a skipped step as satisfied for dependants. `agent_skipped` event; the UI shows it dimmed with the reason (design 14, step 1.3).
+- **Decisions (implemented):** the condition stays Spec A's string (Amendment 3), with the step ids it names as dependencies; the check runs when all of them end, over their verified and declared claims. An answer that is neither yes nor no runs the step (research is not dropped on a guess). The check uses the assess model (role `condition`). The pre-flight counts a conditional step at 50% in both the low and high bound. A skipped step's requirements read `missing`.
 - **Acceptance:** `test_conditional_steps.py`: skipped when false, runs when true, downstream steps unblock either way; cost estimate in pre-flight counts a conditional step at 50% and labels it.
 
 ### Phase 4: Shared evidence handoff (B5)

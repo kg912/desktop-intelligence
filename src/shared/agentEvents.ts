@@ -19,6 +19,7 @@ const KNOWN_TYPES = new Set<string>([
   'assess_start',
   'assess_decision',
   'wave_start',
+  'agent_skipped',
   'run_config',
   'agent_start',
   'agent_token',
@@ -166,6 +167,9 @@ function validateVariant(obj: Record<string, unknown>): string | null {
       if (typeof obj.rules !== 'object' || obj.rules === null) return '"rules" must be an object'
       return checkFields(obj, [['wave', 'number'], ['reason', 'string'], ['costUsd', 'number'], ['durationMs', 'number'], ['model', 'string']])
     }
+
+    case 'agent_skipped':
+      return checkFields(obj, [['agentId', 'string'], ['reason', 'string'], ['condition', 'string'], ['basis', 'string']])
 
     case 'wave_start':
       if (!Array.isArray(obj.steps)) return '"steps" must be an array'

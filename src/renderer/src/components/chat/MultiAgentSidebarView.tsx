@@ -20,7 +20,7 @@ const PLAN_COLUMN_WIDTH = 248
 
 export type Dot = 'ok' | 'run' | 'wait' | 'fail' | 'idle'
 export const DOT: Record<AgentStatus, Dot> = {
-  queued: 'idle', running: 'run', reflecting: 'run', retrying: 'run', paused: 'wait', done: 'ok', failed: 'fail', cancelled: 'fail',
+  queued: 'idle', running: 'run', reflecting: 'run', retrying: 'run', paused: 'wait', done: 'ok', failed: 'fail', cancelled: 'fail', skipped: 'idle',
 }
 /** A step accepted with caveats shows the amber (paused) state, never the failed one. */
 export const dotOf = (agent: AgentView): Dot => (agent.degraded ? 'wait' : DOT[agent.status])
@@ -314,6 +314,7 @@ export function Preflight({ view, config, estimate, onApprove, onCancel }: {
               {s.label}
               <span className="block font-mono text-[11.5px] text-ma-mute">
                 {s.role}{s.dependsOn?.length ? ` · after ${s.dependsOn.join(', ')}` : ' · starts immediately'}
+                {s.condition && <span className="text-ma-amber" data-testid={`preflight-condition-${s.id}`}> · {s.condition}; skipped automatically when the condition fails</span>}
               </span>
             </span>
           </li>
@@ -328,6 +329,11 @@ export function Preflight({ view, config, estimate, onApprove, onCancel }: {
         {estimate ? (
           <>
             <p>Estimated cost <span className="text-ma-text">{formatUsd(estimate.minUsd)} – {formatUsd(estimate.maxUsd)}</span></p>
+            {!!estimate.conditionalSteps && (
+              <p className="text-ma-amber" data-testid="estimate-conditional">
+                {estimate.conditionalSteps} conditional step{estimate.conditionalSteps === 1 ? '' : 's'}, counted at 50%: {estimate.conditionalSteps === 1 ? 'it runs' : 'they run'} only if the condition holds.
+              </p>
+            )}
             {estimate.nominal && (
               <p className="text-ma-mute" data-testid="estimate-nominal">
                 Nominal figure: tool rounds are unlimited, so the worst case assumes {ESTIMATE.nominalToolRounds} rounds per attempt.
@@ -466,6 +472,7 @@ export function stateTag(agent: AgentView, maxRetries: number, hasRequest: boole
     case 'paused': return { label: 'Tool call', tone: 'wait' }
     case 'failed': return { label: agent.startedAt ? 'Failed' : 'Not started', tone: 'fail' }
     case 'cancelled': return { label: 'Stopped', tone: 'idle' }
+    case 'skipped': return { label: 'Skipped', tone: 'idle' }
     default: return { label: 'Queued', tone: 'idle' }
   }
 }
@@ -478,7 +485,7 @@ export const TAG_TONE = {
   idle: 'text-ma-mute border-white/[0.09]',
 } as const
 
-const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, waitingOn, head, queued, active, onToggle, onRespondPermission, onOpenAgent }: {
+export const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, waitingOn, head, queued, active, onToggle, onRespondPermission, onOpenAgent }: {
   agent: AgentView
   open: boolean
   now: number
@@ -500,8 +507,9 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
   const elapsed = elapsedMs(agent, now || agent.startedAt || 0)
   const toolCalls = agent.timeline.filter((t) => t.kind === 'tool').length
   const blocked = agent.status === 'queued' && waitingOn.length > 0
-  const meta = agent.status === 'queued'
-    ? [step.role, waitingOn.length ? `waits on ${waitingOn.join(' ')}` : 'queued']
+  const meta = agent.status === 'skipped' ? [step.role, agent.skipReason ?? 'skipped']
+    : agent.status === 'queued'
+    ? [step.role, waitingOn.length ? `waits on ${waitingOn.join(' ')}` : step.condition ? `only if ${step.condition.replace(/^only if /i, '')}` : 'queued']
     : [step.role, shortModel(step.model), agent.tokenCount ? `${formatTokens(agent.tokenCount)} tok` : agent.streamedTokens ? `~${formatTokens(agent.streamedTokens)} tok` : null,
         toolCalls ? `${toolCalls} tool call${toolCalls === 1 ? '' : 's'}` : null,
         agent.costUsd ? formatUsd(agent.costUsd) : null, elapsed !== null ? formatElapsed(elapsed) : null,
@@ -518,7 +526,7 @@ const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools,
       className={cn(
         'mb-3 overflow-hidden rounded-xl border-[0.5px] bg-ma-bg1 transition-opacity',
         head ? 'border-[#e6b422]/35' : isWorking(agent.status) && agent.status !== 'paused' ? 'border-ma-red/35' : 'border-white/[0.09]',
-        blocked && 'opacity-[0.55]'
+        (blocked || agent.status === 'skipped') && 'opacity-[0.55]'
       )}
     >
       {/* One fixed-height row: output never grows it. */}

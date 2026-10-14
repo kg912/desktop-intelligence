@@ -118,6 +118,8 @@ export interface CostEstimate {
   unpricedModels: string[]
   /** maxToolRounds is unlimited: the worst case assumes ESTIMATE.nominalToolRounds rounds. */
   nominal?: boolean
+  /** Spec B Phase 3: steps with a condition, each counted at 50% (they may be skipped). */
+  conditionalSteps?: number
 }
 
 export const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
@@ -151,6 +153,10 @@ export function estimateRunCost(input: {
   const toolRounds = config.maxToolRounds === null ? ESTIMATE.nominalToolRounds : (config.maxToolRounds ?? DEFAULT_MULTI_AGENT_CONFIG.maxToolRounds ?? 1)
 
   for (const step of steps) {
+    // A conditional step may be skipped: it counts at 50% in both bounds (spec B Phase 3), and the pre-flight says so.
+    const share = step.condition ? 0.5 : 1
+    const stepMin = min
+    const stepMax = max
     const base = ESTIMATE.workerSystemTokens + taskTokens + estimateTokens(step.label)
     const priorOutMin = priorCount(step) * ESTIMATE.workerOutMin
     const priorOutMax = priorCount(step) * ESTIMATE.workerOutMax
@@ -177,6 +183,8 @@ export function estimateRunCost(input: {
         ESTIMATE.reflectionOut
       )
     }
+    min = stepMin + (min - stepMin) * share
+    max = stepMax + (max - stepMax) * share
   }
   const allOutMin = steps.length * ESTIMATE.workerOutMin
   const allOutMax = steps.length * ESTIMATE.workerOutMax
@@ -184,7 +192,8 @@ export function estimateRunCost(input: {
   min += cost(config.models.synthesizer, ESTIMATE.synthesisPromptOverhead + allOutMin, ESTIMATE.synthesisOutMin)
   max += cost(config.models.synthesizer, ESTIMATE.synthesisPromptOverhead + allOutMax, ESTIMATE.synthesisOutMax)
 
-  return { minUsd: min, maxUsd: max, unpricedModels: [...unpriced].sort(), nominal: config.maxToolRounds === null }
+  return { minUsd: min, maxUsd: max, unpricedModels: [...unpriced].sort(), nominal: config.maxToolRounds === null,
+    conditionalSteps: steps.filter((s) => s.condition).length }
 }
 
 /** "$0.04 – $0.18" with sensible precision for sub-cent values. */
