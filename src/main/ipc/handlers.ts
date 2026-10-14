@@ -1,4 +1,5 @@
-import { ipcMain, shell, WebContents, app, dialog, BrowserWindow } from 'electron'
+import { ipcMain, shell, WebContents, app, dialog, BrowserWindow, Notification } from 'electron'
+import { notifyNeedsYou } from '../services/multiAgentNotify'
 import { join, isAbsolute } from 'path'
 import fs from 'fs'
 import { is } from '@electron-toolkit/utils'
@@ -1460,6 +1461,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: Pick<HitlResponse, 'runId' | 'approved'> & { steps?: unknown }) =>
     getMultiAgentCoordinator().respondToPlan(String(r.runId), r.approved === true, editedSteps(r.steps))
   )
+  // Spec B 7e: the renderer says when a run needs the user; main shows it only while the window is unfocused.
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_NOTIFY, (_, p: { title: string; body: string; chatId: string }) => {
+    const wc = webContents()
+    return notifyNeedsYou({ window: wc ? BrowserWindow.fromWebContents(wc) : null, Notification },
+      { title: String(p.title ?? '').slice(0, 120), body: String(p.body ?? '').slice(0, 300), chatId: String(p.chatId ?? '') })
+  })
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_STEER, (_, p: { runId: string; agentId: string; message: string }) =>
     getMultiAgentCoordinator().steer(String(p.runId), String(p.agentId), String(p.message ?? '').slice(0, 2_000))
   )

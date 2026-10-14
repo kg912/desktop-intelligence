@@ -494,6 +494,9 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',
   MULTI_AGENT_GET_EVIDENCE:   'multi-agent:get-evidence',
   MULTI_AGENT_STEER:          'multi-agent:steer',
+  // Spec B 7e: a system notification when a run needs the user (renderer → main), and its click (main → renderer).
+  MULTI_AGENT_NOTIFY:         'multi-agent:notify',
+  MULTI_AGENT_FOCUS_RUN:      'multi-agent:focus-run',
   // Spec B 7b: the assess card's buttons and the ask_user answer.
   MULTI_AGENT_ASSESS_RUN_FOLLOWUP: 'assess:run-followup',
   MULTI_AGENT_ASSESS_FINISH:  'assess:finish',
@@ -587,6 +590,8 @@ export interface MultiAgentConfig {
    *  below followUpAutoUsd run without asking (0 = always ask). Optional so configs saved earlier still load. */
   maxWaves?:               number
   followUpAutoUsd?:        number
+  /** Spec B 7e: a system notification when a run needs the user while the window is in the background (default on). */
+  notifyNeedsYou?:         boolean
   /** Config-file only overrides by role (spec A Phase 8): planner | worker | judge | synthesizer. */
   maxTokensByRole?:        Partial<Record<MultiAgentRole, number>>
   /** Planner, judge and synthesizer efforts (the workers' is reasoningEffort). */
@@ -637,6 +642,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   dataCollection:          'allow',
   maxWaves:                2,
   followUpAutoUsd:         0.15,
+  notifyNeedsYou:          true,
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */

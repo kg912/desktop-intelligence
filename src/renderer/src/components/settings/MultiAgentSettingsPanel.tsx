@@ -163,6 +163,8 @@ export function MultiAgentSettingsPanel() {
         checked={config.requirePermissions} onChange={(e) => update('requirePermissions', e.target.checked)} />
       <Checkbox className="col-span-2" label="Only use OpenRouter providers that do not store prompts (fewer providers; a model may become unavailable)"
         checked={config.dataCollection === 'deny'} onChange={(e) => update('dataCollection', e.target.checked ? 'deny' : 'allow')} />
+      <Checkbox className="col-span-2" label="Notify me when a run needs me (an approval, the plan, or a question) while the app is in the background"
+        checked={config.notifyNeedsYou !== false} onChange={(e) => update('notifyNeedsYou', e.target.checked)} />
 
       <div className="col-span-2 flex items-center gap-3.5">
         <button onClick={() => void save()} disabled={saving}

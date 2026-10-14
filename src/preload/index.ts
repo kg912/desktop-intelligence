@@ -449,6 +449,17 @@ const api = {
   getMultiAgentCatalogue: (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE),
 
+  /** Spec B 7e: a system notification when a run needs the user (shown only while the window is unfocused). */
+  notifyMultiAgent: (payload: { title: string; body: string; chatId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_NOTIFY, payload),
+
+  /** The notification was clicked: open this chat's run. */
+  onMultiAgentFocusRun: (cb: (chatId: string) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, chatId: string): void => cb(chatId)
+    ipcRenderer.on(IPC_CHANNELS.MULTI_AGENT_FOCUS_RUN, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MULTI_AGENT_FOCUS_RUN, h)
+  },
+
   onMultiAgentEvent: (cb: (e: AgentEvent) => void): (() => void) => {
     const h = (_: Electron.IpcRendererEvent, e: AgentEvent): void => cb(e)
     ipcRenderer.on(IPC_CHANNELS.MULTI_AGENT_EVENT, h)

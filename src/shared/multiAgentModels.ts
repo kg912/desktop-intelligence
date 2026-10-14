@@ -260,6 +260,7 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
     dataCollection: c.dataCollection === 'deny' || c.dataCollection === 'allow' ? c.dataCollection : d.dataCollection,
     // Spec B 7f: 1–3 waves; the auto-run limit is non-negative and never above the run's budget cap.
     maxWaves: clampInt(c.maxWaves, 1, 3, d.maxWaves ?? 2),
+    notifyNeedsYou: typeof c.notifyNeedsYou === 'boolean' ? c.notifyNeedsYou : d.notifyNeedsYou ?? true,
     followUpAutoUsd: Math.min(
       Number.isFinite(Number(c.followUpAutoUsd)) && c.followUpAutoUsd !== null && Number(c.followUpAutoUsd) >= 0 ? Number(c.followUpAutoUsd) : d.followUpAutoUsd ?? 0.15,
       Number.isFinite(budget) && budget >= 0 ? budget : d.budgetCapUsd),

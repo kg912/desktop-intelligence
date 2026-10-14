@@ -448,6 +448,13 @@ queued → delivered); a finished run's step can be re-run on another model, alo
 with its estimate, and its output locked or unlocked (`step_locked`; a finished run's lock is recorded in its trace by
 the coordinator).
 
+**Notifications (spec B 7e).** `needsYou()` counts what the run waits on the user for (the plan approval, this run's
+tool approvals, an assess pause) and `nextNotification()` asks for a notification on the first item of a batch (the
+count leaving 0) or a new assess question. Layout sends it over `MULTI_AGENT_NOTIFY` when the setting
+`notifyNeedsYou` (Settings → Multi-Agent, default on) allows; main's `notifyNeedsYou()` shows an Electron
+`Notification` only while the window is unfocused, and a click restores and focuses the window and opens that chat's
+run (`MULTI_AGENT_FOCUS_RUN`).
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

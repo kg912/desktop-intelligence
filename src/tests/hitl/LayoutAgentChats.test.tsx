@@ -238,6 +238,43 @@ describe('Part C — navigation lock while a run is live', () => {
     expect(panelMode()).toBe('chat')
   })
 
+  it('spec B 7e: the first "Needs you" item asks main for a notification (once per batch); the setting turns it off; a click opens the run', async () => {
+    const notify = vi.fn(async () => true)
+    let focusRun: (chatId: string) => void = () => {}
+    Object.assign(overrides, { notifyMultiAgent: notify, onMultiAgentFocusRun: vi.fn((cb: (chatId: string) => void) => { focusRun = cb; return () => {} }) })
+    try {
+      await startRun()
+      await push(1, { type: 'orchestrator_plan', steps: [step] })
+      await push(2, { type: 'hitl_pause', agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} })
+      expect(notify).toHaveBeenCalledTimes(1)
+      expect(notify).toHaveBeenCalledWith({ title: 'A multi-agent run needs you', body: 'Review the plan before any agent starts.', chatId: 'agents' })
+      await push(3, { type: 'hitl_resume', agentId: 'orchestrator', approved: true })
+      await push(4, { type: 'task_complete', finalOutput: 'Done', totalCostUsd: 0, totalTokens: 0 })
+      await act(async () => { fireEvent.click(screen.getByTitle('Chats')) })
+      expect(panelMode()).toBe('chat')
+      await act(async () => { focusRun('agents') })  // the notification was clicked
+      await waitFor(() => expect(panelMode()).toBe('agents'))
+    } finally {
+      delete (overrides as Record<string, unknown>).notifyMultiAgent
+      delete (overrides as Record<string, unknown>).onMultiAgentFocusRun
+    }
+  })
+
+  it('spec B 7e: no notification when the setting is off', async () => {
+    const notify = vi.fn(async () => true)
+    Object.assign(overrides, { notifyMultiAgent: notify })
+    overrides.getMultiAgentConfig.mockResolvedValue({ ...DEFAULT_MULTI_AGENT_CONFIG, notifyNeedsYou: false })
+    try {
+      await startRun()
+      await push(1, { type: 'orchestrator_plan', steps: [step] })
+      await push(2, { type: 'hitl_pause', agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} })
+      expect(notify).not.toHaveBeenCalled()
+    } finally {
+      delete (overrides as Record<string, unknown>).notifyMultiAgent
+      overrides.getMultiAgentConfig.mockResolvedValue(DEFAULT_MULTI_AGENT_CONFIG)
+    }
+  })
+
   it('Goal 4: the full-screen button opens the focus view over the dock; closing it leaves the run and the dock as they were', async () => {
     await startRun()
     await push(1, { type: 'orchestrator_plan', steps: [step] })

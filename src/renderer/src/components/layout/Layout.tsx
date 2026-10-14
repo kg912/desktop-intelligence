@@ -20,6 +20,8 @@ import { ClaimsDrawer } from '../chat/ClaimsDrawer'
 import type { ClaimTarget } from '../chat/ClaimsDrawer'
 import { ClaimLinksContext } from '../chat/ClaimLinks'
 import { RunActionsContext } from '../chat/RunActions'
+import { needsYou, nextNotification } from '../../lib/needsYou'
+import type { NeedsYou } from '../../lib/needsYou'
 import type { RunActions } from '../chat/RunActions'
 import type { ClaimLinks } from '../chat/ClaimLinks'
 import { FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
@@ -306,6 +308,20 @@ export function Layout() {
       lock: (stepId, locked) => window.api.lockMultiAgentStep({ runId: claimView.runId, stepId, locked, chatId: activeChatId }),
     }
   }, [claimView, activeChatId, shownRun, multiAgent])
+
+  // Spec B 7e: a system notification for the first "Needs you" item of a batch or an assess question (main shows it
+  // only while the window is unfocused); clicking it opens that chat's run.
+  const needsYouPrev = useRef<NeedsYou>({ count: 0 })
+  useEffect(() => {
+    const run = multiAgent.run
+    const now = run ? needsYou(run.view, mcpPermissionRequests, run.review) : { count: 0 }
+    const note = nextNotification(needsYouPrev.current, now)
+    needsYouPrev.current = now
+    if (note && run && run.config.notifyNeedsYou !== false) void window.api.notifyMultiAgent?.({ ...note, chatId: run.chatId })?.catch(() => {})
+  }, [multiAgent.run, mcpPermissionRequests])
+  useEffect(() => window.api.onMultiAgentFocusRun?.((chatId) => {
+    void handleSelectChat(chatId).then(() => setSidebarMode('agents'))
+  }), [handleSelectChat])
 
   // ── Sidebar: new chat ─────────────────────────────────────────
   const handleNewChat = useCallback(() => {
