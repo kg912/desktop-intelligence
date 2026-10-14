@@ -128,6 +128,32 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     return true
   }, [])
 
+  /** Spec B Phase 5: resume an interrupted run, or re-run one step of a finished one (`rerun`). The saved run goes live
+   *  (its trace stays; new events apply on top). A refusal leaves it open read-only with the reason. */
+  const continueRun = useCallback(async (chatId: string, runId: string, rerun?: { stepId: string; model?: string; withDependents?: boolean }): Promise<boolean> => {
+    const current = runRef.current
+    if (current && !current.review && isRunActive(current.view)) return false
+    setStartError(null)
+    const record = await window.api.getMultiAgentRun(chatId, runId).catch(() => null)
+    if (!record || record.mode !== 'multi-agent' || record.executionTrace.length === 0) return false
+    const config: MultiAgentConfig = await window.api.getMultiAgentConfig().catch(() => DEFAULT_MULTI_AGENT_CONFIG)
+    const next: ActiveRun = { chatId, task: record.task ?? '', review: false, config, view: reduceRunEvents(runId, record.executionTrace), runIds: record.runIds }
+    runRef.current = next
+    setRun(next)
+    const result = await (rerun
+      ? window.api.rerunMultiAgentStep({ runId, chatId, config, ...rerun })
+      : window.api.resumeMultiAgentRun({ runId, chatId, config })
+    ).catch((err: unknown) => ({ ok: false as const, reason: err instanceof Error ? err.message : String(err) }))
+    if (!result.ok) {
+      const readOnly = { ...next, review: true }
+      runRef.current = readOnly
+      setRun(readOnly)
+      setStartError(result.reason)
+      return false
+    }
+    return true
+  }, [])
+
   const dismiss = useCallback(() => {
     runRef.current = null
     setRun(null)
@@ -162,7 +188,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
   // Memoised so Layout's callbacks that depend on it (handleSend → the memo'd
   // InputBar) keep their identity across unrelated Layout renders.
   return useMemo(
-    () => ({ run, startError, setStartError, pricing, start, review, dismiss, approvePlan, abort, quickPlan }),
-    [run, startError, pricing, start, review, dismiss, approvePlan, abort, quickPlan],
+    () => ({ run, startError, setStartError, pricing, start, review, continueRun, dismiss, approvePlan, abort, quickPlan }),
+    [run, startError, pricing, start, review, continueRun, dismiss, approvePlan, abort, quickPlan],
   )
 }

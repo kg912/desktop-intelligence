@@ -24,13 +24,14 @@ import type {
   MultiAgentConfig,
   MultiAgentRunRecord,
   MultiAgentStartPayload,
+  ResumableRun,
   RunStatus,
   StartRunResult,
 } from '../../shared/types'
 import { isTerminalAgentEvent } from '../../shared/agentEvents'
 import { MODEL_ROLES, resolveRoleModels } from '../../shared/multiAgentModels'
 import type { ModelPricing, ModelRole, OpenRouterModelInfo } from '../../shared/multiAgentModels'
-import type { RunStartRequest } from './MultiAgentSidecarManager'
+import type { ContinueRunBody, RunStartRequest } from './MultiAgentSidecarManager'
 import { currentDateTimeLine } from './SystemPromptService'
 import { BUILTIN_SERVER, McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext, ToolApproval } from './McpServerManager'
@@ -57,12 +58,18 @@ export interface CoordinatorDeps {
   sidecar: {
     on(event: 'event', listener: (event: AgentEvent) => void): unknown
     on(event: 'runStarted', listener: (info: { runId: string; chatId: string }) => void): unknown
+    on(event: 'runContinued', listener: (info: { runId: string; chatId: string }) => void): unknown
     on(event: 'obsRecord', listener: (info: { runId: string; chatId: string; record: unknown }) => void): unknown
     startRun(request: RunStartRequest): Promise<StartRunResult>
     respondHitl(response: HitlResponse): Promise<void>
     abortRun(runId: string): Promise<void>
     quickPlan(runId: string): Promise<void>
     isAwaitingPlanApproval(runId: string): boolean
+    // Spec B Phase 5
+    listResumable(): Promise<ResumableRun[]>
+    continueRun(runId: string, chatId: string, body: ContinueRunBody): Promise<StartRunResult>
+    discardRun(runId: string): Promise<void>
+    lockStep(runId: string, stepId: string, locked: boolean): Promise<void>
   }
   mcp: {
     /** Running MCP schemas a worker can actually call (see multiAgentExclusionReason). */
@@ -125,6 +132,8 @@ export class MultiAgentRunCoordinator {
   private readonly runs = new Map<string, RunContext>()
   /** chatId → config and task for a run whose id the sidecar has not assigned yet. */
   private readonly starting = new Map<string, { config: MultiAgentConfig; task: string; observe: boolean }>()
+  /** runId → the saved trace a resumed or re-run run continues (spec B Phase 5). */
+  private readonly continuing = new Map<string, { config: MultiAgentConfig; trace: AgentEvent[]; steps: AgentStep[] }>()
   private readonly flushDelayMs: number
 
   constructor(private readonly deps: CoordinatorDeps) {
@@ -141,6 +150,13 @@ export class MultiAgentRunCoordinator {
       })
       deps.db.begin(chatId, { runId, task, config })
       if (observe) this.guard(() => deps.runLog?.begin({ runId, chatId, task, config }))
+    })
+    deps.sidecar.on('runContinued', ({ runId, chatId }) => {
+      const saved = this.continuing.get(runId)
+      if (!saved) return
+      this.continuing.delete(runId)
+      // The same run row: its trace grows from where it stopped; no new history entry.
+      this.runs.set(runId, { runId, chatId, config: saved.config, trace: saved.trace, steps: saved.steps, pendingTokens: new Map(), openPauses: 0, flushTimer: null })
     })
     deps.sidecar.on('event', (event) => this.onEvent(event))
     deps.sidecar.on('obsRecord', ({ runId, record }) => this.guard(() => deps.runLog?.record(runId, record)))
@@ -248,6 +264,45 @@ export class MultiAgentRunCoordinator {
     return this.deps.sidecar.quickPlan(runId)
   }
 
+  // ── Resume, re-run and lock (spec B Phase 5) ─────────────────────────────
+
+  /** Runs a sidecar restart interrupted that this app still has a chat for. */
+  async resumable(): Promise<ResumableRun[]> {
+    const runs = await this.deps.sidecar.listResumable()
+    return runs.filter((r) => this.deps.db.getRun(r.chatId, r.runId) !== null && !this.runs.has(r.runId))
+  }
+
+  resume(runId: string, chatId: string, config: MultiAgentConfig): Promise<StartRunResult> {
+    return this.continueSaved(runId, chatId, config, {})
+  }
+
+  rerunStep(runId: string, chatId: string, stepId: string, config: MultiAgentConfig, options: { model?: string; withDependents?: boolean }): Promise<StartRunResult> {
+    return this.continueSaved(runId, chatId, config, { stepId, ...(options.model ? { model: options.model } : {}), withDependents: options.withDependents === true })
+  }
+
+  discard(runId: string): Promise<void> {
+    return this.deps.sidecar.discardRun(runId)
+  }
+
+  lockStep(runId: string, stepId: string, locked: boolean): Promise<void> {
+    return this.deps.sidecar.lockStep(runId, stepId, locked)
+  }
+
+  private async continueSaved(runId: string, chatId: string, config: MultiAgentConfig, rest: Omit<ContinueRunBody, 'openRouterApiKey' | 'lastSeq'>): Promise<StartRunResult> {
+    const { openRouterApiKey } = this.deps.settings()
+    if (!openRouterApiKey) return { ok: false, reason: 'OpenRouter API key is not configured — add it in Settings → Backend' }
+    if ([...this.runs.values()].some((r) => r.chatId === chatId)) return { ok: false, reason: 'A multi-agent run is already in progress for this chat' }
+    const saved = this.deps.db.getRun(chatId, runId)
+    if (!saved) return { ok: false, reason: 'No saved run to continue' }
+    // The trace is saved to the chat's latest run row, so only that run can continue.
+    if (saved.runIds && saved.runIds.at(-1) !== runId) return { ok: false, reason: 'Only the latest run of a chat can be resumed or re-run' }
+    const lastSeq = saved.executionTrace.reduce((max, e) => Math.max(max, e.seq), 0)
+    this.continuing.set(runId, { config, trace: [...saved.executionTrace], steps: saved.agentGraph })
+    const result = await this.deps.sidecar.continueRun(runId, chatId, { openRouterApiKey, lastSeq, ...rest })
+    if (!result.ok) this.continuing.delete(runId)
+    return result
+  }
+
   /** The chat's live run, else its latest saved one; `runId` picks a specific (earlier) run. */
   getRun(chatId: string, runId?: string): MultiAgentRunRecord | null {
     const live = [...this.runs.values()].find((r) => r.chatId === chatId)
@@ -288,6 +343,7 @@ export class MultiAgentRunCoordinator {
     this.flushTokens(run)
     this.record(run, event)
     if (event.type === 'orchestrator_plan') run.steps = event.steps
+    if (event.type === 'wave_start') run.steps = [...(run.steps ?? []), ...event.steps]
     if (event.type === 'hitl_pause') run.openPauses++
     if (event.type === 'hitl_resume') run.openPauses = Math.max(0, run.openPauses - 1)
 

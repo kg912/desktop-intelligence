@@ -61,6 +61,8 @@ export interface AgentView {
   failure?: string
   /** Spec B Phase 3: why a conditional step was not run. */
   skipReason?: string
+  /** Spec B Phase 5: a step it depends on was re-run; this output is built on the earlier one. */
+  stale?: string
   pause?: HitlPauseEvent
   /** The answer hit an output limit. */
   truncated?: OutputLimit
@@ -117,6 +119,9 @@ export function runLogLine(e: AgentEvent): RunLogEntry | null {
     case 'agent_degraded': return at('wait', `${e.agentId} accepted with caveats`, e.agentId)
     case 'agent_failed': return at('fail', `${e.agentId} failed: ${e.reason}`, e.agentId)
     case 'agent_skipped': return at('info', `${e.agentId} skipped: ${e.reason}`, e.agentId)
+    case 'run_resumed': return at('info', `Run resumed: ${e.finishedSteps.join(', ') || 'no step'} kept; unfinished steps start again`)
+    case 'rerun_start': return at('info', `Re-running ${e.steps.join(', ')}${e.model ? ` on ${e.model}` : ''}${e.stale.length ? `; ${e.stale.join(', ')} now stale` : ''}`)
+    case 'agent_stale': return at('wait', `${e.agentId} is stale: ${e.reason}`, e.agentId)
     case 'synthesis_start': return at('info', 'Final synthesis started')
     case 'task_complete': return at('ok', 'Run complete')
     case 'task_failed': return at('fail', `Run failed: ${e.reason}`)
@@ -342,6 +347,25 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
         // The rejected attempt's output must not linger as if it were the answer.
         status: 'retrying', attempt: a.attempt + 1, liveText: '', streamedTokens: 0, output: undefined, endedAt: undefined, truncated: undefined, stoppedAtToolLimit: undefined,
       }))
+    case 'run_resumed': {
+      // The interrupted run is live again: steps that had not finished start over.
+      const agents = { ...next.agents }
+      const kept = new Set(event.finishedSteps)
+      for (const [id, agent] of Object.entries(agents)) {
+        if (!kept.has(id)) agents[id] = freshAgent(agent.step)
+      }
+      return { ...next, agents, phase: 'running', failureReason: undefined, endedAt: undefined, finalOutput: undefined, synthesis: '' }
+    }
+    case 'rerun_start': {
+      const agents = { ...next.agents }
+      for (const id of event.steps) {
+        const step = agents[id]?.step
+        if (step) agents[id] = freshAgent(id === event.stepId && event.model ? { ...step, model: event.model } : step)
+      }
+      return { ...next, agents, phase: 'running', failureReason: undefined, endedAt: undefined, finalOutput: undefined, synthesis: '', synthesisTruncated: undefined }
+    }
+    case 'agent_stale':
+      return updateAgent(next, event.agentId, () => ({ stale: event.reason }))
     case 'agent_skipped':
       return updateAgent(next, event.agentId, () => ({ status: 'skipped', skipReason: event.reason, pause: undefined, endedAt: event.ts }))
     case 'agent_failed':
@@ -391,6 +415,10 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
     default:
       return next
   }
+}
+
+function freshAgent(step: AgentStep): AgentView {
+  return { step, status: 'queued', liveText: '', streamedTokens: 0, tokenCount: 0, costUsd: 0, attempt: 0, reflections: [], timeline: [] }
 }
 
 /** Extend the last item if it is the same kind and attempt, else start a new one. */

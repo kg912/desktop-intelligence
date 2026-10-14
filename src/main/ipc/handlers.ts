@@ -1451,6 +1451,22 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     getMultiAgentCoordinator().quickPlan(String(runId))
   )
 
+  // Spec B Phase 5: interrupted runs (Resume / Discard), step re-runs and locks. The API key comes from Settings in main.
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_RESUMABLE, () => getMultiAgentCoordinator().resumable())
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_RESUME, (_, p: { runId: string; chatId: string; config: MultiAgentConfig }) =>
+    getMultiAgentCoordinator().resume(String(p.runId), String(p.chatId), sanitizeMultiAgentConfig(p.config))
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_DISCARD, (_, runId: string) => getMultiAgentCoordinator().discard(String(runId)))
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_RERUN_STEP, (_, p: { runId: string; chatId: string; stepId: string; config: MultiAgentConfig; model?: string; withDependents?: boolean }) =>
+    getMultiAgentCoordinator().rerunStep(String(p.runId), String(p.chatId), String(p.stepId), sanitizeMultiAgentConfig(p.config), {
+      ...(typeof p.model === 'string' && p.model.trim() ? { model: p.model.trim() } : {}),
+      withDependents: p.withDependents === true,
+    })
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, (_, p: { runId: string; stepId: string; locked: boolean }) =>
+    getMultiAgentCoordinator().lockStep(String(p.runId), String(p.stepId), p.locked === true)
+  )
+
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>
     multiAgentSidecar.getStatus()
   )

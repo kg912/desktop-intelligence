@@ -13,6 +13,8 @@ const api = {
   respondMultiAgentPlan: vi.fn(async () => {}),
   abortMultiAgentRun: vi.fn(async () => {}),
   getMultiAgentRun: vi.fn(),
+  resumeMultiAgentRun: vi.fn(),
+  rerunMultiAgentStep: vi.fn(),
 }
 
 const e = (seq: number, body: Record<string, unknown>): AgentEvent => ({ runId: 'run-1', seq, ts: seq, ...body }) as AgentEvent
@@ -96,5 +98,33 @@ describe('useMultiAgentRun', () => {
     expect(api.abortMultiAgentRun).not.toHaveBeenCalled()
     act(() => result.current.dismiss())
     expect(result.current.run).toBeNull()
+  })
+})
+
+describe('useMultiAgentRun: continue a saved run (spec B Phase 5)', () => {
+  const saved = { mode: 'multi-agent', runStatus: 'failed', agentGraph: [], runId: 'run-1', runIds: ['run-1'], task: 'Trip',
+    executionTrace: [e(1, { type: 'orchestrator_plan', steps: [{ id: '1.1', label: 'x', stage: 'worker', role: 'R', model: 'w', phase: 1 }] }),
+      e(2, { type: 'task_failed', reason: 'Lost connection to the multi-agent sidecar', partialOutputs: {} })] }
+
+  it('resumes: the saved run goes live and new events apply on top', async () => {
+    api.getMultiAgentRun.mockResolvedValue(saved)
+    api.resumeMultiAgentRun.mockResolvedValue({ ok: true, runId: 'run-1' })
+    const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
+    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1')).toBe(true) })
+    expect(api.resumeMultiAgentRun).toHaveBeenCalledWith({ runId: 'run-1', chatId: 'chat-1', config: expect.objectContaining({ maxAgents: DEFAULT_MULTI_AGENT_CONFIG.maxAgents }) })
+    expect(result.current.run).toMatchObject({ chatId: 'chat-1', task: 'Trip', review: false })
+    emit(e(3, { type: 'run_resumed', finishedSteps: [], wave: 1 }))
+    await frame()
+    expect(result.current.run?.view.phase).toBe('running')
+  })
+
+  it('re-runs a step with its options; a refusal shows the reason and leaves the run read-only', async () => {
+    api.getMultiAgentRun.mockResolvedValue(saved)
+    api.rerunMultiAgentStep.mockResolvedValue({ ok: false, reason: 'Step 1.1 is locked: unlock it to re-run it.' })
+    const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
+    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1', { stepId: '1.1', model: 'm/strong', withDependents: true })).toBe(false) })
+    expect(api.rerunMultiAgentStep).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1', chatId: 'chat-1', stepId: '1.1', model: 'm/strong', withDependents: true }))
+    expect(result.current.startError).toBe('Step 1.1 is locked: unlock it to re-run it.')
+    expect(result.current.run?.review).toBe(true)
   })
 })

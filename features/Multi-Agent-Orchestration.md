@@ -173,6 +173,9 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `assess_start` | `wave, open` — the assess node began (spec B Phase 2) |
 | `assess_decision` | `wave, decision (done \| follow_up \| ask_user), reason, steps, unclosable, costUsd, durationMs, model, rules, forced?, estimatedUsd?, autoRun?, question?` |
 | `wave_start` | `n, steps` — a follow-up wave's validated steps |
+| `run_resumed` | `finishedSteps, wave` — a run a sidecar restart interrupted continues (spec B Phase 5) |
+| `rerun_start` | `stepId, withDependents, steps, model?, stale` — steps of a finished run run again, then a new synthesis |
+| `agent_stale` | `agentId, reason` — a dependent of a re-run step that was not re-run |
 | `agent_skipped` | `agentId, reason, condition, basis (condition \| no_basis)` — a conditional step was not run (spec B Phase 3) |
 | `ledger_update` | `ledger {checklistId: {status, claimIds, conflict?}}, counts` — after every step ends; no model call (spec B Phase 1) |
 | `agent_start` | `agentId, role, model` |
@@ -361,6 +364,21 @@ with no new matching code. Its prompt lists the dependencies' verified claims wi
 `"snippets": ["1.2/S3.2"]` (or `"source": "1.2"`, as before). Access is by direct dependency only; a plan step with
 `"evidence": "global"` reads every step. A ref into any other step answers "Evidence of 1.1 is not available to
 step 1.2: it does not depend on 1.1." and a claim citing it fails as `snippet_not_found`. The evidence stays per run.
+
+**Durability, resume and re-run (spec B Phase 5).** Spike: LangGraph 0.4.1 cannot checkpoint this graph — its own
+MemorySaver rejects `{"run": Run}` ("Type is not msgpack serializable: Run") and `langgraph-checkpoint-sqlite` is not a
+dependency — so the sidecar writes a manual state dump (stdlib `sqlite3`) to `multi-agent-state.sqlite` in its
+sandboxed workspace (`DI_MULTI_AGENT_STATE_DB`; the sandbox writes nowhere else). `runs` holds the request without
+the API key, steps, checklist, ledger, wave, outputs, failures, stale and locked steps, spend and seq, saved at plan
+approval, after every step and after every assess; `agent_state` holds each finished step's result and evidence.
+A run left `running` (the sidecar was killed) is listed by `GET /runs/resumable`; Electron offers Resume / Discard
+on start (`ResumeRunsBanner`). `POST /run/{id}/resume {openRouterApiKey, lastSeq}` rebuilds the Run, emits
+`run_resumed` after Electron's last seq and enters the graph at `workers`: finished steps keep their results with no
+new call; steps that were running start over. `POST /run/{id}/steps/{stepId}/rerun {model?, withDependents}`
+re-runs one step of a finished run (optionally on another model, optionally with its dependents), marks dependents
+it does not re-run `agent_stale`, leaves every other record as it was, and re-synthesizes (no assess wave).
+`POST /run/{id}/steps/{stepId}/lock` locks a step: never re-run, never stale. Electron continues the same run row
+(only the chat's latest run), so the trace grows from where it stopped.
 
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat

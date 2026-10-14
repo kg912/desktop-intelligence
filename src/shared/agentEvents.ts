@@ -20,6 +20,9 @@ const KNOWN_TYPES = new Set<string>([
   'assess_decision',
   'wave_start',
   'agent_skipped',
+  'run_resumed',
+  'rerun_start',
+  'agent_stale',
   'run_config',
   'agent_start',
   'agent_token',
@@ -168,6 +171,17 @@ function validateVariant(obj: Record<string, unknown>): string | null {
       return checkFields(obj, [['wave', 'number'], ['reason', 'string'], ['costUsd', 'number'], ['durationMs', 'number'], ['model', 'string']])
     }
 
+    case 'run_resumed':
+      if (!Array.isArray(obj.finishedSteps)) return '"finishedSteps" must be an array'
+      return checkFields(obj, [['wave', 'number']])
+
+    case 'rerun_start':
+      if (!Array.isArray(obj.steps) || !Array.isArray(obj.stale)) return '"steps" and "stale" must be arrays'
+      return checkFields(obj, [['stepId', 'string'], ['withDependents', 'boolean']])
+
+    case 'agent_stale':
+      return checkFields(obj, [['agentId', 'string'], ['reason', 'string']])
+
     case 'agent_skipped':
       return checkFields(obj, [['agentId', 'string'], ['reason', 'string'], ['condition', 'string'], ['basis', 'string']])
 
@@ -297,6 +311,8 @@ export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
     case 'assess_start':
     case 'assess_decision':
     case 'wave_start':
+    case 'run_resumed':
+    case 'rerun_start':
       return 'run'
     case 'hitl_pause':
     case 'hitl_resume':

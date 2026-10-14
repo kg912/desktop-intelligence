@@ -36,6 +36,7 @@ import type {
   MultiAgentRunRecord,
   AgentEvent,
   MultiAgentConfig,
+  ResumableRun,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent, MultiAgentTraceLogEntry } from '../main/services/ObservabilityService'
 import type { RunDetail, RunListRow } from '../main/services/MultiAgentRunLogger'
@@ -391,6 +392,22 @@ const api = {
   /** Slow-plan escape hatch: use the quick fallback plan instead of waiting for the orchestrator. */
   useQuickMultiAgentPlan: (runId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_QUICK_PLAN, runId),
+
+  // Spec B Phase 5: interrupted runs, step re-runs and locks.
+  listResumableMultiAgentRuns: (): Promise<ResumableRun[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_RESUMABLE),
+
+  resumeMultiAgentRun: (payload: { runId: string; chatId: string; config: MultiAgentConfig }): Promise<StartRunResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_RESUME, payload),
+
+  discardMultiAgentRun: (runId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_DISCARD, runId),
+
+  rerunMultiAgentStep: (payload: { runId: string; chatId: string; stepId: string; config: MultiAgentConfig; model?: string; withDependents?: boolean }): Promise<StartRunResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_RERUN_STEP, payload),
+
+  lockMultiAgentStep: (payload: { runId: string; stepId: string; locked: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, payload),
 
   getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS),

@@ -485,6 +485,12 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_GET_RUN:        'multi-agent:get-run',
   MULTI_AGENT_GET_CATALOGUE:  'multi-agent:get-catalogue',
   MULTI_AGENT_WARM_UP:        'multi-agent:warm-up',
+  // Spec B Phase 5: runs a sidecar restart interrupted, and step re-runs / locks.
+  MULTI_AGENT_RESUMABLE:      'multi-agent:resumable',
+  MULTI_AGENT_RESUME:         'multi-agent:resume',
+  MULTI_AGENT_DISCARD:        'multi-agent:discard',
+  MULTI_AGENT_RERUN_STEP:     'multi-agent:rerun-step',
+  MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',
 
 } as const
 
@@ -704,6 +710,43 @@ export interface AssessDecisionEvent extends AgentEventBase {
 
 /** Spec B Phase 3: a conditional step was not run. basis: the yes/no check said no ("condition"), or its dependencies
  *  made no claims to judge it by ("no_basis"). Dependants treat it as done. */
+/** Spec B Phase 5: the sidecar resumed a run a restart interrupted. Finished steps keep their results; steps that were
+ *  running start again. */
+export interface RunResumedEvent extends AgentEventBase {
+  type: 'run_resumed'
+  finishedSteps: string[]
+  wave: number
+}
+
+/** Spec B Phase 5: a step of a finished run is being re-run (with its dependents when asked); a new synthesis follows. */
+export interface RerunStartEvent extends AgentEventBase {
+  type: 'rerun_start'
+  stepId: string
+  withDependents: boolean
+  /** Every step that runs again. */
+  steps: string[]
+  model?: string
+  /** Dependents left as they were, now built on an earlier output. */
+  stale: string[]
+}
+
+/** A dependent of a re-run step that was not re-run itself. */
+export interface AgentStaleEvent extends AgentEventBase {
+  type: 'agent_stale'
+  agentId: string
+  reason: string
+}
+
+/** A run the sidecar can resume (MULTI_AGENT_RESUMABLE). */
+export interface ResumableRun {
+  runId: string
+  chatId: string
+  task: string
+  wave: number
+  finishedSteps: string[]
+  totalSteps: number
+}
+
 export interface AgentSkippedEvent extends AgentEventBase {
   type: 'agent_skipped'
   agentId: string
@@ -998,6 +1041,9 @@ export type AgentEvent =
   | AssessDecisionEvent
   | WaveStartEvent
   | AgentSkippedEvent
+  | RunResumedEvent
+  | RerunStartEvent
+  | AgentStaleEvent
   | RunConfigEvent
   | AgentStartEvent
   | AgentTokenEvent

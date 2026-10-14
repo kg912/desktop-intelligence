@@ -27,6 +27,7 @@ import type {
   AgentEvent,
   HitlResponse,
   MultiAgentStartPayload,
+  ResumableRun,
   SidecarStatus,
   StartRunResult,
   TaskFailedEvent,
@@ -61,6 +62,15 @@ export interface SidecarLaunchConfig {
   openRouterBaseUrl?: string
   /** Explicit interpreter with the requirements installed (tests/dev); skips the venv bootstrap. */
   pythonPath?: string
+}
+
+/** POST body to resume a run (no stepId) or re-run one step (stepId). The API key is never stored by the sidecar. */
+export interface ContinueRunBody {
+  openRouterApiKey: string
+  lastSeq: number
+  stepId?: string
+  model?: string
+  withDependents?: boolean
 }
 
 export interface RunStartRequest extends MultiAgentStartPayload {
@@ -214,6 +224,8 @@ export class MultiAgentSidecarManager extends EventEmitter {
           DI_MULTI_AGENT_TOKEN: this.token,
           PYTHONDONTWRITEBYTECODE: '1',
           PYTHONUNBUFFERED: '1',
+          // Spec B Phase 5: run state survives a sidecar restart. Inside the workspace: the sandbox writes nowhere else.
+          DI_MULTI_AGENT_STATE_DB: join(config.workspaceDir, 'multi-agent-state.sqlite'),
           ...(config.openRouterBaseUrl ? { DI_OPENROUTER_BASE_URL: config.openRouterBaseUrl } : {}),
         },
         timeoutMs: 0,
@@ -458,6 +470,56 @@ export class MultiAgentSidecarManager extends EventEmitter {
     if (!result.ok) throw new Error(`Sidecar HITL response failed (${result.status})`)
   }
 
+  /** Spec B Phase 5: runs a sidecar restart interrupted. Starts the sidecar; empty when it cannot. */
+  async listResumable(): Promise<ResumableRun[]> {
+    try {
+      await this.start()
+      const response = await this.request('/runs/resumable', { method: 'GET' })
+      return response.ok ? ((await response.json()) as ResumableRun[]) : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Resume an interrupted run, or re-run a step of a finished one: the sidecar continues the same run id, with events
+   *  after lastSeq, on a new stream. Emits runContinued before any event, like runStarted. */
+  async continueRun(runId: string, chatId: string, body: ContinueRunBody): Promise<StartRunResult> {
+    if (this.runs.has(runId)) return { ok: false, reason: 'This run is already in progress' }
+    try {
+      await this.start()
+    } catch (err) {
+      return { ok: false, reason: `Multi-agent sidecar unavailable: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    const { stepId, ...rest } = body
+    const path = stepId === undefined
+      ? `/run/${encodeURIComponent(runId)}/resume`
+      : `/run/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/rerun`
+    try {
+      const response = await this.request(path, { method: 'POST', body: JSON.stringify(rest) })
+      if (!response.ok) {
+        const detail = await response.json().then((j: { detail?: unknown }) => String(j.detail ?? ''), () => '')
+        return { ok: false, reason: detail || `Sidecar refused (HTTP ${response.status})` }
+      }
+    } catch (err) {
+      return { ok: false, reason: `Could not reach the multi-agent sidecar: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    this.runs.set(runId, { chatId, lastSeq: body.lastSeq, terminal: false, aborting: false, controller: new AbortController(), awaitingPlanApproval: false })
+    this.emit('runContinued', { runId, chatId })
+    void this.streamRun(runId)
+    return { ok: true, runId }
+  }
+
+  async discardRun(runId: string): Promise<void> {
+    await this.request(`/run/${encodeURIComponent(runId)}/discard`, { method: 'POST' })
+  }
+
+  async lockStep(runId: string, stepId: string, locked: boolean): Promise<void> {
+    const result = await this.request(`/run/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/lock`, {
+      method: 'POST', body: JSON.stringify({ locked }),
+    })
+    if (!result.ok) throw new Error(`Sidecar lock failed (${result.status})`)
+  }
+
   /** Ask the planner to stop and use the fallback plan (UI Goal 5 slow-plan escape). */
   async quickPlan(runId: string): Promise<void> {
     const result = await this.request(`/run/${encodeURIComponent(runId)}/quick-plan`, { method: 'POST' })
@@ -538,7 +600,7 @@ export class MultiAgentSidecarManager extends EventEmitter {
     const run = this.runs.get(runId)
     if (!run || run.terminal || event.runId !== runId || event.seq <= run.lastSeq) return
     run.lastSeq = event.seq
-    if (event.type === 'hitl_pause' && event.serverName === 'multi-agent') run.awaitingPlanApproval = true
+    if (event.type === 'hitl_pause' && event.serverName === 'multi-agent' && event.agentId === 'orchestrator') run.awaitingPlanApproval = true
     if ((event.type === 'hitl_resume' && event.agentId === 'orchestrator') || isTerminalAgentEvent(event)) {
       run.awaitingPlanApproval = false
     }

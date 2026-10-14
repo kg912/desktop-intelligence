@@ -44,6 +44,9 @@ const SAMPLES: Record<AgentEvent['type'], Record<string, unknown>> = {
   assess_decision: { wave: 1, decision: 'done', reason: 'Every requirement is verified.', steps: [], unclosable: [], costUsd: 0, durationMs: 0, model: '',
     rules: { checklist: { open: 0, total: 1 }, waves: { used: 1, max: 2 }, budget: { spentUsd: 0, capUsd: 1 }, progress: 'first', tools: 'n/a' } },
   wave_start: { n: 2, steps: [] },
+  run_resumed: { finishedSteps: ['1.1'], wave: 1 },
+  rerun_start: { stepId: '1.1', withDependents: false, steps: ['1.1'], stale: [] },
+  agent_stale: { agentId: '1.1', reason: 'built on the earlier output of 1.0' },
   agent_skipped: { agentId: '1.1', reason: 'condition not met: x', condition: 'x', basis: 'condition' },
   run_config: { models: { worker: 'm/w' }, sources: { worker: 'saved' }, catalogueChecked: true, maxAgents: 2, budgetCapUsd: 1, reflectionPassThreshold: 3, maxRetriesPerAgent: 1, reasoningEffort: 'medium' },
   hitl_pause: { agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} },
@@ -90,6 +93,10 @@ class FakeSidecar extends EventEmitter {
   abortRun = vi.fn(async () => {})
   quickPlan = vi.fn(async () => {})
   isAwaitingPlanApproval = vi.fn(() => false)
+  listResumable = vi.fn(async () => [])
+  continueRun = vi.fn(async () => ({ ok: false as const, reason: 'n/a' }))
+  discardRun = vi.fn(async () => {})
+  lockStep = vi.fn(async () => {})
 }
 
 /** The production wiring from src/main/index.ts: observe → emitMultiAgentEvent. */
@@ -156,7 +163,7 @@ describe('Phase 0 audit — the old multi-agent logger', () => {
       agent_complete: 'worker', retry: 'worker', agent_failed: 'worker', context_compacted: 'worker', agent_degraded: 'worker',
       reflection_start: 'reflection', reflection_result: 'reflection',
       synthesis_start: 'synthesizer', synthesis_token: 'synthesizer',
-      task_complete: 'run', task_failed: 'run', ledger_update: 'run', assess_start: 'run', assess_decision: 'run', wave_start: 'run', agent_skipped: 'worker',
+      task_complete: 'run', task_failed: 'run', ledger_update: 'run', assess_start: 'run', assess_decision: 'run', wave_start: 'run', agent_skipped: 'worker', run_resumed: 'run', rerun_start: 'run', agent_stale: 'worker',
     }
     for (const type of TYPES) expect([type, agentEventStepType(event(type, 1))]).toEqual([type, expected[type]])
     // A worker's tool pause is a worker step, not the orchestrator's.

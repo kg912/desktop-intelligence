@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -236,6 +237,15 @@ class Run:
     prev_open: int | None = None
     caveats: list[str] = field(default_factory=list)
     user_answer: str = ""
+    # Spec B Phase 5: the latest graph state's steps, outputs and failures (shared with workers_node, saved to STATE),
+    # steps whose output a re-run made stale, and steps the user locked (never re-run or invalidated).
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    outputs: dict[str, str] = field(default_factory=dict)
+    failures: dict[str, str] = field(default_factory=dict)
+    stale: dict[str, str] = field(default_factory=dict)
+    locked: set[str] = field(default_factory=set)
+    # The first event of a resumed or re-run run (run_resumed / rerun_start), emitted by orchestrate().
+    resume_event: dict[str, Any] | None = None
 
     @property
     def config(self) -> Config:
@@ -256,6 +266,8 @@ class Run:
         self.events.append(event)
         if event_type in ("task_complete", "task_failed"):
             self.finished = True
+            if STATE:
+                STATE.save_run(self, "completed" if event_type == "task_complete" else "failed")
         for subscriber in list(self.subscribers):
             subscriber.put_nowait(event)
         if self.finished:
@@ -1225,6 +1237,9 @@ async def approve_node(state: dict[str, Any]) -> dict[str, Any]:
         approved, reason = False, "approval timed out"
     if not approved:
         await run.emit("task_failed", reason=f"Plan not approved{': ' + reason if reason else ''}", partialOutputs={})
+    elif STATE:
+        run.steps = state["steps"]
+        STATE.save_run(run, "running")
     return {**state, "approved": approved}
 
 
@@ -2365,6 +2380,7 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
     outputs: dict[str, str] = dict(state.get("outputs") or {})
     failures: dict[str, str] = dict(state.get("failures") or {})
     pending = {s["id"]: s for s in steps if s["id"] not in outputs and s["id"] not in failures}
+    run.steps, run.outputs, run.failures = steps, outputs, failures
     running: dict[asyncio.Task[str], dict[str, Any]] = {}
 
     async def fail(step_id: str, reason: str) -> None:
@@ -2373,6 +2389,7 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
         run.step_results[step_id] = {"output": "", "claims": [], "statuses": {}}
         await run.emit("agent_failed", agentId=step_id, reason=reason, **run.attempt_of(step_id))
         await update_ledger(run, steps)
+        save_step(run, step_id)
 
     try:
         while pending or running:
@@ -2408,6 +2425,7 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
                     # A skipped step counts as done for its dependants, which (like the synthesizer) are told why it has nothing.
                     outputs[step["id"]] = task.result() if error is None else f"[{step['id']} SKIPPED: {error.reason}]"
                     await update_ledger(run, steps)
+                    save_step(run, step["id"])
                 else:
                     await fail(step["id"], str(error) or type(error).__name__)
     finally:
@@ -2607,7 +2625,10 @@ async def assess_node(state: dict[str, Any]) -> dict[str, Any]:
     set_caveats(run, unclosable)
     run.wave += 1
     await run.emit("wave_start", n=run.wave, steps=steps)
-    return {**state, "steps": state["steps"] + steps, "next": "workers"}
+    run.steps = state["steps"] + steps
+    if STATE:
+        STATE.save_run(run, "running")
+    return {**state, "steps": run.steps, "next": "workers"}
 
 
 # ── Synthesis ────────────────────────────────────────────────────────────────
@@ -2630,7 +2651,8 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
         await run.emit("task_failed", reason="No agent produced an output", partialOutputs={})
         return state
 
-    sources = "\n\n".join(f"[{agent_id}] ({steps[agent_id]['role']}: {steps[agent_id]['label']})\n{text}" for agent_id, text in outputs.items())
+    sources = "\n\n".join(f"[{agent_id}] ({steps[agent_id]['role']}: {steps[agent_id]['label']})\n"
+                        + (f"[{agent_id} STALE: {run.stale[agent_id]}]\n" if agent_id in run.stale else "") + text for agent_id, text in outputs.items())
     missing = "".join(f"\n- [{agent_id}] failed: {reason}" for agent_id, reason in failures.items())
     prompt = [
         {"role": "system", "content": with_date(run, SYNTHESIS_SYSTEM)},
@@ -2660,30 +2682,208 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def build_graph() -> Any:
+def build_graph(entry: str = "plan") -> Any:
+    """entry "plan": a new run. "workers": a resumed run (spec B Phase 5) enters at the workers with its saved state.
+    "rerun": re-run steps, then synthesize (no assess wave)."""
     graph = StateGraph(dict)
+    graph.add_node("workers", workers_node)
+    graph.add_node("synthesize", synthesize_node)
+    graph.add_edge("synthesize", END)
+    if entry == "rerun":
+        graph.add_edge(START, "workers")
+        graph.add_edge("workers", "synthesize")
+        return graph.compile()
+    graph.add_node("assess", assess_node)
+    graph.add_edge("workers", "assess")
+    graph.add_conditional_edges("assess", lambda s: s.get("next", "synthesize"), {"workers": "workers", "synthesize": "synthesize"})
+    if entry == "workers":
+        graph.add_edge(START, "workers")
+        return graph.compile()
     graph.add_node("plan", plan_node)
     graph.add_node("approve", approve_node)
-    graph.add_node("workers", workers_node)
-    graph.add_node("assess", assess_node)
-    graph.add_node("synthesize", synthesize_node)
     graph.add_edge(START, "plan")
     graph.add_edge("plan", "approve")
     graph.add_conditional_edges("approve", lambda s: "workers" if s.get("approved") else END, {"workers": "workers", END: END})
-    graph.add_edge("workers", "assess")
-    graph.add_conditional_edges("assess", lambda s: s.get("next", "synthesize"), {"workers": "workers", "synthesize": "synthesize"})
-    graph.add_edge("synthesize", END)
     return graph.compile()
 
 
 GRAPH = build_graph()
+RESUME_GRAPH = build_graph("workers")
+RERUN_GRAPH = build_graph("rerun")
 
 
-async def orchestrate(run: Run) -> None:
+# ── Durability (spec B Phase 5): a manual state dump, not a LangGraph checkpointer ──
+# The graph state is {"run": Run}, and Run holds an executor, queues, futures and a Condition that no checkpointer can
+# serialise (LangGraph 0.4.1's own MemorySaver rejects it; langgraph-checkpoint-sqlite is not a dependency). So the
+# serialisable parts are written to SQLite at each milestone and a Run is rebuilt from them.
+
+class StateStore:
+    """runs: one row per run (request without the API key, steps, checklist, ledger, wave, outputs, spend, seq, status).
+    agent_state: one row per finished step (its result and evidence). Thread-safe; every write is one transaction."""
+
+    def __init__(self, path: str):
+        self.lock = threading.Lock()
+        self.conn = sqlite3.connect(path, check_same_thread=False)
+        with self.conn:
+            self.conn.execute("CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, chat_id TEXT, status TEXT, request_json TEXT, "
+                              "state_json TEXT, updated_at INTEGER)")
+            self.conn.execute("CREATE TABLE IF NOT EXISTS agent_state (run_id TEXT, agent_id TEXT, state_json TEXT, PRIMARY KEY (run_id, agent_id))")
+
+    def save_run(self, run: Run, status: str) -> None:
+        request = run.request.model_dump(exclude={"openRouterApiKey"})
+        state = {"steps": run.steps, "checklist": run.checklist, "ledger": run.ledger, "wave": run.wave, "prevOpen": run.prev_open,
+                 "caveats": run.caveats, "userAnswer": run.user_answer, "outputs": run.outputs, "failures": run.failures, "stale": run.stale,
+                 "locked": sorted(run.locked), "totalCost": run.total_cost, "totalTokens": run.total_tokens, "seq": run.seq}
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO runs VALUES (?, ?, ?, ?, ?, ?)",
+                              (run.run_id, run.request.chatId, status, json.dumps(request), json.dumps(state), now_ms()))
+
+    def save_agent(self, run: Run, agent_id: str) -> None:
+        state = {"result": run.step_results.get(agent_id), "evidence": run.evidence.get(agent_id, {})}
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO agent_state VALUES (?, ?, ?)", (run.run_id, agent_id, json.dumps(state)))
+
+    def drop_agent(self, run_id: str, agent_id: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM agent_state WHERE run_id = ? AND agent_id = ?", (run_id, agent_id))
+
+    def load(self, run_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.conn.execute("SELECT chat_id, status, request_json, state_json FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            if not row:
+                return None
+            agents = {a: json.loads(j) for a, j in self.conn.execute("SELECT agent_id, state_json FROM agent_state WHERE run_id = ?", (run_id,))}
+        return {"chatId": row[0], "status": row[1], "request": json.loads(row[2]), "state": json.loads(row[3]), "agents": agents}
+
+    def set_status(self, run_id: str, status: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE runs SET status = ?, updated_at = ? WHERE run_id = ?", (status, now_ms(), run_id))
+
+    def set_locked(self, run_id: str, agent_id: str, locked: bool) -> None:
+        saved = self.load(run_id)
+        if not saved:
+            raise KeyError(run_id)
+        state = saved["state"]
+        state["locked"] = sorted(set(state.get("locked", [])) | {agent_id} if locked else set(state.get("locked", [])) - {agent_id})
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE runs SET state_json = ? WHERE run_id = ?", (json.dumps(state), run_id))
+
+    def resumable(self) -> list[dict[str, Any]]:
+        """Runs a sidecar restart interrupted (still "running"), newest first."""
+        with self.lock:
+            rows = self.conn.execute("SELECT run_id FROM runs WHERE status = 'running' ORDER BY updated_at DESC").fetchall()
+        out = []
+        for (run_id,) in rows:
+            saved = self.load(run_id)
+            steps = saved["state"]["steps"]
+            out.append({"runId": run_id, "chatId": saved["chatId"], "task": preview(saved["request"]["task"], 200), "wave": saved["state"]["wave"],
+                        "finishedSteps": [st["id"] for st in steps if st["id"] in saved["agents"]], "totalSteps": len(steps)})
+        return out
+
+
+STATE: StateStore | None = StateStore(os.environ["DI_MULTI_AGENT_STATE_DB"]) if os.environ.get("DI_MULTI_AGENT_STATE_DB") else None
+
+
+def save_step(run: Run, agent_id: str) -> None:
+    if STATE:
+        STATE.save_agent(run, agent_id)
+        STATE.save_run(run, "running")
+
+
+class RerunRefused(Exception):
+    pass
+
+
+def rebuild_run(run_id: str, api_key: str, last_seq: int) -> tuple[Run, dict[str, Any]]:
+    """A Run and its graph state from STATE. The API key comes from Electron (never stored); events continue after the
+    last seq Electron saw."""
+    saved = STATE.load(run_id) if STATE else None
+    if not saved:
+        raise KeyError(run_id)
+    st = saved["state"]
+    run = Run(run_id, RunRequest(**saved["request"], openRouterApiKey=api_key))
+    run.steps, run.checklist, run.ledger, run.wave, run.prev_open = st["steps"], st["checklist"], st["ledger"], st["wave"], st["prevOpen"]
+    run.caveats, run.user_answer, run.stale, run.locked = st["caveats"], st["userAnswer"], st.get("stale", {}), set(st.get("locked", []))
+    run.total_cost, run.total_tokens, run.seq = st["totalCost"], st["totalTokens"], max(st["seq"], last_seq)
+    for agent_id, agent in saved["agents"].items():
+        if agent.get("result") is not None:
+            run.step_results[agent_id] = agent["result"]
+        run.evidence[agent_id] = agent.get("evidence") or {}
+    finished = set(saved["agents"])
+    run.outputs = {k: v for k, v in st["outputs"].items() if k in finished}
+    run.failures = {k: v for k, v in st["failures"].items() if k in finished}
+    return run, {"run": run, "steps": run.steps, "approved": True, "outputs": run.outputs, "failures": run.failures}
+
+
+def resume_run(run_id: str, api_key: str, last_seq: int = 0) -> tuple[Run, dict[str, Any]]:
+    """An interrupted run, ready for orchestrate(run, state): finished steps keep their results; steps that were running
+    restart from the beginning (a tool approval in flight cannot be replayed)."""
+    run, state = rebuild_run(run_id, api_key, last_seq)
+    run.resume_event = {"type": "run_resumed", "finishedSteps": [st["id"] for st in run.steps if st["id"] in run.outputs or st["id"] in run.failures],
+                        "wave": run.wave}
+    return run, state
+
+
+def dependents_of(steps: list[dict[str, Any]], step_id: str, locked: set[str]) -> list[str]:
+    """Steps that use step_id's output, directly or through others, in plan order; a locked step and what hangs off it
+    only through it are left alone."""
+    found: list[str] = []
+    frontier = {step_id}
+    for st in steps:  # plan order is a topological order (dependencies precede dependants)
+        if st["id"] not in locked and frontier & set(st.get("dependsOn", [])):
+            found.append(st["id"])
+            frontier.add(st["id"])
+    return found
+
+
+def prepare_rerun(run_id: str, step_id: str, *, api_key: str, model: str | None = None, with_dependents: bool = False,
+                  last_seq: int = 0) -> tuple[Run, dict[str, Any]]:
+    """Re-run one step of a finished run (optionally on another model, optionally with its dependents). Dependents not
+    re-run are marked stale; locked steps are never invalidated. Other agents' records are left as they are."""
+    live = RUNS.get(run_id)
+    if live and not live.finished:
+        raise RerunRefused("The run is still in progress.")
+    run, state = rebuild_run(run_id, api_key, max(last_seq, live.seq if live else 0))
+    if step_id in run.locked:
+        raise RerunRefused(f"Step {step_id} is locked: unlock it to re-run it.")
+    by_id = {st["id"]: st for st in run.steps}
+    if step_id not in by_id:
+        raise RerunRefused(f"No step {step_id} in this run.")
+    downstream = dependents_of(run.steps, step_id, run.locked)
+    targets = [step_id] + (downstream if with_dependents else [])
+    if model:
+        by_id[step_id]["model"] = model
+    for agent_id in targets:
+        STATE.drop_agent(run_id, agent_id)  # an interrupted re-run must not look finished
+        run.outputs.pop(agent_id, None)
+        run.failures.pop(agent_id, None)
+        run.step_results.pop(agent_id, None)
+        run.evidence.pop(agent_id, None)
+        run.stale.pop(agent_id, None)
+    stale = {} if with_dependents else {a: f"built on the earlier output of {step_id}" for a in downstream}
+    run.stale.update(stale)
+    run.caveats = []
+    run.resume_event = {"type": "rerun_start", "stepId": step_id, "withDependents": with_dependents, "steps": targets,
+                        **({"model": model} if model else {}), "stale": list(stale)}
+    return run, {**state, "rerun": True}
+
+
+async def orchestrate(run: Run, state: dict[str, Any] | None = None) -> None:
+    """A new run (state None), or a resumed / re-run one from resume_run / prepare_rerun."""
     # One pool per run, sized so workers, reflection and synthesis can all overlap.
     run.executor = ThreadPoolExecutor(max_workers=run.config.maxAgents * 2 + 4, thread_name_prefix=f"run-{run.run_id[:8]}")
     try:
-        await GRAPH.ainvoke({"run": run})
+        if state is None:
+            await GRAPH.ainvoke({"run": run})
+        else:
+            event = dict(run.resume_event or {})
+            await run.emit(event.pop("type", "run_resumed"), **event)
+            for agent_id, reason in run.stale.items():
+                if agent_id in event.get("stale", []):
+                    await run.emit("agent_stale", agentId=agent_id, reason=reason)
+            if STATE:
+                STATE.save_run(run, "running")
+            await (RERUN_GRAPH if state.get("rerun") else RESUME_GRAPH).ainvoke(state)
     except asyncio.CancelledError:
         await run.emit("task_failed", reason="Run aborted by user", partialOutputs={})
     except BudgetReached:
@@ -2779,6 +2979,80 @@ async def abort(run_id: str) -> dict[str, bool]:
         run.task.cancel()
     else:
         await run.emit("task_failed", reason="Run aborted by user", partialOutputs={})
+    return {"ok": True}
+
+
+# ── Resume, re-run and lock (spec B Phase 5) ────────────────────────────────
+
+class ResumeRequest(BaseModel):
+    openRouterApiKey: str = Field(min_length=1)
+    # The last event seq Electron saw for the run: new events continue after it.
+    lastSeq: int = Field(default=0, ge=0)
+
+
+class RerunRequest(ResumeRequest):
+    model: str | None = None
+    withDependents: bool = False
+
+
+class LockRequest(BaseModel):
+    locked: bool
+
+
+def start_saved(run: Run, state: dict[str, Any]) -> dict[str, str]:
+    RUNS[run.run_id] = run
+    run.task = asyncio.create_task(orchestrate(run, state))
+    return {"runId": run.run_id}
+
+
+@app.get("/runs/resumable")
+async def resumable() -> list[dict[str, Any]]:
+    """Runs a sidecar restart interrupted, offered as Resume / Discard."""
+    return [r for r in STATE.resumable() if r["runId"] not in RUNS] if STATE else []
+
+
+@app.post("/run/{run_id}/resume")
+async def resume(run_id: str, body: ResumeRequest) -> dict[str, str]:
+    if run_id in RUNS and not RUNS[run_id].finished:
+        raise HTTPException(409, "the run is already running")
+    try:
+        run, state = resume_run(run_id, body.openRouterApiKey, body.lastSeq)
+    except KeyError:
+        raise HTTPException(404, "no saved state for this run") from None
+    return start_saved(run, state)
+
+
+@app.post("/run/{run_id}/discard")
+async def discard(run_id: str) -> dict[str, bool]:
+    if STATE:
+        STATE.set_status(run_id, "discarded")
+    return {"ok": True}
+
+
+@app.post("/run/{run_id}/steps/{step_id}/rerun")
+async def rerun_step(run_id: str, step_id: str, body: RerunRequest) -> dict[str, str]:
+    try:
+        run, state = prepare_rerun(run_id, step_id, api_key=body.openRouterApiKey, model=body.model, with_dependents=body.withDependents,
+                                   last_seq=body.lastSeq)
+    except KeyError:
+        raise HTTPException(404, "no saved state for this run") from None
+    except RerunRefused as exc:
+        raise HTTPException(409, str(exc)) from None
+    return start_saved(run, state)
+
+
+@app.post("/run/{run_id}/steps/{step_id}/lock")
+async def lock_step(run_id: str, step_id: str, body: LockRequest) -> dict[str, bool]:
+    """A locked step's claims and evidence are reused as they are: never re-run, never marked stale."""
+    live = RUNS.get(run_id)
+    if live:
+        (live.locked.add if body.locked else live.locked.discard)(step_id)
+    try:
+        if STATE:
+            STATE.set_locked(run_id, step_id, body.locked)
+    except KeyError:
+        if not live:
+            raise HTTPException(404, "run not found") from None
     return {"ok": True}
 
 

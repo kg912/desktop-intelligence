@@ -7,7 +7,8 @@ import { MultiAgentRunCoordinator } from '../MultiAgentRunCoordinator'
 import type { CoordinatorDeps } from '../MultiAgentRunCoordinator'
 import { McpDeniedError, McpServerManager } from '../McpServerManager'
 import { DEFAULT_MULTI_AGENT_CONFIG, DEFAULT_SYNTHESIZER_MODEL } from '../../../shared/types'
-import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
+import type { AgentEvent, MultiAgentConfig, ResumableRun } from '../../../shared/types'
+import type { ContinueRunBody } from '../MultiAgentSidecarManager'
 import type { OpenRouterModelInfo } from '../../../shared/multiAgentModels'
 
 const model = (id: string, prompt = 1e-6, completion = 2e-6): OpenRouterModelInfo => ({
@@ -25,6 +26,13 @@ class FakeSidecar extends EventEmitter {
   abortRun = vi.fn(async () => {})
   quickPlan = vi.fn(async () => {})
   isAwaitingPlanApproval = vi.fn(() => this.awaitingPlan)
+  listResumable = vi.fn(async (): Promise<ResumableRun[]> => [])
+  continueRun = vi.fn(async (runId: string, chatId: string, _body: ContinueRunBody) => {
+    this.emit('runContinued', { runId, chatId })
+    return { ok: true as const, runId }
+  })
+  discardRun = vi.fn(async () => {})
+  lockStep = vi.fn(async () => {})
   push(event: Partial<AgentEvent> & { type: string; seq: number }): void {
     this.emit('event', { runId: this.runId, ts: 1, ...event })
   }
@@ -446,5 +454,47 @@ describe('MultiAgentRunCoordinator worker tools', () => {
   it('no exclusions: start() has no excludedServers field', async () => {
     const h = setup()
     expect(await h.coordinator.start({ chatId: 'c', task: 't', config: config() })).not.toHaveProperty('excludedServers')
+  })
+})
+
+describe('spec B Phase 5: resume and re-run continue the saved run', () => {
+  const trace = [
+    { runId: 'run-1', seq: 1, ts: 1, type: 'orchestrator_plan', steps: [] },
+    { runId: 'run-1', seq: 7, ts: 7, type: 'task_failed', reason: 'Lost connection to the multi-agent sidecar', partialOutputs: {} },
+  ] as unknown as AgentEvent[]
+  const saved = (runIds = ['run-0', 'run-1']) => ({ mode: 'multi-agent' as const, runStatus: 'failed' as const, agentGraph: [], executionTrace: trace, runId: 'run-1', runIds })
+
+  it('resumes after the last saved event, with the key from Settings, into the same run row', async () => {
+    const { coordinator, sidecar, db, sent } = setup()
+    db.getRun.mockImplementation((() => saved()) as never)
+    const result = await coordinator.resume('run-1', 'chat-1', config())
+    expect(result).toEqual({ ok: true, runId: 'run-1' })
+    expect(sidecar.continueRun).toHaveBeenCalledWith('run-1', 'chat-1', { openRouterApiKey: 'sk-or-1', lastSeq: 7 })
+    expect(db.begin).not.toHaveBeenCalled()  // no new history entry
+    sidecar.push({ type: 'run_resumed', seq: 8, finishedSteps: ['1.1'], wave: 1 } as never)
+    expect(sent.map((e) => e.type)).toEqual(['run_resumed'])
+    sidecar.push({ type: 'task_complete', seq: 9, finalOutput: 'done', totalCostUsd: 0, totalTokens: 0 } as never)
+    const lastSave = db.saveTrace.mock.calls.at(-1) as unknown as [string, AgentEvent[], string]
+    expect(lastSave[1].map((e) => e.seq)).toEqual([1, 7, 8, 9])  // the trace grows from where it stopped
+    expect(lastSave[2]).toBe('completed')
+  })
+
+  it('re-runs one step on another model, only on the chat\'s latest run', async () => {
+    const { coordinator, sidecar, db } = setup()
+    db.getRun.mockImplementation((() => saved()) as never)
+    await coordinator.rerunStep('run-1', 'chat-1', '1.2', config(), { model: 'm/strong', withDependents: true })
+    expect(sidecar.continueRun).toHaveBeenCalledWith('run-1', 'chat-1', { openRouterApiKey: 'sk-or-1', lastSeq: 7, stepId: '1.2', model: 'm/strong', withDependents: true })
+    db.getRun.mockImplementation((() => saved(['run-1', 'run-2'])) as never)
+    expect(await coordinator.rerunStep('run-1', 'chat-2', '1.2', config(), {})).toEqual({ ok: false, reason: 'Only the latest run of a chat can be resumed or re-run' })
+  })
+
+  it('lists only resumable runs whose chat still exists', async () => {
+    const { coordinator, sidecar, db } = setup()
+    sidecar.listResumable.mockResolvedValue([
+      { runId: 'run-1', chatId: 'chat-1', task: 't', wave: 1, finishedSteps: [], totalSteps: 2 },
+      { runId: 'run-9', chatId: 'gone', task: 't', wave: 1, finishedSteps: [], totalSteps: 2 },
+    ])
+    db.getRun.mockImplementation(((chatId: string) => (chatId === 'chat-1' ? saved() : null)) as never)
+    expect((await coordinator.resumable()).map((r) => r.runId)).toEqual(['run-1'])
   })
 })

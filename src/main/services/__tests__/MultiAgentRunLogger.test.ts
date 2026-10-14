@@ -57,6 +57,10 @@ async function fullRun(root: string, opts: { enabled?: boolean } = {}) {
     abortRun = vi.fn(async () => {})
     quickPlan = vi.fn(async () => {})
     isAwaitingPlanApproval = () => false
+    listResumable = async () => []
+    continueRun = async () => ({ ok: false as const, reason: 'n/a' })
+    discardRun = async () => {}
+    lockStep = async () => {}
   })()
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,
