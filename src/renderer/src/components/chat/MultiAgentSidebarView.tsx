@@ -9,6 +9,10 @@ import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AgentStatus, AgentView, ReflectionView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { CUT_OFF_LABEL, elapsedMs, formatElapsed, isRunActive, linkProvenance } from '../../lib/multiAgentRunState'
+import { answerCounts, linkClaims, refFromHref } from '../../lib/claimsView'
+import { Chip } from './ClaimsDrawer'
+import type { ClaimTarget } from './ClaimsDrawer'
+import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
 import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
@@ -574,9 +578,9 @@ export const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries,
             <p className="pt-2.5 text-[12px] text-ma-mute" data-testid={`agent-empty-${step.id}`}>{agent.status === 'queued' ? 'Nothing to show yet' : 'Working…'}</p>
           )}
           {agent.timeline.map((item, i) => (
-            <TraceItem key={i} item={item} attemptLabel={multiAttempt ? ` · attempt ${item.attempt + 1}` : ''} streaming={i === agent.timeline.length - 1 && agent.status === 'running'} />
+            <TraceItem key={i} item={item} agentId={step.id} attemptLabel={multiAttempt ? ` · attempt ${item.attempt + 1}` : ''} streaming={i === agent.timeline.length - 1 && agent.status === 'running'} />
           ))}
-          {agent.timeline.length === 0 && agent.output && <TraceItem item={{ kind: 'output', attempt: 0, text: agent.output }} attemptLabel="" streaming={false} />}
+          {agent.timeline.length === 0 && agent.output && <TraceItem item={{ kind: 'output', attempt: 0, text: agent.output }} agentId={step.id} attemptLabel="" streaming={false} />}
           {agent.status === 'reflecting' && (
             <div className="ma-ev" data-k="gate"><i className="ma-k" /><p className="text-[12px] text-ma-mute">Reflection gate · reviewing…</p></div>
           )}
@@ -729,7 +733,7 @@ function CutOffChip({ limit, testId }: { limit: OutputLimit; testId: string }) {
   )
 }
 
-function TraceItem({ item, attemptLabel, streaming }: { item: TimelineItem; attemptLabel: string; streaming: boolean }) {
+function TraceItem({ item, attemptLabel, streaming, agentId }: { item: TimelineItem; attemptLabel: string; streaming: boolean; agentId?: string }) {
   const [expanded, setExpanded] = useState(false)
   switch (item.kind) {
     case 'reasoning':
@@ -765,7 +769,7 @@ function TraceItem({ item, attemptLabel, streaming }: { item: TimelineItem; atte
           <i className="ma-k" />
           <div className="flex gap-2 text-[12px] text-ma-mute">Answer{attemptLabel}{streaming && <span className="font-mono">· streaming</span>}</div>
           <div className="mt-1.5 text-[13px] leading-relaxed text-[#d0d0d0] [&_li]:!text-[13px] [&_p]:!text-[13px] [&_p]:!leading-relaxed">
-            <MarkdownRenderer content={item.text} isStreaming={streaming} />
+            <ClaimLinkedMarkdown text={item.text} own={agentId} isStreaming={streaming} />
           </div>
         </div>
       )
@@ -790,22 +794,36 @@ function TraceItem({ item, attemptLabel, streaming }: { item: TimelineItem; atte
 
 // ── Main chat: the synthesis, while a run is live ────────────────────────────
 
-export function FinalSynthesis({ view, onSelectAgent }: { view: RunView; onSelectAgent: (agentId: string) => void }) {
+export function FinalSynthesis({ view, onSelectAgent, onOpenClaim }: { view: RunView; onSelectAgent: (agentId: string) => void; onOpenClaim?: (target: ClaimTarget) => void }) {
   const agentIds = useMemo(() => new Set(view.steps.map((s) => s.id)), [view.steps])
-  const linked = useMemo(() => linkProvenance(view.synthesis, agentIds), [view.synthesis, agentIds])
+  // Spec B 7a: [1.2 c3] chips coloured by status and opening the evidence drawer (agent chips [1.2] as before).
+  const linked = useMemo(() => (onOpenClaim ? linkClaims(view.synthesis, agentIds, view) : linkProvenance(view.synthesis, agentIds)), [view, agentIds, onOpenClaim])
+  const counts = useMemo(() => (onOpenClaim ? answerCounts(view) : null), [view, onOpenClaim])
   const passed = view.steps.filter((s) => view.agents[s.id]?.status === 'done').length
   return (
     <div className="mt-5 rounded-[14px] border-[0.5px] border-ma-red/35 bg-gradient-to-b from-ma-red/[0.06] to-ma-red/[0.02] px-[18px] py-4" data-testid="synthesis">
       <div className="flex items-center gap-2 text-[13px] font-medium text-ma-redtext">
         <Network className="h-4 w-4" strokeWidth={1.6} />Final synthesis
         {view.synthesisTruncated && <CutOffChip limit={view.synthesisTruncated} testId="cut-off-synthesis" />}
+        {counts && (counts.verified + counts.unverified + counts.conflicted > 0) && (
+          <span className="ml-auto flex gap-1.5" data-testid="answer-counts">
+            <Chip tone="ok">{counts.verified} verified</Chip>
+            <Chip tone="warn">{counts.unverified} unverified</Chip>
+            <Chip tone="bad">{counts.conflicted} conflicted</Chip>
+          </span>
+        )}
       </div>
       {view.synthesis ? (
         <div
           className="provenance mt-2 text-[14px] leading-relaxed text-ma-soft"
           onClickCapture={(e) => {
             const href = (e.target as HTMLElement).closest('a')?.getAttribute('href') ?? ''
-            if (href.startsWith('#agent-')) {
+            const ref = refFromHref(href)
+            if (ref && onOpenClaim) {
+              e.preventDefault()
+              e.stopPropagation()
+              onOpenClaim({ agentId: ref.split(' ')[0], ref })
+            } else if (href.startsWith('#agent-')) {
               e.preventDefault()
               e.stopPropagation()
               onSelectAgent(href.slice('#agent-'.length))

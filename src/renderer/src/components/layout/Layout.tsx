@@ -16,6 +16,10 @@ import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { ResumeRunsBanner } from '../chat/ResumeRunsBanner'
+import { ClaimsDrawer } from '../chat/ClaimsDrawer'
+import type { ClaimTarget } from '../chat/ClaimsDrawer'
+import { ClaimLinksContext } from '../chat/ClaimLinks'
+import type { ClaimLinks } from '../chat/ClaimLinks'
 import { FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
 import { AgentFocusView } from '../chat/AgentFocusView'
 import { approvalQueues } from '../../lib/approvalQueue'
@@ -279,6 +283,12 @@ export function Layout() {
     }
     return savedRun && savedRun.chatId === activeChatId ? { view: savedRun.view, runIds: savedRun.runIds, live: false } : null
   }, [shownRun, savedRun, activeChatId])
+
+  // Spec B 7a: claim chips anywhere the run's text is shown open the evidence drawer.
+  const [claimTarget, setClaimTarget] = useState<ClaimTarget | null>(null)
+  const claimView = topBarRun?.view ?? null
+  useEffect(() => { setClaimTarget(null) }, [claimView?.runId])
+  const claimLinks = useMemo((): ClaimLinks | null => (claimView ? { view: claimView, open: setClaimTarget, onSelectAgent: selectAgent } : null), [claimView, selectAgent])
 
   // ── Sidebar: new chat ─────────────────────────────────────────
   const handleNewChat = useCallback(() => {
@@ -571,7 +581,9 @@ export function Layout() {
   }, [setContextUsage])
 
   return (
+    <ClaimLinksContext.Provider value={claimLinks}>
     <div className="flex h-full w-full bg-background overflow-hidden">
+      {claimTarget && claimView && <ClaimsDrawer view={claimView} target={claimTarget} onSelect={setClaimTarget} onClose={() => setClaimTarget(null)} />}
       <AnimatePresence>
         {sandboxViolationToast && <SandboxViolationToast violation={sandboxViolationToast} />}
       </AnimatePresence>
@@ -725,7 +737,7 @@ export function Layout() {
                 chatSystemInstructions={chatSystemInstructions}
                 topInset={useAgents ? AGENT_PILL_INSET : 0}
                 footer={shownRun && shownRunActive && shownRun.view.phase !== 'planning' && shownRun.view.phase !== 'preflight'
-                  ? <FinalSynthesis view={shownRun.view} onSelectAgent={selectAgent} />
+                  ? <FinalSynthesis view={shownRun.view} onSelectAgent={selectAgent} onOpenClaim={setClaimTarget} />
                   : null}
               />
             </div>
@@ -753,6 +765,7 @@ export function Layout() {
         </>
       )}
     </div>
+    </ClaimLinksContext.Provider>
   )
 }
 

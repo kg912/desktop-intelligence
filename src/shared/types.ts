@@ -492,6 +492,7 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_DISCARD:        'multi-agent:discard',
   MULTI_AGENT_RERUN_STEP:     'multi-agent:rerun-step',
   MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',
+  MULTI_AGENT_GET_EVIDENCE:   'multi-agent:get-evidence',
 
 } as const
 
@@ -835,6 +836,32 @@ export interface ReflectionResultEvent extends AgentEventBase, AgentAttempt {
   claimStatuses?: Record<string, string>
   /** Failing claims only: claim id → ellipsis_fragment_missing | wrong_call | mismatch | too_short | too_long | call_failed. */
   claimFailureClasses?: Record<string, string>
+  /** Spec B 7a: the claims themselves, as the check left them (quote filled in from snippets, callId after a re-point). */
+  claims?: ClaimView[]
+}
+
+/** One claim of a worker's claims block, for chips and the evidence drawer (spec B 7a). */
+export interface ClaimView {
+  id: string
+  claim: string
+  req?: string | string[]
+  snippets?: string[]
+  callId?: string
+  quote?: string
+  unverified?: boolean
+  source?: string
+  repointedFrom?: string
+}
+
+/** One tool result in full, fetched for the evidence drawer (MULTI_AGENT_GET_EVIDENCE). null = not stored (older runs). */
+export interface EvidenceRecord {
+  agentId: string
+  callId: string
+  name: string
+  args: string
+  ok: boolean
+  result: string
+  snippets: Record<string, string>
 }
 
 /**

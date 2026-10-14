@@ -26,6 +26,7 @@ import { quote } from 'shell-quote'
 import type {
   AgentEvent,
   HitlResponse,
+  EvidenceRecord,
   MultiAgentStartPayload,
   ResumableRun,
   SidecarStatus,
@@ -507,6 +508,17 @@ export class MultiAgentSidecarManager extends EventEmitter {
     this.emit('runContinued', { runId, chatId })
     void this.streamRun(runId)
     return { ok: true, runId }
+  }
+
+  /** Spec B 7a: one tool result for the evidence drawer; null when the sidecar never stored it (older runs). */
+  async getEvidence(runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null> {
+    try {
+      await this.start()
+      const response = await this.request(`/run/${encodeURIComponent(runId)}/evidence/${encodeURIComponent(agentId)}/${callId.split('/').map(encodeURIComponent).join('/')}`, { method: 'GET' })
+      return response.ok ? ((await response.json()) as EvidenceRecord) : null
+    } catch {
+      return null
+    }
   }
 
   async discardRun(runId: string): Promise<void> {

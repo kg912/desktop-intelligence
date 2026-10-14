@@ -8,6 +8,7 @@
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import { Paperclip, Plug } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { StatsBar } from './StatsBar'
 import { CopyMessageButton } from './CopyMessageButton'
 import { messageCopyText } from '../../lib/markdownUtils'
@@ -830,7 +831,8 @@ function AssistantBubble({
 
             {/* Markdown content */}
             {content && (
-              <MarkdownRenderer content={content} isStreaming={isStreaming} />
+              // Spec B 7a: the multi-agent run's answer message gets claim chips (only when it is that run's answer).
+              <ClaimLinkedMarkdown text={content} isStreaming={isStreaming} onlyIf={(links) => !isStreaming && content === links.view.finalOutput} />
             )}
           </>
         )}

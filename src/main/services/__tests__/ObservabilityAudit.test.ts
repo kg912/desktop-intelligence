@@ -97,6 +97,7 @@ class FakeSidecar extends EventEmitter {
   continueRun = vi.fn(async () => ({ ok: false as const, reason: 'n/a' }))
   discardRun = vi.fn(async () => {})
   lockStep = vi.fn(async () => {})
+  getEvidence = vi.fn(async () => null)
 }
 
 /** The production wiring from src/main/index.ts: observe → emitMultiAgentEvent. */

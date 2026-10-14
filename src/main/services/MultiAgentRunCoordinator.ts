@@ -23,6 +23,7 @@ import type {
   HitlResponse,
   MultiAgentConfig,
   MultiAgentRunRecord,
+  EvidenceRecord,
   MultiAgentStartPayload,
   ResumableRun,
   RunStatus,
@@ -70,6 +71,7 @@ export interface CoordinatorDeps {
     continueRun(runId: string, chatId: string, body: ContinueRunBody): Promise<StartRunResult>
     discardRun(runId: string): Promise<void>
     lockStep(runId: string, stepId: string, locked: boolean): Promise<void>
+    getEvidence(runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null>
   }
   mcp: {
     /** Running MCP schemas a worker can actually call (see multiAgentExclusionReason). */
@@ -286,6 +288,11 @@ export class MultiAgentRunCoordinator {
 
   lockStep(runId: string, stepId: string, locked: boolean): Promise<void> {
     return this.deps.sidecar.lockStep(runId, stepId, locked)
+  }
+
+  /** Spec B 7a: a cited tool result for the evidence drawer (lazy). */
+  getEvidence(runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null> {
+    return this.deps.sidecar.getEvidence(runId, agentId, callId)
   }
 
   private async continueSaved(runId: string, chatId: string, config: MultiAgentConfig, rest: Omit<ContinueRunBody, 'openRouterApiKey' | 'lastSeq'>): Promise<StartRunResult> {

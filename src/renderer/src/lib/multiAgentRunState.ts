@@ -2,7 +2,7 @@
 // §08 Frontend). applyAgentEvent() touches only what an event changes, so a
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
-import type { AgentEvent, AgentStep, AssessDecisionEvent, ChecklistItem, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
+import type { AgentEvent, AgentStep, AssessDecisionEvent, ChecklistItem, ClaimView, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled' | 'skipped'
 
@@ -22,6 +22,8 @@ export interface ReflectionView {
   claimsFailed?: number
   claimStatuses?: Record<string, string>
   claimFailureClasses?: Record<string, string>
+  /** Spec B 7a: the attempt's claims, for chips and the evidence drawer. */
+  claims?: ClaimView[]
 }
 
 /** Retries ran out and the best attempt was passed on with its open issues (or accepted unreviewed). */
@@ -334,6 +336,7 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
           ...(event.claimsFailed !== undefined && { claimsFailed: event.claimsFailed }),
           ...(event.claimStatuses !== undefined && { claimStatuses: event.claimStatuses }),
           ...(event.claimFailureClasses !== undefined && { claimFailureClasses: event.claimFailureClasses }),
+          ...(event.claims !== undefined && { claims: event.claims }),
         }
         return {
           reflections: [...a.reflections, gate],

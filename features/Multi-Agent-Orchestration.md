@@ -390,6 +390,20 @@ stage's model calls are made; the cost is printed. `--prompt-file` replaces the 
 Debug → Multi-agent runs, each run has "Copy replay command". `replay_judge` / `replay_synthesis` take a loaded run
 (fixture or run directory), so evals can drive them.
 
+**Claims and evidence drawer (spec B 7a, design 11).** `reflection_result` carries the attempt's `claims` as the check
+left them (`claim_view`: id, claim, req, snippets, callId, quote, unverified, source, repointedFrom). In the final
+synthesis, agent reports, the focus view and the run's own answer message, `[1.2]` is a blue agent chip and
+`[1.2 c3]` (or `[c3]` inside 1.2's report) a claim chip coloured by the computed status only: green verified, amber
+declared unverified (" · unverified"), red in a ledger conflict (" · possible conflict" until the assess call
+confirms it, then " · conflict"), grey for a failed check or no status. The synthesizer is asked to cite claims as
+`[1.1 c3]`. A chip opens `ClaimsDrawer` (560 px, right): the claim, status chips (quote verified / re-pointed /
+possibly contradicted by … / judge n/5 / attempt a of n), the source snippet with the quote highlighted — the
+normalisation of `normalise_quote` is replayed in `findQuoteRanges` with an index map, so the highlight covers the
+original text — "open raw result", the conflicting claim, and the agent's claims with filters (all / unverified
+only / conflicts). Evidence is fetched lazily: `GET /run/{id}/evidence/{agentId}/{callId}` (live run, else the saved
+state; `1.2/<callId>` resolves in 1.2's evidence) via `MULTI_AGENT_GET_EVIDENCE`; a run that never stored it shows
+"Evidence not stored for this run."
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

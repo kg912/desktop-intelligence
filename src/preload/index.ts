@@ -37,6 +37,7 @@ import type {
   AgentEvent,
   MultiAgentConfig,
   ResumableRun,
+  EvidenceRecord,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent, MultiAgentTraceLogEntry } from '../main/services/ObservabilityService'
 import type { RunDetail, RunListRow } from '../main/services/MultiAgentRunLogger'
@@ -409,6 +410,10 @@ const api = {
 
   rerunMultiAgentStep: (payload: { runId: string; chatId: string; stepId: string; config: MultiAgentConfig; model?: string; withDependents?: boolean }): Promise<StartRunResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_RERUN_STEP, payload),
+
+  /** Spec B 7a: a cited tool result for the evidence drawer; null = not stored (older runs). */
+  getMultiAgentEvidence: (runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, { runId, agentId, callId }),
 
   lockMultiAgentStep: (payload: { runId: string; stepId: string; locked: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, payload),

@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { ClaimLinkedMarkdown } from './ClaimLinks'
 import type { AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { elapsedMs, formatElapsed } from '../../lib/multiAgentRunState'
 import { argsSummary, bareTool } from '../../lib/approvalQueue'
@@ -244,7 +245,7 @@ function LiveOutput({ agent, pending }: { agent: AgentView; pending: number }) {
       {currentTools.map((t, i) => <ToolCard key={t.callId} item={t} state={states[i]} />)}
       {draft ? (
         <div className="text-[14px] leading-[1.7] text-[#d8d8d8]" data-testid="focus-draft">
-          <MarkdownRenderer content={draft} isStreaming={streaming} />
+          <ClaimLinkedMarkdown text={draft} own={agent.step.id} isStreaming={streaming} />
           {streaming && <span className="ma-cursor" data-testid="focus-caret" />}
         </div>
       ) : (

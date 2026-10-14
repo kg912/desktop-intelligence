@@ -1641,6 +1641,15 @@ def ledger_counts(ledger: dict[str, dict[str, Any]]) -> dict[str, int]:
     return {status: sum(1 for e in ledger.values() if e["status"] == status) for status in ("verified", "unverified", "conflicted", "missing", "pending")}
 
 
+CLAIM_VIEW_KEYS = ("id", "claim", "req", "snippets", "callId", "quote", "unverified", "source", "repointedFrom")
+
+
+def claim_view(claim: dict[str, Any]) -> dict[str, Any]:
+    """What the UI's claim chips and evidence drawer need (spec B 7a): the claim, its citation as verified (the quote
+    filled in from snippets, the callId after any re-point) and its requirement."""
+    return {k: claim[k] for k in CLAIM_VIEW_KEYS if k in claim}
+
+
 def claim_problems(claims: list[dict[str, Any]], statuses: dict[str, str]) -> list[str]:
     def ref(c: dict[str, Any]) -> str:
         return f"snippets {', '.join(c['snippets'])}" if c.get("snippets") else f"callId {c.get('callId')}"
@@ -2298,7 +2307,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                        issues=issues, model=judge, rubric=REFLECTION_RUBRIC, **({"modelServed": judge_served["model"]} if judge_served else {}),
                        **{k: judge_info[k] for k in ("evidenceMode", "judgeInputChars") if k in judge_info},
                        claimsChecked=sum(1 for c in claims if "callId" in c or c.get("snippets")), claimsFailed=sum(1 for s in statuses.values() if s not in CLAIM_OK),
-                       claimStatuses=statuses, claimFailureClasses=failure_classes(claims, statuses))
+                       claimStatuses=statuses, claimFailureClasses=failure_classes(claims, statuses), claims=[claim_view(c) for c in claims])
         classes = failure_classes(claims, statuses)
         history.append(f"attempt {attempt}: " + (", ".join(f"{k} {v}" for k, v in classes.items()) or "no claim failed"))
         if passed:
@@ -2636,7 +2645,8 @@ async def assess_node(state: dict[str, Any]) -> dict[str, Any]:
 SYNTHESIS_SYSTEM = ("You synthesize a multi-agent team's work into one final answer for the user. "
                     "Merging is your job (the plan has no merge step): combine the agents' results, resolve conflicts between them, and "
                     "apply any exclusions or criteria the task states. "
-                    "Cite every factual contribution with its source agent marker exactly as given, e.g. [1.1]. "
+                    "Cite every factual contribution with its source agent marker exactly as given, e.g. [1.1]; where a sentence rests on "
+                    "one claim the agent marked, cite that claim as [1.1 c3] (agent marker, a space, the claim id). "
                     "Do not invent markers. If some agents failed, say what is missing. An agent output may end with its "
                     "claim statuses: drop or explicitly caveat any claim marked failed-check, and present unverified claims as "
                     "unverified. If an output is marked DEGRADED or UNREVIEWED, say that step's results were accepted with caveats.")
@@ -2980,6 +2990,25 @@ async def abort(run_id: str) -> dict[str, bool]:
     else:
         await run.emit("task_failed", reason="Run aborted by user", partialOutputs={})
     return {"ok": True}
+
+
+# ── Evidence by id (spec B 7a) ───────────────────────────────────────────────
+
+@app.get("/run/{run_id}/evidence/{agent_id}/{call_id:path}")
+async def get_evidence(run_id: str, agent_id: str, call_id: str) -> dict[str, Any]:
+    """One tool result in full, for the evidence drawer: from the live run, else the saved state. "1.2/<callId>" (a
+    cross-agent citation) is looked up in step 1.2's evidence. 404 when it was never stored (older runs)."""
+    if "/" in call_id:
+        agent_id, call_id = call_id.split("/", 1)
+    live = RUNS.get(run_id)
+    entry = (live.evidence.get(agent_id) or {}).get(call_id) if live else None
+    if entry is None and STATE:
+        saved = STATE.load(run_id)
+        entry = (((saved or {}).get("agents", {}).get(agent_id) or {}).get("evidence") or {}).get(call_id)
+    if entry is None:
+        raise HTTPException(404, "evidence not stored")
+    return {"agentId": agent_id, "callId": call_id, "name": entry.get("name", ""), "args": entry.get("args", ""), "ok": bool(entry.get("ok")),
+            "result": entry.get("result", ""), "snippets": entry.get("snippets") or {}}
 
 
 # ── Resume, re-run and lock (spec B Phase 5) ────────────────────────────────

@@ -61,6 +61,7 @@ async function fullRun(root: string, opts: { enabled?: boolean } = {}) {
     continueRun = async () => ({ ok: false as const, reason: 'n/a' })
     discardRun = async () => {}
     lockStep = async () => {}
+    getEvidence = async () => null
   })()
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,

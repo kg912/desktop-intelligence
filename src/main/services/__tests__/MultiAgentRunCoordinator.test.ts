@@ -33,6 +33,7 @@ class FakeSidecar extends EventEmitter {
   })
   discardRun = vi.fn(async () => {})
   lockStep = vi.fn(async () => {})
+  getEvidence = vi.fn(async () => null)
   push(event: Partial<AgentEvent> & { type: string; seq: number }): void {
     this.emit('event', { runId: this.runId, ts: 1, ...event })
   }

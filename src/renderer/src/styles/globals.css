@@ -377,15 +377,16 @@
 
 /* Multi-agent provenance tags ([1.1] in a synthesis) render as clickable chips
    that jump to the source agent card (MULTI_AGENT_SPEC.html §08, DoD D3). */
+/* Spec B 7a: agent chips use design 11's info style (blue), claim chips below are coloured by status. */
 .provenance a[href^="#agent-"] {
   display: inline-flex;
   align-items: center;
   margin: 0 0.1em;
-  padding: 0 0.4em;
-  border-radius: 9999px;
-  border: 1px solid rgba(185, 28, 28, 0.55);
-  background: rgba(127, 29, 29, 0.25);
-  color: #fca5a5;
+  padding: 0 0.45em;
+  border-radius: 5px;
+  border: 0.5px solid rgba(96, 165, 250, 0.4);
+  background: rgba(96, 165, 250, 0.08);
+  color: #60a5fa;
   font-size: 0.72em;
   line-height: 1.5;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -394,13 +395,37 @@
   cursor: pointer;
 }
 .provenance a[href^="#agent-"]:hover {
-  background: rgba(185, 28, 28, 0.35);
+  background: rgba(96, 165, 250, 0.16);
   box-shadow: 0 0 12px rgba(220, 38, 38, 0.3);
 }
+
+/* Spec B 7a (design 11): claim chips [1.2 c3] coloured by the status the verifier computed. */
+.provenance a[href^="#claim-"] {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.1em;
+  padding: 0 0.45em;
+  border-radius: 5px;
+  border: 0.5px solid rgba(255, 255, 255, 0.14);
+  background: #141414;
+  color: #cfcfcf;
+  font-size: 0.78em;
+  line-height: 1.55;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: none;
+  vertical-align: 0.1em;
+  cursor: pointer;
+}
+.provenance a[href^="#claim-ok-"] { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); background: rgba(74, 222, 128, 0.08); }
+.provenance a[href^="#claim-warn-"] { color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.08); }
+.provenance a[href^="#claim-bad-"] { color: #ff6b66; border-color: rgba(229, 57, 53, 0.5); background: rgba(229, 57, 53, 0.1); }
+.provenance a[href^="#claim-"]:hover { box-shadow: 0 0 12px rgba(220, 38, 38, 0.3); }
 
 /* ── Multi-agent dock (designs/01-dock-live.html, 02-states.html) ─────────────
    CSS transitions/animations only: no motion.* in the dock (M1 Pro jank). */
 @keyframes ma-glow { 0%, 100% { opacity: .55 } 50% { opacity: 1 } }
+/* Spec B 7a: the claims drawer slides in from the right, like the approval slide-outs (CSS only). */
+@keyframes ma-slide-in { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }
 @keyframes ma-blink { 50% { opacity: 0 } }
 
 .ma-rail-btn { position: relative; }

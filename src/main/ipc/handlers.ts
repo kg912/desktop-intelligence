@@ -1466,6 +1466,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       withDependents: p.withDependents === true,
     })
   )
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, (_, p: { runId: string; agentId: string; callId: string }) =>
+    getMultiAgentCoordinator().getEvidence(String(p.runId), String(p.agentId), String(p.callId))
+  )
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, (_, p: { runId: string; stepId: string; locked: boolean }) =>
     getMultiAgentCoordinator().lockStep(String(p.runId), String(p.stepId), p.locked === true)
   )
