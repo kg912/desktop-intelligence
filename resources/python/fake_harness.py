@@ -7,7 +7,7 @@ import re
 import multi_agent_sidecar as s
 
 TOOLS = [{"name": "web__search", "description": "", "parameters": {"type": "object"}}]
-SUBTASK_RE = re.compile(r"Your subtask \(([^)]+)\)")
+SUBTASK_RE = re.compile(r"[Ss]ubtask \(([^)]+)\)")
 
 
 def role_of(body):

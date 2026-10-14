@@ -516,6 +516,8 @@ export interface AgentStep {
   /** Spec B Phase 2: the research wave that added the step (absent = 1) and a follow-up step's full task. */
   wave?: number
   task?: string
+  /** Spec B Phase 4: "global" lets the step read every step's evidence, not only its dependencies'. */
+  evidence?: 'global'
 }
 
 /** One requirement of the planner's acceptance checklist (spec B Phase 1). scope: the step it belongs to, or "global". */

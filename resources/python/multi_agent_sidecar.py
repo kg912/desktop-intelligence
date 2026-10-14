@@ -986,6 +986,7 @@ def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
             **({"condition": str(item["condition"]).strip()[:300]} if str(item.get("condition") or "").strip() else {}),
             **({"covers": [str(c)[:20] for c in item["covers"] if isinstance(c, (str, int))][:CHECKLIST_MAX]} if isinstance(item.get("covers"), list) else {}),
             **({"task": str(item["task"]).strip()[:1_000]} if str(item.get("task") or "").strip() else {}),
+            **({"evidence": "global"} if str(item.get("evidence") or "").strip().lower() == "global" else {}),
         })
     ids = {s["id"] for s in steps}
     if legacy:
@@ -1920,6 +1921,53 @@ def evidence_tool(name: str, raw_args: str, store: dict[str, dict[str, Any]]) ->
     return "\n".join(hits[:GREP_MAX_LINES]) + (f"\n… {len(hits) - GREP_MAX_LINES} more" if len(hits) > GREP_MAX_LINES else "") if hits else f"No match for {pattern}."
 
 
+# ── Shared evidence (spec B Phase 4) ───────────────────────────────────────────
+
+def readable_steps(run: Run, step: dict[str, Any]) -> list[str]:
+    """Steps whose evidence this step may read: the ones it depends on, or every other step if its plan entry says
+    "evidence": "global"."""
+    if step.get("evidence") == "global":
+        return [a for a in run.evidence if a != step["id"]]
+    return [d for d in step.get("dependsOn", []) if d in run.evidence]
+
+
+def evidence_view(run: Run, step: dict[str, Any], store: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The step's own store plus read-only copies of the readable steps' entries, keyed "<agentId>/<callId>" with
+    snippets "<agentId>/S3.2", so cross-agent refs resolve and verify like the step's own."""
+    view = dict(store)
+    for other in readable_steps(run, step):
+        for call_id, entry in run.evidence.get(other, {}).items():
+            view[f"{other}/{call_id}"] = {**entry, "snippets": {f"{other}/{sid}": t for sid, t in (entry.get("snippets") or {}).items()}}
+    return view
+
+
+def shared_evidence_tool(run: Run, step: dict[str, Any], name: str, raw_args: str, store: dict[str, dict[str, Any]]) -> str:
+    """read_evidence / grep_evidence over the step's evidence view; a ref into a step it may not read says so."""
+    try:
+        ref = str(json.loads(raw_args or "{}").get("ref" if name == "read_evidence" else "callId") or "")
+    except (ValueError, AttributeError):
+        ref = ""
+    other = ref.split("/", 1)[0] if "/" in ref else ""
+    if other and other != step["id"] and other not in step.get("dependsOn", []) and step.get("evidence") != "global":
+        return f"Evidence of {other} is not available to step {step['id']}: it does not depend on {other}."
+    return evidence_tool(name, raw_args, evidence_view(run, step, store))
+
+
+def dependency_claims(run: Run, step: dict[str, Any]) -> str:
+    """The dependencies' verified claims as a compact list, each with the refs that cite its evidence."""
+    lines = []
+    for dep in step.get("dependsOn", []):
+        done = run.step_results.get(dep) or {}
+        for c in done.get("claims", []):
+            if done["statuses"].get(c["id"]) in CLAIM_VERIFIED:
+                refs = [f"{dep}/{sid}" for sid in c.get("snippets", [])] or ([f"{dep}/{c['callId']}"] if c.get("callId") else [])
+                lines.append(f"- {dep} {c['id']}: {preview(c['claim'], 200)}" + (f" [{', '.join(refs)}]" if refs else ""))
+    if not lines:
+        return ""
+    return ("\n\nVerified claims of the steps you depend on. Cite one with its refs (e.g. \"snippets\": [\"1.2/S3.2\"]) or with "
+            "\"source\": \"1.2\"; read_evidence(\"1.2/S3.2\") shows the text:\n" + "\n".join(lines[:60]))
+
+
 def evidence_stub(call_id: str, entry: dict[str, Any]) -> str:
     """What a consumed result shows in the history: enough to cite it and to decide whether to re-read it."""
     ids = list(entry.get("snippets") or {})
@@ -2034,7 +2082,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                       "If a criterion cannot be verified with your tools, report it as unverified with the reason. Never report an "
                                       "unverifiable criterion as met or as failed, and do not eliminate an item only because data is missing; flag it instead."
                                       "\n\n" + claims_contract(config))},
-        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step.get('task') or step['label']}{covers_text(run, step)}{context}"},
+        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step.get('task') or step['label']}{covers_text(run, step)}{context}{dependency_claims(run, step)}"},
     ]
     compacted: set[int] = set()  # indices of tool messages already replaced by a stub
     # Every judged attempt with usable output (precheck passed), for 'degrade' on exhaustion.
@@ -2136,7 +2184,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                     started_at = now_ms()
                     ok = False
                     if name in EVIDENCE_TOOL_NAMES:  # answered here from the store: no approval, not new evidence
-                        content = evidence_tool(name, raw_args, store)
+                        content = shared_evidence_tool(run, step, name, raw_args, store)
                         run.record({"kind": "tool", "role": "worker", "agentId": agent_id, "attempt": attempt, "toolRound": _round,
                                     "callId": call_id, "name": name, "args": raw_args, "result": content, "approved": True, "denied": False, "error": None,
                                     "timing": {"startedAt": started_at, "endedAt": now_ms(), "ms": int((time.monotonic() - began) * 1000)}})
@@ -2212,7 +2260,8 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                        **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
                        **({"modelServed": served} if served else {}))
 
-        statuses = {c["id"]: verify_claim(c, store) for c in claims}
+        view = evidence_view(run, step, store)  # own evidence + the dependencies' (spec B Phase 4)
+        statuses = {c["id"]: verify_claim(c, view) for c in claims}
         if run.budget_reached:  # no reflection spend once the cap is reached; output kept as-is
             return finish(output, claims, statuses)
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
@@ -2225,7 +2274,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             score, passed, reason, issues, judge = 1, False, f"Claims check: {len(mechanical)} problem(s)", mechanical, "claims check"
         else:
             try:
-                score, passed, reason, issues, judge = await reflect(run, step, output, prior, store, judge_served, judge_info, claims, statuses, history)
+                score, passed, reason, issues, judge = await reflect(run, step, output, prior, view, judge_served, judge_info, claims, statuses, history)
             except BudgetReached:
                 return finish(output, claims, statuses)
             if mechanical:  # last attempt: judged for a score, but it cannot pass with failing claims
@@ -2254,7 +2303,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             # Only some claims failed the mechanical check, the rest of the answer is fine: patch just those (spec A Phase 5).
             if mechanical and judge == "claims check" and not parse_errors and failing and len(failing) < len(claims):
                 patch_base = {"prose": output, "claims": parsed}
-                turn = patch_turn(failing, statuses, store)
+                turn = patch_turn(failing, statuses, view)
             else:
                 patch_base = None
                 turn = repair_turn(score, reason, issues)

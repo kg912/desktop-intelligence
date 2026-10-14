@@ -354,6 +354,14 @@ model, role `condition`, 300-token cap, low effort) over their verified and decl
 requirements read `missing` in the ledger. The UI shows it dimmed with the reason. The pre-flight estimate
 counts a conditional step at 50% (both bounds) and says how many there are.
 
+**Shared evidence (spec B Phase 4).** A step reads its dependencies' evidence by id: `evidence_view()` is its own
+store plus read-only copies of each dependency's entries keyed `1.2/<callId>`, snippets `1.2/S3.2`, so
+`read_evidence("1.2/S3.2")`, `grep_evidence`, the claims check and the judge's excerpts all resolve cross-agent refs
+with no new matching code. Its prompt lists the dependencies' verified claims with their refs, and a claim may cite
+`"snippets": ["1.2/S3.2"]` (or `"source": "1.2"`, as before). Access is by direct dependency only; a plan step with
+`"evidence": "global"` reads every step. A ref into any other step answers "Evidence of 1.1 is not available to
+step 1.2: it does not depend on 1.1." and a claim citing it fails as `snippet_not_found`. The evidence stays per run.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

@@ -57,6 +57,7 @@ New node between `workers` and `synthesize`; conditional edge back to `workers` 
 Builds on Spec A Phase 6 (`read_evidence`).
 - A follow-up or dependent agent gets a read-only view of its dependencies' evidence (`read_evidence(agentId, snippetId)`) and their verified claims as a compact list, not just prose. Evidence store stays per-run; access is by id.
 - Cross-agent claims may cite `source: "1.2"` (existing) or `snippets: ["1.2/S3.2"]`.
+- **Decisions (implemented):** access is by direct dependency (not transitive); `global` is a plan step field (`"evidence": "global"`). Cross-agent refs are `<agentId>/<snippetId>` (or `<agentId>/<callId>` for legacy claims); the step's evidence view prefixes the dependencies' entries, so the existing verifier, evidence tools and judge excerpts handle them unchanged.
 - **Acceptance:** a dependent fake worker cites a dependency snippet and it verifies; an agent cannot read evidence of a step it does not depend on unless flagged `global`.
 
 ### Phase 5: Checkpointer and re-run from step (B6)
