@@ -19,3 +19,7 @@ Fonts: Inter and JetBrains Mono. The PNGs were rendered with a fallback monospac
 | 08-dock-collapsed.png | Goal 7: collapsed dock, idle run |
 | 09-dock-auto-open.png | Goal 7: dock auto-opened for approvals |
 | 10-dock-behavior.png | Goal 7: dock states and behaviour rules |
+| 11-claims-evidence-drawer.png | Spec B 7a: claims and evidence drawer |
+| 12-coverage-assess.png | Spec B 7b: coverage matrix and assess decision |
+| 13-gantt-segments.png | Spec B 7c: Gantt with real segments |
+| 14-preflight-step-controls.png | Spec B 7d: pre-flight plan editor and step controls |

@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Coverage matrix and assess decision</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>*{box-sizing:border-box}
+body{margin:0;background:#050505;color:#e8e8e8;font-family:'Inter',system-ui,-apple-system,sans-serif}
+.m{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+.panel{background:#0a0a0a;border:0.5px solid rgba(255,255,255,.08);border-radius:12px}
+.mut{color:#8a8a8a}.red{color:#ff6b66}.grn{color:#4ade80}.amb{color:#fbbf24}.blu{color:#60a5fa}
+.chip{display:inline-flex;align-items:center;gap:4px;font:500 11px 'JetBrains Mono',monospace;padding:2px 7px;border-radius:5px;border:0.5px solid rgba(255,255,255,.14);background:#141414;color:#cfcfcf}
+.b-ok{color:#4ade80;border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.08)}
+.b-warn{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+.b-bad{color:#ff6b66;border-color:rgba(229,57,53,.5);background:rgba(229,57,53,.1)}
+.b-info{color:#60a5fa;border-color:rgba(96,165,250,.4);background:rgba(96,165,250,.08)}
+.lbl{font:500 10.5px 'JetBrains Mono',monospace;letter-spacing:.06em;color:#8a8a8a;text-transform:uppercase}
+.btn{font:500 12px Inter;padding:7px 12px;border-radius:8px;border:0.5px solid rgba(255,255,255,.16);background:#141414;color:#e8e8e8}
+.btn.pri{background:#e53935;border-color:#e53935;color:#fff}
+.row{display:flex;align-items:center}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+td,th{padding:9px 10px;border-bottom:0.5px solid rgba(255,255,255,.06);font-size:12.5px;text-align:left}
+th{font:500 10.5px 'JetBrains Mono',monospace;letter-spacing:.06em;color:#8a8a8a;text-transform:uppercase}
+td.c{text-align:center}
+</style></head><body>
+<div style="width:1440px;height:860px;padding:28px;display:flex;gap:20px">
+<div class="panel" style="flex:1;padding:20px 22px">
+  <div class="row" style="justify-content:space-between"><div><div class="lbl">Coverage ledger · after wave 1</div><div style="font-size:18px;font-weight:600;margin-top:4px">Acceptance checklist: 18 requirements</div></div>
+  <div class="row" style="gap:6px"><span class="chip b-ok">11 verified</span><span class="chip b-warn">4 unverified</span><span class="chip b-bad">2 conflicted</span><span class="chip">1 missing</span></div></div>
+  <table style="width:100%;border-collapse:collapse;margin-top:16px">
+   <tr><th>Requirement</th><th class="c">Leg 1<br>IST→NAV</th><th class="c">Leg 2<br>ASR→ADB</th><th class="c">Leg 3<br>ADB→IST</th></tr>
+   <tr><td>Airlines operating</td><td class="c"><span class="chip b-ok">✓ 1.1</span></td><td class="c"><span class="chip b-ok">✓ 1.2</span></td><td class="c"><span class="chip b-ok">✓ 1.3</span></td></tr>
+   <tr><td>Days of operation</td><td class="c"><span class="chip b-ok">✓ 1.1</span></td><td class="c"><span class="chip b-bad">⚡ 1.2 vs 2.1</span></td><td class="c"><span class="chip b-ok">✓ 1.3</span></td></tr>
+   <tr><td>Exact-date departure times</td><td class="c"><span class="chip b-warn">? 1.1</span></td><td class="c"><span class="chip b-warn">? 1.2</span></td><td class="c"><span class="chip b-warn">? 1.3</span></td></tr>
+   <tr><td>Baggage allowance</td><td class="c"><span class="chip b-ok">✓ 1.4</span></td><td class="c"><span class="chip b-warn">? 1.4</span></td><td class="c"><span class="chip b-ok">✓ 1.4</span></td></tr>
+   <tr><td>Airport transfer</td><td class="c"><span class="chip b-ok">✓ 1.5</span></td><td class="c"><span class="chip b-bad">⚡ taxi price</span></td><td class="c"><span class="chip b-ok">✓ 1.5</span></td></tr>
+   <tr><td>Risk / fallback</td><td class="c"><span class="chip b-ok">✓ 1.5</span></td><td class="c"><span class="chip">· not run</span></td><td class="c"><span class="chip b-ok">✓ 1.5</span></td></tr>
+  </table>
+  <div class="row" style="gap:14px;margin-top:14px;font-size:11px" ><span class="mut">✓ verified claim</span><span class="mut">? unverified or declared</span><span class="mut">⚡ conflicting verified claims</span><span class="mut">· no claim yet</span></div>
+  <div class="mut" style="font-size:12px;margin-top:18px;line-height:1.6">Click a cell to open the claims in the evidence drawer. The ledger is computed from claim statuses, with no model call.</div>
+</div>
+<div style="width:520px;display:flex;flex-direction:column;gap:16px">
+ <div class="panel" style="padding:18px;border-color:rgba(229,57,53,.4)">
+  <div class="row" style="justify-content:space-between"><span class="lbl">Assess · decision</span><span class="chip">flash-lite · 0.004 USD · 2.1 s</span></div>
+  <div style="font-size:20px;font-weight:600;margin:8px 0 4px">follow_up <span class="mut" style="font-size:13px;font-weight:400">· 2 steps</span></div>
+  <div class="mut" style="font-size:12.5px;line-height:1.55">Two conflicts and one missing item can be closed with the available tools. Exact-date times cannot.</div>
+  <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
+   <div class="panel" style="padding:10px 12px;background:#0d0d0d"><div class="row" style="justify-content:space-between"><span class="m" style="font-size:11.5px">3.1</span><span class="chip b-info">resolves 2 conflicts</span></div><div style="font-size:12.5px;margin-top:5px">Settle ASR–ADB direct service for the target week from airline schedule pages.</div></div>
+   <div class="panel" style="padding:10px 12px;background:#0d0d0d"><div class="row" style="justify-content:space-between"><span class="m" style="font-size:11.5px">3.2 · conditional on 3.1</span><span class="chip b-info">fills 1 missing</span></div><div style="font-size:12.5px;margin-top:5px">If no direct flight: price the overnight bus fallback.</div></div>
+  </div>
+  <div class="row" style="gap:8px;margin-top:14px"><span class="btn pri">Run follow-up</span><span class="btn">Edit steps</span><span class="btn">Finish now</span></div>
+ </div>
+ <div class="panel" style="padding:18px">
+  <div class="lbl">Stop rules</div>
+  <div style="margin-top:10px;font-size:12.5px;line-height:2">
+   <div class="row" style="justify-content:space-between"><span>Checklist complete</span><span class="red">no · 7 open</span></div>
+   <div class="row" style="justify-content:space-between"><span>Wave cap</span><span class="m">1 of 2 used</span></div>
+   <div class="row" style="justify-content:space-between"><span>Budget</span><span class="m">0.63 of 1.00 USD</span></div>
+   <div class="row" style="justify-content:space-between"><span>Progress since last wave</span><span class="grn">n/a (first)</span></div>
+   <div class="row" style="justify-content:space-between"><span>A tool can close the gap</span><span class="amb">partly</span></div>
+  </div>
+  <div style="margin-top:10px;background:rgba(251,191,36,.07);border:0.5px solid rgba(251,191,36,.35);border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.5" class="amb">Exact-date departure times: no available tool can close this gap. Reported to you in the answer, no spend.</div>
+ </div>
+ <div class="panel" style="padding:14px 18px"><div class="lbl">In the run timeline</div>
+  <div class="row m" style="gap:6px;margin-top:10px;font-size:11px;flex-wrap:wrap"><span class="chip">plan</span>→<span class="chip">workers</span>→<span class="chip b-bad">assess: follow_up</span>→<span class="chip">wave 2</span>→<span class="chip b-bad">assess: done</span>→<span class="chip">synthesize</span></div></div>
+</div></div></body></html>

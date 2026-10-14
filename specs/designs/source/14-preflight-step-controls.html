@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Pre-flight editor and step controls</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>*{box-sizing:border-box}
+body{margin:0;background:#050505;color:#e8e8e8;font-family:'Inter',system-ui,-apple-system,sans-serif}
+.m{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+.panel{background:#0a0a0a;border:0.5px solid rgba(255,255,255,.08);border-radius:12px}
+.mut{color:#8a8a8a}.red{color:#ff6b66}.grn{color:#4ade80}.amb{color:#fbbf24}.blu{color:#60a5fa}
+.chip{display:inline-flex;align-items:center;gap:4px;font:500 11px 'JetBrains Mono',monospace;padding:2px 7px;border-radius:5px;border:0.5px solid rgba(255,255,255,.14);background:#141414;color:#cfcfcf}
+.b-ok{color:#4ade80;border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.08)}
+.b-warn{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+.b-bad{color:#ff6b66;border-color:rgba(229,57,53,.5);background:rgba(229,57,53,.1)}
+.b-info{color:#60a5fa;border-color:rgba(96,165,250,.4);background:rgba(96,165,250,.08)}
+.lbl{font:500 10.5px 'JetBrains Mono',monospace;letter-spacing:.06em;color:#8a8a8a;text-transform:uppercase}
+.btn{font:500 12px Inter;padding:7px 12px;border-radius:8px;border:0.5px solid rgba(255,255,255,.16);background:#141414;color:#e8e8e8}
+.btn.pri{background:#e53935;border-color:#e53935;color:#fff}
+.row{display:flex;align-items:center}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.st{padding:12px 14px;border-bottom:0.5px solid rgba(255,255,255,.06)}
+.sel{font:500 11px 'JetBrains Mono',monospace;border:0.5px solid rgba(255,255,255,.16);border-radius:6px;padding:4px 8px;background:#141414}
+.inp{border:0.5px solid rgba(255,255,255,.16);background:#060606;border-radius:8px;padding:9px 11px;font-size:12.5px;color:#cfcfcf}
+</style></head><body>
+<div style="width:1440px;height:860px;padding:28px;display:flex;gap:20px">
+<div class="panel" style="flex:1.15;display:flex;flex-direction:column">
+ <div class="row" style="justify-content:space-between;padding:16px 18px;border-bottom:0.5px solid rgba(255,255,255,.08)"><div><div class="lbl">Pre-flight · edit plan</div><div style="font-size:17px;font-weight:600;margin-top:3px">7 steps · 2 phases</div></div><div class="row" style="gap:6px"><span class="chip">est. 0.31 USD</span><span class="chip">~4 min</span><span class="chip b-warn">1 conditional</span></div></div>
+ <div class="st"><div class="row" style="gap:10px"><span class="mut">⋮⋮</span><span class="m" style="font-size:11px">1.1</span><span style="font-size:13px;flex:1">Leg 1 · Istanbul → Nevşehir: airlines, days, times, baggage</span><span class="sel">worker · flash</span><span class="sel">$0.05</span><span class="mut">🔓</span></div></div>
+ <div class="st"><div class="row" style="gap:10px"><span class="mut">⋮⋮</span><span class="m" style="font-size:11px">1.2</span><span style="font-size:13px;flex:1">Leg 2 · Kayseri → İzmir: settle direct flight</span><span class="sel">worker · flash</span><span class="sel">$0.05</span><span class="mut">🔓</span></div></div>
+ <div class="st" style="background:#0d0d0d;box-shadow:inset 2px 0 0 #fbbf24"><div class="row" style="gap:10px"><span class="mut">⋮⋮</span><span class="m" style="font-size:11px">1.3</span><span style="font-size:13px;flex:1">Leg 2 fallback: overnight bus</span><span class="chip b-warn">only if 1.2 &gt; 5 h</span><span class="sel">worker · flash</span><span class="sel">$0.04</span></div><div class="mut" style="font-size:11.5px;margin:6px 0 0 36px">Depends on 1.2. Skipped automatically when the condition fails.</div></div>
+ <div class="st"><div class="row" style="gap:10px"><span class="mut">⋮⋮</span><span class="m" style="font-size:11px">1.4</span><span style="font-size:13px;flex:1">Leg 3 · İzmir → Istanbul</span><span class="sel">worker · flash</span><span class="sel">$0.05</span><span class="mut">🔓</span></div></div>
+ <div class="st"><div class="row" style="gap:10px"><span class="mut">⋮⋮</span><span class="m" style="font-size:11px">1.5</span><span style="font-size:13px;flex:1">Transfers and baggage across all legs</span><span class="sel">worker · flash</span><span class="sel">$0.05</span><span class="mut">🔓</span></div></div>
+ <div class="st" style="opacity:.55"><div class="row" style="gap:10px"><span class="mut">⋮⋮</span><span class="m" style="font-size:11px">2.1</span><span style="font-size:13px;flex:1;text-decoration:line-through">Merge findings</span><span class="chip">removed · the synthesizer merges</span></div></div>
+ <div class="row" style="padding:12px 18px;gap:10px"><span class="btn">+ Add step</span><span class="mut" style="font-size:12px">Drag to reorder. Dependencies re-check on drop.</span></div>
+ <div style="flex:1"></div>
+ <div class="row" style="padding:14px 18px;border-top:0.5px solid rgba(255,255,255,.08);justify-content:space-between"><span class="mut" style="font-size:12px">Budget cap 1.00 USD · reasoning: low for judge</span><div class="row" style="gap:8px"><span class="btn">Cancel</span><span class="btn pri">Approve and run</span></div></div>
+</div>
+<div style="width:560px;display:flex;flex-direction:column;gap:16px">
+ <div class="panel" style="padding:18px">
+  <div class="row" style="justify-content:space-between"><span class="lbl">Running · step 1.2</span><span class="chip b-info"><span class="dot" style="background:#60a5fa"></span>round 4 · searching</span></div>
+  <div style="font-size:13.5px;margin:8px 0 12px">Leg 2 · Kayseri → İzmir</div>
+  <div class="lbl" style="margin-bottom:6px">Steer this agent</div>
+  <div class="inp">Only use airline schedule pages, ignore aggregators.</div>
+  <div class="row" style="justify-content:space-between;margin-top:8px"><span class="mut" style="font-size:11.5px">Delivered at the next round, shown in the run log</span><span class="btn pri">Send</span></div>
+ </div>
+ <div class="panel" style="padding:18px">
+  <div class="lbl">Finished step · 1.4 Leg 3</div>
+  <div class="row" style="gap:6px;margin:10px 0;flex-wrap:wrap"><span class="chip b-ok">done</span><span class="chip">score 0.84</span><span class="chip">$0.04</span><span class="chip">flash</span></div>
+  <div class="row" style="gap:8px;flex-wrap:wrap"><span class="btn">Re-run on…</span><span class="btn">🔒 Lock output</span><span class="btn">View claims</span></div>
+  <div class="panel" style="padding:10px 12px;margin-top:12px;background:#0d0d0d"><div class="mut" style="font-size:12px;line-height:1.55">Re-run on <b style="color:#e8e8e8">claude-sonnet-5-5</b>: est. 0.09 USD. Downstream steps that used this output will be marked stale, not re-run automatically.</div>
+   <div class="row" style="gap:8px;margin-top:10px"><span class="btn pri">Re-run this step</span><span class="btn">Re-run + dependents</span></div></div>
+ </div>
+ <div class="panel" style="padding:14px 18px"><div class="lbl">Locked</div><div style="font-size:12.5px;margin-top:8px;line-height:1.6" class="mut">🔒 1.1 is locked. Later re-runs and follow-up waves reuse its claims and evidence unchanged.</div></div>
+</div></div></body></html>

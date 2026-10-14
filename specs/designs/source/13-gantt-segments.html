@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Gantt with real segments</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>*{box-sizing:border-box}
+body{margin:0;background:#050505;color:#e8e8e8;font-family:'Inter',system-ui,-apple-system,sans-serif}
+.m{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+.panel{background:#0a0a0a;border:0.5px solid rgba(255,255,255,.08);border-radius:12px}
+.mut{color:#8a8a8a}.red{color:#ff6b66}.grn{color:#4ade80}.amb{color:#fbbf24}.blu{color:#60a5fa}
+.chip{display:inline-flex;align-items:center;gap:4px;font:500 11px 'JetBrains Mono',monospace;padding:2px 7px;border-radius:5px;border:0.5px solid rgba(255,255,255,.14);background:#141414;color:#cfcfcf}
+.b-ok{color:#4ade80;border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.08)}
+.b-warn{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+.b-bad{color:#ff6b66;border-color:rgba(229,57,53,.5);background:rgba(229,57,53,.1)}
+.b-info{color:#60a5fa;border-color:rgba(96,165,250,.4);background:rgba(96,165,250,.08)}
+.lbl{font:500 10.5px 'JetBrains Mono',monospace;letter-spacing:.06em;color:#8a8a8a;text-transform:uppercase}
+.btn{font:500 12px Inter;padding:7px 12px;border-radius:8px;border:0.5px solid rgba(255,255,255,.16);background:#141414;color:#e8e8e8}
+.btn.pri{background:#e53935;border-color:#e53935;color:#fff}
+.row{display:flex;align-items:center}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.bar{position:absolute;height:18px;top:11px;border-radius:3px}
+.mdl{background:#3b82f6}.tool{background:#4ade80;opacity:.8}.appr{background:repeating-linear-gradient(45deg,#fbbf24 0 4px,#7a5c0f 4px 8px)}.jdg{background:#a78bfa}.rep{background:#ff6b66}
+.lane{position:relative;height:40px;border-bottom:0.5px solid rgba(255,255,255,.05)}
+.nm{position:absolute;left:0;width:150px;top:0;height:40px;display:flex;align-items:center;gap:6px;font:500 12px 'JetBrains Mono',monospace}
+.trk{position:absolute;left:160px;right:10px;top:0;bottom:0}
+.lg{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#a8a8a8}.lg i{width:12px;height:10px;border-radius:2px;display:inline-block}
+</style></head><body>
+<div style="width:1440px;height:820px;padding:28px">
+<div class="panel" style="padding:20px 22px;height:100%;position:relative">
+ <div class="row" style="justify-content:space-between"><div><div class="lbl">Timeline · 268 s · 5 agents peak</div><div style="font-size:18px;font-weight:600;margin-top:4px">Where the time went</div></div>
+ <div class="row" style="gap:16px"><span class="lg"><i class="mdl"></i>model</span><span class="lg"><i class="tool"></i>tool</span><span class="lg"><i class="appr"></i>approval wait</span><span class="lg"><i class="jdg"></i>judge</span><span class="lg"><i class="rep"></i>repair attempt</span></div></div>
+ <div style="position:relative;margin-top:22px;height:420px">
+  <div class="trk" style="left:160px;top:-6px;height:430px;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 0.5px),rgba(255,255,255,.05) calc(10% - 0.5px) 10%)"></div>
+  <div style="position:absolute;left:160px;right:10px;top:-22px;height:14px;font:10px 'JetBrains Mono',monospace;color:#6a6a6a;display:flex;justify-content:space-between"><span>0s</span><span>27</span><span>54</span><span>80</span><span>107</span><span>134</span><span>161</span><span>188</span><span>214</span><span>241</span><span>268s</span></div>
+  <!-- lanes: percent of 268s -->
+  <div class="lane" style="top:0"><div class="nm"><span class="dot" style="background:#4ade80"></span>plan</div><div class="trk"><div class="bar mdl" style="left:0;width:5%"></div></div></div>
+  <div class="lane" style="top:0"><div class="nm"><span class="dot" style="background:#4ade80"></span>approve</div><div class="trk"><div class="bar appr" style="left:5%;width:3%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#4ade80"></span>1.1 Leg 1</div><div class="trk">
+    <div class="bar appr" style="left:8%;width:4%"></div><div class="bar mdl" style="left:12%;width:9%"></div><div class="bar tool" style="left:21%;width:14%"></div><div class="bar mdl" style="left:35%;width:6%"></div><div class="bar rep" style="left:41%;width:7%"></div><div class="bar tool" style="left:48%;width:6%"></div><div class="bar jdg" style="left:54%;width:14%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#4ade80"></span>1.2 Leg 2</div><div class="trk">
+    <div class="bar appr" style="left:8%;width:17%"></div><div class="bar mdl" style="left:25%;width:8%"></div><div class="bar tool" style="left:33%;width:12%"></div><div class="bar jdg" style="left:45%;width:10%"></div><div class="bar rep" style="left:55%;width:9%"></div><div class="bar jdg" style="left:64%;width:10%"></div><div class="bar rep" style="left:74%;width:8%"></div><div class="bar jdg" style="left:82%;width:10%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#4ade80"></span>1.3 Leg 3</div><div class="trk">
+    <div class="bar appr" style="left:8%;width:4%"></div><div class="bar mdl" style="left:12%;width:10%"></div><div class="bar tool" style="left:22%;width:16%"></div><div class="bar jdg" style="left:38%;width:14%"></div><div class="bar rep" style="left:52%;width:8%"></div><div class="bar jdg" style="left:60%;width:8%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#4ade80"></span>1.4 Baggage</div><div class="trk">
+    <div class="bar appr" style="left:8%;width:4%"></div><div class="bar mdl" style="left:12%;width:7%"></div><div class="bar tool" style="left:19%;width:18%"></div><div class="bar jdg" style="left:37%;width:12%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#4ade80"></span>1.5 Fallback</div><div class="trk">
+    <div class="bar appr" style="left:8%;width:4%"></div><div class="bar mdl" style="left:12%;width:9%"></div><div class="bar tool" style="left:21%;width:10%"></div><div class="bar jdg" style="left:31%;width:12%"></div><div class="bar rep" style="left:43%;width:6%"></div><div class="bar jdg" style="left:49%;width:9%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#fbbf24"></span>2.1 Merge</div><div class="trk">
+    <div class="bar mdl" style="left:69%;width:6%"></div><div class="bar tool" style="left:75%;width:9%"></div><div class="bar jdg" style="left:84%;width:9%"></div></div></div>
+  <div class="lane"><div class="nm"><span class="dot" style="background:#4ade80"></span>synthesize</div><div class="trk"><div class="bar mdl" style="left:93%;width:7%"></div></div></div>
+ </div>
+ <!-- popover -->
+ <div class="panel" style="position:absolute;left:330px;top:440px;width:360px;padding:14px;background:#101010;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+  <div class="row" style="justify-content:space-between"><span class="m" style="font-size:12px">1.2 · approval wait</span><span class="chip b-warn">45.7 s</span></div>
+  <div class="mut" style="font-size:12px;line-height:1.7;margin-top:8px">First tool call, brave_search<br>Approval mode: <b style="color:#e8e8e8">asked</b> · decided by you<br>Tool execution: 2.1 s (wait excluded)<br>On the critical path: <span class="red">yes, +45 s</span></div>
+  <div class="row" style="gap:8px;margin-top:10px"><span class="btn">Open call record</span><span class="btn">Trust tool for run</span></div></div>
+ <div class="row" style="position:absolute;left:22px;right:22px;bottom:18px;justify-content:space-between;border-top:0.5px solid rgba(255,255,255,.08);padding-top:14px">
+  <div class="row" style="gap:22px;font-size:12px"><span><span class="mut">Critical path</span> <b>1.2 → 2.1 → synth</b></span><span><span class="mut">Retry time</span> <b class="red">96 s</b></span><span><span class="mut">Approval wait</span> <b class="amb">71 s</b></span><span><span class="mut">Judge</span> <b style="color:#a78bfa">187 s</b></span></div>
+  <span class="chip">click any segment to open its call record</span></div>
+</div></div></body></html>

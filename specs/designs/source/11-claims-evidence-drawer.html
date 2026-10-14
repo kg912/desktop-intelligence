@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Claims & evidence drawer</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>*{box-sizing:border-box}
+body{margin:0;background:#050505;color:#e8e8e8;font-family:'Inter',system-ui,-apple-system,sans-serif}
+.m{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+.panel{background:#0a0a0a;border:0.5px solid rgba(255,255,255,.08);border-radius:12px}
+.mut{color:#8a8a8a}.red{color:#ff6b66}.grn{color:#4ade80}.amb{color:#fbbf24}.blu{color:#60a5fa}
+.chip{display:inline-flex;align-items:center;gap:4px;font:500 11px 'JetBrains Mono',monospace;padding:2px 7px;border-radius:5px;border:0.5px solid rgba(255,255,255,.14);background:#141414;color:#cfcfcf}
+.b-ok{color:#4ade80;border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.08)}
+.b-warn{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+.b-bad{color:#ff6b66;border-color:rgba(229,57,53,.5);background:rgba(229,57,53,.1)}
+.b-info{color:#60a5fa;border-color:rgba(96,165,250,.4);background:rgba(96,165,250,.08)}
+.lbl{font:500 10.5px 'JetBrains Mono',monospace;letter-spacing:.06em;color:#8a8a8a;text-transform:uppercase}
+.btn{font:500 12px Inter;padding:7px 12px;border-radius:8px;border:0.5px solid rgba(255,255,255,.16);background:#141414;color:#e8e8e8}
+.btn.pri{background:#e53935;border-color:#e53935;color:#fff}
+.row{display:flex;align-items:center}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+mark{background:rgba(251,191,36,.28);color:#fde68a;padding:1px 2px;border-radius:3px}
+.cite{cursor:pointer}
+.cl{padding:12px 14px;border-bottom:0.5px solid rgba(255,255,255,.06)}
+.cl.sel{background:#111;box-shadow:inset 2px 0 0 #ff6b66}
+</style></head><body>
+<div style="width:1440px;height:880px;padding:28px;display:flex;gap:20px">
+<!-- report -->
+<div class="panel" style="flex:1;padding:28px 34px;overflow:hidden">
+  <div class="row" style="gap:10px;margin-bottom:6px"><span class="lbl">Final answer</span><span class="chip b-ok">23 verified</span><span class="chip b-warn">4 unverified</span><span class="chip b-bad">2 conflicted</span></div>
+  <div style="font-size:22px;font-weight:600;line-height:1.3;margin:10px 0 18px">Istanbul → Cappadocia → İzmir: 3-leg plan</div>
+  <div style="font-size:14px;line-height:1.75;color:#cfcfcf">
+  <b style="color:#e8e8e8">Leg 2 · Kayseri → İzmir.</b> Direct flights are listed on Tuesdays, Thursdays and Saturdays
+  <span class="chip b-info cite">1.2</span><span class="chip b-bad cite" style="margin-left:3px;outline:1px solid #ff6b66">1.2 c3 · conflict</span>,
+  but a second source shows no direct service in the same window <span class="chip b-info cite">2.1</span>. Treat as <b style="color:#fbbf24">unconfirmed</b> until the date is checked on the airline site.<br><br>
+  Checked baggage on the budget fare is 15 kg <span class="chip b-ok cite">1.3 c2</span>; a bag fee applies on the Kayseri leg <span class="chip b-warn cite">1.3 c5 · unverified</span>.<br><br>
+  Airport to Göreme by shuttle takes about 75 minutes <span class="chip b-ok cite">1.4 c1</span>. Taxi estimates range from 1,400 to 2,100 TRY <span class="chip b-bad cite">1.4 c3 · conflict</span>.<br><br>
+  <span class="mut">If leg 2 exceeds 5 h door to door, take the overnight bus instead <span class="chip b-ok cite">1.5 c1</span>.</span></div>
+</div>
+<!-- drawer -->
+<div class="panel" style="width:560px;display:flex;flex-direction:column;overflow:hidden">
+  <div class="row" style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,.08);justify-content:space-between">
+    <div><div class="lbl">Evidence · agent 1.2 · Flights</div><div style="font-size:14px;font-weight:600;margin-top:3px">Claim c3 · conflicted</div></div>
+    <span class="mut">✕</span></div>
+  <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,.08)">
+    <div style="font-size:13.5px;line-height:1.5">"Direct Kayseri–İzmir flights operate Tuesdays, Thursdays and Saturdays."</div>
+    <div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap"><span class="chip b-ok">quote verified</span><span class="chip b-bad">contradicted by 2.1 c4</span><span class="chip">judge 0.62</span><span class="chip">attempt 3 of 3</span></div></div>
+  <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,.08)">
+    <div class="row" style="justify-content:space-between"><span class="lbl">Source · call 17 · brave_search</span><span class="chip">open raw result</span></div>
+    <div class="m" style="font-size:11.5px;line-height:1.65;color:#a8a8a8;margin-top:8px;background:#060606;border:0.5px solid rgba(255,255,255,.06);border-radius:8px;padding:10px 12px">
+    [S17.3] Kayseri (ASR) to İzmir (ADB)<br>https://example-airline.com/kayseri-izmir<br>…schedules change by season. <mark>Flights from Kayseri to İzmir operate on Tuesday, Thursday and Saturday</mark> in the summer timetable. Check the exact date at booking…</div></div>
+  <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,.08)">
+    <div class="lbl" style="margin-bottom:8px">Conflicting claim</div>
+    <div style="background:rgba(229,57,53,.06);border:0.5px solid rgba(229,57,53,.35);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.5">2.1 c4: "No scheduled direct flight between ASR and ADB on the selected week."<div class="mut m" style="font-size:11px;margin-top:5px">call 9 · [S9.1] · verified</div></div></div>
+  <div class="row" style="padding:10px 16px;gap:8px;justify-content:space-between"><div class="row" style="gap:8px"><span class="lbl">All claims</span><span class="chip">all 29</span><span class="chip b-warn">unverified only</span><span class="chip b-bad">conflicts</span></div></div>
+  <div style="overflow:hidden;flex:1">
+    <div class="cl"><div class="row" style="justify-content:space-between"><span class="m" style="font-size:11px">1.2 c1</span><span class="chip b-ok">verified</span></div><div style="font-size:12.5px;margin-top:5px" class="mut">ASR–IST has 8+ daily flights on three carriers.</div></div>
+    <div class="cl"><div class="row" style="justify-content:space-between"><span class="m" style="font-size:11px">1.2 c2</span><span class="chip b-ok">verified</span></div><div style="font-size:12.5px;margin-top:5px" class="mut">Typical ASR–IST flight time is 1 h 25 min.</div></div>
+    <div class="cl sel"><div class="row" style="justify-content:space-between"><span class="m" style="font-size:11px">1.2 c3</span><span class="chip b-bad">conflicted</span></div><div style="font-size:12.5px;margin-top:5px">Direct ASR–ADB flights Tue / Thu / Sat.</div></div>
+    <div class="cl"><div class="row" style="justify-content:space-between"><span class="m" style="font-size:11px">1.2 c5</span><span class="chip b-warn">unverified · declared</span></div><div style="font-size:12.5px;margin-top:5px" class="mut">Exact departure times for the chosen date.</div></div>
+  </div>
+</div></div></body></html>
