@@ -380,6 +380,16 @@ it does not re-run `agent_stale`, leaves every other record as it was, and re-sy
 `POST /run/{id}/steps/{stepId}/lock` locks a step: never re-run, never stale. Electron continues the same run row
 (only the chat's latest run), so the trace grows from where it stopped.
 
+**Replay from logs (spec B Phase 6).** `npm run replay -- <run dir | fixture name> --stage judge|synthesize [--model m]
+[--prompt-file f] [--dry-run]` (`resources/python/replay.py`) re-runs one stage of a recorded run with the current
+code. Judge: every judged attempt is rebuilt from its recorded judge request (task, subtask, output, earlier
+agents' outputs), its evidence and its claims; claim statuses are recomputed by the current verifier and listed
+against the recording, and the judge is called again (verdicts shown recorded → now). Synthesize: the recorded
+synthesis input goes to the current synthesis prompt and the answer is diffed against the recorded one. Only that
+stage's model calls are made; the cost is printed. `--prompt-file` replaces the stage's system prompt. In Settings →
+Debug → Multi-agent runs, each run has "Copy replay command". `replay_judge` / `replay_synthesis` take a loaded run
+(fixture or run directory), so evals can drive them.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

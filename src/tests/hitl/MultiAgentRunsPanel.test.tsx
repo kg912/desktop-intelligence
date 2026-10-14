@@ -8,6 +8,7 @@ const api = {
   ...observabilityMock,
   obsOpenMultiAgentRunFile: vi.fn(async () => ''),
   obsRevealMultiAgentRun: vi.fn(async () => {}),
+  obsMultiAgentReplayCommand: vi.fn(async (_chatId: string, _runId: string) => 'npm run replay -- "/logs/run" --stage judge'),
   obsDeleteMultiAgentRun: vi.fn(observabilityMock.obsDeleteMultiAgentRun),
   obsListMultiAgentRunEvents: vi.fn(observabilityMock.obsListMultiAgentRunEvents),
 }
@@ -69,6 +70,16 @@ describe('MultiAgentRunsPanel', () => {
     expect(api.obsDeleteMultiAgentRun).not.toHaveBeenCalled()
     fireEvent.click(within(row).getByLabelText('Click again to delete'))
     await waitFor(() => expect(screen.queryByText('Summarise the Q3 board pack')).toBeNull())
+  })
+
+  it('spec B Phase 6: copies the replay command for the run (judge stage)', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.assign(navigator, { clipboard: { writeText } })
+    render(<MultiAgentRunsPanel enabled onEnable={() => {}} />)
+    const row = await rowFor('Compare castle hotels near Füssen')
+    fireEvent.click(within(row).getByLabelText('Copy replay command'))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('npm run replay -- "/logs/run" --stage judge'))
+    expect(api.obsMultiAgentReplayCommand).toHaveBeenCalledWith('chat-hotels', '7f3c2a10-9b1e-4c55-a0d4-5e8f1c2be21a')
   })
 
   it('raw UI events for the selected run page newest first', async () => {

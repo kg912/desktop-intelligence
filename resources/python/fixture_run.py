@@ -7,7 +7,11 @@ RUNS = Path(__file__).parent / "tests" / "fixtures" / "runs"
 
 def load(name: str = "istanbul-3leg") -> dict:
     """{"events": [...], "records": {agentId: [records]}, "meta": {...}}."""
-    root = RUNS / name
+    return load_dir(RUNS / name)
+
+
+def load_dir(root: Path) -> dict:
+    """The same for any run directory the run logger wrote."""
     records: dict[str, list[dict]] = {}
     for path in sorted(root.glob("*.jsonl")):
         if path.name == "events.jsonl":

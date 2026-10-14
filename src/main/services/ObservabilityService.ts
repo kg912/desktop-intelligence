@@ -415,6 +415,11 @@ export class ObservabilityService {
     shell.showItemInFolder(path.join(this.multiAgentRuns.runDir(chatId, runId), 'run.meta.json'))
   }
 
+  /** Spec B Phase 6: `npm run replay` for this run's directory (judge stage; --stage synthesize, --model, --prompt-file also work). */
+  multiAgentReplayCommand(chatId: string, runId: string): string {
+    return `npm run replay -- ${JSON.stringify(this.multiAgentRuns.runDir(chatId, runId))} --stage judge`
+  }
+
   deleteMultiAgentRun(chatId: string, runId: string): Promise<boolean> {
     return this.multiAgentRuns.deleteRun(chatId, runId)
   }

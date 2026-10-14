@@ -1412,6 +1412,9 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.OBS_REVEAL_MULTI_AGENT_RUN, async (_e, chatId: string, runId: string): Promise<void> =>
     observabilityService.revealMultiAgentRun(String(chatId), String(runId))
   )
+  ipcMain.handle(IPC_CHANNELS.OBS_MULTI_AGENT_REPLAY_COMMAND, async (_e, chatId: string, runId: string): Promise<string> =>
+    observabilityService.multiAgentReplayCommand(String(chatId), String(runId))
+  )
   ipcMain.handle(IPC_CHANNELS.OBS_DELETE_MULTI_AGENT_RUN, async (_e, chatId: string, runId: string) =>
     observabilityService.deleteMultiAgentRun(String(chatId), String(runId))
   )

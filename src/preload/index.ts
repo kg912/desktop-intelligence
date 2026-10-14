@@ -325,6 +325,10 @@ const api = {
   obsRevealMultiAgentRun: (chatId: string, runId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_REVEAL_MULTI_AGENT_RUN, chatId, runId),
 
+  /** Spec B Phase 6: the dev command that replays this run's judge stage from its logs. */
+  obsMultiAgentReplayCommand: (chatId: string, runId: string): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_MULTI_AGENT_REPLAY_COMMAND, chatId, runId),
+
   obsDeleteMultiAgentRun: (chatId: string, runId: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.OBS_DELETE_MULTI_AGENT_RUN, chatId, runId),
 

@@ -3,7 +3,7 @@
  * Read-only views of the per-run log tree; files open in the OS.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Copy, FileText, FolderOpen, Trash2 } from 'lucide-react'
+import { Copy, FileText, FolderOpen, RotateCcw, Trash2 } from 'lucide-react'
 import type { RunDetail, RunListRow, TimelineCall } from '../../../../main/services/MultiAgentRunLogger'
 import type { MultiAgentTraceLogEntry } from '../../../../main/services/ObservabilityService'
 
@@ -69,8 +69,8 @@ export function MultiAgentRunsPanel({ enabled, onEnable }: { enabled: boolean; o
     }
   }
 
-  const copy = async (runId: string) => {
-    await navigator.clipboard?.writeText(runId).catch(() => {})
+  const copy = async (runId: string, text = runId) => {
+    await navigator.clipboard?.writeText(text).catch(() => {})
     setCopied(runId)
     setTimeout(() => setCopied(null), 1200)
   }
@@ -131,6 +131,10 @@ export function MultiAgentRunsPanel({ enabled, onEnable }: { enabled: boolean; o
                     <IconButton label="Open run.md" onClick={() => void window.api.obsOpenMultiAgentRunFile(row.chatId, row.runId)}><FileText className="h-3.5 w-3.5" /></IconButton>
                     <IconButton label="Reveal folder" onClick={() => void window.api.obsRevealMultiAgentRun(row.chatId, row.runId)}><FolderOpen className="h-3.5 w-3.5" /></IconButton>
                     <IconButton label={copied === row.runId ? 'Copied' : 'Copy run id'} onClick={() => void copy(row.runId)}><Copy className="h-3.5 w-3.5" /></IconButton>
+                    {/* Spec B Phase 6: re-run only the judge stage of this run from its logs (resources/python/replay.py). */}
+                    <IconButton label="Copy replay command" onClick={() => void window.api.obsMultiAgentReplayCommand(row.chatId, row.runId).then((cmd) => copy(row.runId, cmd))}>
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </IconButton>
                     <IconButton label={confirmDelete === row.runId ? 'Click again to delete' : 'Delete'} danger active={confirmDelete === row.runId} disabled={row.status === 'running'} onClick={() => void remove(row)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </IconButton>

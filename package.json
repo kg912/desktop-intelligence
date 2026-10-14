@@ -1,6 +1,6 @@
 {
   "name": "desktop-intelligence",
-  "version": "3.2.54",
+  "version": "3.2.55",
   "description": "Electron orchestration layer for local and cloud LLMs via LMStudio, Ollama, OpenRouter and Nvidia Build",
   "main": "out/main/index.js",
   "author": "Karan Grover",
@@ -22,7 +22,8 @@
     "postinstall": "install-electron && electron-builder install-app-deps",
     "prepackage": "rm -f node_modules/better-sqlite3/build/Release/.forge-meta && electron-builder install-app-deps",
     "prepare": "husky",
-    "baseline": "tsx scripts/run-baseline.ts"
+    "baseline": "tsx scripts/run-baseline.ts",
+    "replay": "node_modules/.cache/di-sidecar-venv/bin/python -W ignore resources/python/replay.py"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.65",

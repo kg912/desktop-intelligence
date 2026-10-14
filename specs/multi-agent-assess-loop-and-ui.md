@@ -71,6 +71,7 @@ Builds on Spec A Phase 6 (`read_evidence`).
 ### Phase 6: Replay from logs (B7)
 - CLI and dev menu: `replay <runId> --stage judge|synthesize [--model m] [--prompt-file f]` loads the stored run (evidence, claims, outputs) and re-runs only that stage; prints cost and a diff of verdicts or the final text against the original.
 - Same mechanism feeds Spec A's fixtures into evals.
+- **Decisions (implemented):** with the current verifier the Istanbul judge replay matches the recorded claim-status table except one claim, 1.2 c2 (attempt 2), which Spec A Phase 1 re-points (`quote_not_found` → `verified_repointed`); the acceptance pins exactly that one difference. The dev menu is a "Copy replay command" action per run in Settings → Debug → Multi-agent runs (the CLI needs the sidecar venv and `OPENROUTER_API_KEY`; the app does not run it). `--prompt-file` replaces the stage's whole system prompt.
 - **Acceptance:** replaying the judge stage of the Istanbul fixture with the same prompt reproduces the claim-status table exactly (no model drift check; claims are deterministic), and costs only the judge calls.
 
 ### Phase 7: UI (B8)

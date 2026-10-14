@@ -472,6 +472,7 @@ export const IPC_CHANNELS = {
   OBS_OPEN_MULTI_AGENT_RUN_FILE: 'obs:openMultiAgentRunFile',
   OBS_REVEAL_MULTI_AGENT_RUN:  'obs:revealMultiAgentRun',
   OBS_DELETE_MULTI_AGENT_RUN:  'obs:deleteMultiAgentRun',
+  OBS_MULTI_AGENT_REPLAY_COMMAND: 'obs:multiAgentReplayCommand',
 
   // ── Multi-Agent Orchestration ──────────────────────────────────────────────
   MULTI_AGENT_START:          'multi-agent:start',
