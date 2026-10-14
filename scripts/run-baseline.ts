@@ -21,7 +21,7 @@ async function main(): Promise<number> {
   const pct = (n: number): string => `${Math.round(100 * n)}%`
   const rows: Array<[string, string]> = [
     ['Total cost', usd(s.costUsd)],
-    ...(['planner', 'worker', 'judge', 'synthesizer'] as const).map((r): [string, string] =>
+    ...(['planner', 'worker', 'judge', 'assess', 'synthesizer'] as const).map((r): [string, string] =>
       [`  ${r}`, `${usd(s.costByRole[r])} (${pct(s.costByRole[r] / s.costUsd)}, ${s.calls[r]} calls)`]),
     ['Wall time', s.wallMs == null ? '—' : `${(s.wallMs / 1000).toFixed(1)} s`],
     ['Critical path', s.criticalPath.join(' → ')],

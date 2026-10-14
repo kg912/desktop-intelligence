@@ -125,6 +125,11 @@ class Config(BaseModel):
     maxTokensByRole: dict[str, int] = Field(default_factory=dict)
     reasoningByRole: dict[str, Literal["off", "low", "medium", "high"]] = Field(default_factory=dict)
     providerPrefs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Spec B Phase 2 (Settings → Follow-up research): research waves including the first (1 = no follow-ups), and the
+    # estimated cost at or below which follow-up steps run without asking (0 = always ask). models["assess"] picks the
+    # assess model (default: the reflection model).
+    maxWaves: int = Field(default=2, ge=1, le=3)
+    followUpAutoUsd: float = Field(default=0.15, ge=0)
 
 
 class RunRequest(BaseModel):
@@ -225,6 +230,12 @@ class Run:
     checklist: list[dict[str, Any]] = field(default_factory=list)
     step_results: dict[str, dict[str, Any]] = field(default_factory=dict)
     ledger: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Spec B Phase 2: the research wave in progress (1 = the planner's steps), the open-requirement count the last
+    # assess saw (None before the first), and what the synthesizer must state: caveats and the user's answer.
+    wave: int = 1
+    prev_open: int | None = None
+    caveats: list[str] = field(default_factory=list)
+    user_answer: str = ""
 
     @property
     def config(self) -> Config:
@@ -657,11 +668,11 @@ class DsmlTokenFilter:
 
 
 # ── Per-role request parameters (spec A Phase 8) ──────────────────────────────
-ROLE_OF_OBS = {"planner": "planner", "worker": "worker", "reflection": "judge", "synthesis": "synthesizer"}
+ROLE_OF_OBS = {"planner": "planner", "worker": "worker", "reflection": "judge", "synthesis": "synthesizer", "assess": "assess"}
 # Worker and synthesizer above the spec's 8k / 12k: in the Istanbul run 4 of 40 worker calls produced more than 8k
 # completion tokens (up to 22.8k, mostly reasoning) and the synthesis 12.9k. These bound reservations, not answers.
-ROLE_MAX_TOKENS = {"planner": 4_000, "worker": 12_000, "judge": 600, "synthesizer": 16_000}
-ROLE_REASONING = {"planner": "medium", "judge": "low", "synthesizer": "medium"}  # the worker's comes from Settings
+ROLE_MAX_TOKENS = {"planner": 4_000, "worker": 12_000, "judge": 600, "synthesizer": 16_000, "assess": 800}
+ROLE_REASONING = {"planner": "medium", "judge": "low", "synthesizer": "medium", "assess": "low"}  # the worker's comes from Settings
 # Families that need explicit cache_control breakpoints; the rest (OpenAI, DeepSeek, Z.AI, Moonshot, Gemini 2.5+) cache automatically.
 CACHE_EXPLICIT_RE = re.compile(r"^(anthropic/|qwen/|google/gemini-(1|2\.0))")
 
@@ -675,7 +686,7 @@ def role_effort(config: Config, role: str) -> str:
 
 
 def provider_prefs(config: Config, role: str) -> dict[str, Any]:
-    return {"require_parameters": True, "data_collection": config.dataCollection, **({"sort": "price"} if role == "judge" else {}),
+    return {"require_parameters": True, "data_collection": config.dataCollection, **({"sort": "price"} if role in ("judge", "assess") else {}),
             **config.providerPrefs.get(role, {})}
 
 
@@ -911,6 +922,19 @@ def plan_json(text: str) -> tuple[Any, list[Any]]:
     raise ValueError("no JSON plan in planner output")
 
 
+def plan_json_object(text: str) -> tuple[dict[str, Any], int]:
+    """(the first JSON object in a reply, its offset); ValueError when there is none."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"{", text):
+        try:
+            value, _ = decoder.raw_decode(text, match.start())
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value, match.start()
+    raise ValueError("no JSON object in the reply")
+
+
 def parse_checklist(text: str, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The planner's acceptance checklist (spec B Phase 1), [] when it wrote none. Ids are unique, scope is a step id or
     "global", at most CHECKLIST_MAX items; each step's covers keep only known ids."""
@@ -961,6 +985,7 @@ def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
             **({"axis": str(item["axis"]).strip().lower()} if str(item.get("axis") or "").strip().lower() in ("entity", "topic") else {}),
             **({"condition": str(item["condition"]).strip()[:300]} if str(item.get("condition") or "").strip() else {}),
             **({"covers": [str(c)[:20] for c in item["covers"] if isinstance(c, (str, int))][:CHECKLIST_MAX]} if isinstance(item.get("covers"), list) else {}),
+            **({"task": str(item["task"]).strip()[:1_000]} if str(item.get("task") or "").strip() else {}),
         })
     ids = {s["id"] for s in steps}
     if legacy:
@@ -1558,12 +1583,16 @@ def possible_conflict(a: str, b: str) -> bool:
 
 def compute_ledger(checklist: list[dict[str, Any]], steps: list[dict[str, Any]], finished: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """checklistId → {status, claimIds[, conflict]}. finished: agentId → {"claims", "statuses"} for every step that ended
-    (a failed or skipped step has no claims). Status: conflicted (two verified claims of different agents disagree),
+    (a failed or skipped step has no claims). Only the latest wave's verified claims count (a follow-up settles a conflict).
+    Status: conflicted (two verified claims of different agents disagree),
     verified, unverified (only declared-unverified claims), pending (a covering step has not ended), missing."""
     covering = {item["id"]: [st["id"] for st in steps if item["id"] in st.get("covers", [])] for item in checklist}
+    wave_of = {st["id"]: st.get("wave", 1) for st in steps}
     by_req: dict[str, list[tuple[str, dict[str, Any], str]]] = {item["id"]: [] for item in checklist}
-    for agent_id, done in finished.items():
-        for claim in done["claims"]:
+    order = [st["id"] for st in steps] + [a for a in finished if a not in wave_of]  # plan order, not finishing order
+    for agent_id in order:
+        done = finished.get(agent_id)
+        for claim in done["claims"] if done else []:
             for req in claim_req(claim):
                 if req in by_req:
                     by_req[req].append((agent_id, claim, done["statuses"].get(claim["id"], "")))
@@ -1571,6 +1600,9 @@ def compute_ledger(checklist: list[dict[str, Any]], steps: list[dict[str, Any]],
     for item in checklist:
         entries = by_req[item["id"]]
         verified = [(a, c) for a, c, st in entries if st in CLAIM_VERIFIED]
+        if verified:  # a later wave's verified claims settle the requirement: earlier ones no longer count against it
+            latest = max(wave_of.get(a, 1) for a, _ in verified)
+            verified = [(a, c) for a, c in verified if wave_of.get(a, 1) == latest]
         declared = [(a, c) for a, c, st in entries if st == "unverified_declared"]
         conflict = next(([f"{a} {x['id']}", f"{b} {y['id']}"] for i, (a, x) in enumerate(verified) for b, y in verified[i + 1:]
                          if a != b and possible_conflict(x["claim"], y["claim"])), None)
@@ -2002,7 +2034,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                       "If a criterion cannot be verified with your tools, report it as unverified with the reason. Never report an "
                                       "unverifiable criterion as met or as failed, and do not eliminate an item only because data is missing; flag it instead."
                                       "\n\n" + claims_contract(config))},
-        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{covers_text(run, step)}{context}"},
+        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step.get('task') or step['label']}{covers_text(run, step)}{context}"},
     ]
     compacted: set[int] = set()  # indices of tool messages already replaced by a stub
     # Every judged attempt with usable output (precheck passed), for 'degrade' on exhaustion.
@@ -2013,7 +2045,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
     def finish(output: str, claims: list[dict[str, Any]], statuses: dict[str, str], header: str = "") -> str:
         """The step's final answer: kept for the coverage ledger and handoffs (spec B), returned as the downstream text."""
-        run.step_results[agent_id] = {"output": output, "claims": claims, "statuses": statuses}
+        run.step_results[agent_id] = {"output": output, "claims": claims, "statuses": statuses, "costUsd": agent_cost}
         return downstream_text(agent_id, output, claims, statuses, header)
 
     async def exhausted(reason: str) -> str:
@@ -2235,9 +2267,10 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
     has passed, up to maxAgents at once — never waiting for a whole phase."""
     run: Run = state["run"]
     steps: list[dict[str, Any]] = state["steps"]
-    outputs: dict[str, str] = {}
-    failures: dict[str, str] = {}
-    pending = {s["id"]: s for s in steps}
+    # Re-entrant (spec B Phase 2): a follow-up wave starts from the earlier waves' outputs and failures.
+    outputs: dict[str, str] = dict(state.get("outputs") or {})
+    failures: dict[str, str] = dict(state.get("failures") or {})
+    pending = {s["id"]: s for s in steps if s["id"] not in outputs and s["id"] not in failures}
     running: dict[asyncio.Task[str], dict[str, Any]] = {}
 
     async def fail(step_id: str, reason: str) -> None:
@@ -2291,6 +2324,197 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
     return {**state, "outputs": outputs, "failures": failures}
 
 
+# ── Assess (spec B Phase 2): is the task done, or is one more bounded wave worth it? ──
+
+ASSESS_SYSTEM = (
+    "You assess whether a multi-agent research run has met its acceptance checklist, after a wave of research. "
+    "You see the checklist, the open requirements with their claims, the tools the agents have, and what is left of the "
+    "budget and waves. Decide one of: \"done\" (the answer can be written now; open items become caveats), \"follow_up\" "
+    "(a few new research steps can close open items with the available tools), or \"ask_user\" (only the user can settle "
+    "it, e.g. a preference). A follow-up step must name the tools it needs from the list; never propose a step that needs a "
+    "tool that is not listed: put that requirement in \"unclosable\" with the reason instead. For each open requirement "
+    "marked \"possible conflict\", list its id in \"confirmed\" only if the claims really disagree. Reply with ONLY a JSON "
+    "object: {\"decision\", \"reason\": one sentence, \"steps\": [{\"title\", \"task\", \"covers\": [checklist ids], "
+    "\"tools\": [tool names], \"condition\"?}], \"unclosable\": [{\"checklistId\", \"reason\"}], \"confirmed\": [ids], \"question\"?}."
+)
+ASSESS_PROMPT_MAX_CHARS = 14_000  # ≈ 3.5k tokens: the assess call stays small (≤ 4k tokens of input)
+ASSESS_CLAIMS_PER_REQ = 6
+NO_TOOL_REASON = "no available tool can close this gap (needs {tools})"
+
+
+def ledger_label(entry: dict[str, Any]) -> str:
+    conflict = entry.get("conflict")
+    return ("conflict" if conflict["confirmed"] else "possible conflict") if conflict and entry["status"] == "conflicted" else entry["status"]
+
+
+def open_requirements(run: Run) -> list[str]:
+    return [item["id"] for item in run.checklist if run.ledger.get(item["id"], {}).get("status") != "verified"]
+
+
+def claim_text(run: Run, ref: str) -> str:
+    agent_id, _, claim_id = ref.partition(" ")
+    claim = next((c for c in run.step_results.get(agent_id, {}).get("claims", []) if c["id"] == claim_id), None)
+    return preview(claim["claim"], 200) if claim else ""
+
+
+def remaining_budget(run: Run) -> float:
+    return run.config.budgetCapUsd - run.total_cost - run.synthesis_reserve()
+
+
+def assess_messages(run: Run) -> list[dict[str, Any]]:
+    """The assess call's input: checklist with statuses, open requirements with their claims, tools, budget and waves."""
+    config = run.config
+    lines = [f"Task: {preview(run.request.task, 1_500)}", "", "Checklist (id · status · requirement):"]
+    lines += [f"- {item['id']} · {ledger_label(run.ledger.get(item['id'], {'status': 'pending'}))} · {item['text']}" for item in run.checklist]
+    lines += ["", "Open requirements and their claims:"]
+    for req in open_requirements(run):
+        entry = run.ledger.get(req, {"status": "pending", "claimIds": []})
+        lines.append(f"- {req} ({ledger_label(entry)}):")
+        lines += [f"    {ref}: {claim_text(run, ref)}" for ref in entry["claimIds"][:ASSESS_CLAIMS_PER_REQ]] or ["    no claims"]
+    tools = [f"{t.get('name')}" + (f": {preview(str(t.get('description')), 100)}" if t.get("description") else "") for t in run.request.tools]
+    lines += ["", "Tools the agents have: " + ("; ".join(tools) if tools else "none"),
+              f"Budget: {run.total_cost:.2f} of {config.budgetCapUsd:.2f} USD spent",
+              f"Waves: {run.wave} of {config.maxWaves} used" + (f"; open requirements after the previous wave: {run.prev_open}" if run.prev_open is not None and run.wave > 1 else "")]
+    text = "\n".join(lines)
+    if len(text) > ASSESS_PROMPT_MAX_CHARS:
+        text = text[:ASSESS_PROMPT_MAX_CHARS] + "\n[…cut to keep the assess call small]"
+    return [{"role": "system", "content": with_date(run, ASSESS_SYSTEM)}, {"role": "user", "content": text}]
+
+
+def step_cost_estimate(run: Run) -> float:
+    """What one more step is likely to cost: the mean of the finished steps' own spend (0 when nothing is priced)."""
+    costs = [r.get("costUsd", 0.0) for r in run.step_results.values() if r.get("claims") or r.get("output")]
+    return sum(costs) / len(costs) if costs else 0.0
+
+
+def plan_follow_up(run: Run, reply: dict[str, Any], steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
+    """(follow-up steps validated like the planner's, unclosable gaps, tool coverage all|partly|none|n/a). A step that
+    needs a tool the run does not have is not run: its requirements become unclosable (no spend on them)."""
+    known = {item["id"] for item in run.checklist}
+    available = {str(t.get("name")) for t in run.request.tools}
+    unclosable = [{"checklistId": str(u.get("checklistId")), "reason": str(u.get("reason") or "")[:300]}
+                  for u in (reply.get("unclosable") or []) if isinstance(u, dict) and str(u.get("checklistId")) in known]
+    proposed = [st for st in (reply.get("steps") or []) if isinstance(st, dict) and str(st.get("title") or "").strip()]
+    capable = []
+    for st in proposed:
+        needs = [str(t) for t in st.get("tools") or [] if str(t).strip()]
+        covers = [str(c) for c in st.get("covers") or [] if str(c) in known]
+        if needs and set(needs) <= available:
+            capable.append({**st, "covers": covers})
+        else:
+            reason = NO_TOOL_REASON.format(tools=", ".join(needs) or "a tool")
+            unclosable += [{"checklistId": c, "reason": reason} for c in covers if all(u["checklistId"] != c for u in unclosable)]
+    coverage = "n/a" if not proposed else "all" if len(capable) == len(proposed) else "partly" if capable else "none"
+    capable = capable[: run.config.maxAgents]
+    if not capable:
+        return [], unclosable, coverage
+    depth = 1 + max((st.get("phase", 1) for st in steps), default=0)
+    producers = {req: [ref.split(" ")[0] for ref in run.ledger.get(req, {}).get("claimIds", [])] for req in known}
+    raw = [{"id": st["id"], "label": st["label"], "role": st["role"], "dependsOn": st.get("dependsOn", [])} for st in steps]
+    for n, st in enumerate(capable, 1):
+        # A follow-up depends on the steps whose claims it re-checks, so it starts from their outputs.
+        deps = list(dict.fromkeys(d for req in st["covers"] for d in producers.get(req, [])))
+        raw.append({"id": f"{depth}.{n}", "label": str(st["title"]).strip(), "role": "Follow-up", "dependsOn": deps,
+                    "covers": st["covers"], "task": str(st.get("task") or ""), **({"condition": st["condition"]} if st.get("condition") else {})})
+    parsed = parse_plan(json.dumps(raw), run.config)  # the planner's checks: known ids, no cycles, depth
+    new_ids = {r["id"] for r in raw[len(steps):]}
+    return [dict(st, wave=run.wave + 1) for st in parsed if st["id"] in new_ids], unclosable, coverage
+
+
+def set_caveats(run: Run, unclosable: list[dict[str, str]]) -> None:
+    """What the synthesizer must state: every requirement still open, with the reason when no tool can close it."""
+    text = {item["id"]: item["text"] for item in run.checklist}
+    reasons = {u["checklistId"]: u["reason"] for u in unclosable}
+    run.caveats = [f"{req} ({text[req]}): {reasons.get(req) or ledger_label(run.ledger.get(req, {'status': 'pending'}))}" for req in open_requirements(run)]
+
+
+async def assess_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Between workers and synthesis. Stop rules are enforced here, never left to the model: the wave cap, no progress
+    since the last wave, the budget, and no available tool for a gap. Fast path: every requirement verified → done."""
+    run: Run = state["run"]
+    config = run.config
+    if not run.checklist:
+        return {**state, "next": "synthesize"}
+    open_ids = open_requirements(run)
+    progress = "first" if run.prev_open is None else "improved" if len(open_ids) < run.prev_open else "none"
+    run.prev_open = len(open_ids)
+    rules = {"checklist": {"open": len(open_ids), "total": len(run.checklist)}, "waves": {"used": run.wave, "max": config.maxWaves},
+             "budget": {"spentUsd": round(run.total_cost, 6), "capUsd": config.budgetCapUsd}, "progress": progress, "tools": "n/a"}
+    await run.emit("assess_start", wave=run.wave, open=len(open_ids))
+    model = config.models.get("assess") or config.models.get("reflection", "")
+    began = time.monotonic()
+    spent = 0.0
+
+    async def decide(decision: str, *, reason: str, forced: str | None = None, steps: list[dict[str, Any]] | None = None,
+                     unclosable: list[dict[str, str]] | None = None, **extra: Any) -> None:
+        await run.emit("assess_decision", wave=run.wave, decision=decision, reason=reason, steps=steps or [], unclosable=unclosable or [],
+                       costUsd=round(spent, 8), durationMs=int((time.monotonic() - began) * 1000), model=model if spent or extra.get("called") else "",
+                       rules=rules, **({"forced": forced} if forced else {}), **{k: v for k, v in extra.items() if k != "called"})
+
+    async def finish(reason: str, forced: str | None = None, unclosable: list[dict[str, str]] | None = None, **extra: Any) -> dict[str, Any]:
+        set_caveats(run, unclosable or [])
+        await decide("done", reason=reason, forced=forced, unclosable=unclosable, **extra)
+        return {**state, "next": "synthesize"}
+
+    if not open_ids:
+        return await finish("Every requirement is verified.")
+    forced = ("wave_cap" if run.wave >= config.maxWaves else "no_progress" if progress == "none"
+              else "budget" if run.budget_reached or remaining_budget(run) <= 0 else None)
+    if forced:
+        return await finish({"wave_cap": f"Wave cap reached ({run.wave} of {config.maxWaves}).",
+                             "no_progress": "The last wave closed no requirement.", "budget": "No budget left for more research."}[forced], forced)
+    try:
+        reply_msg, _, spent = await ask(run, model, assess_messages(run), obs={"role": "assess", "wave": run.wave})
+        reply, _ = plan_json_object(str(reply_msg.get("content") or ""))
+    except BudgetReached:
+        return await finish("No budget left for the assess call.", "budget")
+    except (ValueError, RuntimeError, AgentFailed) as exc:
+        return await finish(f"The assess reply was unusable ({preview(str(exc), 200)}).", called=True)
+
+    confirmed = {str(c) for c in reply.get("confirmed") or []}
+    if any(run.ledger.get(c, {}).get("conflict") for c in confirmed):
+        for c in confirmed:
+            if run.ledger.get(c, {}).get("conflict"):
+                run.ledger[c]["conflict"]["confirmed"] = True
+        await run.emit("ledger_update", ledger=run.ledger, counts=ledger_counts(run.ledger))
+    reason = preview(str(reply.get("reason") or ""), 300)
+    decision = str(reply.get("decision") or "done")
+
+    if decision == "ask_user" and str(reply.get("question") or "").strip():
+        question = preview(str(reply["question"]).strip(), 500)
+        await decide("ask_user", reason=reason, question=question, called=True)
+        try:
+            answered, answer = await run.wait_for_approval("assess", "Assess", model, "ask_user", "multi-agent", {"question": question})
+        except AgentFailed:
+            return await finish("No answer within the approval timeout; finishing with what is known.", "ask_user_timeout", called=True)
+        if answered and answer.strip():
+            run.user_answer = f"The user answered the question \"{question}\": {preview(answer.strip(), 1_000)}"
+        return await finish("The user answered; finishing." if run.user_answer else "The user declined to answer.", called=True)
+
+    steps, unclosable, rules["tools"] = plan_follow_up(run, reply, state["steps"]) if decision == "follow_up" else ([], [], "n/a")
+    if decision != "follow_up" or not steps:
+        no_tool = decision == "follow_up" and rules["tools"] == "none"
+        return await finish(reason or "Nothing more to research.", "no_capable_tool" if no_tool else None, unclosable, called=True)
+    per_step = step_cost_estimate(run)
+    estimate = round(sum(per_step * (0.5 if st.get("condition") else 1.0) for st in steps), 6)
+    if estimate > remaining_budget(run):
+        return await finish(f"The follow-up is estimated at {estimate:.2f} USD, more than the {max(0.0, remaining_budget(run)):.2f} USD left.",
+                            "budget", unclosable, estimatedUsd=estimate, called=True)
+    auto = config.followUpAutoUsd > 0 and estimate <= config.followUpAutoUsd
+    await decide("follow_up", reason=reason, steps=steps, unclosable=unclosable, estimatedUsd=estimate, autoRun=auto, called=True)
+    if not auto:
+        try:
+            approved, _ = await run.wait_for_approval("assess", "Assess", model, "approve_followup", "multi-agent", {"steps": steps, "estimatedUsd": estimate})
+        except AgentFailed:
+            approved = False
+        if not approved:
+            return await finish("You chose to finish now.", "finished_by_user", unclosable, called=True)
+    set_caveats(run, unclosable)
+    run.wave += 1
+    await run.emit("wave_start", n=run.wave, steps=steps)
+    return {**state, "steps": state["steps"] + steps, "next": "workers"}
+
+
 # ── Synthesis ────────────────────────────────────────────────────────────────
 
 SYNTHESIS_SYSTEM = ("You synthesize a multi-agent team's work into one final answer for the user. "
@@ -2315,7 +2539,9 @@ async def synthesize_node(state: dict[str, Any]) -> dict[str, Any]:
     missing = "".join(f"\n- [{agent_id}] failed: {reason}" for agent_id, reason in failures.items())
     prompt = [
         {"role": "system", "content": with_date(run, SYNTHESIS_SYSTEM)},
-        {"role": "user", "content": f"Task: {run.request.task}\n\nAgent outputs:\n\n{sources}" + (f"\n\nFailed agents:{missing}" if missing else "")},
+        {"role": "user", "content": f"Task: {run.request.task}\n\nAgent outputs:\n\n{sources}" + (f"\n\nFailed agents:{missing}" if missing else "")
+         + ("\n\nOpen requirements (state each as a caveat in the answer; do not fill them from memory):\n" + "\n".join(f"- {c}" for c in run.caveats) if run.caveats else "")
+         + (f"\n\n{run.user_answer}" if run.user_answer else "")},
     ]
 
     async def on_token(text: str) -> None:
@@ -2344,11 +2570,13 @@ def build_graph() -> Any:
     graph.add_node("plan", plan_node)
     graph.add_node("approve", approve_node)
     graph.add_node("workers", workers_node)
+    graph.add_node("assess", assess_node)
     graph.add_node("synthesize", synthesize_node)
     graph.add_edge(START, "plan")
     graph.add_edge("plan", "approve")
     graph.add_conditional_edges("approve", lambda s: "workers" if s.get("approved") else END, {"workers": "workers", END: END})
-    graph.add_edge("workers", "synthesize")
+    graph.add_edge("workers", "assess")
+    graph.add_conditional_edges("assess", lambda s: s.get("next", "synthesize"), {"workers": "workers", "synthesize": "synthesize"})
     graph.add_edge("synthesize", END)
     return graph.compile()
 

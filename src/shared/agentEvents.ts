@@ -16,6 +16,9 @@ const KNOWN_TYPES = new Set<string>([
   'plan_reasoning',
   'orchestrator_plan',
   'ledger_update',
+  'assess_start',
+  'assess_decision',
+  'wave_start',
   'run_config',
   'agent_start',
   'agent_token',
@@ -154,6 +157,20 @@ function validateVariant(obj: Record<string, unknown>): string | null {
     case 'plan_step_removed':
       return checkFields(obj, [['stepId', 'string'], ['label', 'string'], ['reason', 'string']])
 
+    case 'assess_start':
+      return checkFields(obj, [['wave', 'number'], ['open', 'number']])
+
+    case 'assess_decision': {
+      if (!['done', 'follow_up', 'ask_user'].includes(obj.decision as string)) return '"decision" must be done, follow_up or ask_user'
+      if (!Array.isArray(obj.steps) || !Array.isArray(obj.unclosable)) return '"steps" and "unclosable" must be arrays'
+      if (typeof obj.rules !== 'object' || obj.rules === null) return '"rules" must be an object'
+      return checkFields(obj, [['wave', 'number'], ['reason', 'string'], ['costUsd', 'number'], ['durationMs', 'number'], ['model', 'string']])
+    }
+
+    case 'wave_start':
+      if (!Array.isArray(obj.steps)) return '"steps" must be an array'
+      return checkFields(obj, [['n', 'number']])
+
     case 'ledger_update': {
       if (typeof obj.ledger !== 'object' || obj.ledger === null || Array.isArray(obj.ledger)) return '"ledger" must be an object'
       for (const [id, entry] of Object.entries(obj.ledger as Record<string, unknown>)) {
@@ -273,6 +290,9 @@ export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
     case 'task_complete':
     case 'task_failed':
     case 'ledger_update':
+    case 'assess_start':
+    case 'assess_decision':
+    case 'wave_start':
       return 'run'
     case 'hitl_pause':
     case 'hitl_resume':

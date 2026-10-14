@@ -16,7 +16,7 @@ describe('summariseRun on the istanbul-3leg fixture', async () => {
 
   it('cost: total, by role, and the judge outspending the workers', () => {
     expect(s.costUsd).toBeCloseTo(0.63, 2)
-    expect(s.calls).toEqual({ planner: 1, worker: 40, judge: 6, synthesizer: 1 })
+    expect(s.calls).toEqual({ planner: 1, worker: 40, judge: 6, assess: 0, synthesizer: 1 })
     expect(s.costByRole.judge).toBeCloseTo(0.33, 2)
     expect(s.costByRole.worker).toBeCloseTo(0.29, 2)
     expect(s.costByRole.synthesizer).toBeCloseTo(0.009, 3)

@@ -40,6 +40,10 @@ const SAMPLES: Record<AgentEvent['type'], Record<string, unknown>> = {
   plan_step_removed: { stepId: '2.1', label: 'Merge all findings', reason: 'a final merge step: the synthesizer merges every step\'s output' },
   orchestrator_plan: { steps: [{ id: '1.1', label: 'Research', stage: 'worker', role: 'Researcher', model: 'm/w', phase: 1, dependsOn: [] }] },
   ledger_update: { ledger: { r1: { status: 'verified', claimIds: ['1.1 c1'] } }, counts: { verified: 1, unverified: 0, conflicted: 0, missing: 0, pending: 0 } },
+  assess_start: { wave: 1, open: 1 },
+  assess_decision: { wave: 1, decision: 'done', reason: 'Every requirement is verified.', steps: [], unclosable: [], costUsd: 0, durationMs: 0, model: '',
+    rules: { checklist: { open: 0, total: 1 }, waves: { used: 1, max: 2 }, budget: { spentUsd: 0, capUsd: 1 }, progress: 'first', tools: 'n/a' } },
+  wave_start: { n: 2, steps: [] },
   run_config: { models: { worker: 'm/w' }, sources: { worker: 'saved' }, catalogueChecked: true, maxAgents: 2, budgetCapUsd: 1, reflectionPassThreshold: 3, maxRetriesPerAgent: 1, reasoningEffort: 'medium' },
   hitl_pause: { agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} },
   hitl_resume: { agentId: 'orchestrator', approved: true },
@@ -151,7 +155,7 @@ describe('Phase 0 audit — the old multi-agent logger', () => {
       agent_complete: 'worker', retry: 'worker', agent_failed: 'worker', context_compacted: 'worker', agent_degraded: 'worker',
       reflection_start: 'reflection', reflection_result: 'reflection',
       synthesis_start: 'synthesizer', synthesis_token: 'synthesizer',
-      task_complete: 'run', task_failed: 'run', ledger_update: 'run',
+      task_complete: 'run', task_failed: 'run', ledger_update: 'run', assess_start: 'run', assess_decision: 'run', wave_start: 'run',
     }
     for (const type of TYPES) expect([type, agentEventStepType(event(type, 1))]).toEqual([type, expected[type]])
     // A worker's tool pause is a worker step, not the orchestrator's.

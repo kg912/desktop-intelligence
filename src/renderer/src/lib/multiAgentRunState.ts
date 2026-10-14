@@ -2,7 +2,7 @@
 // §08 Frontend). applyAgentEvent() touches only what an event changes, so a
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
-import type { AgentEvent, AgentStep, ChecklistItem, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
+import type { AgentEvent, AgentStep, AssessDecisionEvent, ChecklistItem, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled'
 
@@ -92,6 +92,16 @@ export function runLogLine(e: AgentEvent): RunLogEntry | null {
         ...(e.counts.missing ? [`${e.counts.missing} missing`] : [])]
       return at(e.counts.conflicted || e.counts.missing ? 'wait' : 'info', `Coverage: ${parts.join(', ')}`)
     }
+    case 'assess_start': return at('info', `Assessing wave ${e.wave}: ${e.open} requirement${e.open === 1 ? '' : 's'} open`)
+    case 'assess_decision': {
+      const gaps = e.unclosable.length ? `; ${e.unclosable.length} gap${e.unclosable.length === 1 ? '' : 's'} no tool can close` : ''
+      if (e.decision === 'follow_up') {
+        return at('wait', `Assess: follow-up, ${e.steps.length} step${e.steps.length === 1 ? '' : 's'} (${e.autoRun ? 'auto-run' : 'needs your approval'}${e.estimatedUsd !== undefined ? `, est. $${e.estimatedUsd.toFixed(2)}` : ''})${gaps}`)
+      }
+      if (e.decision === 'ask_user') return at('wait', `Assess asks: ${e.question ?? e.reason}`)
+      return at('ok', `Assess: done${e.forced ? ` (${e.forced.replace(/_/g, ' ')})` : ''}${gaps}`)
+    }
+    case 'wave_start': return at('info', `Wave ${e.n} started: ${e.steps.map((s) => s.id).join(', ')}`)
     case 'orchestrator_plan': return e.fallback ? at('wait', `Fallback plan: ${e.fallbackReason ?? 'no usable plan'}`) : at('ok', `Plan: ${e.steps.length} agent${e.steps.length === 1 ? '' : 's'}`)
     case 'hitl_pause': return e.serverName === 'multi-agent' ? at('wait', 'Waiting for plan approval') : at('wait', `${e.agentId} asks to run ${e.toolName}`, e.agentId)
     case 'hitl_resume': return e.agentId === 'orchestrator' ? at(e.approved ? 'ok' : 'fail', e.approved ? 'Plan approved' : 'Plan not approved')
@@ -132,6 +142,9 @@ export interface PlanningView {
   fallbackReason?: string
 }
 
+/** One assessment after a wave (spec B Phase 2). startedAt from assess_start; the rest from assess_decision. */
+export type AssessView = Omit<AssessDecisionEvent, 'type' | 'runId' | 'seq' | 'ts' | 'elapsedMs' | 'runTotals'> & { startedAt?: number; decidedAt: number }
+
 export interface RunView {
   runId: string
   phase: RunPhase
@@ -147,6 +160,12 @@ export interface RunView {
   checklist?: ChecklistItem[]
   ledger?: Record<string, LedgerEntry>
   ledgerCounts?: Record<LedgerStatus, number>
+  /** Spec B Phase 2: the research wave in progress (1 = the plan's steps), each assessment in order, and a pending
+   *  assess question or follow-up approval (agentId "assess"; never the plan pre-flight). */
+  wave: number
+  assess: AssessView[]
+  assessPause?: HitlPauseEvent
+  assessStartedAt?: number
   synthesis: string
   finalOutput?: string
   synthesisTruncated?: OutputLimit
@@ -167,6 +186,8 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
     agents: {},
     synthesis: '',
     served: {},
+    wave: 1,
+    assess: [],
     totals: { costUsd: 0, tokens: 0, budgetReached: false },
     planning: { startedAt, stage: 'reading', stageAt: { reading: startedAt }, attempt: 0, draft: [], reasoning: '', streamedChars: 0 },
     log: [],
@@ -226,15 +247,33 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
     }
     case 'ledger_update':
       return { ...next, ledger: event.ledger, ledgerCounts: event.counts }
+    case 'assess_start':
+      return { ...next, assessStartedAt: event.ts }
+    case 'assess_decision': {
+      const { type: _t, runId: _r, seq: _s, ts, elapsedMs: _e, runTotals: _rt, ...decision } = event
+      // An ask_user or an approval may be followed by a second decision for the same wave: it replaces the first.
+      const assess = [...next.assess.filter((a) => a.wave !== event.wave), { ...decision, decidedAt: ts, startedAt: next.assessStartedAt }]
+      return { ...next, assess }
+    }
+    case 'wave_start': {
+      const agents = { ...next.agents }
+      for (const step of event.steps) {
+        agents[step.id] ??= { step, status: 'queued', liveText: '', streamedTokens: 0, tokenCount: 0, costUsd: 0, attempt: 0, reflections: [], timeline: [] }
+      }
+      const known = new Set(next.steps.map((s) => s.id))
+      return { ...next, wave: event.n, agents, steps: [...next.steps, ...event.steps.filter((s) => !known.has(s.id))] }
+    }
     case 'run_config':
       return { ...next, runConfig: event }
     case 'hitl_pause':
+      if (event.serverName === 'multi-agent' && event.agentId === 'assess') return { ...next, assessPause: event }
       if (event.serverName === 'multi-agent') return { ...next, phase: 'preflight', planPause: event }
       return updateAgent(next, event.agentId, () => ({ status: 'paused', pause: event }))
     case 'hitl_resume':
       if (event.agentId === 'orchestrator') {
         return { ...next, planPause: undefined, phase: event.approved ? 'running' : next.phase }
       }
+      if (event.agentId === 'assess') return { ...next, assessPause: undefined }
       return updateAgent(next, event.agentId, (a) => ({ pause: undefined, status: a.status === 'paused' ? 'running' : a.status }))
     case 'agent_start':
       return updateAgent({ ...next, phase: 'running' }, event.agentId, () => ({
@@ -337,6 +376,7 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
         endedAt: event.ts,
       }
     case 'task_failed': {
+      next = { ...next, assessPause: undefined }
       const agents = { ...next.agents }
       for (const [id, agent] of Object.entries(agents)) {
         if (!isFinished(agent.status)) agents[id] = { ...agent, status: 'cancelled', pause: undefined, endedAt: event.ts }

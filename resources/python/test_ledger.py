@@ -11,7 +11,7 @@ FX = fixture_run.load()
 LABELS = json.loads((fixture_run.RUNS / "istanbul-3leg" / "checklist.json").read_text(encoding="utf-8"))
 
 
-def fixture_ledger():
+def fixture_ledger(with_results=False):
     plan = [e for e in FX["events"] if e["type"] == "orchestrator_plan"][0]["steps"]
     steps = [dict(st, covers=LABELS["covers"].get(st["id"], [])) for st in plan if st["id"] != "2.1"]  # 2.1 (merge) is dropped (spec A Phase 4)
     finished = {}
@@ -24,7 +24,8 @@ def fixture_ledger():
                 claim["req"] = LABELS["req"][agent][claim["id"]]
         store = fixture_run.store(recs)
         finished[agent] = {"claims": claims, "statuses": {c["id"]: s.verify_claim(c, store) for c in claims}}
-    return s.compute_ledger(LABELS["checklist"], steps, finished)
+    ledger = s.compute_ledger(LABELS["checklist"], steps, finished)
+    return (ledger, finished) if with_results else ledger
 
 
 def test_fixture_ledger():

@@ -63,7 +63,7 @@ export interface CallRecord {
   chatId: string
   seq: number
   kind: 'model' | 'tool'
-  role: 'planner' | 'worker' | 'reflection' | 'synthesis'
+  role: 'planner' | 'worker' | 'reflection' | 'synthesis' | 'assess'
   agentId: string | null
   attempt: number
   toolRound?: number
@@ -308,7 +308,7 @@ export async function readRun(dir: string): Promise<{ meta: RunLogMeta; events: 
 
 // ── Rendering ───────────────────────────────────────────────────────────────
 
-const ROLES = ['planner', 'worker', 'reflection', 'synthesis'] as const
+const ROLES = ['planner', 'worker', 'reflection', 'assess', 'synthesis'] as const
 
 function fence(body: string, lang = ''): string {
   const longest = Math.max(2, ...(body.match(/`+/g) ?? []).map((m) => m.length))
@@ -484,8 +484,8 @@ export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallR
 
 // ── Baseline summary (spec multi-agent-reliability-and-cost.md Phase 0) ──────
 
-export type BaselineRole = 'planner' | 'worker' | 'judge' | 'synthesizer'
-const BASELINE_ROLE: Record<CallRecord['role'], BaselineRole> = { planner: 'planner', worker: 'worker', reflection: 'judge', synthesis: 'synthesizer' }
+export type BaselineRole = 'planner' | 'worker' | 'judge' | 'assess' | 'synthesizer'
+const BASELINE_ROLE: Record<CallRecord['role'], BaselineRole> = { planner: 'planner', worker: 'worker', reflection: 'judge', assess: 'assess', synthesis: 'synthesizer' }
 /** Claim status → failure class, for runs recorded before the sidecar sent classes itself. */
 const STATUS_FAILURE_CLASS: Record<string, string> = {
   quote_not_found: 'mismatch', quote_found_elsewhere: 'wrong_call', call_not_found: 'wrong_call', call_failed: 'call_failed', quote_too_short: 'too_short', quote_too_long: 'too_long',
@@ -576,7 +576,7 @@ export function summariseRun(run: { meta: RunLogMeta; events: AgentEvent[]; reco
   const tools = records.filter((r) => r.kind === 'tool')
   const cost = (rs: CallRecord[]): number => rs.reduce((s, r) => s + (r.usage?.costUsd ?? 0), 0)
   const prompt = (rs: CallRecord[]): number => rs.reduce((s, r) => s + (r.usage?.promptTokens ?? 0), 0)
-  const roles: BaselineRole[] = ['planner', 'worker', 'judge', 'synthesizer']
+  const roles: BaselineRole[] = ['planner', 'worker', 'judge', 'assess', 'synthesizer']
   const ofRole = (role: BaselineRole): CallRecord[] => model.filter((r) => BASELINE_ROLE[r.role] === role)
   const t0 = meta.startedAt
 
@@ -776,6 +776,20 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     }
     L.push('')
   } else L.push('No checklist: the planner wrote none, so the ledger and the assess step were off.', '')
+
+  const decisions = eventsOf(events, 'assess_decision')
+  if (decisions.length) {
+    L.push('## Assess', '', '| Wave | Decision | Reason | Follow-up steps | Run | Call |', '|---|---|---|---|---|---|')
+    for (const d of decisions) {
+      const steps = d.steps.map((s) => `${s.id} ${s.label}${s.covers?.length ? ` (covers ${s.covers.join(', ')})` : ''}`).join('; ')
+      const run = d.decision === 'follow_up' ? `${d.autoRun ? 'auto-run' : 'asked you'}${d.estimatedUsd !== undefined ? `, est. ${usd(d.estimatedUsd)}` : ''}` : ''
+      const call = d.model ? `\`${cell(d.model)}\`, ${usd(d.costUsd)}, ${(d.durationMs / 1000).toFixed(1)} s` : 'no model call'
+      L.push(`| ${d.wave} | ${d.decision}${d.forced ? ` (${d.forced})` : ''} | ${cell(d.question ?? d.reason)} | ${cell(steps)} | ${run} | ${call} |`)
+    }
+    const gaps = decisions.flatMap((d) => d.unclosable)
+    if (gaps.length) L.push('', 'Gaps no available tool can close (reported as caveats, no spend):', ...gaps.map((g) => `- ${g.checklistId}: ${g.reason}`))
+    L.push('')
+  }
 
   L.push('## Timeline', '', `Peak concurrency (model calls in flight at once, from recorded timestamps): ${peakConcurrency(records)}`, '')
   L.push('| # | Start (+ms) | Duration (ms) | Kind | Role | Agent | Attempt | Model | Tokens | Cost | Finish | Record |', '|---|---|---|---|---|---|---|---|---|---|---|---|')

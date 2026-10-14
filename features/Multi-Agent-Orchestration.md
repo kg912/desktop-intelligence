@@ -170,6 +170,9 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `plan_subtask_added` | `attempt, index, step {id, label, role, dependsOn}` — a complete subtask parsed out of the planner's streaming JSON; draft only |
 | `plan_reasoning` | `token` — orchestrator reasoning when the model streams it (not requested) |
 | `orchestrator_plan` | `steps: AgentStep[]` (+ `fallback?, fallbackReason?` — the fallback plan is never silent; `checklist?` — spec B) |
+| `assess_start` | `wave, open` — the assess node began (spec B Phase 2) |
+| `assess_decision` | `wave, decision (done \| follow_up \| ask_user), reason, steps, unclosable, costUsd, durationMs, model, rules, forced?, estimatedUsd?, autoRun?, question?` |
+| `wave_start` | `n, steps` — a follow-up wave's validated steps |
 | `ledger_update` | `ledger {checklistId: {status, claimIds, conflict?}}, counts` — after every step ends; no model call (spec B Phase 1) |
 | `agent_start` | `agentId, role, model` |
 | `agent_token` | `agentId, token` |
@@ -324,6 +327,23 @@ statuses, with no model call: `conflicted` (two verified claims of different age
 Failing and unmapped claims fill nothing. Conflicts come from a cheap heuristic (`possible_conflict`: most
 subject words shared, no different airports, different weekdays or numbers beyond 15%), so the UI and run.md say
 "possible conflict" until the assess call confirms one. No checklist: no ledger, no assess step.
+
+**Assess loop (spec B Phase 2).** The graph is `plan → approve → workers → assess → (workers | synthesize)`.
+`workers_node` is re-entrant: a wave starts from the earlier waves' outputs and failures. `assess_node` skips
+itself when there is no checklist. Fast path: every requirement verified → `done`, no model call. Stop rules are
+code, not model advice: the wave cap (`maxWaves`, default 2 = at most one follow-up wave) and no progress since
+the last assessment are checked before any assess call (so `maxWaves: 1` spends nothing on assessing); no budget
+left, a follow-up estimated above what is left, and no available tool for a step are checked after. The assess call
+(`models.assess`, default the judge model; low effort; 800-token cap; input ≤ 4k tokens) returns `{decision,
+reason, steps: [{title, task, covers, tools, condition?}], unclosable, confirmed, question?}`. A step whose tools are
+not all available is not run: its requirements become `unclosable` ("no available tool can close this gap (needs
+…)") with no spend. `confirmed` marks possible conflicts as real. Follow-up steps go through `parse_plan`, get ids
+of the next depth (`2.1`, …), `wave: n`, and depend on the steps whose claims they re-check. Cost estimate = the
+mean worker spend of the finished steps per step (conditional steps at 50%); at or below `followUpAutoUsd` (default
+0.15; 0 = always ask) it runs at once, otherwise the sidecar pauses for approval (`hitl_pause` agentId `assess`,
+toolName `approve_followup`); `ask_user` pauses with the question (toolName `ask_user`) and a timeout finishes the
+run. A later wave's verified claims settle a requirement. Every requirement still open at the end goes to the
+synthesizer as a mandatory caveat (with the unclosable reason), and an answer to `ask_user` goes to it too.
 
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat

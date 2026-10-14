@@ -47,8 +47,8 @@ def researcher(facts):
 class Fake:
     """route: role → fn(agent_id, body) → {"content"} | {"tool_calls"}. Records (role, agent, body) of every call."""
 
-    def __init__(self, routes):
-        self.routes, self.calls = routes, []
+    def __init__(self, routes, cost=None):
+        self.routes, self.calls, self.cost = routes, [], cost or {}
 
     def __call__(self, _key, model, messages, tools, _max_tokens, on_delta, _cancelled, *_a, **_k):
         body = json.loads(json.dumps({"model": model, "messages": messages, "tools": tools}))
@@ -58,7 +58,7 @@ class Fake:
         reply = self.routes[role](agent, body)
         if reply.get("content"):
             on_delta("content", reply["content"])
-        usage = {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20, "cost": reply.get("cost", 0.001)}
+        usage = {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20, "cost": reply.get("cost", self.cost.get(role, 0.001))}
         return {"role": "assistant", "content": reply.get("content", ""), **({"tool_calls": reply["tool_calls"]} if reply.get("tool_calls") else {}),
                 "finish_reason": "tool_calls" if reply.get("tool_calls") else "stop"}, usage
 
@@ -74,10 +74,11 @@ def planner(plan):
     return lambda _agent, _body: {"content": json.dumps(plan)}
 
 
-def run(plan, worker, *, tool_result="Search result text about the subject.", extra_routes=None, approve=None, **config):
-    """orchestrate() a whole run. plan: the planner's JSON (object or array). Returns (run, fake)."""
+def run(plan, worker, *, tool_result="Search result text about the subject.", extra_routes=None, approve=None, cost=None, **config):
+    """orchestrate() a whole run. plan: the planner's JSON (object or array). cost: USD per call by role (default 0.001).
+    Returns (run, fake)."""
     fake = Fake({"planner": planner(plan), "worker": worker, "judge": passing_judge,
-                 "synthesis": lambda _a, _b: {"content": "Final answer."}, **(extra_routes or {})})
+                 "synthesis": lambda _a, _b: {"content": "Final answer."}, **(extra_routes or {})}, cost)
     s._stream_openrouter = fake
     base = dict(maxAgents=4, budgetCapUsd=1, models={"orchestrator": "m/o", "worker": "m/w", "reflection": "m/r", "synthesizer": "m/s"},
                 reflectionPassThreshold=3, maxRetriesPerAgent=0, hitlTimeoutMs=60_000)

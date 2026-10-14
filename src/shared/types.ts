@@ -513,6 +513,9 @@ export interface AgentStep {
   condition?: string
   /** Spec B Phase 1: the checklist requirements this step answers. */
   covers?: string[]
+  /** Spec B Phase 2: the research wave that added the step (absent = 1) and a follow-up step's full task. */
+  wave?: number
+  task?: string
 }
 
 /** One requirement of the planner's acceptance checklist (spec B Phase 1). scope: the step it belongs to, or "global". */
@@ -653,6 +656,54 @@ export interface LedgerUpdateEvent extends AgentEventBase {
   type:   'ledger_update'
   ledger: Record<string, LedgerEntry>
   counts: Record<LedgerStatus, number>
+}
+
+/** Spec B Phase 2: the stop-rule table the assess node checked (every rule is enforced in code). */
+export interface AssessRules {
+  checklist: { open: number; total: number }
+  waves:     { used: number; max: number }
+  budget:    { spentUsd: number; capUsd: number }
+  /** Open requirements versus the previous assessment. */
+  progress:  'first' | 'improved' | 'none'
+  /** Whether the proposed steps' tools are available: n/a when nothing was proposed. */
+  tools:     'all' | 'partly' | 'none' | 'n/a'
+}
+
+export interface UnclosableGap { checklistId: string; reason: string }
+
+/** Which stop rule ended the run's research, when one did. */
+export type AssessStop = 'wave_cap' | 'no_progress' | 'budget' | 'no_capable_tool' | 'ask_user_timeout' | 'finished_by_user'
+
+export interface AssessStartEvent extends AgentEventBase {
+  type: 'assess_start'
+  wave: number
+  open: number
+}
+
+export interface AssessDecisionEvent extends AgentEventBase {
+  type: 'assess_decision'
+  wave: number
+  decision: 'done' | 'follow_up' | 'ask_user'
+  reason: string
+  /** Follow-up steps, already validated like the planner's (ids, dependsOn, covers, wave). */
+  steps: AgentStep[]
+  unclosable: UnclosableGap[]
+  /** The assess call's cost and time; 0 and model '' when a stop rule or the fast path decided without a call. */
+  costUsd: number
+  durationMs: number
+  model: string
+  rules: AssessRules
+  forced?: AssessStop
+  estimatedUsd?: number
+  /** Follow-ups estimated at or below followUpAutoUsd run without asking. */
+  autoRun?: boolean
+  question?: string
+}
+
+export interface WaveStartEvent extends AgentEventBase {
+  type: 'wave_start'
+  n: number
+  steps: AgentStep[]
 }
 
 export interface AgentStartEvent extends AgentEventBase, AgentAttempt {
@@ -931,6 +982,9 @@ export type AgentEvent =
   | PlanReasoningEvent
   | OrchestratorPlanEvent
   | LedgerUpdateEvent
+  | AssessStartEvent
+  | AssessDecisionEvent
+  | WaveStartEvent
   | RunConfigEvent
   | AgentStartEvent
   | AgentTokenEvent
