@@ -112,6 +112,14 @@ export interface RunLoggerOptions {
 }
 
 /** File-name-safe id (agent ids come from planner output). */
+/** Replace a file so a reader never sees it half written (run.meta.json is polled while it is rewritten). */
+let atomicSeq = 0
+async function writeAtomic(file: string, text: string): Promise<void> {
+  const tmp = `${file}.${process.pid}.${++atomicSeq}.tmp`  // unique: the drain loop and renderRun may write one file at once
+  await fs.writeFile(tmp, text, 'utf8')
+  await fs.rename(tmp, file)
+}
+
 export function safeId(id: string): string {
   return id.replace(/[^\w.-]/g, '_').replace(/^\.+/, '_') || '_'
 }
@@ -233,7 +241,7 @@ export class MultiAgentRunLogger {
         const text = scrub(lines.join(''), await secrets)
         await fs.mkdir(path.dirname(file), { recursive: true })
         if (mode === 'append') await fs.appendFile(file, text, 'utf8')
-        else await fs.writeFile(file, text, 'utf8')
+        else await writeAtomic(file, text)
       } catch (err) {
         console.warn('[RunLog] write failed:', err)
       }
@@ -860,7 +868,7 @@ export async function renderRun(dir: string, secrets: string[] = []): Promise<Ru
   }
   const updated: RunLogMeta = { ...meta, summary }
   out.set('run.meta.json', JSON.stringify(updated, null, 2))
-  for (const [name, text] of out) await fs.writeFile(path.join(dir, name), scrub(text, secrets), 'utf8')
+  for (const [name, text] of out) await writeAtomic(path.join(dir, name), scrub(text, secrets))
   return updated
 }
 

@@ -185,7 +185,7 @@ export function MultiAgentSettingsPanel() {
             <p className="mt-1 text-[12px] text-[#ff8c88]" role="alert" data-testid="follow-up-usd-error">Enter an amount from 0 to the {config.budgetCapUsd.toFixed(2)} USD budget cap.</p>
           )}
         </Field>
-        <Field label="Max research waves" value={config.maxWaves ?? 2} help="1 = the first round only, no follow-ups. 2 = the first round plus one follow-up round.">
+        <Field label="Max research waves" help="1 = the first round only, no follow-ups. 2 = the first round plus one follow-up round.">
           <div className="flex items-center gap-2">
             <button type="button" aria-label="Fewer research waves" onClick={() => update('maxWaves', Math.max(1, (config.maxWaves ?? 2) - 1))}
               className="h-[30px] w-[30px] rounded-[7px] border-[0.5px] border-white/[0.12] text-ma-soft hover:bg-ma-bg3">−</button>

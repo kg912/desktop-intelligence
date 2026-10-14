@@ -2,7 +2,7 @@
 // the arrow buttons; a drop that breaks the dependency order is undone), add and remove steps, the conditional marker,
 // and a running estimate. Approve sends the edited plan; the sidecar runs the planner's checks on it again.
 import { useContext, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, GripVertical, Plus, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, GripVertical, Plus, X } from 'lucide-react'
 import type { AgentStep, MultiAgentConfig } from '../../../../shared/types'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import { addStep, moveStep, phasesOf, removeStep, validatePlanEdit } from '../../lib/planEdit'
@@ -25,6 +25,9 @@ export function PlanEditor({ view, config, onApprove, onCancel }: {
   const [steps, setSteps] = useState<AgentStep[]>(view.steps)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dropError, setDropError] = useState<string | null>(null)
+  // One line per step, as designed; a step's task and dependencies open under "Details" (open when it already has a task).
+  const [open, setOpen] = useState<Set<string>>(() => new Set(view.steps.filter((s) => s.task).map((s) => s.id)))
+  const toggle = (id: string): void => setOpen((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const estimate = useMemo(() => actions?.estimateFor(steps) ?? null, [actions, steps])
   const errors = validatePlanEdit(steps, config, estimate)
   const models = actions?.models.length ? actions.models : [config.models.worker].filter(Boolean)
@@ -71,14 +74,23 @@ export function PlanEditor({ view, config, onApprove, onCancel }: {
               <button aria-label={`Move ${s.id} up`} disabled={i === 0} onClick={() => move(i, i - 1)} className="text-[#8a8a8a] hover:text-white disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
               <button aria-label={`Move ${s.id} down`} disabled={i === steps.length - 1} onClick={() => move(i, i + 1)} className="text-[#8a8a8a] hover:text-white disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
               <button aria-label={`Remove ${s.id}`} onClick={() => setSteps((list) => removeStep(list, s.id))} className="text-[#8a8a8a] hover:text-[#ff6b66]"><X className="h-3.5 w-3.5" /></button>
+              <button aria-label={`Details of ${s.id}`} aria-expanded={open.has(s.id)} onClick={() => toggle(s.id)} className="text-[#8a8a8a] hover:text-white">
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open.has(s.id) && 'rotate-180')} />
+              </button>
             </div>
-            <div className="ml-[56px] mt-1.5 flex flex-col gap-1.5">
-              <textarea aria-label={`Task of ${s.id}`} rows={1} value={s.task ?? ''} onChange={(e) => set(s.id, { task: e.target.value || undefined })}
-                placeholder="Task details (optional)" className={cn(FIELD, 'text-[12px]')} />
-              <input aria-label={`Dependencies of ${s.id}`} value={(s.dependsOn ?? []).join(', ')} placeholder="after (step ids, comma separated)"
-                onChange={(e) => set(s.id, { dependsOn: e.target.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean) })} className={cn(FIELD, 'font-mono text-[11px]')} />
-              {s.condition && <p className="text-[12px] text-[#8a8a8a]">Depends on {(s.dependsOn ?? []).join(', ') || 'nothing'}. Skipped automatically when the condition fails.</p>}
-            </div>
+            {(open.has(s.id) || s.condition) && (
+              <div className="ml-[56px] mt-1.5 flex flex-col gap-1.5">
+                {open.has(s.id) && (
+                  <>
+                    <textarea aria-label={`Task of ${s.id}`} rows={1} value={s.task ?? ''} onChange={(e) => set(s.id, { task: e.target.value || undefined })}
+                      placeholder="Task details (optional)" className={cn(FIELD, 'text-[12px]')} />
+                    <input aria-label={`Dependencies of ${s.id}`} value={(s.dependsOn ?? []).join(', ')} placeholder="after (step ids, comma separated)"
+                      onChange={(e) => set(s.id, { dependsOn: e.target.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean) })} className={cn(FIELD, 'font-mono text-[11px]')} />
+                  </>
+                )}
+                {s.condition && <p className="text-[12px] text-[#8a8a8a]">Depends on {(s.dependsOn ?? []).join(', ') || 'nothing'}. Skipped automatically when the condition fails.</p>}
+              </div>
+            )}
           </li>
         ))}
         {view.removedSteps.map((r) => (

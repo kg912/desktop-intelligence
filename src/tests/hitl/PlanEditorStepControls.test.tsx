@@ -45,6 +45,7 @@ describe('PlanEditor', () => {
     const onApprove = vi.fn()
     withActions(actions(), <PlanEditor view={reduceRunEvents('r', PLAN)} config={config} onApprove={onApprove} onCancel={vi.fn()} />)
     fireEvent.change(screen.getByLabelText('Title of 1.1'), { target: { value: 'Leg 1 · Istanbul → Nevşehir' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Details of 1.1' }))  // task and dependencies open under Details
     fireEvent.change(screen.getByLabelText('Task of 1.1'), { target: { value: 'Airlines, days, times, baggage.' } })
     fireEvent.change(screen.getByLabelText('Model of 1.2'), { target: { value: 'anthropic/claude-sonnet-5-5' } })
     fireEvent.change(screen.getByLabelText('Budget of 1.2'), { target: { value: '0.05' } })
@@ -59,6 +60,8 @@ describe('PlanEditor', () => {
   it('a cycle, a missing dependency or an over-budget plan blocks approval with the reason', () => {
     withActions(actions(), <PlanEditor view={reduceRunEvents('r', PLAN)} config={config} onApprove={vi.fn()} onCancel={vi.fn()} />)
     const approve = screen.getByRole('button', { name: 'Approve and run' }) as HTMLButtonElement
+    expect(screen.queryByLabelText('Dependencies of 1.2')).toBeNull()  // collapsed: one line per step
+    fireEvent.click(screen.getByRole('button', { name: 'Details of 1.2' }))
     fireEvent.change(screen.getByLabelText('Dependencies of 1.2'), { target: { value: '1.3' } })
     expect(screen.getByTestId('plan-editor-errors').textContent).toContain('Dependency cycle: 1.2 → 1.3 → 1.2.')
     expect(approve.disabled).toBe(true)
