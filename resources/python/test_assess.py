@@ -4,6 +4,7 @@ import json
 import statistics
 
 import fake_harness as h
+from pydantic import ValidationError
 import fixture_run
 import multi_agent_sidecar as s
 from test_ledger import fixture_ledger
@@ -286,3 +287,18 @@ def test_checklist_topic():
     assert s.parse_checklist(text, steps) == [{"id": "r1", "text": "Baggage allowance, leg 1", "scope": "1.1", "topic": "Baggage allowance"},
                                               {"id": "r2", "text": "x", "scope": "global"}]
     assert '"topic"' in s.PLANNER_SYSTEM
+
+
+def test_settings_from_electron_reach_the_sidecar_config():
+    """Spec B 7f: the Settings values parse as sent (maxWaves 1–3, followUpAutoUsd ≥ 0, models.assess) and drive the run."""
+    base = dict(maxAgents=2, budgetCapUsd=1, reflectionPassThreshold=3, maxRetriesPerAgent=0, hitlTimeoutMs=60_000)
+    cfg = s.Config(**base, models={"orchestrator": "m/o", "worker": "m/w", "reflection": "m/r", "synthesizer": "m/s", "assess": "m/a"}, maxWaves=1, followUpAutoUsd=0)
+    assert (cfg.maxWaves, cfg.followUpAutoUsd, cfg.models["assess"]) == (1, 0, "m/a")
+    defaults = s.Config(**base, models={})
+    assert (defaults.maxWaves, defaults.followUpAutoUsd) == (2, 0.15)
+    for bad in ({"maxWaves": 0}, {"maxWaves": 4}, {"followUpAutoUsd": -0.01}):
+        try:
+            s.Config(**base, models={}, **bad)
+        except ValidationError:
+            continue
+        raise AssertionError(f"{bad} must be rejected")

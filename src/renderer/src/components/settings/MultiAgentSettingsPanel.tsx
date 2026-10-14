@@ -36,11 +36,14 @@ export function MultiAgentSettingsPanel() {
   const [status, setStatus] = useState<SidecarStatus>('stopped')
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
+  // Spec B 7f: the auto-run limit as typed, so an invalid entry is shown and rejected instead of silently clamped.
+  const [autoUsdText, setAutoUsdText] = useState<string | null>(null)
 
   useEffect(() => {
     void window.api.getMultiAgentConfig().then((c) => {
       setConfig(c)
       setSavedConfig(c)
+      setAutoUsdText(null)
     })
     void window.api.getBackendSettings().then((s) => setActiveModel(s?.openrouterModel ?? '')).catch(() => {})
     void window.api.getMultiAgentSidecarStatus().then(setStatus).catch(() => {})
@@ -165,6 +168,38 @@ export function MultiAgentSettingsPanel() {
         checked={config.dataCollection === 'deny'} onChange={(e) => update('dataCollection', e.target.checked ? 'deny' : 'allow')} />
       <Checkbox className="col-span-2" label="Notify me when a run needs me (an approval, the plan, or a question) while the app is in the background"
         checked={config.notifyNeedsYou !== false} onChange={(e) => update('notifyNeedsYou', e.target.checked)} />
+
+      {/* Spec B 7f: Follow-up research. */}
+      <div className="col-span-2 grid grid-cols-2 gap-x-7 gap-y-[22px] border-t-[0.5px] border-white/5 pt-2.5" data-testid="follow-up-settings">
+        <div className="col-span-2 text-[13px] text-ma-mute">Follow-up research</div>
+        <Field label="Auto-run follow-ups up to (USD)" htmlFor="ma-follow-up-usd"
+          help="After the first round of research, Claude may propose extra steps to close conflicts or gaps. Follow-ups estimated at or below this amount run automatically; anything above asks you first. Set to 0 to always ask.">
+          <NumberInput id="ma-follow-up-usd" min={0} step="0.01" value={autoUsdText ?? String(config.followUpAutoUsd ?? 0.15)}
+            onChange={(e) => {
+              const text = e.target.value
+              setAutoUsdText(text)
+              const n = Number(text)
+              if (text.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= config.budgetCapUsd) update('followUpAutoUsd', n)
+            }} />
+          {autoUsdText !== null && !(autoUsdText.trim() !== '' && Number.isFinite(Number(autoUsdText)) && Number(autoUsdText) >= 0 && Number(autoUsdText) <= config.budgetCapUsd) && (
+            <p className="mt-1 text-[12px] text-[#ff8c88]" role="alert" data-testid="follow-up-usd-error">Enter an amount from 0 to the {config.budgetCapUsd.toFixed(2)} USD budget cap.</p>
+          )}
+        </Field>
+        <Field label="Max research waves" value={config.maxWaves ?? 2} help="1 = the first round only, no follow-ups. 2 = the first round plus one follow-up round.">
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="Fewer research waves" onClick={() => update('maxWaves', Math.max(1, (config.maxWaves ?? 2) - 1))}
+              className="h-[30px] w-[30px] rounded-[7px] border-[0.5px] border-white/[0.12] text-ma-soft hover:bg-ma-bg3">−</button>
+            <span className="w-6 text-center font-mono text-[13px]" data-testid="max-waves-value">{config.maxWaves ?? 2}</span>
+            <button type="button" aria-label="More research waves" onClick={() => update('maxWaves', Math.min(3, (config.maxWaves ?? 2) + 1))}
+              className="h-[30px] w-[30px] rounded-[7px] border-[0.5px] border-white/[0.12] text-ma-soft hover:bg-ma-bg3">+</button>
+          </div>
+        </Field>
+        <Field label="Assess model" help="Decides whether the run is done. Uses a small, cheap call.">
+          <ModelSelect label="Assess model" value={config.models.assess ?? ''} models={filtered} emptyLabel="Same as the reflection model"
+            onChange={(id) => update('models', { ...config.models, assess: id })} />
+        </Field>
+        <p className="col-span-2 text-[12.5px] text-ma-mute">Follow-ups never exceed the run's budget cap, and never run for gaps no available tool can close.</p>
+      </div>
 
       <div className="col-span-2 flex items-center gap-3.5">
         <button onClick={() => void save()} disabled={saving}

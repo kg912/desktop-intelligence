@@ -549,3 +549,19 @@ describe('spec B 7d: edited plan, steer, lock', () => {
     expect([chatId, saved.map((e) => e.seq), status]).toEqual(['chat-1', [9, 10], 'completed'])
   })
 })
+
+describe('spec B 7f: follow-up settings reach the sidecar', () => {
+  it('maxWaves, followUpAutoUsd and the assess model (checked against the catalogue and priced)', async () => {
+    const { coordinator, sidecar } = setup({ catalogue: [model('meta-llama/llama-3.3-70b-instruct'), model('active/model', 3e-6, 4e-6), model(DEFAULT_SYNTHESIZER_MODEL, 5e-6, 6e-6), model('cheap/assess', 1e-7, 2e-7)] })
+    await coordinator.start({ chatId: 'chat-1', task: 't', config: { ...config(), maxWaves: 1, followUpAutoUsd: 0, models: { ...config().models, assess: 'cheap/assess' } } })
+    const req = sidecar.startRun.mock.calls[0][0] as unknown as { config: MultiAgentConfig; pricing: Record<string, unknown> }
+    expect(req.config).toMatchObject({ maxWaves: 1, followUpAutoUsd: 0, models: expect.objectContaining({ assess: 'cheap/assess' }) })
+    expect(req.pricing['cheap/assess']).toEqual({ prompt: 1e-7, completion: 2e-7, contextLength: expect.any(Number) })
+  })
+
+  it('an assess model the catalogue does not list stops the run, like the escalation model', async () => {
+    const { coordinator } = setup()
+    const result = await coordinator.start({ chatId: 'chat-1', task: 't', config: { ...config(), models: { ...config().models, assess: 'gone/model' } } })
+    expect(result).toEqual({ ok: false, reason: 'Not in the OpenRouter catalogue: assess model "gone/model" — choose another in Settings → Multi-Agent' })
+  })
+})

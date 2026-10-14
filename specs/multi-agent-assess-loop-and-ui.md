@@ -112,6 +112,7 @@ Follow the dark language in `designs/` (Inter + JetBrains Mono, panel `#0a0a0a`,
 - **Assess model** (model picker, default: the reflection/judge model). Helper text: "Decides whether the run is done. Uses a small, cheap call." Maps to `models.assess`.
 - A fixed note under the group: "Follow-ups never exceed the run's budget cap, and never run for gaps no available tool can close."
 - Values are validated on save (non-negative, capped at the run budget cap) and the pre-flight and assess card show the effective values ("auto-runs under $0.15").
+- **Decisions (implemented):** the stepper is −/+ buttons around the value; an invalid amount stays visible with the inline message and the last valid value is what saves; the assess model is optional (empty = the reflection model) and a set one is checked against the catalogue like the escalation model. The sidecar side of `maxWaves` / `followUpAutoUsd` is covered by `test_assess.py` (maxWaves 1 skips follow-ups and the assess call, maxWaves 2 allows exactly one follow-up wave, 0.15 auto-runs a cheap wave, 0 always asks).
 - **Acceptance:** Vitest: defaults render as 0.15 / 2 / judge model; changes persist across reload and reach the config sent to the sidecar; `followUpAutoUsd = 0` forces the approval card for every follow-up; `maxWaves = 1` skips the assess follow-up path entirely; invalid input is rejected with an inline message.
 
 ## 3. Data and event changes

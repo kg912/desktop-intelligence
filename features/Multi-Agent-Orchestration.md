@@ -455,6 +455,16 @@ count leaving 0) or a new assess question. Layout sends it over `MULTI_AGENT_NOT
 `Notification` only while the window is unfocused, and a click restores and focuses the window and opens that chat's
 run (`MULTI_AGENT_FOCUS_RUN`).
 
+**Follow-up research settings (spec B 7f).** Settings → Multi-Agent → "Follow-up research", beside the
+notification toggle: Auto-run follow-ups up to (USD, `followUpAutoUsd`, default 0.15; an entry that is negative, not
+a number or above the budget cap is shown with "Enter an amount from 0 to the <cap> USD budget cap." and never reaches
+the config), Max research waves (−/+ stepper 1–3, `maxWaves`, default 2), Assess model (`models.assess`, empty =
+the reflection model; checked against the catalogue and priced at run start like the escalation model), and the
+note "Follow-ups never exceed the run's budget cap, and never run for gaps no available tool can close." They are
+saved and sanitised with the other multi-agent options and sent in `MultiAgentConfig`. The pre-flight shows the
+effective values ("Follow-ups auto-run under $0.15 · up to 2 research waves", or "No follow-up research (1 wave)")
+and the assess card the auto-run limit.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

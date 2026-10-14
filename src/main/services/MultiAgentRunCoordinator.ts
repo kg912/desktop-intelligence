@@ -205,6 +205,14 @@ export class MultiAgentRunCoordinator {
       }
       models.escalation = escalation
     }
+    // Spec B 7f: the assess model (default: the reflection model in the sidecar), checked and priced the same way.
+    const assess = payload.config.models.assess?.trim()
+    if (assess) {
+      if (catalogueChecked && !known.has(assess)) {
+        return { ok: false, reason: `Not in the OpenRouter catalogue: assess model "${assess}" — choose another in Settings → Multi-Agent` }
+      }
+      models.assess = assess
+    }
     const missing = MODEL_ROLES.filter((role) => !models[role])
     if (missing.length) {
       return { ok: false, reason: `No OpenRouter model for: ${missing.join(', ')} — choose one in Settings` }

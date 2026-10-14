@@ -372,6 +372,10 @@ export function Preflight({ view, config, estimate, onApprove, onCancel }: {
               {estimate.maxUsd > cap && <span className="font-normal text-ma-mute"> (capped by the {formatUsd(cap)} budget)</span>}
             </p>
             {estimate.unpricedModels.length > 0 && <p className="text-ma-mute">No published price for {estimate.unpricedModels.join(', ')}, counted as $0.</p>}
+            {/* Spec B 7f: the effective follow-up settings for this run. */}
+            <p className="text-ma-mute" data-testid="preflight-follow-up">
+              {(config.maxWaves ?? 2) > 1 ? `Follow-ups auto-run under $${(config.followUpAutoUsd ?? 0.15).toFixed(2)} · up to ${config.maxWaves ?? 2} research waves` : 'No follow-up research (1 wave)'}
+            </p>
           </>
         ) : (
           <p className="text-ma-mute">Cost estimate unavailable (OpenRouter prices not loaded). The {formatUsd(cap)} budget cap still applies.</p>
