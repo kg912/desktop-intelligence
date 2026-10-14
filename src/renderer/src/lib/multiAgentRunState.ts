@@ -155,6 +155,35 @@ export interface PlanningView {
 /** One assessment after a wave (spec B Phase 2). startedAt from assess_start; the rest from assess_decision. */
 export type AssessView = Omit<AssessDecisionEvent, 'type' | 'runId' | 'seq' | 'ts' | 'elapsedMs' | 'runTotals'> & { startedAt?: number; decidedAt: number }
 
+/** What the Gantt needs from an event: when, what, whose, and a tool call's approval timing (spec A Phase 9). */
+export interface TimingEvent {
+  type: AgentEvent['type']
+  ts: number
+  agentId?: string
+  attempt?: number
+  callId?: string
+  tool?: string
+  approvalMode?: 'trusted' | 'asked' | 'auto'
+  waitMs?: number
+  toolMs?: number
+  model?: string
+}
+
+const TIMING_TYPES = new Set<AgentEvent['type']>(['plan_started', 'orchestrator_plan', 'hitl_pause', 'hitl_resume', 'agent_start', 'tool_start', 'tool_done',
+  'agent_complete', 'reflection_start', 'reflection_result', 'retry', 'agent_failed', 'agent_degraded', 'agent_skipped', 'assess_start', 'assess_decision',
+  'wave_start', 'synthesis_start', 'task_complete', 'task_failed', 'run_resumed', 'rerun_start'])
+
+function timingOf(e: AgentEvent): TimingEvent {
+  const x = e as AgentEvent & Partial<Omit<TimingEvent, 'type' | 'ts'>>
+  return {
+    type: e.type, ts: e.ts,
+    ...(x.agentId !== undefined && { agentId: x.agentId }), ...(x.attempt !== undefined && { attempt: x.attempt }),
+    ...(x.callId !== undefined && { callId: x.callId }), ...(x.tool !== undefined && { tool: x.tool }),
+    ...(x.approvalMode !== undefined && { approvalMode: x.approvalMode }), ...(x.waitMs !== undefined && { waitMs: x.waitMs }),
+    ...(x.toolMs !== undefined && { toolMs: x.toolMs }), ...(x.model !== undefined && { model: x.model }),
+  }
+}
+
 export interface RunView {
   runId: string
   phase: RunPhase
@@ -176,6 +205,8 @@ export interface RunView {
   assess: AssessView[]
   assessPause?: HitlPauseEvent
   assessStartedAt?: number
+  /** Spec B 7c: the timing events the Gantt is built from (no token streams), in arrival order. */
+  timing: TimingEvent[]
   synthesis: string
   finalOutput?: string
   synthesisTruncated?: OutputLimit
@@ -198,6 +229,7 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
     served: {},
     wave: 1,
     assess: [],
+    timing: [],
     totals: { costUsd: 0, tokens: 0, budgetReached: false },
     planning: { startedAt, stage: 'reading', stageAt: { reading: startedAt }, attempt: 0, draft: [], reasoning: '', streamedChars: 0 },
     log: [],
@@ -225,6 +257,7 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
   if (event.runId !== view.runId || event.seq <= view.lastSeq) return view
   let next: RunView = { ...view, lastSeq: event.seq }
   if (event.runTotals) next.totals = event.runTotals
+  if (TIMING_TYPES.has(event.type)) next.timing = [...next.timing, timingOf(event)]
 
   switch (event.type) {
     case 'plan_started':

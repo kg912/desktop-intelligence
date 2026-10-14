@@ -443,6 +443,15 @@ describe('List | Graph toggle (Goal 6)', () => {
     expect(onMode).toHaveBeenCalledWith('list')
   })
 
+  it('spec B 7c: a third option, Gantt', () => {
+    const onMode = vi.fn()
+    render(<ModelStoreProvider><TopBar activeChatId="c" onCompactComplete={vi.fn()} sidebarCollapsed={false} mode="multi-agent" agentRun={runOf(FINISHED)} agentViewMode="gantt" onAgentViewMode={onMode} /></ModelStoreProvider>)
+    expect(within(screen.getByTestId('view-toggle')).getAllByRole('radio').map((r) => r.textContent)).toEqual(['List', 'Graph', 'Gantt'])
+    expect(screen.getByTestId('view-gantt').getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(screen.getByTestId('view-graph'))
+    expect(onMode).toHaveBeenCalledWith('graph')
+  })
+
   it('is absent without a handler (regular chats)', () => {
     render(<ModelStoreProvider><TopBar activeChatId="c" onCompactComplete={vi.fn()} sidebarCollapsed={false} mode="multi-agent" agentRun={null} /></ModelStoreProvider>)
     expect(screen.queryByTestId('view-toggle')).toBeNull()

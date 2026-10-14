@@ -773,12 +773,12 @@ export function Layout() {
 /** Top of the floating run pill (10px) + its height (30px) − ChatArea's own 32px start, rounded up. */
 const AGENT_PILL_INSET = 16
 
-type AgentViewMode = 'list' | 'graph'
+type AgentViewMode = 'list' | 'graph' | 'gantt'
 const viewKey = (chatId: string): string => `di.multiAgentView.${chatId}`
 function readAgentView(chatId: string): AgentViewMode | null {
   try {
     const v = localStorage.getItem(viewKey(chatId))
-    return v === 'list' || v === 'graph' ? v : null
+    return v === 'list' || v === 'graph' || v === 'gantt' ? v : null
   } catch { return null }
 }
 function writeAgentView(chatId: string, mode: AgentViewMode): void {

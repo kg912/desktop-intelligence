@@ -18,6 +18,7 @@ import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
 import { AssessCard, CoverageSection } from './CoveragePanel'
+import { GanttStrip } from './GanttView'
 
 interface Props {
   view: RunView
@@ -140,7 +141,7 @@ export function GraphView({ view, config, readOnly, now, estimate, queues, onRes
           )}
           {dock.tab === 'assess' && <div className="px-7 pb-4"><CoverageSection view={view} config={config} readOnly={readOnly} onAssess={onAssess} /></div>}
           {dock.tab === 'node' && <NodePanel view={view} id={selected} now={now} models={models} onOpenAgent={onOpenAgent} />}
-          {dock.tab === 'log' && <RunLog view={view} />}
+          {dock.tab === 'log' && <RunLog view={view} now={live ? now : undefined} />}
         </GraphDock>
       </div>
       <StatsStrip view={view} config={config} live={live} now={now} waiting={waitingTotal} onAbort={onAbort} />
@@ -417,9 +418,12 @@ function NodePanel({ view, id, now, models, onOpenAgent }: {
 
 const LOG_TONE = { info: 'text-ma-soft', ok: 'text-[#7fdcb0]', wait: 'text-[#e8c77f]', fail: 'text-[#ff8c88]' } as const
 
-function RunLog({ view }: { view: RunView }) {
+function RunLog({ view, now }: { view: RunView; now?: number }) {
   if (view.log.length === 0) return <p className="px-7 py-3.5 text-[12.5px] text-ma-mute">Nothing logged yet.</p>
   return (
+    <>
+    {/* Spec B 7c: a compact Gantt above the log. */}
+    <div className="px-7 pt-3"><GanttStrip view={view} now={now} /></div>
     <ol className="flex flex-col gap-1.5 px-7 pb-4 pt-3 font-mono text-[11.5px]" data-testid="run-log">
       {[...view.log].reverse().map((l, i) => (
         <li key={view.log.length - i} className="flex gap-2.5">
@@ -428,6 +432,7 @@ function RunLog({ view }: { view: RunView }) {
         </li>
       ))}
     </ol>
+    </>
   )
 }
 

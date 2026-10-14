@@ -95,6 +95,7 @@ Follow the dark language in `designs/` (Inter + JetBrains Mono, panel `#0a0a0a`,
 - Replace the "Peak: N agents in parallel" bar with a Gantt (a new tab beside List | Graph, and a compact version in the dock Run log). Lanes: plan, approve, each agent, synthesize. Segment kinds: model, tool, approval wait, judge, repair attempt. Data from Spec A Phase 9 (`waitMs`, `toolMs`) and existing per-call timestamps; no new sidecar data other than those.
 - Hover/click a segment: popover with duration, approval mode, critical-path flag, "Open call record"; the footer shows critical path, total retry time, approval wait, judge time.
 - Critical path computed in the renderer from `dependsOn` and segment times.
+- **Decisions (implemented):** checked first that spec A Phase 9's `waitMs` / `toolMs` / `approvalMode` reach `tool_done` (they do, Amendment 4). A run that predates them (the Istanbul fixture) shows each tool call's whole pause as approval wait, and says so; no tool time is invented. "Trust tool for run" is left out of the popover: trust stays in the approval strips, whose UX is unchanged. An "assess" lane appears when the assess node ran. The List view keeps its caption and status bars and draws the segments over them.
 - **Acceptance:** unit test of `buildSegments(run)` and `criticalPath(run)` on the fixture (critical path 1.2 → 2.1 → synth for the old run); a run still in progress renders open-ended segments.
 
 **7d. Pre-flight plan editor and step controls (design 14).**

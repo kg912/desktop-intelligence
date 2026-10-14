@@ -37,8 +37,8 @@ interface TopBarProps {
   onOpenAgentRunView?:            () => void
   onOpenAgentSettings?:           () => void
   /** Multi-agent run view: List (agent rows) or Graph (designs/06-graph-view.png); remembered per chat. */
-  agentViewMode?:                 'list' | 'graph'
-  onAgentViewMode?:               (mode: 'list' | 'graph') => void
+  agentViewMode?:                 'list' | 'graph' | 'gantt'
+  onAgentViewMode?:               (mode: 'list' | 'graph' | 'gantt') => void
 }
 
 export function TopBar({
@@ -337,12 +337,12 @@ export function TopBar({
           {onAgentViewMode && (
             <div role="radiogroup" aria-label="Run view" data-testid="view-toggle"
               className="ml-2.5 flex flex-none overflow-hidden rounded-[9px] border-[0.5px] border-white/[0.12] font-mono text-[12px]">
-              {(['list', 'graph'] as const).map((v) => (
+              {(['list', 'graph', 'gantt'] as const).map((v) => (
                 <button key={v} role="radio" aria-checked={agentViewMode === v} data-testid={`view-${v}`} onClick={() => onAgentViewMode(v)}
                   className={agentViewMode === v
                     ? 'border-l-2 border-ma-red bg-ma-red/[0.18] px-3.5 py-1 text-white'
                     : 'px-3.5 py-1 text-ma-mute hover:text-ma-soft'}>
-                  {v === 'list' ? 'List' : 'Graph'}
+                  {v === 'list' ? 'List' : v === 'graph' ? 'Graph' : 'Gantt'}
                 </button>
               ))}
             </div>

@@ -419,6 +419,19 @@ the question with an answer box (Answer / Skip). They dispatch `assess:run-follo
 and the timeline strip (plan → workers → assess: … → wave n → … → synthesize) after the agent cards; the Graph dock
 gets an Assess tab, and an assess pause joins Needs you (counted, so the dock opens for it).
 
+**Gantt (spec B 7c, design 13).** The run view keeps a timing log (`RunView.timing`: plan, approvals, agent
+start/complete, tool start/done with spec A Phase 9's `approvalMode` / `waitMs` / `toolMs`, gates, retries, assess,
+synthesis; no token streams). `buildSegments()` gives lanes plan, approve, each agent, assess (when it ran),
+synthesize, with segments model / tool / approval wait / judge / repair attempt (model time in attempts after the
+first). A worker tool call is a sidecar pause while Electron asks and runs the tool: with `waitMs` the pause splits
+into the person's wait and the tool's own time; older runs logged no split, so the whole pause is the wait (the
+popover says so). Seams of a few milliseconds between events fold into the segment before them. `criticalPath()`
+walks back from the step that finished last through the dependency that finished last (the Istanbul run:
+1.2 → 2.1 → synth). The Gantt is a third run view beside List | Graph (popover: duration, tool call, approval mode,
+tool time, critical-path flag, Open call record; footer: critical path, retry time, approval wait, judge time); the
+List view's timeline lanes and the dock's Run log draw the same segments compactly. Live runs draw open segments to
+now.
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

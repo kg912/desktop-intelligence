@@ -14,6 +14,9 @@ import { Chip } from './ClaimsDrawer'
 import type { ClaimTarget } from './ClaimsDrawer'
 import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { CoverageSection } from './CoveragePanel'
+import { GanttView } from './GanttView'
+import { buildSegments } from '../../lib/gantt'
+import { SEGMENT_CLASS } from './GanttView'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
 import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
@@ -85,7 +88,7 @@ interface Props {
   /** Slow-plan escape hatch: use the quick fallback plan. */
   onQuickPlan?: () => Promise<void> | void
   /** List (rows) or Graph (designs/06-graph-view.png). Both stay mounted once shown, so switching loses nothing. */
-  viewMode?: 'list' | 'graph'
+  viewMode?: 'list' | 'graph' | 'gantt'
   /** The chat this run belongs to (the Graph view's dock remembers its pin and height per chat). */
   chatId?: string | null
   /** Spec B 7b: answer an assess pause (Run follow-up / Finish now / an ask_user answer). */
@@ -119,7 +122,11 @@ export function MultiAgentSidebarView(props: Props) {
             chatId={props.chatId} active={graph} onAssess={props.onAssess} />
         </div>
       )}
-      <div className={cn('flex h-full w-full min-w-0', graph && 'hidden')} data-testid="dock-list">
+      {/* Spec B 7c: the Gantt tab (design 13). */}
+      {props.viewMode === 'gantt' && (
+        <div className="h-full w-full min-w-0 overflow-auto p-4" data-testid="dock-gantt"><GanttView view={view} now={live ? now : undefined} chatId={props.chatId} /></div>
+      )}
+      <div className={cn('flex h-full w-full min-w-0', (graph || props.viewMode === 'gantt') && 'hidden')} data-testid="dock-list">
       {!props.hidePlanColumn && <section aria-label="Run plan" className="flex min-h-0 flex-none flex-col border-r-[0.5px] border-white/5" style={{ width: PLAN_COLUMN_WIDTH }}>
         <div className="border-b-[0.5px] border-white/5 px-4 pb-3 pt-3.5">
           <div className="flex items-center justify-between font-semibold">
@@ -268,6 +275,8 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
   const intervals = agents.filter((a) => a.startedAt).map((a) => [a.startedAt!, a.endedAt ?? end] as [number, number])
   const working = agents.filter((a) => isWorking(a.status)).length
   const peak = peakOverlap(intervals)
+  // Spec B 7c: each lane shows its real segments (model, tool, approval wait, judge, repair) over the status bar.
+  const gantt = useMemo(() => buildSegments(view, live ? now : undefined), [view, live, now])
   const caption = live && working > 1 ? `${working} agents running in parallel`
     : live && working === 1 ? '1 agent running'
     : peak > 1 ? `Peak: ${peak} agents in parallel`
@@ -290,6 +299,10 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
             <div key={a.step.id} className="relative my-[5px] h-4" data-testid={`lane-${a.step.id}`}>
               <span className="absolute -left-px -top-px -translate-x-full pr-1.5 font-mono text-[10.5px] text-ma-mute">{a.step.id}</span>
               <i className="ma-lane-bar" data-s={state} style={{ left: `${left}%`, width: `${Math.max(right - left, 1.5)}%` }} />
+              {gantt.lanes.find((l) => l.id === a.step.id)?.segments.map((s, i) => (
+                <b key={i} data-kind={s.kind} className={cn('absolute top-[4px] h-[8px] rounded-[2px]', SEGMENT_CLASS[s.kind])}
+                  style={{ left: `${pos(s.start)}%`, width: `${Math.max(pos(s.end ?? end) - pos(s.start), 0.4)}%` }} />
+              ))}
             </div>
           )
         })}
