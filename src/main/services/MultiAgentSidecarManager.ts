@@ -527,6 +527,14 @@ export class MultiAgentSidecarManager extends EventEmitter {
     }
   }
 
+  /** Spec B 7d: a message for a running agent, delivered at its next round. */
+  async steer(runId: string, agentId: string, message: string): Promise<void> {
+    const result = await this.request(`/run/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}/steer`, {
+      method: 'POST', body: JSON.stringify({ message }),
+    })
+    if (!result.ok) throw new Error(result.status === 409 ? 'That agent is not running' : `Sidecar steer failed (${result.status})`)
+  }
+
   async discardRun(runId: string): Promise<void> {
     await this.request(`/run/${encodeURIComponent(runId)}/discard`, { method: 'POST' })
   }

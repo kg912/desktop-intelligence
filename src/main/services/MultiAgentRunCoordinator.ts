@@ -74,6 +74,7 @@ export interface CoordinatorDeps {
     lockStep(runId: string, stepId: string, locked: boolean): Promise<void>
     getEvidence(runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null>
     isAwaitingAssess(runId: string): boolean
+    steer(runId: string, agentId: string, message: string): Promise<void>
   }
   mcp: {
     /** Running MCP schemas a worker can actually call (see multiAgentExclusionReason). */
@@ -250,12 +251,19 @@ export class MultiAgentRunCoordinator {
     }
   }
 
-  /** Renderer-owned pre-flight answer. Tool pauses can never be answered from the renderer. */
-  async respondToPlan(runId: string, approved: boolean): Promise<void> {
+  /** Renderer-owned pre-flight answer. Tool pauses can never be answered from the renderer. Spec B 7d: an approval
+   *  may carry the plan as the user edited it; the sidecar validates it like the planner's. */
+  async respondToPlan(runId: string, approved: boolean, steps?: AgentStep[]): Promise<void> {
     if (!this.deps.sidecar.isAwaitingPlanApproval(runId)) {
       throw new Error('This run is not waiting for plan approval')
     }
-    await this.deps.sidecar.respondHitl({ runId, agentId: 'orchestrator', approved })
+    await this.deps.sidecar.respondHitl({ runId, agentId: 'orchestrator', approved, ...(approved && steps ? { result: JSON.stringify({ steps }) } : {}) })
+  }
+
+  /** Spec B 7d: steer a running agent (delivered at its next round). */
+  steer(runId: string, agentId: string, message: string): Promise<void> {
+    if (!this.runs.has(runId)) return Promise.reject(new Error('No such live run'))
+    return this.deps.sidecar.steer(runId, agentId, message.trim())
   }
 
   abort(runId: string): Promise<void> {
@@ -297,8 +305,16 @@ export class MultiAgentRunCoordinator {
     return this.deps.sidecar.discardRun(runId)
   }
 
-  lockStep(runId: string, stepId: string, locked: boolean): Promise<void> {
-    return this.deps.sidecar.lockStep(runId, stepId, locked)
+  /** A live run announces the lock itself (step_locked); a finished one gets it recorded here, after its last event. */
+  async lockStep(runId: string, stepId: string, locked: boolean, chatId?: string): Promise<void> {
+    await this.deps.sidecar.lockStep(runId, stepId, locked)
+    if (this.runs.has(runId) || !chatId) return
+    const saved = this.deps.db.getRun(chatId, runId)
+    if (!saved || (saved.runIds && saved.runIds.at(-1) !== runId)) return
+    const seq = saved.executionTrace.reduce((max, e) => Math.max(max, e.seq), 0) + 1
+    const event = { runId, seq, ts: Date.now(), type: 'step_locked' as const, agentId: stepId, locked }
+    this.deps.db.saveTrace(chatId, [...saved.executionTrace, event], saved.runStatus, saved.agentGraph)
+    this.deps.sendEvent(event)
   }
 
   /** Spec B 7a: a cited tool result for the evidence drawer (lazy). */

@@ -246,6 +246,8 @@ class Run:
     locked: set[str] = field(default_factory=set)
     # The first event of a resumed or re-run run (run_resumed / rerun_start), emitted by orchestrate().
     resume_event: dict[str, Any] | None = None
+    # Spec B 7d: steer messages per agent, delivered as a user turn at its next round.
+    steers: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def config(self) -> Config:
@@ -1229,14 +1231,51 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
     return {**state, "steps": steps}
 
 
+def edited_plan(run: Run, text: str) -> list[dict[str, Any]] | None:
+    """Spec B 7d: the plan the user edited in pre-flight ({"steps": [...]}), checked like the planner's output (known
+    dependencies, no cycle, at most maxAgents) plus each step's model, budget, task, condition and covers. None when the
+    approval carries no plan; ValueError when it is not valid."""
+    try:
+        doc = json.loads(text) if text.strip().startswith("{") else None
+    except ValueError:
+        return None
+    if not isinstance(doc, dict) or not isinstance(doc.get("steps"), list):
+        return None
+    raw = [st for st in doc["steps"] if isinstance(st, dict)]
+    steps = parse_plan(json.dumps(raw), run.config)
+    if len(steps) > run.config.maxAgents:
+        raise ValueError(f"{len(steps)} steps, the maximum is {run.config.maxAgents}")
+    known = {c["id"] for c in run.checklist}
+    for st, item in zip(steps, raw):
+        if str(item.get("model") or "").strip():
+            st["model"] = str(item["model"]).strip()[:120]
+        budget = item.get("budgetUsd")
+        if isinstance(budget, (int, float)) and not isinstance(budget, bool) and budget >= 0:
+            st["budgetUsd"] = float(budget)
+        st["covers"] = [c for c in st.get("covers", []) if c in known]
+        if not st["covers"]:
+            st.pop("covers")
+    return steps
+
+
 async def approve_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Pre-flight approval (spec §06): no worker starts before the user approves."""
+    """Pre-flight approval (spec §06): no worker starts before the user approves. The approval may carry the plan as
+    the user edited it (spec B 7d)."""
     run: Run = state["run"]
     try:
         approved, reason = await run.wait_for_approval("orchestrator", "Orchestrator", run.config.models.get("orchestrator", ""),
                                                         "approve_plan", "multi-agent", {"steps": state["steps"]})
     except AgentFailed:
         approved, reason = False, "approval timed out"
+    if approved:
+        try:
+            edited = edited_plan(run, reason)
+        except ValueError as exc:
+            await run.emit("task_failed", reason=f"The edited plan is not valid: {exc}", partialOutputs={})
+            return {**state, "approved": False}
+        if edited is not None:
+            state = {**state, "steps": edited}
+            await run.emit("orchestrator_plan", steps=edited, edited=True, **({"checklist": run.checklist} if run.checklist else {}))
     if not approved:
         await run.emit("task_failed", reason=f"Plan not approved{': ' + reason if reason else ''}", partialOutputs={})
     elif STATE:
@@ -2156,9 +2195,14 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         _round = 0
         try:
             while True:
-                last_round = limit is not None and _round >= limit - 1
+                # Spec B 7d: a step's own budget, once spent, forces its wrap-up round like the tool-round limit.
+                last_round = (limit is not None and _round >= limit - 1) or ("budgetUsd" in step and agent_cost >= step["budgetUsd"])
                 if last_round and messages[-1].get("content") not in (TOOL_BUDGET_USED, NO_ANSWER_NUDGE):
                     messages.append({"role": "user", "content": TOOL_BUDGET_USED})
+                steering = run.steers.pop(agent_id, [])
+                for message in steering:  # spec B 7d: the user's steer, at this round
+                    messages.append({"role": "user", "content": f"Steering from the user: {message}"})
+                    await run.emit("steer", agentId=agent_id, message=message, status="delivered", round=_round, attempt=attempt)
                 stub_consumed(messages, store, compacted)
                 freed = compact_to_fit(run, model, messages, store, compacted)
                 if freed:
@@ -3098,12 +3142,30 @@ async def rerun_step(run_id: str, step_id: str, body: RerunRequest) -> dict[str,
     return start_saved(run, state)
 
 
+class SteerRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2_000)
+
+
+@app.post("/run/{run_id}/agents/{agent_id}/steer")
+async def steer(run_id: str, agent_id: str, body: SteerRequest) -> dict[str, bool]:
+    """Spec B 7d: a message to a running agent, delivered as a user turn at its next round (logged as steer)."""
+    run = RUNS.get(run_id)
+    if not run or run.finished:
+        raise HTTPException(404, "run not found")
+    if agent_id not in run.attempts or agent_id in run.step_results:
+        raise HTTPException(409, "that agent is not running")
+    run.steers.setdefault(agent_id, []).append(body.message.strip())
+    await run.emit("steer", agentId=agent_id, message=body.message.strip(), status="queued")
+    return {"ok": True}
+
+
 @app.post("/run/{run_id}/steps/{step_id}/lock")
 async def lock_step(run_id: str, step_id: str, body: LockRequest) -> dict[str, bool]:
     """A locked step's claims and evidence are reused as they are: never re-run, never marked stale."""
     live = RUNS.get(run_id)
     if live:
         (live.locked.add if body.locked else live.locked.discard)(step_id)
+        await live.emit("step_locked", agentId=step_id, locked=body.locked)
     try:
         if STATE:
             STATE.set_locked(run_id, step_id, body.locked)

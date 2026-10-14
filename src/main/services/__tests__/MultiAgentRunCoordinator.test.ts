@@ -36,6 +36,7 @@ class FakeSidecar extends EventEmitter {
   discardRun = vi.fn(async () => {})
   lockStep = vi.fn(async () => {})
   getEvidence = vi.fn(async () => null)
+  steer = vi.fn(async () => {})
   push(event: Partial<AgentEvent> & { type: string; seq: number }): void {
     this.emit('event', { runId: this.runId, ts: 1, ...event })
   }
@@ -515,5 +516,36 @@ describe('spec B 7b: assess:run-followup / assess:finish / assess:answer', () =>
     expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'assess', approved: false, result: '' })
     await coordinator.respondAssess('run-1', { kind: 'answer', answer: 'Kayseri' })
     expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'assess', approved: true, result: 'Kayseri' })
+  })
+})
+
+describe('spec B 7d: edited plan, steer, lock', () => {
+  it('an approved edited plan rides on the plan approval', async () => {
+    const { coordinator, sidecar } = setup()
+    sidecar.awaitingPlan = true
+    const steps = [{ id: '1.1', label: 'Leg 1 via SAW', stage: 'worker', role: 'R', model: 'm/w', phase: 1, dependsOn: [], budgetUsd: 0.2 }] as never
+    await coordinator.respondToPlan('run-1', true, steps)
+    expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'orchestrator', approved: true, result: JSON.stringify({ steps }) })
+    await coordinator.respondToPlan('run-1', true)
+    expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'orchestrator', approved: true })
+  })
+
+  it('steer goes to the sidecar for a live run only', async () => {
+    const { coordinator, sidecar } = setup()
+    await expect(coordinator.steer('run-1', '1.2', 'Only airline pages.')).rejects.toThrow('No such live run')
+    await coordinator.start({ chatId: 'chat-1', task: 't', config: config() })
+    await coordinator.steer('run-1', '1.2', '  Only airline pages.  ')
+    expect(sidecar.steer).toHaveBeenCalledWith('run-1', '1.2', 'Only airline pages.')
+  })
+
+  it('locking a step of a finished run is recorded in its trace and shown at once', async () => {
+    const { coordinator, sidecar, db, sent } = setup()
+    const trace = [{ runId: 'run-1', seq: 9, ts: 9, type: 'task_complete', finalOutput: 'x', totalCostUsd: 0, totalTokens: 0 }] as unknown as AgentEvent[]
+    db.getRun.mockImplementation((() => ({ mode: 'multi-agent', runStatus: 'completed', agentGraph: [], executionTrace: trace, runId: 'run-1', runIds: ['run-1'] })) as never)
+    await coordinator.lockStep('run-1', '1.1', true, 'chat-1')
+    expect(sidecar.lockStep).toHaveBeenCalledWith('run-1', '1.1', true)
+    expect(sent.at(-1)).toMatchObject({ runId: 'run-1', seq: 10, type: 'step_locked', agentId: '1.1', locked: true })
+    const [chatId, saved, status] = db.saveTrace.mock.calls.at(-1) as unknown as [string, AgentEvent[], string]
+    expect([chatId, saved.map((e) => e.seq), status]).toEqual(['chat-1', [9, 10], 'completed'])
   })
 })

@@ -47,6 +47,8 @@ const SAMPLES: Record<AgentEvent['type'], Record<string, unknown>> = {
   run_resumed: { finishedSteps: ['1.1'], wave: 1 },
   rerun_start: { stepId: '1.1', withDependents: false, steps: ['1.1'], stale: [] },
   agent_stale: { agentId: '1.1', reason: 'built on the earlier output of 1.0' },
+  steer: { agentId: '1.1', message: 'Only airline pages.', status: 'queued' },
+  step_locked: { agentId: '1.1', locked: true },
   agent_skipped: { agentId: '1.1', reason: 'condition not met: x', condition: 'x', basis: 'condition' },
   run_config: { models: { worker: 'm/w' }, sources: { worker: 'saved' }, catalogueChecked: true, maxAgents: 2, budgetCapUsd: 1, reflectionPassThreshold: 3, maxRetriesPerAgent: 1, reasoningEffort: 'medium' },
   hitl_pause: { agentId: 'orchestrator', role: 'Orchestrator', toolName: 'approve_plan', serverName: 'multi-agent', args: {} },
@@ -99,6 +101,7 @@ class FakeSidecar extends EventEmitter {
   lockStep = vi.fn(async () => {})
   getEvidence = vi.fn(async () => null)
   isAwaitingAssess = vi.fn(() => false)
+  steer = vi.fn(async () => {})
 }
 
 /** The production wiring from src/main/index.ts: observe → emitMultiAgentEvent. */
@@ -165,7 +168,7 @@ describe('Phase 0 audit — the old multi-agent logger', () => {
       agent_complete: 'worker', retry: 'worker', agent_failed: 'worker', context_compacted: 'worker', agent_degraded: 'worker',
       reflection_start: 'reflection', reflection_result: 'reflection',
       synthesis_start: 'synthesizer', synthesis_token: 'synthesizer',
-      task_complete: 'run', task_failed: 'run', ledger_update: 'run', assess_start: 'run', assess_decision: 'run', wave_start: 'run', agent_skipped: 'worker', run_resumed: 'run', rerun_start: 'run', agent_stale: 'worker',
+      task_complete: 'run', task_failed: 'run', ledger_update: 'run', assess_start: 'run', assess_decision: 'run', wave_start: 'run', agent_skipped: 'worker', run_resumed: 'run', rerun_start: 'run', agent_stale: 'worker', steer: 'worker', step_locked: 'run',
     }
     for (const type of TYPES) expect([type, agentEventStepType(event(type, 1))]).toEqual([type, expected[type]])
     // A worker's tool pause is a worker step, not the orchestrator's.

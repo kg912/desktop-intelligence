@@ -5,10 +5,10 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../../lib/utils'
-import { MarkdownRenderer } from './MarkdownRenderer'
 import { ClaimLinkedMarkdown } from './ClaimLinks'
+import { StepControls } from './StepControls'
 import type { AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
-import { elapsedMs, formatElapsed } from '../../lib/multiAgentRunState'
+import { elapsedMs, formatElapsed, isRunActive } from '../../lib/multiAgentRunState'
 import { argsSummary, bareTool } from '../../lib/approvalQueue'
 import { APPROVAL_TONE, TAG_TONE, formatTokens, isWorking, shortModel, stateTag } from './MultiAgentSidebarView'
 import { formatUsd } from '../../../../shared/multiAgentModels'
@@ -174,7 +174,7 @@ export function AgentFocusView({ view, agentId, task, config, queue, readOnly, o
             </FollowScroll>
             {head && <PinnedApproval key={head.requestId} request={head} position={1} total={queue.length} onRespond={onRespond} />}
           </section>
-          <RightRail view={view} agent={agent} queue={readOnly ? [] : queue} config={config} />
+          <RightRail view={view} agent={agent} queue={readOnly ? [] : queue} config={config} readOnly={readOnly && isRunActive(view)} />
         </div>
       </div>
     </div>
@@ -347,7 +347,7 @@ function PinnedApproval({ request, position, total, onRespond }: { request: McpT
   )
 }
 
-function RightRail({ view, agent, queue, config }: { view: RunView; agent: AgentView; queue: McpToolPermissionRequest[]; config: MultiAgentConfig }) {
+function RightRail({ view, agent, queue, config, readOnly }: { view: RunView; agent: AgentView; queue: McpToolPermissionRequest[]; config: MultiAgentConfig; readOnly?: boolean }) {
   const tools = agent.timeline.filter((t): t is ToolItem => t.kind === 'tool')
   const place = useMemo(() => placeInGraph(view, agent.step.id), [view, agent.step.id])
   const gate = agent.reflections.at(-1)
@@ -359,6 +359,8 @@ function RightRail({ view, agent, queue, config }: { view: RunView; agent: Agent
   const section = 'border-t-[0.5px] border-white/[0.06] pt-4'
   return (
     <aside className="flex w-[360px] flex-none flex-col gap-5 overflow-y-auto border-l-[0.5px] border-white/[0.06] px-[22px] py-5" aria-label="Agent details" data-testid="focus-rail">
+      {/* Spec B 7d: steer, re-run on…, lock output. */}
+      <StepControls view={view} agentId={agent.step.id} readOnly={readOnly} />
       <div>
         <Label>TOOL TIMELINE</Label>
         {tools.length === 0 && queue.length === 0 && <Empty text="No tool calls yet." />}

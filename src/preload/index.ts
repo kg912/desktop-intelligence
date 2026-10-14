@@ -38,6 +38,7 @@ import type {
   MultiAgentConfig,
   ResumableRun,
   EvidenceRecord,
+  AgentStep,
 } from '../shared/types'
 import type { DebugPrefs, SessionEntry, ObsEvent, MultiAgentTraceLogEntry } from '../main/services/ObservabilityService'
 import type { RunDetail, RunListRow } from '../main/services/MultiAgentRunLogger'
@@ -388,8 +389,12 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_START, payload),
 
   /** Pre-flight plan approval only — worker tool pauses are answered in main. */
-  respondMultiAgentPlan: (runId: string, approved: boolean): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, { runId, approved }),
+  respondMultiAgentPlan: (runId: string, approved: boolean, steps?: AgentStep[]): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, { runId, approved, ...(steps ? { steps } : {}) }),
+
+  /** Spec B 7d: a message for a running agent, delivered at its next round. */
+  steerMultiAgent: (runId: string, agentId: string, message: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_STEER, { runId, agentId, message }),
 
   abortMultiAgentRun: (runId: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ABORT, runId),
@@ -423,7 +428,7 @@ const api = {
   getMultiAgentEvidence: (runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, { runId, agentId, callId }),
 
-  lockMultiAgentStep: (payload: { runId: string; stepId: string; locked: boolean }): Promise<void> =>
+  lockMultiAgentStep: (payload: { runId: string; stepId: string; locked: boolean; chatId?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, payload),
 
   getMultiAgentSidecarStatus: (): Promise<SidecarStatus> =>

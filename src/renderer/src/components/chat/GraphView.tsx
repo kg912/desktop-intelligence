@@ -16,7 +16,8 @@ import { AgentGraphCanvas, useElementSize, usePageVisible } from './AgentGraphCa
 import { Preflight, formatTokens, isWorking, peakOverlap, shortModel } from './MultiAgentSidebarView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { formatUsd } from '../../../../shared/multiAgentModels'
-import type { AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
+import type { AgentStep, AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
+import { StepControls } from './StepControls'
 import { AssessCard, CoverageSection } from './CoveragePanel'
 import { GanttStrip } from './GanttView'
 
@@ -29,7 +30,7 @@ interface Props {
   /** agentId → pending requests, oldest first (approvalQueues of the shared request list). */
   queues: Map<string, McpToolPermissionRequest[]>
   onRespond: (r: McpToolPermissionResponse) => void
-  onApprovePlan: () => void
+  onApprovePlan: (steps?: AgentStep[]) => void
   onCancelPlan: () => void
   onAbort: () => void
   onOpenAgent?: (agentId: string) => void
@@ -265,7 +266,7 @@ const isPinned = (d: DockState): boolean => d.mode === 'pinned'
 function NeedsYou({ view, config, preflight, estimate, queues, order, activeCard, setActiveCard, selected, onRespond, onApprovePlan, onCancelPlan }: {
   view: RunView; config: MultiAgentConfig; preflight: boolean; estimate: CostEstimate | null
   queues: Map<string, McpToolPermissionRequest[]>; order: string[]; activeCard: string | null; setActiveCard: (id: string | null) => void
-  selected: string | null; onRespond: (r: McpToolPermissionResponse) => void; onApprovePlan: () => void; onCancelPlan: () => void
+  selected: string | null; onRespond: (r: McpToolPermissionResponse) => void; onApprovePlan: (steps?: AgentStep[]) => void; onCancelPlan: () => void
 }) {
   const inbox = useMemo(() => inboxSummary(queues), [queues])
   const agents = order.filter((id) => queues.has(id))
@@ -412,6 +413,8 @@ function NodePanel({ view, id, now, models, onOpenAgent }: {
       {gate && <p className={cn('mb-2', gate.passed ? 'text-[#7fdcb0]' : 'text-[#ff8c88]')}>Review {gate.score}/5 — {gate.reason}</p>}
       {agent.failure && <p className="mb-2 text-[#ff8c88]">{agent.failure}</p>}
       {text ? <p className="line-clamp-[8] whitespace-pre-wrap text-ma-soft" data-testid="node-output">{text}</p> : !gate && !agent.failure && <p className="text-ma-dim">No output yet.</p>}
+      {/* Spec B 7d: steer, re-run on…, lock output. */}
+      <div className="mt-3 max-w-[560px]"><StepControls view={view} agentId={id} /></div>
     </>
   ))
 }

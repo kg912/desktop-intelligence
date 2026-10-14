@@ -59,6 +59,7 @@ import { getOpenRouterCatalogue } from '../services/OpenRouterCatalogue'
 import { sanitizeMultiAgentConfig } from '../../shared/multiAgentModels'
 import type { OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
+import type { AgentStep } from '../../shared/types'
 import { cloudModelState, daemonReady, buildLmsLoadArgs, definedOnly, stripEosFromMessages } from './handlerHelpers'
 import { readSettings, writeSettings } from '../services/SettingsStore'
 import { mcpServerManager } from '../services/McpServerManager'
@@ -169,6 +170,20 @@ function referencesPlot(msg: string): boolean {
  * registerIpcHandlers
  * All ipcMain.handle / ipcMain.on calls live here — nowhere else.
  */
+/** Spec B 7d: the edited plan from pre-flight, shape-checked (the sidecar validates dependencies, cycles and limits). */
+function editedSteps(steps: unknown): AgentStep[] | undefined {
+  if (!Array.isArray(steps)) return undefined
+  return steps.filter((s): s is Record<string, unknown> => !!s && typeof s === 'object').slice(0, 20).map((s) => ({
+    id: String(s.id ?? '').slice(0, 20), label: String(s.label ?? '').slice(0, 200), stage: 'worker' as const, role: String(s.role ?? 'Researcher').slice(0, 60),
+    model: String(s.model ?? '').slice(0, 120), phase: Number(s.phase) || 1,
+    dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String).slice(0, 20) : [],
+    ...(typeof s.task === 'string' && s.task.trim() ? { task: s.task.slice(0, 1_000) } : {}),
+    ...(typeof s.condition === 'string' && s.condition.trim() ? { condition: s.condition.slice(0, 300) } : {}),
+    ...(Array.isArray(s.covers) ? { covers: s.covers.map(String).slice(0, 25) } : {}),
+    ...(typeof s.budgetUsd === 'number' && s.budgetUsd >= 0 ? { budgetUsd: s.budgetUsd } : {}),
+  }))
+}
+
 export function registerIpcHandlers(webContents: () => WebContents | null): void {
   const send = (channel: string, payload: unknown): void => {
     const wc = webContents()
@@ -1442,8 +1457,11 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
 
   // The renderer may only answer the pre-flight plan approval; tool results
   // come exclusively from McpServerManager, so any `result` here is ignored.
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: Pick<HitlResponse, 'runId' | 'approved'>) =>
-    getMultiAgentCoordinator().respondToPlan(String(r.runId), r.approved === true)
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_HITL_RESPOND, (_, r: Pick<HitlResponse, 'runId' | 'approved'> & { steps?: unknown }) =>
+    getMultiAgentCoordinator().respondToPlan(String(r.runId), r.approved === true, editedSteps(r.steps))
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_STEER, (_, p: { runId: string; agentId: string; message: string }) =>
+    getMultiAgentCoordinator().steer(String(p.runId), String(p.agentId), String(p.message ?? '').slice(0, 2_000))
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ABORT, (_, runId: string) =>
@@ -1484,8 +1502,8 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, (_, p: { runId: string; agentId: string; callId: string }) =>
     getMultiAgentCoordinator().getEvidence(String(p.runId), String(p.agentId), String(p.callId))
   )
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, (_, p: { runId: string; stepId: string; locked: boolean }) =>
-    getMultiAgentCoordinator().lockStep(String(p.runId), String(p.stepId), p.locked === true)
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, (_, p: { runId: string; stepId: string; locked: boolean; chatId?: string }) =>
+    getMultiAgentCoordinator().lockStep(String(p.runId), String(p.stepId), p.locked === true, p.chatId ? String(p.chatId) : undefined)
   )
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_SIDECAR_STATUS, () =>

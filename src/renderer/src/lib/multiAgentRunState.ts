@@ -65,6 +65,8 @@ export interface AgentView {
   skipReason?: string
   /** Spec B Phase 5: a step it depends on was re-run; this output is built on the earlier one. */
   stale?: string
+  /** Spec B 7d: the user's steer messages, oldest first, and whether each has reached the agent yet. */
+  steers?: Array<{ message: string; delivered: boolean; round?: number }>
   pause?: HitlPauseEvent
   /** The answer hit an output limit. */
   truncated?: OutputLimit
@@ -124,6 +126,8 @@ export function runLogLine(e: AgentEvent): RunLogEntry | null {
     case 'run_resumed': return at('info', `Run resumed: ${e.finishedSteps.join(', ') || 'no step'} kept; unfinished steps start again`)
     case 'rerun_start': return at('info', `Re-running ${e.steps.join(', ')}${e.model ? ` on ${e.model}` : ''}${e.stale.length ? `; ${e.stale.join(', ')} now stale` : ''}`)
     case 'agent_stale': return at('wait', `${e.agentId} is stale: ${e.reason}`, e.agentId)
+    case 'steer': return e.status === 'queued' ? at('info', `Steer for ${e.agentId}: ${e.message}`, e.agentId) : at('ok', `${e.agentId} got your steer at round ${(e.round ?? 0) + 1}`, e.agentId)
+    case 'step_locked': return at('info', `${e.agentId} ${e.locked ? 'locked' : 'unlocked'}`, e.agentId)
     case 'synthesis_start': return at('info', 'Final synthesis started')
     case 'task_complete': return at('ok', 'Run complete')
     case 'task_failed': return at('fail', `Run failed: ${e.reason}`)
@@ -207,6 +211,9 @@ export interface RunView {
   assessStartedAt?: number
   /** Spec B 7c: the timing events the Gantt is built from (no token streams), in arrival order. */
   timing: TimingEvent[]
+  /** Spec B 7d: steps the user locked, and the planner's steps the sidecar removed (spec A Phase 4's merge step). */
+  locked: string[]
+  removedSteps: Array<{ stepId: string; label: string; reason: string }>
   synthesis: string
   finalOutput?: string
   synthesisTruncated?: OutputLimit
@@ -230,6 +237,8 @@ export function emptyRunView(runId: string, startedAt = Date.now()): RunView {
     wave: 1,
     assess: [],
     timing: [],
+    locked: [],
+    removedSteps: [],
     totals: { costUsd: 0, tokens: 0, budgetReached: false },
     planning: { startedAt, stage: 'reading', stageAt: { reading: startedAt }, attempt: 0, draft: [], reasoning: '', streamedChars: 0 },
     log: [],
@@ -402,6 +411,18 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
     }
     case 'agent_stale':
       return updateAgent(next, event.agentId, () => ({ stale: event.reason }))
+    case 'steer':
+      return updateAgent(next, event.agentId, (a) => {
+        const steers = [...(a.steers ?? [])]
+        const queued = steers.findIndex((x) => !x.delivered && x.message === event.message)
+        if (event.status === 'delivered' && queued >= 0) steers[queued] = { message: event.message, delivered: true, round: event.round }
+        else steers.push({ message: event.message, delivered: event.status === 'delivered', ...(event.round !== undefined && { round: event.round }) })
+        return { steers }
+      })
+    case 'plan_step_removed':
+      return { ...next, removedSteps: [...next.removedSteps.filter((r) => r.stepId !== event.stepId), { stepId: event.stepId, label: event.label, reason: event.reason }] }
+    case 'step_locked':
+      return { ...next, locked: event.locked ? [...new Set([...next.locked, event.agentId])] : next.locked.filter((id) => id !== event.agentId) }
     case 'agent_skipped':
       return updateAgent(next, event.agentId, () => ({ status: 'skipped', skipReason: event.reason, pause: undefined, endedAt: event.ts }))
     case 'agent_failed':

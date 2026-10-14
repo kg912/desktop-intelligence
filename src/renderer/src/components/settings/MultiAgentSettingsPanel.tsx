@@ -150,7 +150,7 @@ export function MultiAgentSettingsPanel() {
 
       {ROLES.map(({ key, label, hint }) => (
         <Field key={key} label={label} help={hint}>
-          <ModelSelect label={`${label} model`} value={config.models[key]} models={filtered}
+          <ModelSelect label={`${label} model`} value={config.models[key] ?? ''} models={filtered}
             onChange={(id) => update('models', { ...config.models, [key]: id })} />
         </Field>
       ))}

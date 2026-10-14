@@ -3,7 +3,7 @@
 // Right column: one accordion card per agent with its trace. CSS transitions
 // only — no motion.* here (M1 Pro scroll-jank issue).
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, Maximize2, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -15,6 +15,8 @@ import type { ClaimTarget } from './ClaimsDrawer'
 import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { CoverageSection } from './CoveragePanel'
 import { GanttView } from './GanttView'
+import { PlanEditor } from './PlanEditor'
+import { RunActionsContext } from './RunActions'
 import { buildSegments } from '../../lib/gantt'
 import { SEGMENT_CLASS } from './GanttView'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
@@ -22,7 +24,7 @@ import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
-import type { AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig, OutputLimit } from '../../../../shared/types'
+import type { AgentStep, AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig, OutputLimit } from '../../../../shared/types'
 
 const PLAN_COLUMN_WIDTH = 248
 
@@ -70,7 +72,8 @@ interface Props {
   estimate: CostEstimate | null
   permissionRequests: McpToolPermissionRequest[]
   onRespondPermission: (response: McpToolPermissionResponse) => void
-  onApprove: () => void
+  /** Spec B 7d: steps = the plan as edited in pre-flight (absent: the planner's plan). */
+  onApprove: (steps?: AgentStep[]) => void
   onCancel: () => void
   onAbort: () => void
   focusAgentId: string | null
@@ -315,9 +318,13 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
 // ── Pre-flight ───────────────────────────────────────────────────────────────
 
 export function Preflight({ view, config, estimate, onApprove, onCancel }: {
-  view: RunView; config: MultiAgentConfig; estimate: CostEstimate | null; onApprove: () => void; onCancel: () => void
+  view: RunView; config: MultiAgentConfig; estimate: CostEstimate | null; onApprove: (steps?: AgentStep[]) => void; onCancel: () => void
 }) {
   const cap = config.budgetCapUsd
+  // Spec B 7d: the plan editor (design 14), when the run's actions are available.
+  const canEdit = !!useContext(RunActionsContext)
+  const [editing, setEditing] = useState(false)
+  if (editing) return <PlanEditor view={view} config={config} onApprove={(steps) => onApprove(steps)} onCancel={() => setEditing(false)} />
   return (
     <div className="rounded-xl border-[0.5px] border-ma-amber/35 bg-ma-bg1 p-4" data-testid="preflight">
       <p className="text-[14px] font-medium">Review the plan</p>
@@ -371,7 +378,8 @@ export function Preflight({ view, config, estimate, onApprove, onCancel }: {
         )}
       </div>
       <div className="mt-3 flex gap-2">
-        <button onClick={onApprove} className="h-7 rounded-[7px] border-[0.5px] border-ma-red bg-ma-red px-3 text-[12.5px] font-medium text-white hover:bg-[#d8322e]">Approve & run</button>
+        <button onClick={() => onApprove()} className="h-7 rounded-[7px] border-[0.5px] border-ma-red bg-ma-red px-3 text-[12.5px] font-medium text-white hover:bg-[#d8322e]">Approve & run</button>
+        {canEdit && <button onClick={() => setEditing(true)} className="h-7 rounded-[7px] border-[0.5px] border-white/[0.09] px-3 text-[12.5px] text-ma-soft hover:bg-ma-bg3 hover:text-ma-text">Edit plan</button>}
         <button onClick={onCancel} className="h-7 rounded-[7px] border-[0.5px] border-white/[0.09] px-3 text-[12.5px] text-ma-mute hover:bg-ma-bg3 hover:text-ma-text">Cancel</button>
       </div>
     </div>

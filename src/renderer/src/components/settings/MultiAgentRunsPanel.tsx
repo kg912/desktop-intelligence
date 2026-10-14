@@ -22,6 +22,9 @@ const ROLE_BAR: Record<TimelineCall['role'], string> = {
   planner: 'bg-ma-mute/45',
   worker: 'bg-ma-red/55',
   reflection: 'bg-ma-amber/55',
+  // Spec B: the assess call and condition checks.
+  assess: 'bg-[#a78bfa]/55',
+  condition: 'bg-[#a78bfa]/40',
   synthesis: 'bg-ma-ok/55',
 }
 

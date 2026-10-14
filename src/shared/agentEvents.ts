@@ -23,6 +23,8 @@ const KNOWN_TYPES = new Set<string>([
   'run_resumed',
   'rerun_start',
   'agent_stale',
+  'steer',
+  'step_locked',
   'run_config',
   'agent_start',
   'agent_token',
@@ -182,6 +184,13 @@ function validateVariant(obj: Record<string, unknown>): string | null {
     case 'agent_stale':
       return checkFields(obj, [['agentId', 'string'], ['reason', 'string']])
 
+    case 'steer':
+      if (obj.status !== 'queued' && obj.status !== 'delivered') return '"status" must be queued or delivered'
+      return checkFields(obj, [['agentId', 'string'], ['message', 'string']])
+
+    case 'step_locked':
+      return checkFields(obj, [['agentId', 'string'], ['locked', 'boolean']])
+
     case 'agent_skipped':
       return checkFields(obj, [['agentId', 'string'], ['reason', 'string'], ['condition', 'string'], ['basis', 'string']])
 
@@ -313,6 +322,7 @@ export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
     case 'wave_start':
     case 'run_resumed':
     case 'rerun_start':
+    case 'step_locked':
       return 'run'
     case 'hitl_pause':
     case 'hitl_resume':

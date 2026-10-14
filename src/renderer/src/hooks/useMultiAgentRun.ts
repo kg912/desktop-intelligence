@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
-import type { AgentEvent, AssessAction, MultiAgentConfig } from '../../../shared/types'
+import type { AgentEvent, AgentStep, AssessAction, MultiAgentConfig } from '../../../shared/types'
 import { isTerminalAgentEvent } from '../../../shared/agentEvents'
 import type { ModelPricing } from '../../../shared/multiAgentModels'
 import { applyAgentEvent, emptyRunView, isRunActive, reduceRunEvents } from '../lib/multiAgentRunState'
@@ -160,10 +160,12 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     setStartError(null)
   }, [])
 
-  const approvePlan = useCallback((approved: boolean) => {
+  /** Spec B 7d: steps = the plan as edited in pre-flight. */
+  const approvePlan = useCallback((approved: boolean, steps?: AgentStep[]) => {
     const current = runRef.current
     if (!current || current.review) return
-    window.api.respondMultiAgentPlan(current.view.runId, approved).catch((err: unknown) => {
+    const sent = approved && steps ? window.api.respondMultiAgentPlan(current.view.runId, approved, steps) : window.api.respondMultiAgentPlan(current.view.runId, approved)
+    sent.catch((err: unknown) => {
       setStartError(err instanceof Error ? err.message : String(err))
     })
   }, [])

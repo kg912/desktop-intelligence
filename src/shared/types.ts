@@ -493,6 +493,7 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_RERUN_STEP:     'multi-agent:rerun-step',
   MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',
   MULTI_AGENT_GET_EVIDENCE:   'multi-agent:get-evidence',
+  MULTI_AGENT_STEER:          'multi-agent:steer',
   // Spec B 7b: the assess card's buttons and the ask_user answer.
   MULTI_AGENT_ASSESS_RUN_FOLLOWUP: 'assess:run-followup',
   MULTI_AGENT_ASSESS_FINISH:  'assess:finish',
@@ -530,6 +531,8 @@ export interface AgentStep {
   task?: string
   /** Spec B Phase 4: "global" lets the step read every step's evidence, not only its dependencies'. */
   evidence?: 'global'
+  /** Spec B 7d: the step's own spend limit, set in pre-flight; once spent, its next round is the wrap-up. */
+  budgetUsd?: number
 }
 
 /** One requirement of the planner's acceptance checklist (spec B Phase 1). scope: the step it belongs to, or "global". */
@@ -673,6 +676,25 @@ export interface OrchestratorPlanEvent extends AgentEventBase {
   modelServed?: string
   /** Spec B Phase 1: the planner's acceptance checklist. Absent: no ledger, no assess step. */
   checklist?: ChecklistItem[]
+  /** Spec B 7d: the plan as the user edited it in pre-flight (sent after approval, replacing the planner's). */
+  edited?: boolean
+}
+
+/** Spec B 7d: a steer message for a running agent: queued when sent, delivered as a user turn at its next round. */
+export interface SteerEvent extends AgentEventBase {
+  type: 'steer'
+  agentId: string
+  message: string
+  status: 'queued' | 'delivered'
+  round?: number
+  attempt?: number
+}
+
+/** Spec B 7d: a step was locked (its claims and evidence are reused unchanged) or unlocked. */
+export interface StepLockedEvent extends AgentEventBase {
+  type: 'step_locked'
+  agentId: string
+  locked: boolean
 }
 
 /** The coverage ledger after a step ended (spec B Phase 1). */
@@ -1093,6 +1115,8 @@ export type AgentEvent =
   | RunResumedEvent
   | RerunStartEvent
   | AgentStaleEvent
+  | SteerEvent
+  | StepLockedEvent
   | RunConfigEvent
   | AgentStartEvent
   | AgentTokenEvent

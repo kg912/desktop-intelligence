@@ -176,6 +176,8 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `run_resumed` | `finishedSteps, wave` — a run a sidecar restart interrupted continues (spec B Phase 5) |
 | `rerun_start` | `stepId, withDependents, steps, model?, stale` — steps of a finished run run again, then a new synthesis |
 | `agent_stale` | `agentId, reason` — a dependent of a re-run step that was not re-run |
+| `steer` | `agentId, message, status (queued \| delivered), round?` — a user message for a running agent (spec B 7d) |
+| `step_locked` | `agentId, locked` — a step's output locked or unlocked |
 | `agent_skipped` | `agentId, reason, condition, basis (condition \| no_basis)` — a conditional step was not run (spec B Phase 3) |
 | `ledger_update` | `ledger {checklistId: {status, claimIds, conflict?}}, counts` — after every step ends; no model call (spec B Phase 1) |
 | `agent_start` | `agentId, role, model` |
@@ -431,6 +433,20 @@ walks back from the step that finished last through the dependency that finished
 tool time, critical-path flag, Open call record; footer: critical path, retry time, approval wait, judge time); the
 List view's timeline lanes and the dock's Run log draw the same segments compactly. Live runs draw open segments to
 now.
+
+**Pre-flight editor and step controls (spec B 7d, design 14).** With the run's actions available, the pre-flight has
+"Edit plan": titles and tasks, each step's model (the run's models) and budget, dependencies, reorder (drag or the
+arrow buttons; a move that would run a step before what it needs is undone and explained), add and remove steps,
+the conditional marker, the removed merge step, and a running estimate. `validatePlanEdit()` blocks approval on a
+missing dependency, a cycle, a bad order, too many steps, or step budgets / the low estimate over the cap. "Approve
+and run" sends the steps with the plan approval; `approve_node` → `edited_plan()` runs the planner's checks again,
+keeps each step's model, budget, task, condition and covers, re-emits `orchestrator_plan` with `edited: true`, or
+fails the run with "The edited plan is not valid: …". A step's `budgetUsd`, once spent, makes its next round the
+wrap-up. During a run, `StepControls` (focus view rail, dock Node tab): a running step can be steered
+(`POST /run/{id}/agents/{agentId}/steer`, delivered as "Steering from the user: …" at its next round; `steer` events
+queued → delivered); a finished run's step can be re-run on another model, alone or with its dependents (phase 5),
+with its estimate, and its output locked or unlocked (`step_locked`; a finished run's lock is recorded in its trace by
+the coordinator).
 
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat

@@ -19,6 +19,8 @@ import { ResumeRunsBanner } from '../chat/ResumeRunsBanner'
 import { ClaimsDrawer } from '../chat/ClaimsDrawer'
 import type { ClaimTarget } from '../chat/ClaimsDrawer'
 import { ClaimLinksContext } from '../chat/ClaimLinks'
+import { RunActionsContext } from '../chat/RunActions'
+import type { RunActions } from '../chat/RunActions'
 import type { ClaimLinks } from '../chat/ClaimLinks'
 import { FinalSynthesis, MultiAgentSidebarView } from '../chat/MultiAgentSidebarView'
 import { AgentFocusView } from '../chat/AgentFocusView'
@@ -29,6 +31,7 @@ import type { RunView } from '../../lib/multiAgentRunState'
 import type { TopBarRun } from './MultiAgentModeIndicator'
 import { estimateRunCost } from '../../../../shared/multiAgentModels'
 import type { Chat, McpToolPermissionResponse, ProcessedAttachment, StoredMessage, McpToolPermissionRequest, SandboxViolationTraceEvent } from '../../../../shared/types'
+import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../../shared/types'
 import type { Message } from '../chat/MessageBubble'
 
 export function Layout() {
@@ -289,6 +292,20 @@ export function Layout() {
   const claimView = topBarRun?.view ?? null
   useEffect(() => { setClaimTarget(null) }, [claimView?.runId])
   const claimLinks = useMemo((): ClaimLinks | null => (claimView ? { view: claimView, open: setClaimTarget, onSelectAgent: selectAgent } : null), [claimView, selectAgent])
+
+  // Spec B 7d: the pre-flight editor and the step controls act on the run on screen.
+  const runActions = useMemo((): RunActions | null => {
+    if (!claimView || !activeChatId) return null
+    const config = shownRun?.config ?? DEFAULT_MULTI_AGENT_CONFIG
+    const runConfigModels = claimView.runConfig?.models ?? config.models
+    return {
+      models: [...new Set(Object.values(runConfigModels).filter((m): m is string => !!m))],
+      estimateFor: (steps) => (Object.keys(multiAgent.pricing).length ? estimateRunCost({ task: shownRun?.task ?? '', steps, config, pricing: multiAgent.pricing }) : null),
+      steer: (agentId, message) => window.api.steerMultiAgent(claimView.runId, agentId, message),
+      rerun: (stepId, options) => multiAgent.continueRun(activeChatId, claimView.runId, { stepId, ...options }),
+      lock: (stepId, locked) => window.api.lockMultiAgentStep({ runId: claimView.runId, stepId, locked, chatId: activeChatId }),
+    }
+  }, [claimView, activeChatId, shownRun, multiAgent])
 
   // ── Sidebar: new chat ─────────────────────────────────────────
   const handleNewChat = useCallback(() => {
@@ -581,6 +598,7 @@ export function Layout() {
   }, [setContextUsage])
 
   return (
+    <RunActionsContext.Provider value={runActions}>
     <ClaimLinksContext.Provider value={claimLinks}>
     <div className="flex h-full w-full bg-background overflow-hidden">
       {claimTarget && claimView && <ClaimsDrawer view={claimView} target={claimTarget} onSelect={setClaimTarget} onClose={() => setClaimTarget(null)} />}
@@ -627,7 +645,7 @@ export function Layout() {
                     estimate={estimate}
                     permissionRequests={mcpPermissionRequests}
                     onRespondPermission={respondToPermission}
-                    onApprove={() => multiAgent.approvePlan(true)}
+                    onApprove={(steps) => multiAgent.approvePlan(true, steps)}
                     onCancel={() => multiAgent.approvePlan(false)}
                     onAbort={multiAgent.abort}
                     onQuickPlan={multiAgent.quickPlan}
@@ -767,6 +785,7 @@ export function Layout() {
       )}
     </div>
     </ClaimLinksContext.Provider>
+    </RunActionsContext.Provider>
   )
 }
 

@@ -63,6 +63,7 @@ async function fullRun(root: string, opts: { enabled?: boolean } = {}) {
     lockStep = async () => {}
     getEvidence = async () => null
     isAwaitingAssess = () => false
+    steer = async () => {}
   })()
   const coordinator = new MultiAgentRunCoordinator({
     sidecar,
