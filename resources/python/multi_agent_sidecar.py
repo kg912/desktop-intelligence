@@ -887,7 +887,8 @@ PLANNER_SYSTEM = (
     "Return ONLY a JSON object {\"steps\": [...], \"checklist\": [...]}. Each step: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
     "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs], "
     "\"axis\": \"entity\" or \"topic\", \"covers\": [checklist ids it answers], and \"condition\" only when the step is conditional}. "
-    "Each checklist item: {\"id\": \"r1\", \"text\": the requirement, \"scope\": the id of the step it belongs to, or \"global\"}."
+    "Each checklist item: {\"id\": \"r1\", \"text\": the requirement, \"scope\": the id of the step it belongs to, or \"global\", "
+    "\"topic\": a short name the same requirement shares across steps, e.g. \"Baggage allowance\"}."
 )
 CHECKLIST_MAX = 25
 
@@ -960,7 +961,8 @@ def parse_checklist(text: str, steps: list[dict[str, Any]]) -> list[dict[str, An
         if any(c["id"] == item_id for c in checklist):
             continue
         scope = str(item.get("scope") or "").strip()
-        checklist.append({"id": item_id, "text": str(item["text"]).strip()[:200], "scope": scope if scope in step_ids else "global"})
+        topic = str(item.get("topic") or "").strip()[:60]
+        checklist.append({"id": item_id, "text": str(item["text"]).strip()[:200], "scope": scope if scope in step_ids else "global", **({"topic": topic} if topic else {})})
     known = {c["id"] for c in checklist}
     for st in steps:
         st["covers"] = [c for c in st.get("covers", []) if c in known]
@@ -1632,7 +1634,9 @@ def compute_ledger(checklist: list[dict[str, Any]], steps: list[dict[str, Any]],
             status = "pending"
         else:
             status = "missing"
-        ledger[item["id"]] = {"status": status, "claimIds": [f"{a} {c['id']}" for a, c in verified + declared],
+        # The claims that decide the status: verified ones for verified/conflicted, declared ones for unverified.
+        deciding = verified if verified else declared
+        ledger[item["id"]] = {"status": status, "claimIds": [f"{a} {c['id']}" for a, c in deciding],
                               **({"conflict": {"claimIds": conflict, "confirmed": False}} if conflict else {})}
     return ledger
 
@@ -2543,6 +2547,28 @@ def plan_follow_up(run: Run, reply: dict[str, Any], steps: list[dict[str, Any]])
     return [dict(st, wave=run.wave + 1) for st in parsed if st["id"] in new_ids], unclosable, coverage
 
 
+def apply_step_edits(steps: list[dict[str, Any]], edited: str) -> list[dict[str, Any]]:
+    """Spec B 7b "Edit steps": the approval may return the proposed steps (by id) with a new label and task, or fewer of
+    them. Unknown ids are ignored, so no step the tool check did not see can run. Empty or not a list: unchanged."""
+    try:
+        items = json.loads(edited) if edited.strip() else None
+    except ValueError:
+        items = None
+    if not isinstance(items, list):
+        return steps
+    by_id = {st["id"]: st for st in steps}
+    out = []
+    for item in items:
+        if isinstance(item, dict) and str(item.get("id")) in by_id:
+            st = dict(by_id[str(item["id"])])
+            if str(item.get("label") or "").strip():
+                st["label"] = str(item["label"]).strip()[:200]
+            if str(item.get("task") or "").strip():
+                st["task"] = str(item["task"]).strip()[:1_000]
+            out.append(st)
+    return out
+
+
 def set_caveats(run: Run, unclosable: list[dict[str, str]]) -> None:
     """What the synthesizer must state: every requirement still open, with the reason when no tool can close it."""
     text = {item["id"]: item["text"] for item in run.checklist}
@@ -2626,10 +2652,12 @@ async def assess_node(state: dict[str, Any]) -> dict[str, Any]:
     await decide("follow_up", reason=reason, steps=steps, unclosable=unclosable, estimatedUsd=estimate, autoRun=auto, called=True)
     if not auto:
         try:
-            approved, _ = await run.wait_for_approval("assess", "Assess", model, "approve_followup", "multi-agent", {"steps": steps, "estimatedUsd": estimate})
+            approved, edited = await run.wait_for_approval("assess", "Assess", model, "approve_followup", "multi-agent", {"steps": steps, "estimatedUsd": estimate})
         except AgentFailed:
-            approved = False
-        if not approved:
+            approved, edited = False, ""
+        if approved:
+            steps = apply_step_edits(steps, edited)
+        if not approved or not steps:
             return await finish("You chose to finish now.", "finished_by_user", unclosable, called=True)
     set_caveats(run, unclosable)
     run.wave += 1

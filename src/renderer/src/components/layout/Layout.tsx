@@ -631,6 +631,7 @@ export function Layout() {
                     onCancel={() => multiAgent.approvePlan(false)}
                     onAbort={multiAgent.abort}
                     onQuickPlan={multiAgent.quickPlan}
+                    onAssess={multiAgent.respondAssess}
                     viewMode={agentView}
                     chatId={activeChatId}
                     focusAgentId={focusAgentId}

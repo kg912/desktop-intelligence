@@ -429,3 +429,26 @@ describe('pickDensity', () => {
     }
   })
 })
+
+describe('spec B 7b: assess in the dock', () => {
+  const rules = { checklist: { open: 1, total: 1 }, waves: { used: 1, max: 2 }, budget: { spentUsd: 0.1, capUsd: 1 }, progress: 'first', tools: 'n/a' }
+
+  it('an ask_user question joins Needs you (counted, the dock opens), and the run gets an Assess tab', () => {
+    const onAssess = vi.fn()
+    const v = running([
+      { type: 'ledger_update', ledger: { r1: { status: 'unverified', claimIds: [] } }, counts: { verified: 0, unverified: 1, conflicted: 0, missing: 0, pending: 0 } },
+      { type: 'assess_start', wave: 1, open: 1 },
+      { type: 'assess_decision', wave: 1, decision: 'ask_user', reason: 'Only you know.', question: 'Kayseri or Nevşehir?', steps: [], unclosable: [], costUsd: 0.001, durationMs: 800, model: 'm/a', rules },
+      { type: 'hitl_pause', agentId: 'assess', role: 'Assess', model: 'm/a', toolName: 'ask_user', serverName: 'multi-agent', args: { question: 'Kayseri or Nevşehir?' } },
+    ])
+    render(<GraphView {...props} view={{ ...v, checklist: [{ id: 'r1', text: 'Leg 2 airport', scope: 'global' }] }} queues={new Map()} onAssess={onAssess} />)
+    expect(screen.getByTestId('needs-count').textContent).toBe('1')
+    const needs = screen.getByTestId('needs-assess')
+    expect(within(needs).getByTestId('assess-question').textContent).toBe('Kayseri or Nevşehir?')
+    fireEvent.change(within(needs).getByLabelText('Your answer'), { target: { value: 'Kayseri' } })
+    fireEvent.click(within(needs).getByRole('button', { name: 'Answer' }))
+    expect(onAssess).toHaveBeenCalledWith({ kind: 'answer', answer: 'Kayseri' })
+    fireEvent.click(screen.getByRole('tab', { name: 'Assess' }))
+    expect(screen.getByTestId('coverage-section')).toBeTruthy()
+  })
+})

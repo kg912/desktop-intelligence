@@ -13,12 +13,13 @@ import { answerCounts, linkClaims, refFromHref } from '../../lib/claimsView'
 import { Chip } from './ClaimsDrawer'
 import type { ClaimTarget } from './ClaimsDrawer'
 import { ClaimLinkedMarkdown } from './ClaimLinks'
+import { CoverageSection } from './CoveragePanel'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
 import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
-import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig, OutputLimit } from '../../../../shared/types'
+import type { AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig, OutputLimit } from '../../../../shared/types'
 
 const PLAN_COLUMN_WIDTH = 248
 
@@ -87,6 +88,8 @@ interface Props {
   viewMode?: 'list' | 'graph'
   /** The chat this run belongs to (the Graph view's dock remembers its pin and height per chat). */
   chatId?: string | null
+  /** Spec B 7b: answer an assess pause (Run follow-up / Finish now / an ask_user answer). */
+  onAssess?: (action: AssessAction) => void
 }
 
 export function MultiAgentSidebarView(props: Props) {
@@ -113,7 +116,7 @@ export function MultiAgentSidebarView(props: Props) {
         <div className={cn('h-full w-full min-w-0', !graph && 'hidden')} data-testid="dock-graph">
           <GraphView view={view} config={config} readOnly={readOnly} now={now} estimate={estimate} queues={requestsByAgent}
             onRespond={onRespondPermission} onApprovePlan={props.onApprove} onCancelPlan={props.onCancel} onAbort={props.onAbort} onOpenAgent={props.onOpenAgent}
-            chatId={props.chatId} active={graph} />
+            chatId={props.chatId} active={graph} onAssess={props.onAssess} />
         </div>
       )}
       <div className={cn('flex h-full w-full min-w-0', graph && 'hidden')} data-testid="dock-list">
@@ -190,6 +193,7 @@ export function MultiAgentSidebarView(props: Props) {
         ) : (
           <AgentCards view={view} now={now} config={config} requestsByAgent={requestsByAgent} onRespondPermission={onRespondPermission} focusAgentId={focusAgentId} onOpenAgent={props.onOpenAgent} />
         )}
+        <CoverageSection view={view} config={config} readOnly={readOnly} onAssess={props.onAssess} />
         {view.phase === 'failed' && view.failureReason && view.steps.length > 0 && (
           <p className="rounded-xl border-[0.5px] border-ma-red/35 bg-ma-red/[0.08] p-3 text-[12.5px] text-ma-redtext">Run failed: {view.failureReason}</p>
         )}

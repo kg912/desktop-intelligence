@@ -6,7 +6,7 @@
 // has emptied and a new batch arrives.
 
 export type DockMode = 'collapsed' | 'auto' | 'peek' | 'pinned'
-export type DockTab = 'needs' | 'node' | 'log'
+export type DockTab = 'needs' | 'node' | 'assess' | 'log'
 
 export interface DockState {
   mode: DockMode

@@ -18,6 +18,8 @@ const model = (id: string, prompt = 1e-6, completion = 2e-6): OpenRouterModelInf
 class FakeSidecar extends EventEmitter {
   runId = 'run-1'
   awaitingPlan = false
+  awaitingAssess = false
+  isAwaitingAssess = vi.fn(() => this.awaitingAssess)
   startRun = vi.fn(async (req: { chatId: string }) => {
     this.emit('runStarted', { runId: this.runId, chatId: req.chatId })
     return { ok: true as const, runId: this.runId }
@@ -497,5 +499,21 @@ describe('spec B Phase 5: resume and re-run continue the saved run', () => {
     ])
     db.getRun.mockImplementation(((chatId: string) => (chatId === 'chat-1' ? saved() : null)) as never)
     expect((await coordinator.resumable()).map((r) => r.runId)).toEqual(['run-1'])
+  })
+})
+
+describe('spec B 7b: assess:run-followup / assess:finish / assess:answer', () => {
+  it('answers the assess pause only while it waits; run carries edited steps, finish declines, answer carries the text', async () => {
+    const { coordinator, sidecar } = setup()
+    await expect(coordinator.respondAssess('run-1', { kind: 'finish' })).rejects.toThrow('This run is not waiting for an assess decision')
+    sidecar.awaitingAssess = true
+    await coordinator.respondAssess('run-1', { kind: 'run', steps: [{ id: '2.1', label: 'Edited', task: 'Edited task' }] })
+    expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'assess', approved: true, result: '[{"id":"2.1","label":"Edited","task":"Edited task"}]' })
+    await coordinator.respondAssess('run-1', { kind: 'run' })
+    expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'assess', approved: true, result: '' })
+    await coordinator.respondAssess('run-1', { kind: 'finish' })
+    expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'assess', approved: false, result: '' })
+    await coordinator.respondAssess('run-1', { kind: 'answer', answer: 'Kayseri' })
+    expect(sidecar.respondHitl).toHaveBeenLastCalledWith({ runId: 'run-1', agentId: 'assess', approved: true, result: 'Kayseri' })
   })
 })

@@ -24,6 +24,7 @@ import type {
   MultiAgentConfig,
   MultiAgentRunRecord,
   EvidenceRecord,
+  AssessAction,
   MultiAgentStartPayload,
   ResumableRun,
   RunStatus,
@@ -72,6 +73,7 @@ export interface CoordinatorDeps {
     discardRun(runId: string): Promise<void>
     lockStep(runId: string, stepId: string, locked: boolean): Promise<void>
     getEvidence(runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null>
+    isAwaitingAssess(runId: string): boolean
   }
   mcp: {
     /** Running MCP schemas a worker can actually call (see multiAgentExclusionReason). */
@@ -258,6 +260,15 @@ export class MultiAgentRunCoordinator {
 
   abort(runId: string): Promise<void> {
     return this.deps.sidecar.abortRun(runId)
+  }
+
+  /** Spec B 7b: answer the assess pause (Run follow-up, possibly with edited steps / Finish now / an ask_user reply). */
+  async respondAssess(runId: string, action: AssessAction): Promise<void> {
+    if (!this.deps.sidecar.isAwaitingAssess(runId)) throw new Error('This run is not waiting for an assess decision')
+    const reply = action.kind === 'finish' ? { approved: false, result: '' }
+      : action.kind === 'answer' ? { approved: true, result: action.answer }
+      : { approved: true, result: action.steps?.length ? JSON.stringify(action.steps) : '' }
+    await this.deps.sidecar.respondHitl({ runId, agentId: 'assess', ...reply })
   }
 
   /** Slow-plan escape hatch: stop the orchestrator; its fallback plan still goes through approval. */

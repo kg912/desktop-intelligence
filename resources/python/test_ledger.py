@@ -40,7 +40,10 @@ def test_fixture_ledger():
     # TK economy cabin vs business cabin is the heuristic's false positive, which is why it is never "confirmed".
     assert conflicts == {"days-2": ["1.2 c2", "1.5 c16"], "bag-1": ["1.1 c11", "1.4 c8"], "bag-3": ["1.3 c12", "1.4 c2"]}
     assert not any(e["conflict"]["confirmed"] for e in ledger.values() if "conflict" in e)
-    assert "1.5 c23" in ledger["risk-2"]["claimIds"] and "1.2 c24" in ledger["times-2"]["claimIds"]
+    # claimIds are the claims that decide the status: verified ones for risk-2 (not 1.2 c25, declared unverified),
+    # the declared ones for the unverified times-2.
+    assert "1.5 c24" in ledger["risk-2"]["claimIds"] and not any(r.startswith("1.2 ") for r in ledger["risk-2"]["claimIds"])
+    assert ledger["times-2"]["claimIds"] == ["1.2 c24"]
 
 
 def entry(cid, claim, req=None, **kind):

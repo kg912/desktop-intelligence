@@ -404,6 +404,21 @@ only / conflicts). Evidence is fetched lazily: `GET /run/{id}/evidence/{agentId}
 state; `1.2/<callId>` resolves in 1.2's evidence) via `MULTI_AGENT_GET_EVIDENCE`; a run that never stored it shows
 "Evidence not stored for this run."
 
+**Coverage matrix and assess card (spec B 7b, design 12).** Checklist items carry an optional `topic` ("Baggage
+allowance"); the matrix has one row per topic (the item text when it has none) and one column per scope (the plan's
+steps in order, then "Whole task"), with cells `✓ 1.1 1.5` / `? 1.2` / `⚡ 1.2 vs 1.5` / `· missing` / `· pending` and
+header chips from the ledger counts. A ledger entry's `claimIds` are the claims that decide its status (verified ones
+for verified/conflicted, declared ones for unverified). A cell opens the evidence drawer on its claims. The assess
+card shows the decision, the call's model · cost · time (or "no model call"), the reason, each follow-up step with what
+it closes ("resolves 2 conflicts", "fills 1 missing", "checks 1 unverified"), the effective auto-run limit, the
+stop-rule table (checklist, wave cap, budget, progress, tool coverage) and each unclosable gap ("…: no available
+tool can close this gap. Reported to you in the answer, no spend."). At an `approve_followup` pause it has Run
+follow-up / Edit steps (titles and tasks of the proposed steps, or fewer of them) / Finish now; at an `ask_user` pause
+the question with an answer box (Answer / Skip). They dispatch `assess:run-followup` / `assess:finish` /
+`assess:answer` (the coordinator answers only while the sidecar waits). The List run view shows the matrix, the card
+and the timeline strip (plan → workers → assess: … → wave n → … → synthesize) after the agent cards; the Graph dock
+gets an Assess tab, and an assess pause joins Needs you (counted, so the dock opens for it).
+
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
 research") is a new user turn, so tool results are kept. A repetition loop adds its nudge the same

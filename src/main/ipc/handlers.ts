@@ -1466,6 +1466,21 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
       withDependents: p.withDependents === true,
     })
   )
+  // Spec B 7b: the assess card (renderer-owned, like the plan pre-flight).
+  const assessSteps = (steps: unknown): Array<{ id: string; label?: string; task?: string }> | undefined =>
+    Array.isArray(steps)
+      ? steps.filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { id?: unknown }).id === 'string')
+          .map((s) => ({ id: String(s.id), ...(typeof s.label === 'string' ? { label: s.label } : {}), ...(typeof s.task === 'string' ? { task: s.task } : {}) }))
+      : undefined
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ASSESS_RUN_FOLLOWUP, (_, p: { runId: string; steps?: unknown }) =>
+    getMultiAgentCoordinator().respondAssess(String(p.runId), { kind: 'run', steps: assessSteps(p.steps) })
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ASSESS_FINISH, (_, p: { runId: string }) =>
+    getMultiAgentCoordinator().respondAssess(String(p.runId), { kind: 'finish' })
+  )
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ASSESS_ANSWER, (_, p: { runId: string; answer: string }) =>
+    getMultiAgentCoordinator().respondAssess(String(p.runId), { kind: 'answer', answer: String(p.answer ?? '') })
+  )
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, (_, p: { runId: string; agentId: string; callId: string }) =>
     getMultiAgentCoordinator().getEvidence(String(p.runId), String(p.agentId), String(p.callId))
   )

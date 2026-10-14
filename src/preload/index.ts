@@ -411,6 +411,14 @@ const api = {
   rerunMultiAgentStep: (payload: { runId: string; chatId: string; stepId: string; config: MultiAgentConfig; model?: string; withDependents?: boolean }): Promise<StartRunResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_RERUN_STEP, payload),
 
+  /** Spec B 7b: the assess card's buttons and the ask_user answer. */
+  runAssessFollowUp: (runId: string, steps?: Array<{ id: string; label?: string; task?: string }>): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ASSESS_RUN_FOLLOWUP, { runId, steps }),
+  finishAssess: (runId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ASSESS_FINISH, { runId }),
+  answerAssess: (runId: string, answer: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_ASSESS_ANSWER, { runId, answer }),
+
   /** Spec B 7a: a cited tool result for the evidence drawer; null = not stored (older runs). */
   getMultiAgentEvidence: (runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, { runId, agentId, callId }),

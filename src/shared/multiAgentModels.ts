@@ -245,6 +245,7 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
       reflection: model(c.models?.reflection, d.models.reflection),
       synthesizer: model(c.models?.synthesizer, d.models.synthesizer),
       ...(typeof c.models?.escalation === 'string' && c.models.escalation.trim() ? { escalation: c.models.escalation.trim() } : {}),
+      ...(typeof c.models?.assess === 'string' && c.models.assess.trim() ? { assess: c.models.assess.trim() } : {}),
     },
     reflectionPassThreshold: clampInt(c.reflectionPassThreshold, 1, 5, d.reflectionPassThreshold),
     maxRetriesPerAgent: clampInt(c.maxRetriesPerAgent, 0, 5, d.maxRetriesPerAgent),
@@ -257,6 +258,11 @@ export function sanitizeMultiAgentConfig(input: Partial<MultiAgentConfig> | null
     claimFormat: c.claimFormat === 'legacy' || c.claimFormat === 'snippet' ? c.claimFormat : d.claimFormat,
     judgeEvidenceMode: c.judgeEvidenceMode === 'full' || c.judgeEvidenceMode === 'excerpts' ? c.judgeEvidenceMode : d.judgeEvidenceMode,
     dataCollection: c.dataCollection === 'deny' || c.dataCollection === 'allow' ? c.dataCollection : d.dataCollection,
+    // Spec B 7f: 1–3 waves; the auto-run limit is non-negative and never above the run's budget cap.
+    maxWaves: clampInt(c.maxWaves, 1, 3, d.maxWaves ?? 2),
+    followUpAutoUsd: Math.min(
+      Number.isFinite(Number(c.followUpAutoUsd)) && c.followUpAutoUsd !== null && Number(c.followUpAutoUsd) >= 0 ? Number(c.followUpAutoUsd) : d.followUpAutoUsd ?? 0.15,
+      Number.isFinite(budget) && budget >= 0 ? budget : d.budgetCapUsd),
     ...roleOverrides(c),
   }
 }

@@ -493,6 +493,10 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_RERUN_STEP:     'multi-agent:rerun-step',
   MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',
   MULTI_AGENT_GET_EVIDENCE:   'multi-agent:get-evidence',
+  // Spec B 7b: the assess card's buttons and the ask_user answer.
+  MULTI_AGENT_ASSESS_RUN_FOLLOWUP: 'assess:run-followup',
+  MULTI_AGENT_ASSESS_FINISH:  'assess:finish',
+  MULTI_AGENT_ASSESS_ANSWER:  'assess:answer',
 
 } as const
 
@@ -533,6 +537,8 @@ export interface ChecklistItem {
   id:    string
   text:  string
   scope: string
+  /** Spec B 7b: what the same requirement is called across steps ("Baggage allowance"): a coverage-matrix row. */
+  topic?: string
 }
 
 export type LedgerStatus = 'verified' | 'unverified' | 'conflicted' | 'missing' | 'pending'
@@ -557,6 +563,8 @@ export interface MultiAgentConfig {
     synthesizer:  string
     /** Runs a worker's attempts from the second repair on (spec A Phase 5). Absent or '' = the worker model. */
     escalation?:  string
+    /** Spec B Phase 2 / 7f: decides whether the run is done (and checks conditions). Absent or '' = the reflection model. */
+    assess?:      string
   }
   reflectionPassThreshold: number   // 1–5, min score to pass without retry
   maxRetriesPerAgent:      number
@@ -572,6 +580,10 @@ export interface MultiAgentConfig {
   judgeEvidenceMode:       'excerpts' | 'full'
   /** OpenRouter provider.data_collection for every request: 'deny' uses only providers that do not store prompts. */
   dataCollection:          'allow' | 'deny'
+  /** Spec B Phase 2 / 7f: research waves including the first, 1–3 (1 = no follow-ups); follow-ups estimated at or
+   *  below followUpAutoUsd run without asking (0 = always ask). Optional so configs saved earlier still load. */
+  maxWaves?:               number
+  followUpAutoUsd?:        number
   /** Config-file only overrides by role (spec A Phase 8): planner | worker | judge | synthesizer. */
   maxTokensByRole?:        Partial<Record<MultiAgentRole, number>>
   /** Planner, judge and synthesizer efforts (the workers' is reasoningEffort). */
@@ -620,6 +632,8 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   claimFormat:             'snippet',
   judgeEvidenceMode:       'excerpts',
   dataCollection:          'allow',
+  maxWaves:                2,
+  followUpAutoUsd:         0.15,
 }
 
 /** Cumulative spend for the whole run, as observed from OpenRouter usage. */
@@ -738,6 +752,13 @@ export interface AgentStaleEvent extends AgentEventBase {
   agentId: string
   reason: string
 }
+
+/** Spec B 7b: the answer to an assess pause. run: start the follow-up (optionally with edited steps: proposed ids only);
+ *  finish: finish now; answer: the user's reply to an ask_user question. */
+export type AssessAction =
+  | { kind: 'run'; steps?: Array<{ id: string; label?: string; task?: string }> }
+  | { kind: 'finish' }
+  | { kind: 'answer'; answer: string }
 
 /** A run the sidecar can resume (MULTI_AGENT_RESUMABLE). */
 export interface ResumableRun {

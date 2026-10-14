@@ -249,10 +249,40 @@ def test_istanbul_projection_against_baseline():
     one_pass = statistics.mean(sum(r["usage"]["costUsd"] or 0 for r in fx["records"][a] if r["kind"] == "model" and r["role"] == "worker" and r["attempt"] == 0)
                                for a in workers) + sum(judge_after) / len(judge_after)
     after = spec_a + assess_cost + one_pass
-    assert round(spec_a, 3) == 0.312 and round(assess_chars * per_char) == 2_162 and round(assess_cost, 4) == 0.0046
+    assert round(spec_a, 3) == 0.312 and round(assess_chars * per_char) == 2_129 and round(assess_cost, 4) == 0.0046
     assert round(estimate, 4) == 0.0534 and estimate <= run.config.followUpAutoUsd  # the leg-2 follow-up runs without asking
     assert round(one_pass, 4) == 0.0431 and round(after, 3) == 0.360 and after <= 1.25 * spec_a
 
 
 def LABELS_CHECKLIST():
     return json.loads((fixture_run.RUNS / "istanbul-3leg" / "checklist.json").read_text())["checklist"]
+
+
+def test_edited_follow_up_steps_from_the_approval():
+    """Spec B 7b "Edit steps": the approval may send back the proposed steps with new titles/tasks, or fewer of them;
+    nothing else (no new step, so no unchecked tool)."""
+    two = follow_up(SETTLE, {**SETTLE, "title": "Second check", "task": "Another page."})
+
+    async def approve(agent_id, role, model, tool, server, args):
+        if agent_id == "orchestrator":
+            return True, ""
+        if agent_id == "assess":
+            first = args["steps"][0]
+            edited = [{**first, "label": "Settle it on the Pegasus page", "task": "Open the Pegasus timetable."},
+                      {"id": "9.9", "label": "Sneaked in", "task": "x", "covers": ["r2"]}]
+            return True, json.dumps(edited)
+        return True, "Search result text about the subject."
+    run, fake, _ = go(SETTLED, two, approve=approve, followUpAutoUsd=0)
+    [wave] = h.events(run, "wave_start")
+    assert [(st["id"], st["label"], st["task"]) for st in wave["steps"]] == [("2.1", "Settle it on the Pegasus page", "Open the Pegasus timetable.")]
+    task = next(body["messages"][1]["content"] for agent, body in fake.of("worker") if agent == "2.1")
+    assert "Open the Pegasus timetable." in task
+
+
+def test_checklist_topic():
+    text = json.dumps({"steps": [{"id": "1.1", "label": "Leg 1", "role": "R", "dependsOn": [], "covers": ["r1"]}],
+                       "checklist": [{"id": "r1", "text": "Baggage allowance, leg 1", "scope": "1.1", "topic": "Baggage allowance"}, {"id": "r2", "text": "x"}]})
+    steps = s.parse_plan(text, s.Config(maxAgents=2, budgetCapUsd=1, models={}, reflectionPassThreshold=3, maxRetriesPerAgent=0, hitlTimeoutMs=1000))
+    assert s.parse_checklist(text, steps) == [{"id": "r1", "text": "Baggage allowance, leg 1", "scope": "1.1", "topic": "Baggage allowance"},
+                                              {"id": "r2", "text": "x", "scope": "global"}]
+    assert '"topic"' in s.PLANNER_SYSTEM

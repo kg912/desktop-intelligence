@@ -16,7 +16,8 @@ import { AgentGraphCanvas, useElementSize, usePageVisible } from './AgentGraphCa
 import { Preflight, formatTokens, isWorking, peakOverlap, shortModel } from './MultiAgentSidebarView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { formatUsd } from '../../../../shared/multiAgentModels'
-import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
+import type { AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
+import { AssessCard, CoverageSection } from './CoveragePanel'
 
 interface Props {
   view: RunView
@@ -35,12 +36,14 @@ interface Props {
   chatId?: string | null
   /** false while the List view is showing (this view stays mounted): its shortcuts are off. */
   active?: boolean
+  /** Spec B 7b: answer an assess pause from Needs you or the Assess tab. */
+  onAssess?: (action: AssessAction) => void
 }
 
 /** Arrow keys on the dock's handle change its height by this fraction of the pane. */
 const RESIZE_KEY_STEP = 0.05
 
-export function GraphView({ view, config, readOnly, now, estimate, queues, onRespond, onApprovePlan, onCancelPlan, onAbort, onOpenAgent, chatId, active = true }: Props) {
+export function GraphView({ view, config, readOnly, now, estimate, queues, onRespond, onApprovePlan, onCancelPlan, onAbort, onOpenAgent, chatId, active = true, onAssess }: Props) {
   const live = isRunActive(view) && !readOnly
   const visible = usePageVisible()
   const models = view.runConfig?.models ?? config.models
@@ -54,7 +57,10 @@ export function GraphView({ view, config, readOnly, now, estimate, queues, onRes
   const labels = useMemo(() => columnLabels(layoutDag(nodes).columns), [nodes])
   const order = useMemo(() => view.steps.map((s) => s.id), [view.steps])
   const preflight = view.phase === 'preflight' && !readOnly
-  const waitingTotal = [...queues.values()].reduce((n, q) => n + q.length, 0) + (preflight ? 1 : 0)
+  // Spec B 7b: an assess pause (follow-up approval or ask_user) waits on the user like an approval.
+  const assessWaiting = !readOnly && !!view.assessPause
+  const waitingTotal = [...queues.values()].reduce((n, q) => n + q.length, 0) + (preflight ? 1 : 0) + (assessWaiting ? 1 : 0)
+  const hasAssess = !!view.checklist?.length || view.assess.length > 0
 
   const [selected, setSelected] = useState<string | null>(null)
   // The agent whose card J/K/Y/N act on.
@@ -120,13 +126,19 @@ export function GraphView({ view, config, readOnly, now, estimate, queues, onRes
             selectedId={selected ?? (dock.mode !== 'collapsed' && dock.tab === 'needs' ? activeCard : null)} onSelect={select} onEmptyClick={onEmptyClick}
             onOpen={(id) => { if (id !== ORCH_ID && id !== OUT_ID && view.agents[id]) onOpenAgent?.(id) }} />
         </div>
-        <GraphDock dock={dock} dispatch={dispatch} height={height} paneH={paneH} waiting={waitingTotal} selected={selected}
+        <GraphDock dock={dock} dispatch={dispatch} height={height} paneH={paneH} waiting={waitingTotal} selected={selected} tabs={hasAssess ? ['needs', 'node', 'assess', 'log'] : ['needs', 'node', 'log']}
           latest={view.log.at(-1) ? `${formatElapsed(Math.max(0, view.log.at(-1)!.ts - view.startedAt))} · ${view.log.at(-1)!.text}` : ''}>
           {dock.tab === 'needs' && (
-            <NeedsYou view={view} config={config} preflight={preflight} estimate={estimate} queues={queues} order={order}
-              activeCard={activeCard} setActiveCard={setActiveCard} selected={selected}
-              onRespond={onRespond} onApprovePlan={onApprovePlan} onCancelPlan={onCancelPlan} />
+            <>
+              {assessWaiting && <div className="max-w-[560px] px-7 pt-3" data-testid="needs-assess"><AssessCard view={view} config={config} readOnly={readOnly} onAssess={onAssess} /></div>}
+              {(!assessWaiting || preflight || queues.size > 0) && (
+                <NeedsYou view={view} config={config} preflight={preflight} estimate={estimate} queues={queues} order={order}
+                  activeCard={activeCard} setActiveCard={setActiveCard} selected={selected}
+                  onRespond={onRespond} onApprovePlan={onApprovePlan} onCancelPlan={onCancelPlan} />
+              )}
+            </>
           )}
+          {dock.tab === 'assess' && <div className="px-7 pb-4"><CoverageSection view={view} config={config} readOnly={readOnly} onAssess={onAssess} /></div>}
           {dock.tab === 'node' && <NodePanel view={view} id={selected} now={now} models={models} onOpenAgent={onOpenAgent} />}
           {dock.tab === 'log' && <RunLog view={view} />}
         </GraphDock>
@@ -136,12 +148,14 @@ export function GraphView({ view, config, readOnly, now, estimate, queues, onRes
   )
 }
 
-const TAB_LABEL: Record<DockTab, string> = { needs: 'Needs you', node: 'Node', log: 'Run log' }
+const TAB_LABEL: Record<DockTab, string> = { needs: 'Needs you', node: 'Node', assess: 'Assess', log: 'Run log' }
 
 /** The bottom dock: a 44px bar when collapsed, else handle + tabs + the tab body (designs/08, 09, 07). */
-function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, children }: {
+function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, children, tabs = ['needs', 'node', 'log'] }: {
   dock: DockState; dispatch: React.Dispatch<Parameters<typeof dockReducer>[1]>; height: number; paneH: number
   waiting: number; selected: string | null; latest: string; children: React.ReactNode
+  /** Spec B 7b: "assess" appears when the run has a checklist. */
+  tabs?: DockTab[]
 }) {
   const open = dock.mode !== 'collapsed'
   const [dragging, setDragging] = useState(false)
@@ -182,7 +196,7 @@ function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, c
       <div aria-live="polite" className="sr-only" data-testid="dock-announce">{dock.mode === 'auto' ? dock.announce : ''}</div>
       {!open ? (
         <div className="flex h-[44px] flex-none items-center gap-2.5 px-5" data-testid="dock-bar">
-          {(['needs', 'node', 'log'] as const).map((t) => (
+          {tabs.map((t) => (
             <button key={t} onClick={() => dispatch({ type: 'tab', tab: t })} data-testid={`dock-chip-${t}`}
               className={cn('flex flex-none items-center gap-[7px] rounded-lg border-[0.5px] px-2.5 py-[5px] text-[12.5px] hover:bg-white/5',
                 t === 'needs' && waiting > 0 ? 'border-[#e6b422]/50 text-[#e6b422]' : 'border-white/10 text-[#9a9a9a]')}>
@@ -208,7 +222,7 @@ function GraphDock({ dock, dispatch, height, paneH, waiting, selected, latest, c
           </div>
           <div className="ma-gdock-head flex h-[34px] flex-none items-center gap-[22px] border-b-[0.5px] border-white/[0.06] px-7 text-[13px]">
             <div role="tablist" aria-label="Inspector" className="ma-gdock-tabs flex h-full items-center gap-[22px]">
-              {(['needs', 'node', 'log'] as const).map((t) => (
+              {tabs.map((t) => (
                 <button key={t} role="tab" id={`graph-dock-tab-${t}`} aria-selected={dock.tab === t} aria-controls="graph-dock-panel"
                   onClick={() => dispatch({ type: 'tab', tab: t })}
                   className={cn('-mb-px flex h-full flex-none items-center gap-1.5 whitespace-nowrap border-b-2',

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
-import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
+import type { AgentEvent, AssessAction, MultiAgentConfig } from '../../../shared/types'
 import { isTerminalAgentEvent } from '../../../shared/agentEvents'
 import type { ModelPricing } from '../../../shared/multiAgentModels'
 import { applyAgentEvent, emptyRunView, isRunActive, reduceRunEvents } from '../lib/multiAgentRunState'
@@ -177,6 +177,17 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     })
   }, [])
 
+  /** Spec B 7b: answer the assess pause from the assess card (Run follow-up / Finish now) or the ask_user question. */
+  const respondAssess = useCallback((action: AssessAction) => {
+    const current = runRef.current
+    if (!current || current.review) return
+    const runId = current.view.runId
+    const sent = action.kind === 'run' ? window.api.runAssessFollowUp(runId, action.steps)
+      : action.kind === 'finish' ? window.api.finishAssess(runId)
+      : window.api.answerAssess(runId, action.answer)
+    sent.catch((err: unknown) => setStartError(err instanceof Error ? err.message : String(err)))
+  }, [])
+
   const abort = useCallback(() => {
     const current = runRef.current
     if (!current || current.review) return
@@ -188,7 +199,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
   // Memoised so Layout's callbacks that depend on it (handleSend → the memo'd
   // InputBar) keep their identity across unrelated Layout renders.
   return useMemo(
-    () => ({ run, startError, setStartError, pricing, start, review, continueRun, dismiss, approvePlan, abort, quickPlan }),
-    [run, startError, pricing, start, review, continueRun, dismiss, approvePlan, abort, quickPlan],
+    () => ({ run, startError, setStartError, pricing, start, review, continueRun, dismiss, approvePlan, respondAssess, abort, quickPlan }),
+    [run, startError, pricing, start, review, continueRun, dismiss, approvePlan, respondAssess, abort, quickPlan],
   )
 }

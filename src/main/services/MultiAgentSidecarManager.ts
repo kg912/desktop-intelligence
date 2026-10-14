@@ -110,6 +110,8 @@ interface RunState {
   aborting: boolean
   controller: AbortController
   awaitingPlanApproval: boolean
+  /** Spec B 7b: the assess node is waiting for Run follow-up / Finish now / an answer. */
+  awaitingAssess?: boolean
 }
 
 /** First free port, preferring `preferred`. */
@@ -175,6 +177,10 @@ export class MultiAgentSidecarManager extends EventEmitter {
   /** Only the renderer's pre-flight screen may answer the plan-approval pause. */
   isAwaitingPlanApproval(runId: string): boolean {
     return this.runs.get(runId)?.awaitingPlanApproval === true
+  }
+
+  isAwaitingAssess(runId: string): boolean {
+    return this.runs.get(runId)?.awaitingAssess === true
   }
 
   private setStatus(next: SidecarStatus): void {
@@ -613,6 +619,8 @@ export class MultiAgentSidecarManager extends EventEmitter {
     if (!run || run.terminal || event.runId !== runId || event.seq <= run.lastSeq) return
     run.lastSeq = event.seq
     if (event.type === 'hitl_pause' && event.serverName === 'multi-agent' && event.agentId === 'orchestrator') run.awaitingPlanApproval = true
+    if (event.type === 'hitl_pause' && event.serverName === 'multi-agent' && event.agentId === 'assess') run.awaitingAssess = true
+    if ((event.type === 'hitl_resume' && event.agentId === 'assess') || isTerminalAgentEvent(event)) run.awaitingAssess = false
     if ((event.type === 'hitl_resume' && event.agentId === 'orchestrator') || isTerminalAgentEvent(event)) {
       run.awaitingPlanApproval = false
     }
