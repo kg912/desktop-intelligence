@@ -220,6 +220,11 @@ class Run:
     quick_plan: bool = False
     # agentId → {approvalMode, waitMs, toolMs} of its last answered tool approval (spec A Phase 9).
     approval_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Spec B Phase 1: the planner's acceptance checklist ([] = ledger disabled), each ended step's final claims and
+    # statuses ({"claims", "statuses"}; a failed step has none), and the coverage ledger computed from them.
+    checklist: list[dict[str, Any]] = field(default_factory=list)
+    step_results: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ledger: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def config(self) -> Config:
@@ -854,10 +859,14 @@ PLANNER_SYSTEM = (
     "a topic that every entity needs is part of each entity step, not a step of its own. "
     "If a step only matters depending on another step's answer (\"if leg 2 takes more than 5 hours…\"), it depends on that step: "
     "list it in dependsOn and state the condition in \"condition\". You may spawn a maximum of {max_agents} agents (steps). "
-    "Return ONLY a JSON array. Each element: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
+    "Also write the acceptance checklist: every requirement the answer must meet, each atomic and checkable "
+    "(\"baggage allowance, leg 2\", not \"baggage\"), at most 25, and say which steps cover each. "
+    "Return ONLY a JSON object {\"steps\": [...], \"checklist\": [...]}. Each step: {\"id\": \"<depth>.<n>\" (depth 1 = no dependencies), "
     "\"label\": short imperative subtask, \"role\": short agent role name, \"dependsOn\": [ids this step needs], "
-    "\"axis\": \"entity\" or \"topic\", and \"condition\" only when the step is conditional}."
+    "\"axis\": \"entity\" or \"topic\", \"covers\": [checklist ids it answers], and \"condition\" only when the step is conditional}. "
+    "Each checklist item: {\"id\": \"r1\", \"text\": the requirement, \"scope\": the id of the step it belongs to, or \"global\"}."
 )
+CHECKLIST_MAX = 25
 
 SLICING_CORRECTION = "Fix the plan's slicing, then reply with ONLY the JSON array:"
 CONDITIONAL_RE = re.compile(r"\b(?:if|unless|in case)\b[^:;.]*", re.I)
@@ -886,14 +895,47 @@ CHAIN_CORRECTION = (
 )
 
 
+def plan_json(text: str) -> tuple[Any, list[Any]]:
+    """(steps, checklist) from a planner reply: the {"steps", "checklist"} object, or a bare array of steps (older
+    planners, no checklist). The first JSON value that is one of those wins; prose around it is ignored."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", text):
+        try:
+            value, _ = decoder.raw_decode(text, match.start())
+        except ValueError:
+            continue
+        if isinstance(value, list):
+            return value, []
+        if isinstance(value, dict) and isinstance(value.get("steps"), list):
+            return value["steps"], value["checklist"] if isinstance(value.get("checklist"), list) else []
+    raise ValueError("no JSON plan in planner output")
+
+
+def parse_checklist(text: str, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The planner's acceptance checklist (spec B Phase 1), [] when it wrote none. Ids are unique, scope is a step id or
+    "global", at most CHECKLIST_MAX items; each step's covers keep only known ids."""
+    _, raw = plan_json(text)
+    step_ids = {st["id"] for st in steps}
+    checklist: list[dict[str, Any]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict) or not str(item.get("text") or "").strip() or len(checklist) >= CHECKLIST_MAX:
+            continue
+        item_id = str(item.get("id") or "").strip()[:20] or f"r{index + 1}"
+        if any(c["id"] == item_id for c in checklist):
+            continue
+        scope = str(item.get("scope") or "").strip()
+        checklist.append({"id": item_id, "text": str(item["text"]).strip()[:200], "scope": scope if scope in step_ids else "global"})
+    known = {c["id"] for c in checklist}
+    for st in steps:
+        st["covers"] = [c for c in st.get("covers", []) if c in known]
+    return checklist
+
+
 def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
     """Steps with explicit dependsOn and a derived display phase (dependency depth).
     The legacy phase-only shape is converted: a step depends on every step in an
     earlier phase, which is exactly what the old phase-by-phase loop gave it."""
-    match = re.search(r"\[.*\]", text, re.S)
-    if not match:
-        raise ValueError("no JSON array in planner output")
-    raw = json.loads(match.group(0))
+    raw, _ = plan_json(text)
     if not isinstance(raw, list) or not raw:
         raise ValueError("plan is not a non-empty list")
     legacy = not any(isinstance(item, dict) and "dependsOn" in item for item in raw)
@@ -918,6 +960,7 @@ def parse_plan(text: str, config: Config) -> list[dict[str, Any]]:
             "chainReason": str(item.get("chainReason") or "").strip()[:200],
             **({"axis": str(item["axis"]).strip().lower()} if str(item.get("axis") or "").strip().lower() in ("entity", "topic") else {}),
             **({"condition": str(item["condition"]).strip()[:300]} if str(item.get("condition") or "").strip() else {}),
+            **({"covers": [str(c)[:20] for c in item["covers"] if isinstance(c, (str, int))][:CHECKLIST_MAX]} if isinstance(item.get("covers"), list) else {}),
         })
     ids = {s["id"] for s in steps}
     if legacy:
@@ -974,7 +1017,8 @@ def is_pure_chain(steps: list[dict[str, Any]]) -> bool:
 def partial_plan_steps(text: str) -> list[dict[str, Any]]:
     """The complete step objects of a plan array that is still streaming, in order. Objects whose
     closing brace has not arrived yet are left out; strings may contain braces and brackets."""
-    start = text.find("[")
+    key = text.find('"steps"')
+    start = text.find("[", key if key >= 0 else 0)
     if start < 0:
         return []
     steps: list[dict[str, Any]] = []
@@ -1114,6 +1158,7 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
             outcome = f"kept the chain ({reason or 'no reason given'})" if is_pure_chain(candidate) else "parallelised"
             print(f"[plan] run {run.run_id}: chain correction → {outcome}", file=sys.stderr, flush=True)
         steps = candidate
+        run.checklist = parse_checklist(text, steps)
         break
     if steps is None and not fallback_reason:
         fallback_reason = "The orchestrator did not return a usable plan after 4 attempts."
@@ -1130,7 +1175,10 @@ async def plan_node(state: dict[str, Any]) -> dict[str, Any]:
         s.pop("chainReason", None)
     if fallback:  # never silent: the reason reaches the plan approval screen and the run log
         print(f"[plan] run {run.run_id}: using the fallback plan — {fallback_reason}", file=sys.stderr, flush=True)
+    if fallback:
+        run.checklist = []
     await run.emit("orchestrator_plan", steps=steps, **({"fallback": True, "fallbackReason": fallback_reason} if fallback else {}),
+                   **({"checklist": run.checklist} if run.checklist else {}),
                    **({"modelServed": served} if served else {}))
     await run.emit("run_config", models=config.models,
                    sources={role: run.request.modelSources.get(role, "saved") for role in config.models},
@@ -1322,15 +1370,19 @@ def parse_claim_item(item: Any, index: int) -> tuple[dict[str, Any] | None, str]
     if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
         return None, f"Claim {claim_id} needs an \"id\" and a \"claim\"."
     text = str(item["claim"])[:400]
+    # The requirement(s) it fills (spec B Phase 1): a checklist id, or a list of them for a claim that answers several.
+    raw_req = item.get("req")
+    req = [str(r)[:20] for r in (raw_req if isinstance(raw_req, list) else [raw_req]) if isinstance(r, str) and r.strip()][:5]
+    base = {"id": claim_id, "claim": text, **({"req": req[0] if len(req) == 1 else req} if req else {})}
     if isinstance(item.get("snippets"), list) and item["snippets"]:
-        return {"id": claim_id, "claim": text, "snippets": [str(x)[:20] for x in item["snippets"]][:10]}, ""
+        return {**base, "snippets": [str(x)[:20] for x in item["snippets"]][:10]}, ""
     if item.get("callId") and isinstance(item.get("quote"), str):
-        return {"id": claim_id, "claim": text, "callId": str(item["callId"]), "quote": item["quote"]}, ""
+        return {**base, "callId": str(item["callId"]), "quote": item["quote"]}, ""
     if item.get("unverified") is True:
-        return {"id": claim_id, "claim": text, "unverified": True}, ""
+        return {**base, "unverified": True}, ""
     if item.get("source"):
-        return {"id": claim_id, "claim": text, "source": str(item["source"])[:20]}, ""
-    return {"id": claim_id, "claim": text}, ""  # cites nothing: a claim problem (no_citation), checked and repaired like the others
+        return {**base, "source": str(item["source"])[:20]}, ""
+    return base, ""  # cites nothing: a claim problem (no_citation), checked and repaired like the others
 
 
 def parse_patch(output: str) -> tuple[dict[str, Any] | None, str]:
@@ -1370,7 +1422,7 @@ def apply_claims_patch(claims: list[dict[str, Any]], patch: dict[str, Any]) -> t
     for claim_id in map(str, drop):
         at = next((i for i, c in enumerate(merged) if c["id"] == claim_id), None)
         if at is not None:
-            merged[at] = {"id": claim_id, "claim": merged[at]["claim"], "unverified": True}
+            merged[at] = {"id": claim_id, "claim": merged[at]["claim"], "unverified": True, **({"req": merged[at]["req"]} if "req" in merged[at] else {})}
     return merged, errors
 
 
@@ -1455,6 +1507,90 @@ def failure_class(claim: dict[str, Any], status: str) -> str | None:
 
 def failure_classes(claims: list[dict[str, Any]], statuses: dict[str, str]) -> dict[str, str]:
     return {c["id"]: cls for c in claims if (cls := failure_class(c, statuses[c["id"]]))}
+
+
+# ── Coverage ledger (spec B Phase 1): requirement statuses from claim statuses, no model call ──
+
+CLAIM_VERIFIED = CLAIM_OK - {"unverified_declared", "source"}
+DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DAY_RE = re.compile(r"\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)s?\b|\b(every day|daily)\b", re.I)
+DURATION_RE = re.compile(r"(\d+)\s*h\s*(\d+)\s*m(?:in)?\b", re.I)
+NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+CODE_RE = re.compile(r"\b[A-Z]{3}\b")
+NOT_CODES = {"EUR", "USD", "TRY", "GBP", "AND", "THE", "VIA", "THY", "PGT", "TKJ"}
+STOP_WORDS = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are", "by", "with", "from", "at", "up", "per", "it", "its", "says", "lists",
+              "kg", "cm", "km", "min", "h", "m", "eur", "usd", "try", "tl", "x"}  # units are not the subject
+
+
+def claim_req(claim: dict[str, Any]) -> list[str]:
+    req = claim.get("req")
+    return [req] if isinstance(req, str) else [r for r in req if isinstance(r, str)] if isinstance(req, list) else []
+
+
+def claim_facts(text: str) -> tuple[set[str], set[str], list[float], set[str]]:
+    """(subject words, airport codes, numbers with "1h5m" as minutes, weekdays named; "every day"/"daily" = all)."""
+    days = set()
+    for m in DAY_RE.finditer(text):
+        days |= set(DAY_NAMES) if m.group(2) else {m.group(1)[:3].lower()}
+    plain = DURATION_RE.sub(lambda m: str(int(m.group(1)) * 60 + int(m.group(2))), DAY_RE.sub(" ", text))
+    words = {w.rstrip("s") for w in WORD_RE.findall(normalise_quote(plain)) if not w[0].isdigit() and w not in STOP_WORDS}
+    return words, set(CODE_RE.findall(text)) - NOT_CODES, [float(n) for n in NUMBER_RE.findall(plain)], days
+
+
+def numbers_agree(a: list[float], b: list[float]) -> bool:
+    """One claim's numbers are all (within 15%) among the other's: one adds detail, neither contradicts."""
+    def within(xs: list[float], ys: list[float]) -> bool:
+        return all(any(abs(x - y) <= 0.15 * max(abs(x), abs(y)) for y in ys) for x in xs)
+    return within(a, b) or within(b, a)
+
+
+def possible_conflict(a: str, b: str) -> bool:
+    """Cheap heuristic: the same subject (most words shared, and no different airports) with different weekdays or numbers.
+    Shown as a possible conflict until the assess call confirms it."""
+    wa, ca, na, da = claim_facts(a)
+    wb, cb, nb, db = claim_facts(b)
+    if ca and cb and ca != cb:
+        return False
+    if not (wa and wb and len(wa & wb) / min(len(wa), len(wb)) >= 0.75):
+        return False
+    return (bool(da and db) and da != db) or (bool(na and nb) and not numbers_agree(na, nb))
+
+
+def compute_ledger(checklist: list[dict[str, Any]], steps: list[dict[str, Any]], finished: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """checklistId → {status, claimIds[, conflict]}. finished: agentId → {"claims", "statuses"} for every step that ended
+    (a failed or skipped step has no claims). Status: conflicted (two verified claims of different agents disagree),
+    verified, unverified (only declared-unverified claims), pending (a covering step has not ended), missing."""
+    covering = {item["id"]: [st["id"] for st in steps if item["id"] in st.get("covers", [])] for item in checklist}
+    by_req: dict[str, list[tuple[str, dict[str, Any], str]]] = {item["id"]: [] for item in checklist}
+    for agent_id, done in finished.items():
+        for claim in done["claims"]:
+            for req in claim_req(claim):
+                if req in by_req:
+                    by_req[req].append((agent_id, claim, done["statuses"].get(claim["id"], "")))
+    ledger: dict[str, dict[str, Any]] = {}
+    for item in checklist:
+        entries = by_req[item["id"]]
+        verified = [(a, c) for a, c, st in entries if st in CLAIM_VERIFIED]
+        declared = [(a, c) for a, c, st in entries if st == "unverified_declared"]
+        conflict = next(([f"{a} {x['id']}", f"{b} {y['id']}"] for i, (a, x) in enumerate(verified) for b, y in verified[i + 1:]
+                         if a != b and possible_conflict(x["claim"], y["claim"])), None)
+        if conflict:
+            status = "conflicted"
+        elif verified:
+            status = "verified"
+        elif declared:
+            status = "unverified"
+        elif any(sid not in finished for sid in covering[item["id"]]) or (not covering[item["id"]] and len(finished) < len(steps)):
+            status = "pending"
+        else:
+            status = "missing"
+        ledger[item["id"]] = {"status": status, "claimIds": [f"{a} {c['id']}" for a, c in verified + declared],
+                              **({"conflict": {"claimIds": conflict, "confirmed": False}} if conflict else {})}
+    return ledger
+
+
+def ledger_counts(ledger: dict[str, dict[str, Any]]) -> dict[str, int]:
+    return {status: sum(1 for e in ledger.values() if e["status"] == status) for status in ("verified", "unverified", "conflicted", "missing", "pending")}
 
 
 def claim_problems(claims: list[dict[str, Any]], statuses: dict[str, str]) -> list[str]:
@@ -1817,6 +1953,24 @@ def compact_to_fit(run: Run, model: str, messages: list[dict[str, Any]], store: 
     raise ContextExceeded(f"Context window exceeded for {model}: the request does not fit even with every tool result compacted")
 
 
+def covers_text(run: Run, step: dict[str, Any]) -> str:
+    """The checklist requirements this step answers, and how to tag claims with them (spec B Phase 1)."""
+    items = [c for c in run.checklist if c["id"] in step.get("covers", [])]
+    if not items:
+        return ""
+    return ("\n\nRequirements this step covers. In the claims block, give each claim that answers one a \"req\" with its id "
+            "(a list if it answers several), e.g. {\"id\": \"c1\", \"claim\": \"…\", \"snippets\": [\"S1.1\"], \"req\": \"r2\"}:\n"
+            + "\n".join(f"- {c['id']}: {c['text']}" for c in items))
+
+
+async def update_ledger(run: Run, steps: list[dict[str, Any]]) -> None:
+    """Recompute the coverage ledger after a step ends and send it (no model call). No checklist, no ledger."""
+    if not run.checklist:
+        return
+    run.ledger = compute_ledger(run.checklist, steps, run.step_results)
+    await run.emit("ledger_update", ledger=run.ledger, counts=ledger_counts(run.ledger))
+
+
 async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> str:
     config = run.config
     agent_id, role, model = step["id"], step["role"], step["model"]
@@ -1848,7 +2002,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                                       "If a criterion cannot be verified with your tools, report it as unverified with the reason. Never report an "
                                       "unverifiable criterion as met or as failed, and do not eliminate an item only because data is missing; flag it instead."
                                       "\n\n" + claims_contract(config))},
-        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{context}"},
+        {"role": "user", "content": f"Overall task: {run.request.task}\n\nYour subtask ({agent_id}): {step['label']}{covers_text(run, step)}{context}"},
     ]
     compacted: set[int] = set()  # indices of tool messages already replaced by a stub
     # Every judged attempt with usable output (precheck passed), for 'degrade' on exhaustion.
@@ -1856,6 +2010,11 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
     history: list[str] = []  # per attempt: its claim-check failures, shown to the judge
     # Set after a patch-only repair turn: the report and claims the next reply's claims_patch applies to.
     patch_base: dict[str, Any] | None = None
+
+    def finish(output: str, claims: list[dict[str, Any]], statuses: dict[str, str], header: str = "") -> str:
+        """The step's final answer: kept for the coverage ledger and handoffs (spec B), returned as the downstream text."""
+        run.step_results[agent_id] = {"output": output, "claims": claims, "statuses": statuses}
+        return downstream_text(agent_id, output, claims, statuses, header)
 
     async def exhausted(reason: str) -> str:
         """Retries are used up (or the attempt cannot continue): fail, or pass on the best usable attempt
@@ -1866,7 +2025,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         await run.emit("agent_degraded", agentId=agent_id, attempt=best["attempt"], score=best["score"], issues=best["issues"],
                        claimStatuses=best["statuses"], claimFailureClasses=failure_classes(best["claims"], best["statuses"]), reason=reason)
         header = f"[{agent_id} DEGRADED: score {best['score']}/5; open issues: {'; '.join(best['issues'][:5]) or 'none listed'}]"
-        return downstream_text(agent_id, best["output"], best["claims"], best["statuses"], header)
+        return finish(best["output"], best["claims"], best["statuses"], header)
 
     for attempt in range(config.maxRetriesPerAgent + 1):
         run.attempts[agent_id] = attempt
@@ -2023,7 +2182,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
 
         statuses = {c["id"]: verify_claim(c, store) for c in claims}
         if run.budget_reached:  # no reflection spend once the cap is reached; output kept as-is
-            return downstream_text(agent_id, output, claims, statuses)
+            return finish(output, claims, statuses)
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)
         # Gate order: (a) precheck, (b) claims parse + mechanical quote check, (c) judge. A mechanical
         # failure goes straight to a repair turn with no judge spend, except on the last allowed attempt.
@@ -2036,7 +2195,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
             try:
                 score, passed, reason, issues, judge = await reflect(run, step, output, prior, store, judge_served, judge_info, claims, statuses, history)
             except BudgetReached:
-                return downstream_text(agent_id, output, claims, statuses)
+                return finish(output, claims, statuses)
             if mechanical:  # last attempt: judged for a score, but it cannot pass with failing claims
                 passed, reason, issues = False, f"{len(mechanical)} claim problem(s); reviewer: {reason}", (mechanical + issues)[:12]
         await run.emit("reflection_result", agentId=agent_id, attempt=attempt, score=score, passed=passed, reason=reason,
@@ -2047,14 +2206,14 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         classes = failure_classes(claims, statuses)
         history.append(f"attempt {attempt}: " + (", ".join(f"{k} {v}" for k, v in classes.items()) or "no claim failed"))
         if passed:
-            return downstream_text(agent_id, output, claims, statuses)
+            return finish(output, claims, statuses)
         if not precheck(output):
             usable.append({"attempt": attempt, "output": output, "claims": claims, "statuses": statuses, "score": score, "issues": issues})
         if reason == "gate unavailable" and not mechanical and config.onRetryExhausted == "degrade":
             # No verdict is not a rejection: accept as unreviewed rather than re-asking the worker.
             await run.emit("agent_degraded", agentId=agent_id, attempt=attempt, score=0, issues=issues, claimStatuses=statuses,
                            claimFailureClasses=failure_classes(claims, statuses), reason="gate unavailable", unreviewed=True)
-            return downstream_text(agent_id, output, claims, statuses, f"[{agent_id} UNREVIEWED: the reviewer was unavailable]")
+            return finish(output, claims, statuses, f"[{agent_id} UNREVIEWED: the reviewer was unavailable]")
         last_reason = f"score {score}/5: {reason}" if score else reason
         if attempt < config.maxRetriesPerAgent:
             escalate = attempt + 1 >= 2 and escalation != model
@@ -2084,7 +2243,9 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
     async def fail(step_id: str, reason: str) -> None:
         pending.pop(step_id, None)
         failures[step_id] = reason
+        run.step_results[step_id] = {"output": "", "claims": [], "statuses": {}}
         await run.emit("agent_failed", agentId=step_id, reason=reason, **run.attempt_of(step_id))
+        await update_ledger(run, steps)
 
     try:
         while pending or running:
@@ -2118,6 +2279,7 @@ async def workers_node(state: dict[str, Any]) -> dict[str, Any]:
                 error = task.exception()
                 if error is None:
                     outputs[step["id"]] = task.result()
+                    await update_ledger(run, steps)
                 else:
                     await fail(step["id"], str(error) or type(error).__name__)
     finally:

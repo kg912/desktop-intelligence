@@ -15,6 +15,7 @@ const KNOWN_TYPES = new Set<string>([
   'plan_step_removed',
   'plan_reasoning',
   'orchestrator_plan',
+  'ledger_update',
   'run_config',
   'agent_start',
   'agent_token',
@@ -153,6 +154,16 @@ function validateVariant(obj: Record<string, unknown>): string | null {
     case 'plan_step_removed':
       return checkFields(obj, [['stepId', 'string'], ['label', 'string'], ['reason', 'string']])
 
+    case 'ledger_update': {
+      if (typeof obj.ledger !== 'object' || obj.ledger === null || Array.isArray(obj.ledger)) return '"ledger" must be an object'
+      for (const [id, entry] of Object.entries(obj.ledger as Record<string, unknown>)) {
+        const e = entry as Record<string, unknown> | null
+        if (typeof e !== 'object' || e === null || typeof e.status !== 'string' || !Array.isArray(e.claimIds)) return `"ledger.${id}" must be {status, claimIds}`
+      }
+      if (typeof obj.counts !== 'object' || obj.counts === null) return '"counts" must be an object'
+      return null
+    }
+
     case 'agent_degraded': {
       const err = checkFields(obj, [['agentId', 'string'], ['attempt', 'number'], ['score', 'number']])
       if (err) return err
@@ -261,6 +272,7 @@ export function agentEventStepType(event: AgentEvent): AgentTraceStepType {
       return 'synthesizer'
     case 'task_complete':
     case 'task_failed':
+    case 'ledger_update':
       return 'run'
     case 'hitl_pause':
     case 'hitl_resume':

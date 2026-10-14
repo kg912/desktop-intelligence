@@ -2,7 +2,7 @@
 // §08 Frontend). applyAgentEvent() touches only what an event changes, so a
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
-import type { AgentEvent, AgentStep, HitlPauseEvent, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
+import type { AgentEvent, AgentStep, ChecklistItem, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled'
 
@@ -84,6 +84,14 @@ export function runLogLine(e: AgentEvent): RunLogEntry | null {
   const at = (tone: RunLogEntry['tone'], text: string, agentId?: string): RunLogEntry => ({ ts: e.ts, tone, text, ...(agentId && { agentId }) })
   switch (e.type) {
     case 'plan_started': return at('info', `Planning started (up to ${e.maxAgents} agents)`)
+    case 'ledger_update': {
+      const total = Object.keys(e.ledger).length
+      const parts = [`${e.counts.verified} of ${total} verified`,
+        ...(e.counts.unverified ? [`${e.counts.unverified} unverified`] : []),
+        ...(e.counts.conflicted ? [`${e.counts.conflicted} possible conflict${e.counts.conflicted === 1 ? '' : 's'}`] : []),
+        ...(e.counts.missing ? [`${e.counts.missing} missing`] : [])]
+      return at(e.counts.conflicted || e.counts.missing ? 'wait' : 'info', `Coverage: ${parts.join(', ')}`)
+    }
     case 'orchestrator_plan': return e.fallback ? at('wait', `Fallback plan: ${e.fallbackReason ?? 'no usable plan'}`) : at('ok', `Plan: ${e.steps.length} agent${e.steps.length === 1 ? '' : 's'}`)
     case 'hitl_pause': return e.serverName === 'multi-agent' ? at('wait', 'Waiting for plan approval') : at('wait', `${e.agentId} asks to run ${e.toolName}`, e.agentId)
     case 'hitl_resume': return e.agentId === 'orchestrator' ? at(e.approved ? 'ok' : 'fail', e.approved ? 'Plan approved' : 'Plan not approved')
@@ -135,6 +143,10 @@ export interface RunView {
   log: RunLogEntry[]
   /** What the run actually used (models per role and their source). */
   runConfig?: RunConfigEvent
+  /** Spec B Phase 1: the planner's acceptance checklist and the latest coverage ledger. Absent on runs without a checklist. */
+  checklist?: ChecklistItem[]
+  ledger?: Record<string, LedgerEntry>
+  ledgerCounts?: Record<LedgerStatus, number>
   synthesis: string
   finalOutput?: string
   synthesisTruncated?: OutputLimit
@@ -209,8 +221,11 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
       }
       const planning = { ...next.planning, stage: 'wiring' as const, stageAt: { ...next.planning.stageAt, wiring: next.planning.stageAt.wiring ?? event.ts },
         ...(event.fallback && { fallbackReason: event.fallbackReason ?? 'The planner never returned a usable plan.' }) }
-      return { ...next, steps: event.steps, agents, planning, ...(event.modelServed && { served: { ...next.served, orchestrator: event.modelServed } }) }
+      return { ...next, steps: event.steps, agents, planning, ...(event.modelServed && { served: { ...next.served, orchestrator: event.modelServed } }),
+        ...(event.checklist?.length && { checklist: event.checklist }) }
     }
+    case 'ledger_update':
+      return { ...next, ledger: event.ledger, ledgerCounts: event.counts }
     case 'run_config':
       return { ...next, runConfig: event }
     case 'hitl_pause':

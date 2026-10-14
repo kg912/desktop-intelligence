@@ -511,6 +511,25 @@ export interface AgentStep {
   /** Spec A Phase 10: how the planner sliced this step, and the condition on another step's answer, if any. */
   axis?: 'entity' | 'topic'
   condition?: string
+  /** Spec B Phase 1: the checklist requirements this step answers. */
+  covers?: string[]
+}
+
+/** One requirement of the planner's acceptance checklist (spec B Phase 1). scope: the step it belongs to, or "global". */
+export interface ChecklistItem {
+  id:    string
+  text:  string
+  scope: string
+}
+
+export type LedgerStatus = 'verified' | 'unverified' | 'conflicted' | 'missing' | 'pending'
+
+/** A requirement's status, computed in the sidecar from claim statuses with no model call. claimIds: "<agentId> <claimId>". */
+export interface LedgerEntry {
+  status:   LedgerStatus
+  claimIds: string[]
+  /** Two verified claims of different agents that disagree. Heuristic: "possible conflict" until the assess call confirms it. */
+  conflict?: { claimIds: string[]; confirmed: boolean }
 }
 
 export interface MultiAgentConfig {
@@ -625,6 +644,15 @@ export interface OrchestratorPlanEvent extends AgentEventBase {
   fallbackReason?: string
   /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
   modelServed?: string
+  /** Spec B Phase 1: the planner's acceptance checklist. Absent: no ledger, no assess step. */
+  checklist?: ChecklistItem[]
+}
+
+/** The coverage ledger after a step ended (spec B Phase 1). */
+export interface LedgerUpdateEvent extends AgentEventBase {
+  type:   'ledger_update'
+  ledger: Record<string, LedgerEntry>
+  counts: Record<LedgerStatus, number>
 }
 
 export interface AgentStartEvent extends AgentEventBase, AgentAttempt {
@@ -902,6 +930,7 @@ export type AgentEvent =
   | PlanStepRemovedEvent
   | PlanReasoningEvent
   | OrchestratorPlanEvent
+  | LedgerUpdateEvent
   | RunConfigEvent
   | AgentStartEvent
   | AgentTokenEvent

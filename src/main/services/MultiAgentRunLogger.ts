@@ -763,6 +763,20 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     L.push('```', '')
   } else L.push('No plan was recorded.', '')
 
+  L.push('## Coverage', '')
+  const checklist = eventsOf(events, 'orchestrator_plan').at(-1)?.checklist ?? []
+  const ledger = eventsOf(events, 'ledger_update').at(-1)?.ledger ?? {}
+  if (checklist.length) {
+    L.push('| Requirement | Text | Scope | Status | Claims |', '|---|---|---|---|---|')
+    for (const item of checklist) {
+      const entry = ledger[item.id]
+      const status = !entry ? 'pending'
+        : entry.conflict ? `${entry.conflict.confirmed ? 'conflict' : 'possible conflict'} (${entry.conflict.claimIds.join(' vs ')})` : entry.status
+      L.push(`| ${cell(item.id)} | ${cell(item.text)} | ${cell(item.scope)} | ${cell(status)} | ${cell((entry?.claimIds ?? []).join(', '))} |`)
+    }
+    L.push('')
+  } else L.push('No checklist: the planner wrote none, so the ledger and the assess step were off.', '')
+
   L.push('## Timeline', '', `Peak concurrency (model calls in flight at once, from recorded timestamps): ${peakConcurrency(records)}`, '')
   L.push('| # | Start (+ms) | Duration (ms) | Kind | Role | Agent | Attempt | Model | Tokens | Cost | Finish | Record |', '|---|---|---|---|---|---|---|---|---|---|---|---|')
   const ordered = [...records].sort((a, b) => (a.timing.startedAt ?? a.timing.endedAt) - (b.timing.startedAt ?? b.timing.endedAt) || a.seq - b.seq)

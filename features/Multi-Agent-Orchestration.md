@@ -169,7 +169,8 @@ AgentEventBase { runId: string; seq: number; ts: number }   // seq = monotonic p
 | `plan_stage_changed` | `stage ('reading' \| 'splitting' \| 'assigning' \| 'wiring'), attempt` |
 | `plan_subtask_added` | `attempt, index, step {id, label, role, dependsOn}` — a complete subtask parsed out of the planner's streaming JSON; draft only |
 | `plan_reasoning` | `token` — orchestrator reasoning when the model streams it (not requested) |
-| `orchestrator_plan` | `steps: AgentStep[]` (+ `fallback?, fallbackReason?` — the fallback plan is never silent) |
+| `orchestrator_plan` | `steps: AgentStep[]` (+ `fallback?, fallbackReason?` — the fallback plan is never silent; `checklist?` — spec B) |
+| `ledger_update` | `ledger {checklistId: {status, claimIds, conflict?}}, counts` — after every step ends; no model call (spec B Phase 1) |
 | `agent_start` | `agentId, role, model` |
 | `agent_token` | `agentId, token` |
 | `agent_complete` | `agentId, output, tokenCount, costUsd` |
@@ -312,6 +313,17 @@ that only matters depending on another step's answer lists that step in `depends
 conditions executable). `slicing_problems()` flags mixed axes and a label with an "if / unless / in case"
 clause that depends on nothing; the planner gets one correction turn (`SLICING_CORRECTION`), and its next
 answer is kept either way.
+
+**Coverage ledger (spec B Phase 1).** The planner replies `{"steps": [...], "checklist": [...]}`: each
+checklist item is one atomic, checkable requirement (`{id, text, scope: stepId | "global"}`, at most 25),
+and each step lists the requirements it `covers`. A bare array (older planners) still parses, with no
+checklist. Each worker is told its requirements and tags claims with `req` (an id, or a list for a claim that
+answers several). After every step ends, `compute_ledger()` sets each requirement from the final claim
+statuses, with no model call: `conflicted` (two verified claims of different agents disagree), `verified`,
+`unverified` (only declared-unverified claims), `pending` (a covering step has not ended) or `missing`.
+Failing and unmapped claims fill nothing. Conflicts come from a cheap heuristic (`possible_conflict`: most
+subject words shared, no different airports, different weekdays or numbers beyond 15%), so the UI and run.md say
+"possible conflict" until the assess call confirms one. No checklist: no ledger, no assess step.
 
 **Repair retries.** A retry continues the worker's conversation: the rejected answer stays as the
 last assistant turn and the verdict (`Reviewer verdict: score n/5 — …`, issues, "do not repeat
