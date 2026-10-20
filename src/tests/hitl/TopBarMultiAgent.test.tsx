@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 vi.mock('@preact/signals-react/runtime', () => ({ useSignals: () => {} }))
 
@@ -455,5 +457,57 @@ describe('List | Graph toggle (Goal 6)', () => {
   it('is absent without a handler (regular chats)', () => {
     render(<ModelStoreProvider><TopBar activeChatId="c" onCompactComplete={vi.fn()} sidebarCollapsed={false} mode="multi-agent" agentRun={null} /></ModelStoreProvider>)
     expect(screen.queryByTestId('view-toggle')).toBeNull()
+  })
+})
+
+// Rectification R2: the left cluster yields in a fixed order and never covers the chat actions. jsdom cannot evaluate
+// container queries, so the rules are read from globals.css and checked against the widths measured in a browser
+// (the needs below); the real overlap check at 1100/900/760/640 px is the browser run in progress.md row 442.
+describe('top bar breakpoints (rectification R2)', () => {
+  const CSS = readFileSync(join(__dirname, '../../renderer/src/styles/globals.css'), 'utf8')
+  /** max-width of the @container rule that sets `decl` on `selector`, or null. */
+  const containerAt = (selector: string, decl: string): number | null => {
+    for (const m of CSS.matchAll(/@container \(max-width: (\d+)px\) \{([^@]*?)\}\s*\}/g)) {
+      const body = m[2]
+      const rule = body.split('}').find((r) => r.split('{')[0].split(',').map((x) => x.trim()).includes(selector))
+      if (rule && rule.split('{')[1].replace(/\s/g, '').includes(decl)) return Number(m[1])
+    }
+    return null
+  }
+  // Content-box widths each state needs (browser, Istanbul run, sidebar toggle shown, sub "6 agents · 2 phases").
+  const NEED = { full: 607, noSub: 467, noLabel: 388 }
+
+  it('each step hides the right thing, in order, before the previous state stops fitting', () => {
+    const sub = containerAt('.ma-mpill-sub', 'display:none')!
+    const label = containerAt('.ma-mpill-label', 'display:none')!
+    const tabText = containerAt('.ma-view-label', 'display:none')!
+    const tabIcon = containerAt('.ma-view-icon', 'display:inline-block')!
+    expect([sub, label, tabText].every((n) => typeof n === 'number')).toBe(true)
+    expect(sub).toBeGreaterThan(label)
+    expect(label).toBeGreaterThan(tabText)
+    expect(tabIcon).toBe(tabText)
+    expect(sub).toBeGreaterThanOrEqual(NEED.full)
+    expect(label).toBeGreaterThanOrEqual(NEED.noSub)
+    expect(tabText).toBeGreaterThanOrEqual(NEED.noLabel)
+    expect(CSS).toMatch(/^\.ma-view-icon \{ display: none; \}/m)  // full width: text tabs only
+    expect(CSS).not.toMatch(/@media[^{]*\{[^}]*\.ma-(mpill-sub|mpill-label|view-)/)  // container queries, not the viewport
+  })
+
+  it('the elements carry those classes; tabs keep their accessible names and tooltips; the actions never shrink', () => {
+    render(<ModelStoreProvider><TopBar activeChatId="c" onCompactComplete={vi.fn()} sidebarCollapsed mode="multi-agent" agentRun={runOf(FINISHED)} agentViewMode="list" onAgentViewMode={vi.fn()} /></ModelStoreProvider>)
+    expect(screen.getByTestId('top-bar').className).toContain('ma-topbar-cq')
+    const pill = screen.getByTestId('mode-pill')
+    expect(pill.querySelector('.ma-mpill-label')?.textContent).toBe('Multi-agent')
+    expect(pill.querySelector('.ma-mpill-sub')).toBeTruthy()
+    expect(pill.querySelector('.ma-mpill-dot')).toBeTruthy()
+    for (const [v, name] of [['list', 'List'], ['graph', 'Graph'], ['gantt', 'Gantt']]) {
+      const tab = screen.getByRole('radio', { name })
+      expect(tab.getAttribute('title')).toBe(name)
+      expect(screen.getByTestId(`view-${v}-icon`).getAttribute('class')).toContain('ma-view-icon')
+      expect(screen.getByTestId(`view-${v}-label`).className).toBe('ma-view-label')
+    }
+    const left = screen.getByTestId('top-bar-left')
+    expect(left.className.split(' ')).toEqual(expect.arrayContaining(['min-w-0', 'overflow-x-clip']))
+    expect(screen.getByTestId('top-bar-actions').className).toContain('flex-none')
   })
 })

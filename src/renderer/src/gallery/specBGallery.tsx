@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-// Dev-only page for the browser preview (npx vite --config vite.preview.config.ts → http://localhost:5174/gallery.html#d11 … #d14, #settings): spec B's UI surfaces
+// Dev-only page for the browser preview (npx vite --config vite.preview.config.ts → http://localhost:5174/gallery.html#d11 … #d14, #settings, #topbar): spec B's UI surfaces
 // with the Istanbul fixture's data, to compare against specs/designs/11–14. Not part of the app build.
 import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
@@ -17,6 +17,8 @@ import { PlanEditor } from '../components/chat/PlanEditor'
 import { StepControls } from '../components/chat/StepControls'
 import { RunActionsContext } from '../components/chat/RunActions'
 import { MultiAgentSettingsPanel } from '../components/settings/MultiAgentSettingsPanel'
+import { TopBar } from '../components/layout/TopBar'
+import { ModelStoreProvider } from '../store/ModelStore'
 import LEDGER from '../lib/__tests__/fixtures/istanbul-ledger.json'
 import EVENTS_JSONL from '../../../../resources/python/tests/fixtures/runs/istanbul-3leg/events.jsonl?raw'
 
@@ -118,6 +120,25 @@ function Settings() {
   return <div style={{ ...frame, height: 'auto', display: 'block', background: '#0f0f0f' }}><MultiAgentSettingsPanel /></div>
 }
 
-const SECTIONS: Record<string, () => React.ReactElement> = { d11: D11, d12: D12, d13: D13, d14: D14, settings: Settings }
+/** Rectification R2: the multi-agent top bar at a given chat-column width (?w=1100&collapsed=1&live=1). */
+function TopBarAt() {
+  const q = new URLSearchParams(location.search)
+  const [view, setView] = useState<'list' | 'graph' | 'gantt'>('gantt')
+  const events = EVENTS_JSONL.split('\n').filter(Boolean).map((l: string) => JSON.parse(l) as AgentEvent)
+  const live = q.get('live') === '1'
+  const cut = live ? events.slice(0, events.findIndex((e) => e.type === 'agent_complete')) : events
+  const run = { view: reduceRunEvents(events[0].runId, cut), runIds: [events[0].runId], live }
+  return (
+    <ModelStoreProvider>
+      <div data-testid="topbar-frame" style={{ width: Number(q.get('w') ?? 1100), background: '#000' }}>
+        <TopBar activeChatId="c" onCompactComplete={() => {}} sidebarCollapsed={q.get('collapsed') === '1'} onSidebarToggle={() => {}}
+          chatSystemInstructions={null} onUpdateChatSystemInstructions={() => {}} mode="multi-agent" agentRun={run} agentDockOpen
+          agentViewMode={view} onAgentViewMode={setView} />
+      </div>
+    </ModelStoreProvider>
+  )
+}
+
+const SECTIONS: Record<string, () => React.ReactElement> = { d11: D11, d12: D12, d13: D13, d14: D14, settings: Settings, topbar: TopBarAt }
 const Section = SECTIONS[location.hash.slice(1)] ?? D11
 ReactDOM.createRoot(document.getElementById('root')!).render(<Section />)

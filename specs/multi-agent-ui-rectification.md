@@ -31,7 +31,7 @@ Design rule: the right cluster (`top-bar-actions`: system prompt, download, etc.
 3. The view tabs become icon-only (list, graph, gantt icons) with accessible names and tooltips.
 4. If it still does not fit, the left cluster scrolls or clips with `min-w-0 overflow-hidden`; it never grows over the right cluster.
 Use the existing container-query setup (`ma-topbar-cq`) rather than viewport media queries. The sidebar-collapsed padding (`pl-[80px]`, traffic-light room) is part of the budget.
-- **Acceptance:** a Vitest layout test cannot measure real widths, so the agent must render the top bar in a browser (Playwright) at container widths 1100, 900, 760 and 640 px, in both sidebar-collapsed and expanded states, and check that no element in the left cluster's bounding box intersects the right cluster's. Save the 8 screenshots under `specs/designs/rectification/` and reference them in progress.md. Add a Playwright or unit-level test of the breakpoint classes (each step hides or shows the right elements).
+- **Acceptance:** a Vitest layout test cannot measure real widths, so the agent must render the top bar in a browser (headless Chrome over CDP; Playwright is not a project dependency) at container widths 1100, 900, 760 and 640 px, in both sidebar-collapsed and expanded states, and check that no element in the left cluster's bounding box intersects the right cluster's. Save the 8 screenshots under `specs/designs/rectification/` and reference them in progress.md. Add a unit-level test of the breakpoint classes (each step hides or shows the right elements).
 
 ### R3. Remove Lock from the UI
 Decision (from the user): "what even is this lock button" means it goes.

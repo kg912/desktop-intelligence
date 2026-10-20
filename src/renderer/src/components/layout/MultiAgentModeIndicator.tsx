@@ -247,7 +247,7 @@ export function MultiAgentModeIndicator({ run, dockOpen, onToggleDock, onOpenRun
         onClick={run ? onToggleDock : undefined}
       >
         {tone === 'idle' ? <Network className="h-[15px] w-[15px]" strokeWidth={1.6} /> : <span className="ma-mpill-dot" data-s={tone === 'done' ? 'ok' : tone === 'bad' ? 'fail' : 'run'} />}
-        Multi-agent
+        <span className="ma-mpill-label">Multi-agent</span>
         {sub && <span className="ma-mpill-sub" data-testid="mode-pill-sub">{sub}</span>}
       </button>
       {open && <HoverCard id={cardId} style={placement} run={run} onOpenRunView={onOpenRunView} onOpenSettings={onOpenSettings} />}

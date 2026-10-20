@@ -540,10 +540,16 @@
 .ma-mpill-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: #e53935; animation: ma-glow 1.6s ease-in-out infinite; }
 .ma-mpill-dot[data-s="ok"] { background: #43cf8f; animation: none; }
 .ma-mpill-dot[data-s="fail"] { background: transparent; border: 1.5px solid #e53935; animation: none; }
-@media (max-width: 900px) { .ma-mpill-sub { display: none; } }
-/* The chat column narrows when the dock widens (Graph view): the bar follows its own width, not the window's. */
+/* The chat column narrows when the dock widens (Graph view): the bar follows its own width, not the window's.
+   Rectification R2: the left cluster yields so the chat actions are never overlapped. Widths are the bar's content box
+   (its padding, incl. the collapsed sidebar's 80px traffic-light room, is already excluded). Measured needs: full 607px
+   ("6 agents · 2 phases"), without the sub-label 467, without the "Multi-agent" label 388, icon-only tabs 287; below
+   that the cluster clips (top-bar-left: min-w-0, overflow-x clip). */
 .ma-topbar-cq { container-type: inline-size; }
-@container (max-width: 560px) { .ma-mpill-sub { display: none; } }
+.ma-view-icon { display: none; }
+@container (max-width: 640px) { .ma-mpill-sub { display: none; } }
+@container (max-width: 480px) { .ma-mpill-label { display: none; } }
+@container (max-width: 400px) { .ma-view-label { display: none; } .ma-view-icon { display: inline-block; } }
 /* Graph dock header follows the dock's width, not the window's: the auto-opened chip shortens, then goes;
    tabs never wrap, and scroll sideways (no bar) only when they alone do not fit. Pin and collapse never shrink.
    Widths are the row's content box (minus px-7), sized for the widest tabs: "Needs you 11" + "Node 1.6". */

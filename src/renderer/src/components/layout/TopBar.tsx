@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText, Download } from 'lucide-react'
+import { Zap, RotateCw, ChevronLeft, ChevronRight, ScrollText, Download, List, Workflow, GanttChart } from 'lucide-react'
 import { useModelStore, contextUsageSignal, contextFillSignal, isCompactingSignal } from '../../store/ModelStore'
 import type { ChatMode } from '../../../../shared/types'
 import { MultiAgentModeIndicator, type TopBarRun } from './MultiAgentModeIndicator'
 
-const DEBUG = (import.meta as Record<string, unknown> & { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
+// Run view tabs: text at full width, icon-only when the bar narrows (globals.css, .ma-topbar-cq). The name never changes.
+const VIEW_TABS = { list: { label: 'List', Icon: List }, graph: { label: 'Graph', Icon: Workflow }, gantt: { label: 'Gantt', Icon: GanttChart } } as const
+
+const DEBUG = (import.meta as unknown as { env?: { DEV_MODE?: boolean } }).env?.DEV_MODE === true
 
 /**
  * TopBar — centre model name + right-side context utilisation indicator + Compact button.
@@ -325,7 +328,9 @@ export function TopBar({
         data-mode="multi-agent"
         className={`ma-topbar-cq drag-region flex-shrink-0 flex items-center justify-between gap-2 h-[52px] border-b border-surface-border/50 relative bg-black ${barPadding}`}
       >
-        <div className="no-drag flex min-w-0 items-center gap-1.5">
+        {/* Rectification R2: the left cluster yields (pill label, then tab labels, then clipping); the actions never move.
+            overflow-x clip keeps the live pill's glow visible above and below; -ml-4/pl-4 leaves it room on the left. */}
+        <div className="no-drag -ml-4 flex min-w-0 items-center gap-1.5 overflow-x-clip pl-4" data-testid="top-bar-left">
           {sidebarToggle}
           <MultiAgentModeIndicator
             run={agentRun}
@@ -337,14 +342,18 @@ export function TopBar({
           {onAgentViewMode && (
             <div role="radiogroup" aria-label="Run view" data-testid="view-toggle"
               className="ml-2.5 flex flex-none overflow-hidden rounded-[9px] border-[0.5px] border-white/[0.12] font-mono text-[12px]">
-              {(['list', 'graph', 'gantt'] as const).map((v) => (
-                <button key={v} role="radio" aria-checked={agentViewMode === v} data-testid={`view-${v}`} onClick={() => onAgentViewMode(v)}
-                  className={agentViewMode === v
-                    ? 'border-l-2 border-ma-red bg-ma-red/[0.18] px-3.5 py-1 text-white'
-                    : 'px-3.5 py-1 text-ma-mute hover:text-ma-soft'}>
-                  {v === 'list' ? 'List' : v === 'graph' ? 'Graph' : 'Gantt'}
-                </button>
-              ))}
+              {(['list', 'graph', 'gantt'] as const).map((v) => {
+                const { label, Icon } = VIEW_TABS[v]
+                return (
+                  <button key={v} role="radio" aria-checked={agentViewMode === v} aria-label={label} title={label} data-testid={`view-${v}`} onClick={() => onAgentViewMode(v)}
+                    className={`ma-view-tab inline-flex items-center px-3.5 py-1 ${agentViewMode === v
+                      ? 'border-l-2 border-ma-red bg-ma-red/[0.18] text-white'
+                      : 'text-ma-mute hover:text-ma-soft'}`}>
+                    <Icon className="ma-view-icon h-3.5 w-3.5" aria-hidden="true" data-testid={`view-${v}-icon`} />
+                    <span className="ma-view-label" data-testid={`view-${v}-label`}>{label}</span>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
