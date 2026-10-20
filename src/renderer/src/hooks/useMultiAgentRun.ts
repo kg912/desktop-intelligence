@@ -1,3 +1,4 @@
+import { describeActionError } from '../lib/actionErrors'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
 import type { AgentEvent, AgentStep, AssessAction, MultiAgentConfig } from '../../../shared/types'
@@ -98,7 +99,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
         runRef.current = null
         setRun(null)
       }
-      setStartError(started.reason)
+      setStartError(describeActionError(started.reason))
       return false
     }
     const buffered = early.current.filter((e) => e.runId === started.runId)
@@ -154,9 +155,9 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
       const readOnly = { ...next, review: true }
       runRef.current = readOnly
       setRun(readOnly)
-      setStartError(result.reason)
+      setStartError(describeActionError(result.reason))
     }
-    return { ok: false, reason: result.reason }
+    return { ok: false, reason: describeActionError(result.reason) }
   }, [])
 
   const dismiss = useCallback(() => {
@@ -171,7 +172,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     if (!current || current.review) return
     const sent = approved && steps ? window.api.respondMultiAgentPlan(current.view.runId, approved, steps) : window.api.respondMultiAgentPlan(current.view.runId, approved)
     sent.catch((err: unknown) => {
-      setStartError(err instanceof Error ? err.message : String(err))
+      setStartError(describeActionError(err))
     })
   }, [])
 
@@ -180,7 +181,7 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     const current = runRef.current
     if (!current || current.review || current.view.runId.startsWith(PENDING_RUN_PREFIX)) return
     await window.api.useQuickMultiAgentPlan(current.view.runId).catch((err: unknown) => {
-      setStartError(err instanceof Error ? err.message : String(err))
+      setStartError(describeActionError(err))
     })
   }, [])
 
@@ -192,14 +193,14 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
     const sent = action.kind === 'run' ? window.api.runAssessFollowUp(runId, action.steps)
       : action.kind === 'finish' ? window.api.finishAssess(runId)
       : window.api.answerAssess(runId, action.answer)
-    sent.catch((err: unknown) => setStartError(err instanceof Error ? err.message : String(err)))
+    sent.catch((err: unknown) => setStartError(describeActionError(err)))
   }, [])
 
   const abort = useCallback(() => {
     const current = runRef.current
     if (!current || current.review) return
     window.api.abortMultiAgentRun(current.view.runId).catch((err: unknown) => {
-      setStartError(err instanceof Error ? err.message : String(err))
+      setStartError(describeActionError(err))
     })
   }, [])
 

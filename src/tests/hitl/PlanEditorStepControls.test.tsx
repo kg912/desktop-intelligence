@@ -178,10 +178,26 @@ describe('StepControls', () => {
     withActions(a, <StepControls view={reduceRunEvents('r', finishedEvents)} agentId="1.2" />)
     fireEvent.click(screen.getByRole('button', { name: 'Re-run on…' }))
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Re-run this step' })) })
-    await waitFor(() => expect(screen.getByTestId('rerun-unavailable').textContent).toContain('no saved state for this run'))
+    await waitFor(() => expect(screen.getByTestId('rerun-unavailable').textContent).toBe('This run has no saved state to continue from, so it cannot be re-run or resumed.'))
     expect((screen.getByRole('button', { name: 'Re-run on…' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.queryByTestId('rerun-panel')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('rectification R6: a failed steer or a refused re-run reads as a plain sentence, never the IPC wrapper', async () => {
+    const a = { ...actions(),
+      steer: vi.fn(async () => { throw new Error("Error invoking remote method 'multi-agent:steer': Error: That agent is not running") }),
+      rerun: vi.fn(async () => ({ ok: false as const, reason: 'no saved state for this run' })) }
+    const { unmount } = withActions(a, <StepControls view={reduceRunEvents('r', live)} agentId="1.2" />)
+    fireEvent.change(screen.getByLabelText('Steer 1.2'), { target: { value: 'Only airline pages.' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send' })) })
+    expect(screen.getByRole('alert').textContent).toBe('This agent is no longer running, so it cannot be steered.')
+    unmount()
+    withActions(a, <StepControls view={reduceRunEvents('r', finishedEvents)} agentId="1.2" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Re-run on…' }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Re-run this step' })) })
+    expect(screen.getByTestId('rerun-unavailable').textContent).toBe('This run has no saved state to continue from, so it cannot be re-run or resumed.')
+    expect(document.body.textContent).not.toContain('Error invoking remote method')
   })
 
   it('no UI code calls the lock IPC, so no lock 404 can be triggered from the UI', () => {

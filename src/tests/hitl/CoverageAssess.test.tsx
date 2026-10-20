@@ -76,6 +76,17 @@ describe('assess card', () => {
     expect(api.runAssessFollowUp).toHaveBeenLastCalledWith('r', [{ id: '2.1', label: 'Settle it on the Pegasus page', task: 'Open the Pegasus timetable.' }])
   })
 
+  it('rectification R6: a refused assess action shows a plain sentence, not the IPC wrapper', async () => {
+    const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
+    ;(window as any).api = { ...api, getMultiAgentRun: vi.fn(async () => ({ mode: 'multi-agent', runStatus: 'running', agentGraph: [], executionTrace: [...base, DECISION, PAUSE], runIds: ['r'] })),
+      getMultiAgentConfig: vi.fn(async () => config), resumeMultiAgentRun: vi.fn(async () => ({ ok: true, runId: 'r' })),
+      finishAssess: vi.fn(async () => { throw new Error("Error invoking remote method 'multi-agent:assess-finish': Error: This run is not waiting for an assess decision") }) }
+    await act(async () => { await result.current.continueRun('chat', 'r') })
+    render(<AssessCard view={result.current.run!.view} config={config} readOnly={false} onAssess={result.current.respondAssess} />)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Finish now' })) })
+    expect(result.current.startError).toBe('This decision has already been made.')
+  })
+
   it('an auto-run follow-up has no buttons and says so; a read-only run has none either', () => {
     const auto = ev(4, { ...DECISION, estimatedUsd: 0.05, autoRun: true })
     render(<AssessCard view={reduceRunEvents('r', [...base, auto])} config={config} readOnly={false} onAssess={vi.fn()} />)

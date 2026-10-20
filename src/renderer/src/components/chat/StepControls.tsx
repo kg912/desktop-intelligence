@@ -6,6 +6,7 @@ import { useContext, useMemo, useState } from 'react'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { RunView } from '../../lib/multiAgentRunState'
 import { isRunActive } from '../../lib/multiAgentRunState'
+import { describeActionError } from '../../lib/actionErrors'
 import { cn } from '../../lib/utils'
 import { Chip } from './ClaimsDrawer'
 import { ClaimLinksContext } from './ClaimLinks'
@@ -33,9 +34,9 @@ export function StepControls({ view, agentId, readOnly }: { view: RunView; agent
   const rerunBlocked = actions.rerunUnavailable ?? (view.locked.includes(agentId) ? 'Re-run is unavailable: an earlier version of the app kept this step\'s output fixed.' : null) ?? refused
   const running = live && isWorking(agent.status)
   const finished = !live && (agent.status === 'done' || agent.status === 'failed')
-  const run = (p: Promise<unknown>): void => { setError(null); p.catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }
+  const run = (p: Promise<unknown>): void => { setError(null); p.catch((e: unknown) => setError(describeActionError(e))) }
   const rerun = (withDependents: boolean): void => run(actions.rerun(agentId, { model, withDependents }).then((r) => {
-    if (!r.ok) { setRefused(r.reason); setRerunOpen(false) }
+    if (!r.ok) { setRefused(describeActionError(r.reason)); setRerunOpen(false) }
   }))
   const round = agent.timeline.filter((t) => t.kind === 'tool' && t.attempt === agent.attempt - 1).length + 1
   const lastGate = agent.reflections.at(-1)

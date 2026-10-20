@@ -66,7 +66,7 @@ describe('useMultiAgentRun', () => {
     api.startMultiAgentRun.mockResolvedValue({ ok: false, reason: 'OpenRouter API key is not configured' })
     const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
     await act(async () => { expect(await result.current.start('chat-1', 't')).toBe(false) })
-    expect(result.current.startError).toBe('OpenRouter API key is not configured')
+    expect(result.current.startError).toBe('Add your OpenRouter API key in Settings → Backend first.')  // rectification R6: plain sentence
     expect(result.current.run).toBeNull()
   })
 
@@ -123,7 +123,7 @@ describe('useMultiAgentRun: continue a saved run (spec B Phase 5)', () => {
     api.rerunMultiAgentStep.mockResolvedValue({ ok: false, reason: 'no saved state for this run' })
     const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
     await act(async () => {
-      expect(await result.current.continueRun('chat-1', 'run-1', { stepId: '1.1', model: 'm/strong', withDependents: true })).toEqual({ ok: false, reason: 'no saved state for this run' })
+      expect(await result.current.continueRun('chat-1', 'run-1', { stepId: '1.1', model: 'm/strong', withDependents: true })).toEqual({ ok: false, reason: 'This run has no saved state to continue from, so it cannot be re-run or resumed.' })
     })
     expect(api.rerunMultiAgentStep).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1', chatId: 'chat-1', stepId: '1.1', model: 'm/strong', withDependents: true }))
     expect(result.current.startError).toBeNull()  // shown inline by the step controls, not in the composer banner
@@ -134,8 +134,8 @@ describe('useMultiAgentRun: continue a saved run (spec B Phase 5)', () => {
     api.getMultiAgentRun.mockResolvedValue(saved)
     api.resumeMultiAgentRun.mockResolvedValue({ ok: false, reason: 'no saved state for this run' })
     const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
-    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1')).toEqual({ ok: false, reason: 'no saved state for this run' }) })
-    expect(result.current.startError).toBe('no saved state for this run')
+    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1')).toEqual({ ok: false, reason: 'This run has no saved state to continue from, so it cannot be re-run or resumed.' }) })
+    expect(result.current.startError).toBe('This run has no saved state to continue from, so it cannot be re-run or resumed.')  // rectification R6
     expect(result.current.run?.review).toBe(true)
   })
 })
