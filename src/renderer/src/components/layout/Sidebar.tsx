@@ -1,3 +1,4 @@
+import { Z_LAYERS } from '../chat/zLayers'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   MessageSquare,
@@ -825,7 +826,7 @@ export function Sidebar({
           background:  sidebarMode === 'agents' ? '#0e0e0e' : '#141414',
           borderRight: '0.5px solid rgba(255,255,255,0.05)',
           ...(overlayDock && sidebarMode === 'agents' && {
-            position: 'absolute', left: RAIL_WIDTH, top: 0, bottom: 0, zIndex: 45, maxWidth: `calc(100vw - ${RAIL_WIDTH}px)`,
+            position: 'absolute', left: RAIL_WIDTH, top: 0, bottom: 0, zIndex: Z_LAYERS.dock, maxWidth: `calc(100vw - ${RAIL_WIDTH}px)`,
             boxShadow: '18px 0 40px rgba(0,0,0,0.55)',
           }),
         }}

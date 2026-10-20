@@ -3,6 +3,7 @@
 // Right column: one accordion card per agent with its trace. CSS transitions
 // only — no motion.* here (M1 Pro scroll-jank issue).
 
+import { coveredAbove } from './zLayers'
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, Maximize2, Network } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -216,8 +217,8 @@ export function MultiAgentSidebarView(props: Props) {
 function useEscape(onClose: () => void): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      // A modal layer above the dock (the agent focus view) owns Escape while it is open.
-      if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[aria-modal="true"]')) onClose()
+      // A layer above the dock (focus view, claims drawer, approvals, a hover card) owns Escape while it is open.
+      if (e.key === 'Escape' && !e.defaultPrevented && !coveredAbove('dock')) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

@@ -838,6 +838,10 @@ export interface AgentCompleteEvent extends AgentEventBase, AgentAttempt {
   stoppedAtToolLimit?: boolean
   /** The model OpenRouter actually answered with, when it reported one (may differ from the one requested). */
   modelServed?: string
+  /** Rectification R4: this answer's claims as verified, and their statuses, on every path (the gate may never come:
+   *  budget reached). Absent on runs from older sidecars. */
+  claims?: ClaimView[]
+  claimStatuses?: Record<string, string>
 }
 
 /** Which limit ended a generation early: the run's budget cap, the model's context window, or the role's

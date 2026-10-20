@@ -1,6 +1,6 @@
 // Spec B 7a: claim chips and the evidence drawer's view-model. Chips never imply a status the verifier did not compute.
 import { describe, it, expect } from 'vitest'
-import { acceptedClaims, claimLabel, claimTone, findQuoteRanges, linkClaims, answerCounts } from '../claimsView'
+import { acceptedClaims, claimLabel, claimTone, findQuoteRanges, linkClaims, answerCounts, noClaimsReason } from '../claimsView'
 import { reduceRunEvents } from '../multiAgentRunState'
 import type { AgentEvent } from '../../../../shared/types'
 
@@ -88,5 +88,52 @@ describe('findQuoteRanges: highlight maps back to the original text', () => {
     expect(ranges.map(([a, b]) => text.slice(a, b))).toEqual(['Pegasus flies daily', 'SunExpress flies on Mondays'])
     expect(findQuoteRanges(text, 'not in the text at all')).toEqual([])
     expect(findQuoteRanges(text, 'SunExpress flies on Mondays ... Pegasus flies daily')).toEqual([])  // out of order
+  })
+})
+
+// Rectification R4: claims come from agent_complete when no gate carries them; when there are none, say why.
+describe('acceptedClaims fallback and the empty state', () => {
+  const e = (seq: number, x: Record<string, unknown>) => ({ runId: 'r', seq, ts: seq, ...x }) as unknown as AgentEvent
+  const plan = e(1, { type: 'orchestrator_plan', steps: [{ id: '1.1', label: 'Leg 1', stage: 'worker', role: 'Leg', model: 'm', phase: 1, dependsOn: [] }] })
+  const start = e(2, { type: 'agent_start', agentId: '1.1', role: 'Leg', model: 'm', attempt: 0 })
+  const CLAIMS = [{ id: 'c1', claim: 'A', callId: 'x', quote: 'a quote long enough' }, { id: 'c2', claim: 'B', unverified: true }]
+  const done = (seq: number, attempt: number, extra: Record<string, unknown> = {}) =>
+    e(seq, { type: 'agent_complete', agentId: '1.1', attempt, output: 'o', tokenCount: 1, costUsd: 0.1, ...extra })
+
+  it('budget reached right after the answer: no gate, the answer\'s claims and statuses are used', () => {
+    const view = reduceRunEvents('r', [plan, start, done(3, 0, { claims: CLAIMS, claimStatuses: { c1: 'verified', c2: 'unverified_declared' }, runTotals: { costUsd: 1, tokens: 1, budgetReached: true } })])
+    const accepted = acceptedClaims(view, '1.1')!
+    expect(accepted.claims.map((c) => [c.ref, c.status])).toEqual([['1.1 c1', 'verified'], ['1.1 c2', 'unverified_declared']])
+    expect([accepted.attempt, accepted.attempts, accepted.score]).toEqual([0, 1, 0])
+  })
+
+  it('a gate without claims (an older sidecar) falls back to that attempt\'s answer, statuses from the gate', () => {
+    const view = reduceRunEvents('r', [plan, start, done(3, 0, { claims: CLAIMS }),
+      e(4, { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 5, passed: true, reason: 'ok', claimStatuses: { c1: 'verified_repointed', c2: 'unverified_declared' } })])
+    expect(acceptedClaims(view, '1.1')!.claims.map((c) => c.status)).toEqual(['verified_repointed', 'unverified_declared'])
+  })
+
+  it('a retry\'s answer is matched to its own gate, not the first one', () => {
+    const view = reduceRunEvents('r', [plan, start, done(3, 0, { claims: [CLAIMS[0]], claimStatuses: { c1: 'quote_not_found' } }),
+      e(4, { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 1, passed: false, reason: 'x', claimStatuses: { c1: 'quote_not_found' } }),
+      e(5, { type: 'retry', agentId: '1.1', attempt: 1, reason: 'x' }), done(6, 1, { claims: CLAIMS }),
+      e(7, { type: 'reflection_result', agentId: '1.1', attempt: 1, score: 5, passed: true, reason: 'ok', claimStatuses: { c1: 'verified', c2: 'unverified_declared' } })])
+    const accepted = acceptedClaims(view, '1.1')!
+    expect(accepted.claims.map((c) => c.id)).toEqual(['c1', 'c2'])
+    expect([accepted.attempt, accepted.attempts]).toEqual([1, 2])
+  })
+
+  it('says why there are no claims', () => {
+    const noBlock = reduceRunEvents('r', [plan, start, done(3, 0, { runTotals: { costUsd: 1, tokens: 1, budgetReached: true } })])
+    expect(noClaimsReason(noBlock, '1.1')).toBe('This step ended without a claims check (budget reached).')
+    const none = reduceRunEvents('r', [plan, start, done(3, 0, { claims: [], claimStatuses: {} }),
+      e(4, { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 5, passed: true, reason: 'ok', claimStatuses: {}, claims: [] })])
+    expect(acceptedClaims(none, '1.1')!.claims).toEqual([])
+    expect(noClaimsReason(none, '1.1')).toBe('This step produced no claims.')
+    const old = reduceRunEvents('r', [plan, start, done(3, 0), e(4, { type: 'reflection_result', agentId: '1.1', attempt: 0, score: 5, passed: true, reason: 'ok', claimStatuses: { c1: 'verified' } })])
+    expect(noClaimsReason(old, '1.1')).toBe('This run was saved before claims were recorded, and its log is not available, so they cannot be shown.')
+    expect(noClaimsReason(reduceRunEvents('r', [plan]), '1.1')).toBe('This step has not finished yet.')
+    expect(noClaimsReason(reduceRunEvents('r', [plan, start, e(3, { type: 'agent_failed', agentId: '1.1', reason: 'x' })]), '1.1')).toBe('This step failed, so no answer was accepted.')
+    expect(noClaimsReason(reduceRunEvents('r', [plan, e(3, { type: 'agent_skipped', agentId: '1.1', reason: 'condition not met', condition: 'c', basis: '' })]), '1.1')).toBe('This step was skipped, so it made no claims.')
   })
 })

@@ -17,6 +17,7 @@ import { McpPermissionDialog } from '../chat/McpPermissionDialog'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { ResumeRunsBanner } from '../chat/ResumeRunsBanner'
 import { ClaimsDrawer } from '../chat/ClaimsDrawer'
+import { layerProps } from '../chat/zLayers'
 import type { ClaimTarget } from '../chat/ClaimsDrawer'
 import { ClaimLinksContext } from '../chat/ClaimLinks'
 import { RunActionsContext } from '../chat/RunActions'
@@ -726,7 +727,7 @@ export function Layout() {
                 screen render inline in their agent card (non-blocking, spec §07);
                 everything else stays modal so it cannot be missed. */}
             {modalPermissionRequests.length > 0 && (
-              <div className="absolute inset-0 z-50 flex flex-wrap content-center justify-center gap-4 overflow-y-auto bg-black/70 p-6 backdrop-blur-sm">
+              <div {...layerProps('approvals')} className="absolute inset-0 flex flex-wrap content-center justify-center gap-4 overflow-y-auto bg-black/70 p-6 backdrop-blur-sm">
                 {modalPermissionRequests.map((request) => (
                   <McpPermissionDialog key={request.requestId} inline request={request} onRespond={respondToPermission} />
                 ))}

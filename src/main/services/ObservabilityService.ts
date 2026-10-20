@@ -5,7 +5,7 @@ import { readSettings, writeSettings } from './SettingsStore'
 import type { AgentEvent, SandboxViolationTraceEvent, SandboxViolationLogEntry } from '../../shared/types'
 import { shouldAlertForViolation } from './sandbox/isCredentialPath'
 import { agentEventStepType } from '../../shared/agentEvents'
-import { DEFAULT_KEEP_RUNS, MultiAgentRunLogger, renderRun, rowFromMeta, runDetail, runEvents } from './MultiAgentRunLogger'
+import { DEFAULT_KEEP_RUNS, MultiAgentRunLogger, renderRun, rowFromMeta, runDetail, runEvents, safeId } from './MultiAgentRunLogger'
 import type { RunDetail, RunListRow } from './MultiAgentRunLogger'
 import type { AgentTraceStepType } from '../../shared/agentEvents'
 
@@ -409,6 +409,21 @@ export class ObservabilityService {
     }
     if (!(await fs.readdir(dir)).includes(file) || path.basename(file) !== file) return 'not found'
     return shell.openPath(path.join(dir, file))
+  }
+
+  /** Rectification R4: a run's log directory (where older runs' claims and tool results live). */
+  multiAgentRunDir(chatId: string, runId: string): string {
+    return this.multiAgentRuns.runDir(chatId, runId)
+  }
+
+  /** The same, found by run id alone (the evidence request carries no chat id); null when the run was not recorded. */
+  async findMultiAgentRunDir(runId: string): Promise<string | null> {
+    const chats = await fs.readdir(this.multiAgentRuns.root).catch(() => [] as string[])
+    for (const chat of chats) {
+      const dir = path.join(this.multiAgentRuns.root, chat, safeId(runId))
+      if (await fs.access(dir).then(() => true, () => false)) return dir
+    }
+    return null
   }
 
   revealMultiAgentRun(chatId: string, runId: string): void {

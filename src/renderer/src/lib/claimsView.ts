@@ -41,23 +41,49 @@ export function conflictsByRef(view: RunView): Map<string, { other: string[]; co
   return out
 }
 
-/** The claims of the answer an agent passed on: the passing attempt's, or the degraded one's. Null when none were sent. */
+/** The claims of the answer an agent passed on: the passing attempt's, or the degraded one's, or (budget reached, no
+ *  gate) the last answer's. From the gate, else from that attempt's agent_complete (rectification R4). Null when none
+ *  were sent; see noClaimsReason. */
 export function acceptedClaims(view: RunView, agentId: string): AcceptedClaims | null {
   const agent = view.agents[agentId]
   if (!agent) return null
-  // One gate per attempt, in order: the index is the 0-based attempt (ReflectionView.attempt counts from 1).
+  // One gate per judged attempt, in order; ReflectionView.attempt counts from 1, answers are keyed from 0.
   const gates = agent.reflections
-  const index = agent.degraded ? agent.degraded.attempt : gates.findLastIndex((r) => r.passed) >= 0 ? gates.findLastIndex((r) => r.passed) : gates.length - 1
-  const gate = gates[index]
-  if (!gate?.claims) return null
-  const statuses = agent.degraded?.claimStatuses ?? gate.claimStatuses ?? {}
+  const answers = agent.answerClaims ?? {}
+  const lastAnswer = Math.max(-1, ...Object.keys(answers).map(Number))
+  const passing = gates.findLastIndex((r) => r.passed)
+  const lastGateAttempt = gates.length ? gates[gates.length - 1].attempt - 1 : -1
+  // An answer after the last gate that the run accepted without one (the budget-reached return).
+  const ungated = !agent.degraded && passing < 0 && agent.status === 'done' && lastAnswer > lastGateAttempt
+  const index = agent.degraded ? agent.degraded.attempt : passing >= 0 ? passing : gates.length - 1
+  const gate = ungated ? undefined : gates[index]
+  const attempt = ungated ? lastAnswer : index
+  // The gate's own attempt finds its answer even when an attempt had no gate (a repetition loop); 0 = no agent_start seen.
+  const answer = answers[gate && gate.attempt > 0 ? gate.attempt - 1 : attempt]
+  const raw = gate?.claims ?? answer?.claims
+  if (!raw) return null
+  const statuses = agent.degraded?.claimStatuses ?? gate?.claimStatuses ?? answer?.claimStatuses ?? {}
   const conflicts = conflictsByRef(view)
-  const claims = gate.claims.map((c): ClaimRow => {
+  const claims = raw.map((c): ClaimRow => {
     const ref = `${agentId} ${c.id}`
     const conflict = conflicts.get(ref)
     return { ...c, agentId, ref, status: statuses[c.id] ?? 'unknown', ...(conflict && { conflictWith: conflict.other, conflictConfirmed: conflict.confirmed }) }
   })
-  return { claims, attempt: index, attempts: gates.length, score: gate.score }
+  return { claims, attempt, attempts: Math.max(gates.length, lastAnswer + 1), score: gate?.score ?? 0 }
+}
+
+/** One line on why an agent shows no claims (rectification R4: never a blank drawer), or null when it has some. */
+export function noClaimsReason(view: RunView, agentId: string): string | null {
+  const agent = view.agents[agentId]
+  if (agent?.status === 'failed' || agent?.status === 'cancelled') return 'This step failed, so no answer was accepted.'
+  if (agent?.status === 'skipped') return 'This step was skipped, so it made no claims.'
+  if (!agent || agent.status !== 'done') return 'This step has not finished yet.'
+  const accepted = acceptedClaims(view, agentId)
+  if (accepted) return accepted.claims.length ? null : 'This step produced no claims.'
+  const statuses = [agent.degraded?.claimStatuses, ...agent.reflections.map((g) => g.claimStatuses)]
+  if (statuses.some((st) => st && Object.keys(st).length)) return 'This run was saved before claims were recorded, and its log is not available, so they cannot be shown.'
+  if (!agent.reflections.length && view.totals.budgetReached) return 'This step ended without a claims check (budget reached).'
+  return 'This step produced no claims.'
 }
 
 export function claimTone(status: string, conflicted: boolean): ChipTone {

@@ -2328,12 +2328,13 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
         else:
             output, claims, parse_errors = parse_claims(output)
         parsed = [dict(c) for c in claims]  # before verify_claim fills/re-points them: what a later patch applies to
-        await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
-                       **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
-                       **({"modelServed": served} if served else {}))
-
         view = evidence_view(run, step, store)  # own evidence + the dependencies' (spec B Phase 4)
         statuses = {c["id"]: verify_claim(c, view) for c in claims}
+        # Rectification R4: the answer carries its claims as verified, so every path that ends here with an answer
+        # (budget reached, degraded, re-run, resumed) has them even when no reflection_result follows.
+        await run.emit("agent_complete", agentId=agent_id, attempt=attempt, output=output, tokenCount=agent_tokens, costUsd=round(agent_cost, 8),
+                       **({"truncated": truncated} if truncated else {}), **({"stoppedAtToolLimit": True} if stopped_at_limit else {}),
+                       **({"modelServed": served} if served else {}), claims=[claim_view(c) for c in claims], claimStatuses=statuses)
         if run.budget_reached:  # no reflection spend once the cap is reached; output kept as-is
             return finish(output, claims, statuses)
         await run.emit("reflection_start", agentId=agent_id, attempt=attempt)

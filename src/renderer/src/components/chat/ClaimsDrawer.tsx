@@ -1,11 +1,14 @@
 // Spec B 7a: the claims and evidence drawer (design 11). Opens from any claim chip, a ledger cell (7b) or "View claims".
-import { useEffect, useMemo, useState } from 'react'
+// Rectification R4: it sits above the agent focus view (zLayers.ts), Escape closes it first, and an agent with no claims
+// says why in one line instead of an empty list.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import type { EvidenceRecord } from '../../../../shared/types'
-import { acceptedClaims, claimLabel, claimTone, findQuoteRanges } from '../../lib/claimsView'
+import { acceptedClaims, claimLabel, claimTone, findQuoteRanges, noClaimsReason } from '../../lib/claimsView'
 import type { ChipTone, ClaimRow } from '../../lib/claimsView'
 import type { RunView } from '../../lib/multiAgentRunState'
 import { cn } from '../../lib/utils'
+import { coveredAbove, layerProps } from './zLayers'
 
 /** What to open: one agent's claims, focused on `ref`; `refs` limits the list (a ledger cell's claims). */
 export interface ClaimTarget {
@@ -81,11 +84,25 @@ export function ClaimsDrawer({ view, target, onSelect, onClose }: {
   const conflictRows = useMemo(() => (row?.conflictWith ?? []).map((ref) => acceptedClaims(view, ref.split(' ')[0])?.claims.find((c) => c.ref === ref)), [view, row])
   const step = view.agents[target.agentId]?.step
 
+  // Escape closes this layer only: captured and handled, so the focus view and the dock beneath do not also close.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || coveredAbove('claimsDrawer')) return
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
+
+  // Focus moves into the drawer and back to whatever opened it.
+  const root = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    root.current?.focus()
+    return () => { if (opener?.isConnected && opener !== document.body) opener.focus() }
+  }, [])
 
   useEffect(() => {
     setRaw(false)
@@ -102,8 +119,8 @@ export function ClaimsDrawer({ view, target, onSelect, onClose }: {
   const source = evidence.state === 'ok' && row ? sourceText(row, evidence.record) : null
 
   return (
-    <aside data-testid="claims-drawer" role="dialog" aria-label="Claims and evidence"
-      className="fixed bottom-4 right-4 top-4 z-50 flex w-[560px] max-w-[calc(100vw-32px)] animate-[ma-slide-in_180ms_ease-out] flex-col overflow-hidden rounded-xl border-[0.5px] border-white/[0.08] bg-[#0a0a0a] text-[#e8e8e8] shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+    <aside ref={root} tabIndex={-1} data-testid="claims-drawer" role="dialog" aria-label="Claims and evidence" {...layerProps('claimsDrawer')}
+      className="fixed bottom-4 right-4 top-4 flex outline-none w-[560px] max-w-[calc(100vw-32px)] animate-[ma-slide-in_180ms_ease-out] flex-col overflow-hidden rounded-xl border-[0.5px] border-white/[0.08] bg-[#0a0a0a] text-[#e8e8e8] shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
       <div className="flex items-center justify-between border-b-[0.5px] border-white/[0.08] px-4 py-3.5">
         <div>
           <div className={LABEL}>Evidence · agent {target.agentId}{step ? ` · ${step.role}` : ''}</div>
@@ -153,7 +170,8 @@ export function ClaimsDrawer({ view, target, onSelect, onClose }: {
           )}
         </>
       )}
-      <div className="flex items-center gap-2 px-4 py-2.5">
+      {!all.length && <p data-testid="drawer-empty" className="px-4 py-3.5 text-[13px] leading-normal text-[#a8a8a8]">{noClaimsReason(view, target.agentId) ?? 'No claims match.'}</p>}
+      {all.length > 0 && <div className="flex items-center gap-2 px-4 py-2.5">
         <span className={LABEL}>All claims</span>
         {([['all', `all ${all.length}`, 'neutral'], ['unverified', 'unverified only', 'warn'], ['conflicts', 'conflicts', 'bad']] as const).map(([key, text, tone]) => (
           <button key={key} data-testid={`drawer-filter-${key}`} aria-pressed={filter === key} onClick={() => setFilter(key)}
@@ -161,7 +179,7 @@ export function ClaimsDrawer({ view, target, onSelect, onClose }: {
             {text}
           </button>
         ))}
-      </div>
+      </div>}
       <div className="min-h-0 flex-1 overflow-auto">
         {shown.map((c) => (
           <button key={c.ref} data-testid={`drawer-claim-row-${c.ref}`} onClick={() => onSelect({ ...target, ref: c.ref })}

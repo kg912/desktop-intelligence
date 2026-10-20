@@ -2,6 +2,7 @@
 // states B–D). Every figure comes from the same RunView the dock renders, with
 // the dock's status mapping, so the card and the dock cannot disagree.
 
+import { Z_LAYERS } from '../chat/zLayers'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Network } from 'lucide-react'
@@ -331,7 +332,7 @@ function HoverCard({ id, style, run, onOpenRunView, onOpenSettings }: { id: stri
     : `${formatUsd(view.totals.costUsd)} · ${formatTokens(view.totals.tokens)} tokens`
 
   return (
-    <div id={id} role="dialog" aria-label="Multi-agent run" className="ma-pop" data-testid="mode-card" style={style}>
+    <div id={id} role="dialog" aria-label="Multi-agent run" className="ma-pop" data-testid="mode-card" data-layer="popover" style={{ ...style, zIndex: Z_LAYERS.popover }}>
       <h4><b data-testid="mode-card-title">{title}</b>{right && <span>{right}</span>}</h4>
       {hasGraph ? <AgentGraph view={view!} /> : <p className="ma-pop-empty">{explanation}</p>}
       <div className="ma-models" aria-label="Models">

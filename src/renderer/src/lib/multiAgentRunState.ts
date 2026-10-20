@@ -76,6 +76,8 @@ export interface AgentView {
   modelServed?: string
   /** Accepted with caveats: shown amber, never as failed. */
   degraded?: DegradedView
+  /** Rectification R4: each answer's claims and statuses by 0-based attempt (from agent_complete), for when no gate has them. */
+  answerClaims?: Record<number, { claims: ClaimView[]; claimStatuses?: Record<string, string> }>
   /** History compacted to fit the context window: events and tool results stubbed in total. */
   compacted?: { events: number; stubbed: number; tokensFreed: number }
   startedAt?: number
@@ -359,9 +361,10 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
         ),
       }))
     case 'agent_complete':
-      return updateAgent(next, event.agentId, () => ({
+      return updateAgent(next, event.agentId, (a) => ({
         output: event.output, tokenCount: event.tokenCount, costUsd: event.costUsd, status: 'done', endedAt: event.ts, truncated: event.truncated,
         stoppedAtToolLimit: event.stoppedAtToolLimit, modelServed: event.modelServed,
+        ...(event.claims && { answerClaims: { ...a.answerClaims, [event.attempt ?? a.attempt - 1]: { claims: event.claims, ...(event.claimStatuses && { claimStatuses: event.claimStatuses }) } } }),
       }))
     case 'reflection_start':
       return updateAgent(next, event.agentId, () => ({ status: 'reflecting' }))

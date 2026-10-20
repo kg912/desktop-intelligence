@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-// Dev-only page for the browser preview (npx vite --config vite.preview.config.ts → http://localhost:5174/gallery.html#d11 … #d14, #settings, #topbar): spec B's UI surfaces
+// Dev-only page for the browser preview (npx vite --config vite.preview.config.ts → http://localhost:5174/gallery.html#d11 … #d14, #settings, #topbar, #r4): spec B's UI surfaces
 // with the Istanbul fixture's data, to compare against specs/designs/11–14. Not part of the app build.
 import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
@@ -21,6 +21,10 @@ import { TopBar } from '../components/layout/TopBar'
 import { ModelStoreProvider } from '../store/ModelStore'
 import LEDGER from '../lib/__tests__/fixtures/istanbul-ledger.json'
 import EVENTS_JSONL from '../../../../resources/python/tests/fixtures/runs/istanbul-3leg/events.jsonl?raw'
+import AGENT_13_JSONL from '../../../../resources/python/tests/fixtures/runs/istanbul-3leg/agent-1.3.jsonl?raw'
+import { AgentFocusView } from '../components/chat/AgentFocusView'
+import { evidenceFromRecords, withClaimsFromRecords } from '../../../shared/claimRecovery'
+import type { LogRecord } from '../../../shared/claimRecovery'
 
 let seq = 0
 const ev = (e: Record<string, unknown>) => ({ runId: 'r', seq: ++seq, ts: 1_000 * seq, ...e }) as unknown as AgentEvent
@@ -144,6 +148,29 @@ function TopBarAt() {
   )
 }
 
-const SECTIONS: Record<string, () => React.ReactElement> = { d11: D11, d12: D12, d13: D13, d14: D14, settings: Settings, topbar: TopBarAt }
+/** Rectification R4: the reported run's step 1.3 in the focus view; "View claims" opens the drawer above it. */
+function R4() {
+  const events = EVENTS_JSONL.split('\n').filter(Boolean).map((l: string) => JSON.parse(l) as AgentEvent)
+  const records = AGENT_13_JSONL.split('\n').filter(Boolean).map((l: string) => JSON.parse(l) as LogRecord)
+  const runId = events[0].runId
+  const fixed = withClaimsFromRecords({ mode: 'multi-agent', runStatus: 'completed', agentGraph: [], executionTrace: events, runId }, (id) => (id === '1.3' ? records : []))
+  const view = reduceRunEvents(runId, fixed.executionTrace)
+  ;(window as any).api.getMultiAgentEvidence = async (_r: string, agentId: string, callId: string) => (agentId === '1.3' ? evidenceFromRecords(records, '1.3', callId) : null)
+  const [target, setTarget] = useState<ClaimTarget | null>(null)
+  const [focus, setFocus] = useState(true)
+  const actions = { models: [], estimateFor: () => null, steer: async () => {}, rerun: async () => ({ ok: true as const }), rerunUnavailable: null }
+  return (
+    <RunActionsContext.Provider value={actions}>
+      <ClaimLinksContext.Provider value={{ view, open: setTarget, onSelectAgent: () => {} }}>
+        <div data-testid="r4-under" style={{ ...frame, width: '100%', height: '100vh' }}>the app under the overlays</div>
+        {target && <ClaimsDrawer view={view} target={target} onSelect={setTarget} onClose={() => setTarget(null)} />}
+        {focus && <AgentFocusView view={view} agentId="1.3" task="Verify the domestic flight legs" config={config} queue={[]} readOnly={false}
+          onRespond={() => {}} onNavigate={() => {}} onClose={() => setFocus(false)} />}
+      </ClaimLinksContext.Provider>
+    </RunActionsContext.Provider>
+  )
+}
+
+const SECTIONS: Record<string, () => React.ReactElement> = { d11: D11, d12: D12, d13: D13, d14: D14, settings: Settings, topbar: TopBarAt, r4: R4 }
 const Section = SECTIONS[location.hash.slice(1)] ?? D11
 ReactDOM.createRoot(document.getElementById('root')!).render(<Section />)

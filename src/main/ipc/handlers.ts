@@ -14,6 +14,7 @@ import { processFile } from '../services/FileProcessorService'
 import { pythonWorker } from '../services/PythonWorkerService'
 import { savePlot, searchPlots } from '../services/PlotStore'
 import { observabilityService } from '../services/ObservabilityService'
+import { evidenceFromLog, withRecoveredClaims } from '../services/multiAgentClaimRecovery'
 import { getSandboxStatus } from '../services/sandbox/sandboxStatus'
 import type { DebugPrefs } from '../services/ObservabilityService'
 import {
@@ -1506,9 +1507,13 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_ASSESS_ANSWER, (_, p: { runId: string; answer: string }) =>
     getMultiAgentCoordinator().respondAssess(String(p.runId), { kind: 'answer', answer: String(p.answer ?? '') })
   )
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, (_, p: { runId: string; agentId: string; callId: string }) =>
-    getMultiAgentCoordinator().getEvidence(String(p.runId), String(p.agentId), String(p.callId))
-  )
+  // Rectification R4: runs whose sidecar state is gone (older runs) still have their tool results in the run log.
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, async (_, p: { runId: string; agentId: string; callId: string }) => {
+    const live = await getMultiAgentCoordinator().getEvidence(String(p.runId), String(p.agentId), String(p.callId))
+    if (live) return live
+    const dir = await observabilityService.findMultiAgentRunDir(String(p.runId))
+    return dir ? evidenceFromLog(dir, String(p.agentId), String(p.callId)) : null
+  })
   // Unused by UI since rectification R3; kept for old runs (step_locked events, `locked` in saved state).
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, (_, p: { runId: string; stepId: string; locked: boolean; chatId?: string }) =>
     getMultiAgentCoordinator().lockStep(String(p.runId), String(p.stepId), p.locked === true, p.chatId ? String(p.chatId) : undefined)
@@ -1526,9 +1531,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     return multiAgentSidecar.getStatus()
   })
 
-  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_RUN, (_, chatId: string, runId?: string) =>
-    getMultiAgentCoordinator().getRun(String(chatId), typeof runId === 'string' ? runId : undefined)
-  )
+  // Rectification R4: runs recorded before claims were stored on the gates get them from their run log.
+  ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_RUN, async (_, chatId: string, runId?: string) => {
+    const record = getMultiAgentCoordinator().getRun(String(chatId), typeof runId === 'string' ? runId : undefined)
+    const id = record?.runId ?? record?.executionTrace[0]?.runId
+    return record && id ? withRecoveredClaims(record, observabilityService.multiAgentRunDir(String(chatId), id)) : record
+  })
 
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_CATALOGUE, async (): Promise<{ models: OpenRouterModelInfo[]; error: string | null }> => {
     const key = readSettings().openrouterApiKey ?? ''

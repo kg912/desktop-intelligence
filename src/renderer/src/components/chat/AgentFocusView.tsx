@@ -10,6 +10,7 @@ import { StepControls } from './StepControls'
 import type { AgentView, RunView, TimelineItem } from '../../lib/multiAgentRunState'
 import { elapsedMs, formatElapsed, isRunActive } from '../../lib/multiAgentRunState'
 import { argsSummary, bareTool } from '../../lib/approvalQueue'
+import { coveredAbove, layerProps } from './zLayers'
 import { APPROVAL_TONE, TAG_TONE, formatTokens, isWorking, shortModel, stateTag } from './MultiAgentSidebarView'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
@@ -99,9 +100,10 @@ export function AgentFocusView({ view, agentId, task, config, queue, readOnly, o
   }, [])
 
   // Esc closes; J/K (or the arrows) change agent without closing. Captured so the dock's Esc does not also fire.
+  // A layer above (the claims drawer opened from here) owns the keyboard while it is open (rectification R4).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.metaKey || e.ctrlKey || e.altKey || coveredAbove('agentFocus')) return
       if ((e.target as HTMLElement | null)?.closest?.('input, textarea')) return
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
       if (key === 'Escape') onClose()
@@ -124,7 +126,7 @@ export function AgentFocusView({ view, agentId, task, config, queue, readOnly, o
   const phases = Math.max(0, ...view.steps.map((s) => s.phase))
 
   return (
-    <div className="fixed inset-0 z-[70]" data-testid="agent-focus-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="fixed inset-0" {...layerProps('agentFocus')} data-testid="agent-focus-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !coveredAbove('agentFocus')) onClose() }}>
       <div
         ref={layer}
         role="dialog"
