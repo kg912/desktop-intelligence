@@ -359,7 +359,7 @@ function RightRail({ view, agent, queue, config, readOnly }: { view: RunView; ag
   const section = 'border-t-[0.5px] border-white/[0.06] pt-4'
   return (
     <aside className="flex w-[360px] flex-none flex-col gap-5 overflow-y-auto border-l-[0.5px] border-white/[0.06] px-[22px] py-5" aria-label="Agent details" data-testid="focus-rail">
-      {/* Spec B 7d: steer, re-run on…, lock output. */}
+      {/* Spec B 7d: steer, re-run on… (rectification R3: no lock). */}
       <StepControls view={view} agentId={agent.step.id} readOnly={readOnly} />
       <div>
         <Label>TOOL TIMELINE</Label>

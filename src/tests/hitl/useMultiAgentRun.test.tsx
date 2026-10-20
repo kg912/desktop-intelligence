@@ -110,7 +110,7 @@ describe('useMultiAgentRun: continue a saved run (spec B Phase 5)', () => {
     api.getMultiAgentRun.mockResolvedValue(saved)
     api.resumeMultiAgentRun.mockResolvedValue({ ok: true, runId: 'run-1' })
     const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
-    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1')).toBe(true) })
+    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1')).toEqual({ ok: true }) })
     expect(api.resumeMultiAgentRun).toHaveBeenCalledWith({ runId: 'run-1', chatId: 'chat-1', config: expect.objectContaining({ maxAgents: DEFAULT_MULTI_AGENT_CONFIG.maxAgents }) })
     expect(result.current.run).toMatchObject({ chatId: 'chat-1', task: 'Trip', review: false })
     emit(e(3, { type: 'run_resumed', finishedSteps: [], wave: 1 }))
@@ -118,13 +118,24 @@ describe('useMultiAgentRun: continue a saved run (spec B Phase 5)', () => {
     expect(result.current.run?.view.phase).toBe('running')
   })
 
-  it('re-runs a step with its options; a refusal shows the reason and leaves the run read-only', async () => {
+  it('re-runs a step with its options; a refusal returns the reason and leaves the run as it was (rectification R3)', async () => {
     api.getMultiAgentRun.mockResolvedValue(saved)
-    api.rerunMultiAgentStep.mockResolvedValue({ ok: false, reason: 'Step 1.1 is locked: unlock it to re-run it.' })
+    api.rerunMultiAgentStep.mockResolvedValue({ ok: false, reason: 'no saved state for this run' })
     const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
-    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1', { stepId: '1.1', model: 'm/strong', withDependents: true })).toBe(false) })
+    await act(async () => {
+      expect(await result.current.continueRun('chat-1', 'run-1', { stepId: '1.1', model: 'm/strong', withDependents: true })).toEqual({ ok: false, reason: 'no saved state for this run' })
+    })
     expect(api.rerunMultiAgentStep).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1', chatId: 'chat-1', stepId: '1.1', model: 'm/strong', withDependents: true }))
-    expect(result.current.startError).toBe('Step 1.1 is locked: unlock it to re-run it.')
+    expect(result.current.startError).toBeNull()  // shown inline by the step controls, not in the composer banner
+    expect(result.current.run).toBeNull()  // the saved run stays on screen as it was (nothing was live)
+  })
+
+  it('a refused resume still shows the reason and leaves the run read-only', async () => {
+    api.getMultiAgentRun.mockResolvedValue(saved)
+    api.resumeMultiAgentRun.mockResolvedValue({ ok: false, reason: 'no saved state for this run' })
+    const { result } = renderHook(() => useMultiAgentRun(vi.fn()))
+    await act(async () => { expect(await result.current.continueRun('chat-1', 'run-1')).toEqual({ ok: false, reason: 'no saved state for this run' }) })
+    expect(result.current.startError).toBe('no saved state for this run')
     expect(result.current.run?.review).toBe(true)
   })
 })

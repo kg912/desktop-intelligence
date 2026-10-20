@@ -3161,7 +3161,8 @@ async def steer(run_id: str, agent_id: str, body: SteerRequest) -> dict[str, boo
 
 @app.post("/run/{run_id}/steps/{step_id}/lock")
 async def lock_step(run_id: str, step_id: str, body: LockRequest) -> dict[str, bool]:
-    """A locked step's claims and evidence are reused as they are: never re-run, never marked stale."""
+    """A locked step's claims and evidence are reused as they are: never re-run, never marked stale. Unused by UI since
+    rectification R3 (Lock was removed from the app); kept so old runs' saved locks and step_locked events still load."""
     live = RUNS.get(run_id)
     if live:
         (live.locked.add if body.locked else live.locked.discard)(step_id)

@@ -97,11 +97,12 @@ function D14() {
   const view = reduceRunEvents('r', [ev({ type: 'orchestrator_plan', steps: plan }), ev({ type: 'plan_step_removed', stepId: '2.1', label: 'Merge findings', reason: 'merge' })])
   const running = reduceRunEvents('r', [ev({ type: 'orchestrator_plan', steps: plan }), ev({ type: 'hitl_resume', agentId: 'orchestrator', approved: true }),
     ev({ type: 'agent_start', agentId: '1.2', role: 'Leg', model: 'm' }), ...[1, 2, 3].map((n) => ev({ type: 'tool_start', agentId: '1.2', attempt: 0, callId: `c${n}`, tool: 'brave_search', server: 'builtin', argsPreview: '' }))])
-  const finished = reduceRunEvents('r', [ev({ type: 'orchestrator_plan', steps: plan }), ev({ type: 'agent_start', agentId: '1.4', role: 'Leg', model: 'm' }),
+  const finishedEvents = [ev({ type: 'orchestrator_plan', steps: plan }), ev({ type: 'agent_start', agentId: '1.4', role: 'Leg', model: 'm' }),
     ev({ type: 'agent_complete', agentId: '1.4', output: 'x', tokenCount: 1, costUsd: 0.04 }), ev({ type: 'reflection_result', agentId: '1.4', score: 4, passed: true, reason: 'ok' }),
-    ev({ type: 'task_complete', finalOutput: 'a', totalCostUsd: 0.3, totalTokens: 1 }), ev({ type: 'step_locked', agentId: '1.1', locked: true })])
+    ev({ type: 'task_complete', finalOutput: 'a', totalCostUsd: 0.3, totalTokens: 1 })]
+  const finished = reduceRunEvents('r', finishedEvents)
   const actions = { models: ['deepseek/deepseek-v4.1-flash', 'anthropic/claude-sonnet-5-5'], estimateFor: (s: unknown[]) => ({ minUsd: 0.06 * s.length, maxUsd: 0.09 * s.length, unpricedModels: [] }),
-    steer: async () => {}, rerun: async () => true, lock: async () => {} }
+    steer: async () => {}, rerun: async () => ({ ok: true as const }), rerunUnavailable: null }
   return (
     <RunActionsContext.Provider value={actions}>
       <div style={frame}>
@@ -109,7 +110,11 @@ function D14() {
         <div style={{ width: 540, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <StepControls view={running} agentId="1.2" />
           <StepControls view={finished} agentId="1.4" />
-          <StepControls view={finished} agentId="1.1" />
+          {/* An old trace whose finished step 1.4 was locked (rectification R3: no lock UI, re-run disabled with a reason). */}
+          <StepControls view={reduceRunEvents('r', [...finishedEvents, ev({ type: 'step_locked', agentId: '1.4', locked: true })])} agentId="1.4" />
+          <RunActionsContext.Provider value={{ ...actions, rerunUnavailable: 'Re-run is only available for the latest run of this chat' }}>
+            <StepControls view={finished} agentId="1.4" />
+          </RunActionsContext.Provider>
         </div>
       </div>
     </RunActionsContext.Provider>

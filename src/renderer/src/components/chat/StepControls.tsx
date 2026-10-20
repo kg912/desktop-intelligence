@@ -1,8 +1,8 @@
 // Spec B 7d (design 14, right): controls for one step. Running: steer it (delivered at its next round). Finished run:
-// re-run it on another model (optionally with its dependents, otherwise they are marked stale), lock its output, view
-// its claims. Locked: says what that means.
+// re-run it on another model (optionally with its dependents, otherwise they are marked stale), view its claims.
+// Rectification R3: no lock control (the backend keeps step_locked for old runs); when re-run cannot work, the button
+// is disabled with a one-line reason instead of failing.
 import { useContext, useMemo, useState } from 'react'
-import { Lock, LockOpen } from 'lucide-react'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { RunView } from '../../lib/multiAgentRunState'
 import { isRunActive } from '../../lib/multiAgentRunState'
@@ -25,13 +25,18 @@ export function StepControls({ view, agentId, readOnly }: { view: RunView; agent
   const [error, setError] = useState<string | null>(null)
   const [rerunOpen, setRerunOpen] = useState(false)
   const [model, setModel] = useState(agent?.step.model ?? '')
+  const [refused, setRefused] = useState<string | null>(null)
   const estimate = useMemo(() => (agent && actions ? actions.estimateFor([{ ...agent.step, model, dependsOn: agent.step.dependsOn }]) : null), [actions, agent, model])
   if (!agent || !actions || readOnly) return null
   const live = isRunActive(view)
-  const locked = view.locked.includes(agentId)
+  // A step locked by an earlier version of the app is never re-run by the sidecar; say so in plain words.
+  const rerunBlocked = actions.rerunUnavailable ?? (view.locked.includes(agentId) ? 'Re-run is unavailable: an earlier version of the app kept this step\'s output fixed.' : null) ?? refused
   const running = live && isWorking(agent.status)
   const finished = !live && (agent.status === 'done' || agent.status === 'failed')
   const run = (p: Promise<unknown>): void => { setError(null); p.catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }
+  const rerun = (withDependents: boolean): void => run(actions.rerun(agentId, { model, withDependents }).then((r) => {
+    if (!r.ok) { setRefused(r.reason); setRerunOpen(false) }
+  }))
   const round = agent.timeline.filter((t) => t.kind === 'tool' && t.attempt === agent.attempt - 1).length + 1
   const lastGate = agent.reflections.at(-1)
   return (
@@ -66,13 +71,11 @@ export function StepControls({ view, agentId, readOnly }: { view: RunView; agent
             {agent.stale && <Chip tone="warn">stale</Chip>}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className={BTN} disabled={locked} aria-expanded={rerunOpen} onClick={() => setRerunOpen((v) => !v)}>Re-run on…</button>
-            <button className={cn(BTN, 'inline-flex items-center gap-1.5')} onClick={() => run(actions.lock(agentId, !locked))}>
-              {locked ? <LockOpen className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}{locked ? 'Unlock output' : 'Lock output'}
-            </button>
+            <button className={BTN} disabled={!!rerunBlocked} aria-expanded={rerunOpen} onClick={() => setRerunOpen((v) => !v)}>Re-run on…</button>
             {links && <button className={BTN} onClick={() => links.open({ agentId })}>View claims</button>}
           </div>
-          {rerunOpen && !locked && (
+          {rerunBlocked && <p className="mt-2 text-[12px] leading-normal text-[#a8a8a8]" data-testid="rerun-unavailable">{rerunBlocked}</p>}
+          {rerunOpen && !rerunBlocked && (
             <div className="mt-3 rounded-lg border-[0.5px] border-white/[0.08] bg-[#0d0d0d] p-3" data-testid="rerun-panel">
               <select aria-label={`Re-run ${agentId} on`} value={model} onChange={(e) => setModel(e.target.value)}
                 className="rounded-md border-[0.5px] border-white/[0.14] bg-[#141414] px-2 py-1 font-mono text-[11.5px]">
@@ -83,19 +86,11 @@ export function StepControls({ view, agentId, readOnly }: { view: RunView; agent
                 Downstream steps that used this output will be marked stale, not re-run automatically.
               </p>
               <div className="mt-2.5 flex gap-2">
-                <button className={PRIMARY} onClick={() => run(actions.rerun(agentId, { model, withDependents: false }))}>Re-run this step</button>
-                <button className={BTN} onClick={() => run(actions.rerun(agentId, { model, withDependents: true }))}>Re-run + dependents</button>
+                <button className={PRIMARY} onClick={() => rerun(false)}>Re-run this step</button>
+                <button className={BTN} onClick={() => rerun(true)}>Re-run + dependents</button>
               </div>
             </div>
           )}
-        </section>
-      )}
-      {locked && (
-        <section className={PANEL} data-testid="locked-note">
-          <div className={LABEL}>Locked</div>
-          <p className="mt-2 flex items-start gap-1.5 text-[13px] leading-relaxed text-[#cfcfcf]">
-            <Lock className="mt-[3px] h-3.5 w-3.5 flex-none text-[#fbbf24]" />{agentId} is locked. Later re-runs and follow-up waves reuse its claims and evidence unchanged.
-          </p>
         </section>
       )}
       {error && <p className="text-[12px] text-[#ff8c88]" role="alert">{error}</p>}

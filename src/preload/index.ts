@@ -428,6 +428,7 @@ const api = {
   getMultiAgentEvidence: (runId: string, agentId: string, callId: string): Promise<EvidenceRecord | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, { runId, agentId, callId }),
 
+  // Unused by UI since rectification R3 (Lock was removed); kept with its IPC so old runs and their step_locked events load.
   lockMultiAgentStep: (payload: { runId: string; stepId: string; locked: boolean; chatId?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, payload),
 

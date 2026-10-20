@@ -130,12 +130,14 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
 
   /** Spec B Phase 5: resume an interrupted run, or re-run one step of a finished one (`rerun`). The saved run goes live
    *  (its trace stays; new events apply on top). A refusal leaves it open read-only with the reason. */
-  const continueRun = useCallback(async (chatId: string, runId: string, rerun?: { stepId: string; model?: string; withDependents?: boolean }): Promise<boolean> => {
+  /** Resume an interrupted run, or re-run a step of a finished one. A refused re-run leaves the screen as it was and
+   *  returns the reason for the step controls to show (rectification R3); a refused resume shows it read-only. */
+  const continueRun = useCallback(async (chatId: string, runId: string, rerun?: { stepId: string; model?: string; withDependents?: boolean }): Promise<{ ok: true } | { ok: false; reason: string }> => {
     const current = runRef.current
-    if (current && !current.review && isRunActive(current.view)) return false
+    if (current && !current.review && isRunActive(current.view)) return { ok: false, reason: 'A multi-agent run is already in progress for this chat' }
     setStartError(null)
     const record = await window.api.getMultiAgentRun(chatId, runId).catch(() => null)
-    if (!record || record.mode !== 'multi-agent' || record.executionTrace.length === 0) return false
+    if (!record || record.mode !== 'multi-agent' || record.executionTrace.length === 0) return { ok: false, reason: 'No saved run to continue' }
     const config: MultiAgentConfig = await window.api.getMultiAgentConfig().catch(() => DEFAULT_MULTI_AGENT_CONFIG)
     const next: ActiveRun = { chatId, task: record.task ?? '', review: false, config, view: reduceRunEvents(runId, record.executionTrace), runIds: record.runIds }
     runRef.current = next
@@ -144,14 +146,17 @@ export function useMultiAgentRun(onRunFinished: (chatId: string) => void) {
       ? window.api.rerunMultiAgentStep({ runId, chatId, config, ...rerun })
       : window.api.resumeMultiAgentRun({ runId, chatId, config })
     ).catch((err: unknown) => ({ ok: false as const, reason: err instanceof Error ? err.message : String(err) }))
-    if (!result.ok) {
+    if (result.ok) return { ok: true }
+    if (rerun) {
+      runRef.current = current
+      setRun(current)
+    } else {
       const readOnly = { ...next, review: true }
       runRef.current = readOnly
       setRun(readOnly)
       setStartError(result.reason)
-      return false
     }
-    return true
+    return { ok: false, reason: result.reason }
   }, [])
 
   const dismiss = useCallback(() => {

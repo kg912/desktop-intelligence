@@ -1,8 +1,11 @@
 // Spec B 7d (design 14): the pre-flight plan editor and the step controls. Edit validation (cycle, missing dependency,
-// order, over budget) blocks approval; an edited plan is what approval sends; steer / re-run on… / lock call the run's
-// actions. (The sidecar side: resources/python/test_preflight_steer.py and test_resume_rerun.py.)
+// order, over budget) blocks approval; an edited plan is what approval sends; steer / re-run on… call the run's actions.
+// Rectification R3: no lock affordance anywhere; re-run is disabled with a one-line reason when it cannot run.
+// (The sidecar side: resources/python/test_preflight_steer.py and test_resume_rerun.py.)
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within, act, renderHook } from '@testing-library/react'
+import { render, screen, fireEvent, within, act, renderHook, waitFor } from '@testing-library/react'
+import { readdirSync, readFileSync, statSync } from 'fs'
+import { join } from 'path'
 import { PlanEditor } from '../../renderer/src/components/chat/PlanEditor'
 import { StepControls } from '../../renderer/src/components/chat/StepControls'
 import { Preflight } from '../../renderer/src/components/chat/MultiAgentSidebarView'
@@ -23,7 +26,7 @@ const config = { ...DEFAULT_MULTI_AGENT_CONFIG, maxAgents: 6, budgetCapUsd: 1, m
 const actions = (): RunActions => ({
   models: ['m/flash', 'anthropic/claude-sonnet-5-5'],
   estimateFor: vi.fn((steps) => ({ minUsd: 0.05 * steps.length, maxUsd: 0.1 * steps.length, unpricedModels: [] })),
-  steer: vi.fn(async () => {}), rerun: vi.fn(async () => true), lock: vi.fn(async () => {}),
+  steer: vi.fn(async () => {}), rerun: vi.fn(async () => ({ ok: true as const })), rerunUnavailable: null,
 })
 const withActions = (a: RunActions, ui: React.ReactNode) => render(<RunActionsContext.Provider value={a}>{ui}</RunActionsContext.Provider>)
 
@@ -120,12 +123,15 @@ describe('StepControls', () => {
     expect(screen.getByTestId('steer-sent').textContent).toBe('“Only use airline schedule pages, ignore aggregators.” · delivered at round 2')
   })
 
-  it('a finished run\'s step: re-run on another model with the estimate, or with dependents; lock output', () => {
+  const finishedEvents = [...live, ev(7, { type: 'agent_complete', agentId: '1.2', output: 'x', tokenCount: 1, costUsd: 0.04 }),
+    ev(8, { type: 'reflection_result', agentId: '1.2', score: 4, passed: true, reason: 'ok' }), ev(9, { type: 'task_complete', finalOutput: 'a', totalCostUsd: 0.1, totalTokens: 1 })]
+
+  it('a finished run\'s step: re-run on another model with the estimate, or with dependents; no lock affordance', () => {
     const a = actions()
-    const done = reduceRunEvents('r', [...live, ev(7, { type: 'agent_complete', agentId: '1.2', output: 'x', tokenCount: 1, costUsd: 0.04 }),
-      ev(8, { type: 'reflection_result', agentId: '1.2', score: 4, passed: true, reason: 'ok' }), ev(9, { type: 'task_complete', finalOutput: 'a', totalCostUsd: 0.1, totalTokens: 1 })])
-    withActions(a, <StepControls view={done} agentId="1.2" />)
+    withActions(a, <StepControls view={reduceRunEvents('r', finishedEvents)} agentId="1.2" />)
     expect(screen.getByText('Finished step · 1.2 Leg 1.2')).toBeTruthy()
+    expect(screen.getByTestId('step-controls-1.2').textContent).not.toMatch(/lock/i)
+    expect(screen.queryByRole('button', { name: /lock/i })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Re-run on…' }))
     fireEvent.change(screen.getByLabelText('Re-run 1.2 on'), { target: { value: 'anthropic/claude-sonnet-5-5' } })
     expect(screen.getByTestId('rerun-estimate').textContent).toBe('Re-run on claude-sonnet-5-5: est. $0.05 – $0.10. Downstream steps that used this output will be marked stale, not re-run automatically.')
@@ -133,19 +139,59 @@ describe('StepControls', () => {
     expect(a.rerun).toHaveBeenCalledWith('1.2', { model: 'anthropic/claude-sonnet-5-5', withDependents: false })
     fireEvent.click(screen.getByRole('button', { name: 'Re-run + dependents' }))
     expect(a.rerun).toHaveBeenLastCalledWith('1.2', { model: 'anthropic/claude-sonnet-5-5', withDependents: true })
-    fireEvent.click(screen.getByRole('button', { name: 'Lock output' }))
-    expect(a.lock).toHaveBeenCalledWith('1.2', true)
   })
 
-  it('a locked step says so, cannot be re-run, and unlocks', () => {
+  it('the pre-flight editor has no lock affordance either', () => {
+    withActions(actions(), <PlanEditor view={reduceRunEvents('r', PLAN)} config={config} onApprove={vi.fn()} onCancel={vi.fn()} />)
+    expect(screen.getByTestId('plan-editor').textContent).not.toMatch(/lock/i)
+    expect(screen.queryAllByRole('button').filter((b) => /lock/i.test(`${b.textContent} ${b.getAttribute('aria-label') ?? ''} ${b.title}`))).toHaveLength(0)
+  })
+
+  it('an old trace with step_locked still loads: no lock text, re-run disabled with a plain reason', async () => {
     const a = actions()
-    const locked = reduceRunEvents('r', [...live, ev(7, { type: 'agent_complete', agentId: '1.2', output: 'x', tokenCount: 1, costUsd: 0.04 }),
-      ev(8, { type: 'task_complete', finalOutput: 'a', totalCostUsd: 0.1, totalTokens: 1 }), ev(9, { type: 'step_locked', agentId: '1.2', locked: true })])
-    withActions(a, <StepControls view={locked} agentId="1.2" />)
-    expect(screen.getByTestId('locked-note').textContent).toContain('1.2 is locked. Later re-runs and follow-up waves reuse its claims and evidence unchanged.')
+    const old = reduceRunEvents('r', [...finishedEvents, ev(10, { type: 'step_locked', agentId: '1.2', locked: true })])
+    expect(old.locked).toEqual(['1.2'])  // the saved-state field still loads
+    withActions(a, <StepControls view={old} agentId="1.2" />)
+    const box = screen.getByTestId('step-controls-1.2')
+    expect(box.textContent).not.toMatch(/lock/i)
     expect((screen.getByRole('button', { name: 'Re-run on…' }) as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Unlock output' }))
-    expect(a.lock).toHaveBeenCalledWith('1.2', false)
+    expect(screen.getByTestId('rerun-unavailable').textContent).toBe('Re-run is unavailable: an earlier version of the app kept this step\'s output fixed.')
+    const { MultiAgentSidebarView } = await import('../../renderer/src/components/chat/MultiAgentSidebarView')
+    render(<MultiAgentSidebarView view={old} task="t" config={config} readOnly estimate={null} permissionRequests={[]}
+      onRespondPermission={vi.fn()} onApprove={vi.fn()} onCancel={vi.fn()} onAbort={vi.fn()} focusAgentId={null} onSelectAgent={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.getAllByText(/Leg 1\.2/).length).toBeGreaterThan(0)
+  })
+
+  it('an earlier run of the chat: re-run is disabled with the one-line reason, nothing is called', () => {
+    const a = { ...actions(), rerunUnavailable: 'Re-run is only available for the latest run of this chat' }
+    withActions(a, <StepControls view={reduceRunEvents('r', finishedEvents)} agentId="1.2" />)
+    const btn = screen.getByRole('button', { name: 'Re-run on…' }) as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(screen.getByTestId('rerun-unavailable').textContent).toBe('Re-run is only available for the latest run of this chat')
+    fireEvent.click(btn)
+    expect(screen.queryByTestId('rerun-panel')).toBeNull()
+    expect(a.rerun).not.toHaveBeenCalled()
+  })
+
+  it('a refused re-run shows the reason inline and disables Re-run; it is not thrown', async () => {
+    const a = { ...actions(), rerun: vi.fn(async () => ({ ok: false as const, reason: 'no saved state for this run' })) }
+    withActions(a, <StepControls view={reduceRunEvents('r', finishedEvents)} agentId="1.2" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Re-run on…' }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Re-run this step' })) })
+    await waitFor(() => expect(screen.getByTestId('rerun-unavailable').textContent).toContain('no saved state for this run'))
+    expect((screen.getByRole('button', { name: 'Re-run on…' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByTestId('rerun-panel')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('no UI code calls the lock IPC, so no lock 404 can be triggered from the UI', () => {
+    const root = join(__dirname, '../../renderer/src')
+    const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
+      const p = join(dir, f)
+      return statSync(p).isDirectory() ? (f === '__tests__' || f === 'mocks' ? [] : files(p)) : /\.tsx?$/.test(f) ? [p] : []
+    })
+    const callers = files(root).filter((f) => readFileSync(f, 'utf8').includes('lockMultiAgentStep'))
+    expect(callers).toEqual([])
   })
 })
 

@@ -313,7 +313,8 @@ export class MultiAgentRunCoordinator {
     return this.deps.sidecar.discardRun(runId)
   }
 
-  /** A live run announces the lock itself (step_locked); a finished one gets it recorded here, after its last event. */
+  /** A live run announces the lock itself (step_locked); a finished one gets it recorded here, after its last event.
+   *  Unused by UI since rectification R3; kept so old runs' locks and step_locked events still load. */
   async lockStep(runId: string, stepId: string, locked: boolean, chatId?: string): Promise<void> {
     await this.deps.sidecar.lockStep(runId, stepId, locked)
     if (this.runs.has(runId) || !chatId) return

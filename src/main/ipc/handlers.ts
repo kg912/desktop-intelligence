@@ -1509,6 +1509,7 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_GET_EVIDENCE, (_, p: { runId: string; agentId: string; callId: string }) =>
     getMultiAgentCoordinator().getEvidence(String(p.runId), String(p.agentId), String(p.callId))
   )
+  // Unused by UI since rectification R3; kept for old runs (step_locked events, `locked` in saved state).
   ipcMain.handle(IPC_CHANNELS.MULTI_AGENT_LOCK_STEP, (_, p: { runId: string; stepId: string; locked: boolean; chatId?: string }) =>
     getMultiAgentCoordinator().lockStep(String(p.runId), String(p.stepId), p.locked === true, p.chatId ? String(p.chatId) : undefined)
   )

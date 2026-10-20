@@ -35,7 +35,7 @@ Use the existing container-query setup (`ma-topbar-cq`) rather than viewport med
 
 ### R3. Remove Lock from the UI
 Decision (from the user): "what even is this lock button" means it goes.
-- Remove every lock affordance: the "Lock output" / "Unlock output" button and the "Locked" note in `StepControls`, any lock icon in `PlanEditor`, and lock mentions in copy.
+- Remove every lock affordance: the "Lock output" / "Unlock output" button and the "Locked" note in `StepControls`, any lock icon in `PlanEditor`, and lock mentions in copy. (PlanEditor had no lock icon; nothing to remove there.) A step locked in an old trace keeps its lock in the sidecar, so its Re-run is disabled with "Re-run is unavailable: an earlier version of the app kept this step's output fixed."
 - Keep the backend (`step_locked` events, `/lock` route, `locked` in saved state, `lockStep` IPC) so old traces still load; mark them "unused by UI" in a code comment. Old runs that contain `step_locked` events must still render without error.
 - "Re-run on..." stays only if it works on a finished run: the agent must test re-run on a finished run from a saved trace. If it is unavailable (for example, "Only the latest run of a chat can be resumed or re-run", or no saved state), disable the button with a one-line reason shown inline ("Re-run is only available for the latest run of this chat"), never a raw error.
 - **Acceptance:** no element with text "Lock" in `StepControls` or `PlanEditor`; a trace containing `step_locked` loads; re-run on an ineligible step shows the plain-language reason; no 404 can be triggered from the UI.

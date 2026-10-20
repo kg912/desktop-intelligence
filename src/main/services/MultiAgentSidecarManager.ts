@@ -539,6 +539,7 @@ export class MultiAgentSidecarManager extends EventEmitter {
     await this.request(`/run/${encodeURIComponent(runId)}/discard`, { method: 'POST' })
   }
 
+  /** Unused by UI since rectification R3; kept for old runs (see the sidecar's /lock route). */
   async lockStep(runId: string, stepId: string, locked: boolean): Promise<void> {
     const result = await this.request(`/run/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/lock`, {
       method: 'POST', body: JSON.stringify({ locked }),

@@ -305,9 +305,10 @@ export function Layout() {
       estimateFor: (steps) => (Object.keys(multiAgent.pricing).length ? estimateRunCost({ task: shownRun?.task ?? '', steps, config, pricing: multiAgent.pricing }) : null),
       steer: (agentId, message) => window.api.steerMultiAgent(claimView.runId, agentId, message),
       rerun: (stepId, options) => multiAgent.continueRun(activeChatId, claimView.runId, { stepId, ...options }),
-      lock: (stepId, locked) => window.api.lockMultiAgentStep({ runId: claimView.runId, stepId, locked, chatId: activeChatId }),
+      // The coordinator only continues a chat's latest run (its trace lives in that row): say so before anyone clicks.
+      rerunUnavailable: topBarRun?.runIds && topBarRun.runIds.at(-1) !== claimView.runId ? 'Re-run is only available for the latest run of this chat' : null,
     }
-  }, [claimView, activeChatId, shownRun, multiAgent])
+  }, [claimView, activeChatId, shownRun, multiAgent, topBarRun])
 
   // Spec B 7e: a system notification for the first "Needs you" item of a batch or an assess question (main shows it
   // only while the window is unfocused); clicking it opens that chat's run.

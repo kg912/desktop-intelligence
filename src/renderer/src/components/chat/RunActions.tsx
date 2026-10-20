@@ -9,8 +9,10 @@ export interface RunActions {
   models: string[]
   estimateFor: (steps: AgentStep[]) => CostEstimate | null
   steer: (agentId: string, message: string) => Promise<void>
-  rerun: (stepId: string, options: { model?: string; withDependents?: boolean }) => Promise<boolean>
-  lock: (stepId: string, locked: boolean) => Promise<void>
+  /** Refusals come back as { ok: false, reason } (shown inline by StepControls), never thrown. */
+  rerun: (stepId: string, options: { model?: string; withDependents?: boolean }) => Promise<{ ok: true } | { ok: false; reason: string }>
+  /** Rectification R3: a one-line reason when re-run cannot work for this run at all (e.g. not the chat's latest run). */
+  rerunUnavailable: string | null
 }
 
 export const RunActionsContext = createContext<RunActions | null>(null)

@@ -413,7 +413,7 @@ function NodePanel({ view, id, now, models, onOpenAgent }: {
       {gate && <p className={cn('mb-2', gate.passed ? 'text-[#7fdcb0]' : 'text-[#ff8c88]')}>Review {gate.score}/5 — {gate.reason}</p>}
       {agent.failure && <p className="mb-2 text-[#ff8c88]">{agent.failure}</p>}
       {text ? <p className="line-clamp-[8] whitespace-pre-wrap text-ma-soft" data-testid="node-output">{text}</p> : !gate && !agent.failure && <p className="text-ma-dim">No output yet.</p>}
-      {/* Spec B 7d: steer, re-run on…, lock output. */}
+      {/* Spec B 7d: steer, re-run on… (rectification R3: no lock). */}
       <div className="mt-3 max-w-[560px]"><StepControls view={view} agentId={id} /></div>
     </>
   ))

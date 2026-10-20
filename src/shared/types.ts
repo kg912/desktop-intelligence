@@ -491,7 +491,7 @@ export const IPC_CHANNELS = {
   MULTI_AGENT_RESUME:         'multi-agent:resume',
   MULTI_AGENT_DISCARD:        'multi-agent:discard',
   MULTI_AGENT_RERUN_STEP:     'multi-agent:rerun-step',
-  MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',
+  MULTI_AGENT_LOCK_STEP:      'multi-agent:lock-step',  // unused by UI since rectification R3; kept so old runs' locks still apply
   MULTI_AGENT_GET_EVIDENCE:   'multi-agent:get-evidence',
   MULTI_AGENT_STEER:          'multi-agent:steer',
   // Spec B 7e: a system notification when a run needs the user (renderer → main), and its click (main → renderer).

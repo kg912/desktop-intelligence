@@ -22,7 +22,7 @@ import { execFileSync, spawnSync } from 'child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import type { AgentEvent, MultiAgentConfig } from '../../../shared/types'
+import type { AgentEvent, MultiAgentConfig, MultiAgentRunRecord } from '../../../shared/types'
 
 vi.mock('electron', () => ({
   app: { getPath: (name: string) => (name === 'userData' ? '/tmp/di-sidecar-it-userdata' : '/tmp') },
@@ -1026,6 +1026,73 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     // A non-context provider error keeps the generic HTTP wording.
     const other = await limitRun({ scout: () => ({ httpError: { status: 502, message: 'upstream unavailable' } }) })
     expect(other.find((e) => e.type === 'agent_failed')).toMatchObject({ reason: 'OpenRouter HTTP 502: upstream unavailable' })
+  }, 60_000)
+
+  it('Rectification R3: re-run on a finished run from its saved trace works; an earlier run and a run with no saved state are refused with a reason', async () => {
+    planOverride = () => ({ content: JSON.stringify([{ id: '1.1', label: 'Find the answer', role: 'Scout', dependsOn: [] }]) })
+    replyOverride = (body) => (systemOf(body).includes('Scout agent') ? { content: 'The answer is 42. The notes state it twice, in the summary and in the closing section, and nothing contradicts it.' } : undefined)
+    // The app database as the coordinator sees it: one row per run, the chat's runs oldest first.
+    const rows = new Map<string, MultiAgentRunRecord>()
+    const order: string[] = []
+    const db = {
+      begin: (_chatId: string, run: { runId: string; task: string }) => { order.push(run.runId); rows.set(run.runId, { mode: 'multi-agent', runStatus: 'running', agentGraph: [], executionTrace: [], runId: run.runId, task: run.task }) },
+      saveTrace: (_chatId: string, trace: AgentEvent[], status: MultiAgentRunRecord['runStatus'], steps?: MultiAgentRunRecord['agentGraph']) => {
+        const row = trace[0] && rows.get(trace[0].runId)
+        if (row) Object.assign(row, { executionTrace: [...trace], runStatus: status, agentGraph: steps ?? row.agentGraph })
+      },
+      saveAssistantMessage: () => {},
+      getRun: (_chatId: string, runId?: string) => { const row = rows.get(runId ?? order.at(-1) ?? ''); return row ? { ...row, runIds: [...order] } : null },
+      claimMode: () => null,
+    }
+    const sent: AgentEvent[] = []
+    const waiters: Array<{ n: number; resolve: () => void }> = []
+    const terminals = (): number => sent.filter((e) => e.type === 'task_complete' || e.type === 'task_failed').length
+    const terminal = (n: number): Promise<void> => new Promise((resolve) => (terminals() >= n ? resolve() : waiters.push({ n, resolve })))
+    const coordinator: MultiAgentRunCoordinator = new MultiAgentRunCoordinator({
+      sidecar: mgr,
+      mcp: new McpServerManager(),
+      builtin: { getToolSchemas: () => [], call: async () => '' },
+      sendEvent: (e) => {
+        sent.push(e)
+        if (e.type === 'hitl_pause' && e.serverName === 'multi-agent') void coordinator.respondToPlan(e.runId, true)
+        for (const w of waiters.filter((x) => terminals() >= x.n)) { waiters.splice(waiters.indexOf(w), 1); w.resolve() }
+      },
+      db,
+      observe: () => {},
+      settings: () => ({ backendProvider: 'openrouter', openRouterApiKey: 'sk-or-test', openRouterModel: 'fake/worker' }),
+      catalogue: async () => [],
+    })
+    try {
+      const started = await coordinator.start({ chatId: 'chat-r3', task: 'What is the answer?', config: baseConfig({ requirePermissions: false }) })
+      expect(started.ok).toBe(true)
+      await terminal(1)
+      const end1 = sent.find((e) => e.type === 'task_complete' || e.type === 'task_failed')
+      expect(end1?.type, JSON.stringify(end1)).toBe('task_complete')
+      const runId = (started as { runId: string }).runId
+      await vi.waitFor(() => expect(rows.get(runId)?.runStatus).toBe('completed'))
+      const scoutCalls = (): number => fake.requests.filter((r) => systemOf(r.body).includes('Scout agent')).length
+      const before = scoutCalls()
+
+      // The finished run is the chat's latest: re-running 1.1 from the saved trace works and ends again.
+      const rerun = await coordinator.rerunStep(runId, 'chat-r3', '1.1', baseConfig({ requirePermissions: false }), {})
+      expect(rerun).toMatchObject({ ok: true })
+      await terminal(2)
+      expect(sent.filter((e) => e.runId === runId).map((e) => e.type)).toContain('rerun_start')
+      expect(sent.at(-1)?.type).toBe('task_complete')
+      expect(scoutCalls()).toBeGreaterThan(before)
+
+      // A later run exists: the earlier one is refused, with the reason (the UI disables Re-run with its own sentence).
+      await vi.waitFor(() => expect(rows.get(runId)?.runStatus).toBe('completed'))
+      order.push('later-run')
+      rows.set('later-run', { mode: 'multi-agent', runStatus: 'completed', agentGraph: [], executionTrace: [], runId: 'later-run' })
+      expect(await coordinator.rerunStep(runId, 'chat-r3', '1.1', baseConfig(), {})).toEqual({ ok: false, reason: 'Only the latest run of a chat can be resumed or re-run' })
+
+      // The latest run has a row but the sidecar never saved its state (an older run): refused, not thrown.
+      expect(await coordinator.rerunStep('later-run', 'chat-r3', '1.1', baseConfig(), {})).toEqual({ ok: false, reason: 'no saved state for this run' })
+    } finally {
+      planOverride = null
+      replyOverride = null
+    }
   }, 60_000)
 
   it('requires the per-launch token on every endpoint', async () => {
