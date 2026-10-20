@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { placeOverlay } from '../overlayPlacement'
+import { placeOverlay, placeTooltip } from '../overlayPlacement'
 
 const pill = (left: number) => ({ left, width: 180 })
 
@@ -29,6 +29,35 @@ describe('placeOverlay', () => {
         expect(p.arrowX).toBeGreaterThanOrEqual(16)
         expect(p.arrowX).toBeLessThanOrEqual(p.width - 16)
       }
+    }
+  })
+})
+
+// Rectification R1: the Gantt tooltip sits next to its segment, inside the Gantt container.
+describe('placeTooltip', () => {
+  const box = { width: 800, height: 500 }
+  const tip = { width: 300, height: 100 }
+  it('above the segment when it fits, left-aligned with it', () => {
+    expect(placeTooltip({ left: 100, top: 300, width: 40, height: 18 }, tip, box)).toEqual({ left: 100, top: 194, below: false })
+  })
+  it('flips below when it would clip at the top', () => {
+    expect(placeTooltip({ left: 100, top: 50, width: 40, height: 18 }, tip, box)).toEqual({ left: 100, top: 74, below: true })
+  })
+  it('clamps inside the right edge (right half: right-aligned with the segment, then shifted in)', () => {
+    const p = placeTooltip({ left: 760, top: 300, width: 40, height: 18 }, tip, box)
+    expect(p.left + tip.width).toBeLessThanOrEqual(box.width - 8)
+  })
+  it('never clips at the bottom', () => {
+    const p = placeTooltip({ left: 100, top: 20, width: 40, height: 18 }, tip, { width: 800, height: 120 })
+    expect(p.top + tip.height).toBeLessThanOrEqual(120)
+    expect(p.top).toBeGreaterThanOrEqual(0)
+  })
+  it('never overlaps its segment when there is room above or below', () => {
+    for (const top of [0, 40, 120, 250, 380, 482]) {
+      const a = { left: 200, top, width: 60, height: 18 }
+      const p = placeTooltip(a, tip, box)
+      const overlaps = p.top < a.top + a.height && p.top + tip.height > a.top
+      expect(overlaps).toBe(false)
     }
   })
 })

@@ -127,7 +127,7 @@ export function MultiAgentSidebarView(props: Props) {
       )}
       {/* Spec B 7c: the Gantt tab (design 13). */}
       {props.viewMode === 'gantt' && (
-        <div className="h-full w-full min-w-0 overflow-auto p-4" data-testid="dock-gantt"><GanttView view={view} now={live ? now : undefined} chatId={props.chatId} /></div>
+        <div className="h-full w-full min-w-0 overflow-auto p-4" data-testid="dock-gantt"><GanttView view={view} now={live ? now : undefined} /></div>
       )}
       <div className={cn('flex h-full w-full min-w-0', (graph || props.viewMode === 'gantt') && 'hidden')} data-testid="dock-list">
       {!props.hidePlanColumn && <section aria-label="Run plan" className="flex min-h-0 flex-none flex-col border-r-[0.5px] border-white/5" style={{ width: PLAN_COLUMN_WIDTH }}>

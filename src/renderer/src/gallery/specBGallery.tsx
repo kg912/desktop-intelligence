@@ -85,7 +85,7 @@ function D12() {
 function D13() {
   const events = EVENTS_JSONL.split('\n').filter(Boolean).map((l: string) => JSON.parse(l) as AgentEvent)
   const view = reduceRunEvents(events[0].runId, events)
-  return <div style={{ ...frame, height: 820 }}><div style={{ flex: 1 }}><GanttView view={view} chatId="c" /></div></div>
+  return <div style={{ ...frame, height: 820 }}><div style={{ flex: 1 }}><GanttView view={view} /></div></div>
 }
 
 function D14() {
