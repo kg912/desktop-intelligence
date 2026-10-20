@@ -1,7 +1,7 @@
 // Spec B 7c (design 13): the Gantt tab, its tooltip and footer, the compact strips, and the List | Graph | Gantt toggle.
 // Rectification R1: the tooltip is hover/focus only, informational, with no buttons.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, cleanup } from '@testing-library/react'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { GanttView, GanttStrip } from '../../renderer/src/components/chat/GanttView'
@@ -102,15 +102,26 @@ describe('GanttView on the Istanbul run', () => {
   })
 })
 
-describe('the List view\'s timeline lanes', () => {
-  it('draw each agent\'s real segments over its status bar', async () => {
+describe('the List view\'s mini chart (rectification R5: the pre-7c status bars)', () => {
+  it('one status bar per agent, coloured by status, no segment overlay; the Gantt tab keeps the segments', async () => {
     const { MultiAgentSidebarView } = await import('../../renderer/src/components/chat/MultiAgentSidebarView')
     const { DEFAULT_MULTI_AGENT_CONFIG } = await import('../../shared/types')
-    render(<MultiAgentSidebarView view={reduceRunEvents(RUN, EVENTS)} task="t" config={DEFAULT_MULTI_AGENT_CONFIG} readOnly estimate={null} permissionRequests={[]}
+    const view = reduceRunEvents(RUN, EVENTS)
+    render(<MultiAgentSidebarView view={view} task="t" config={DEFAULT_MULTI_AGENT_CONFIG} readOnly estimate={null} permissionRequests={[]}
       onRespondPermission={vi.fn()} onApprove={vi.fn()} onCancel={vi.fn()} onAbort={vi.fn()} focusAgentId={null} onSelectAgent={vi.fn()} onClose={vi.fn()} />)
-    const lane = screen.getByTestId('lane-1.2')
-    expect(lane.querySelector('i')!.dataset.s).toBeTruthy()  // the status bar stays
-    const kinds = new Set([...lane.querySelectorAll('b[data-kind]')].map((b) => b.getAttribute('data-kind')))
-    expect([...kinds].sort()).toEqual(['judge', 'model', 'repair', 'wait'])
+    const timeline = screen.getByTestId('concurrency-timeline')
+    expect(timeline.querySelectorAll('[data-kind]')).toHaveLength(0)
+    expect(screen.getByTestId('concurrency-caption').textContent).toMatch(/^Peak: \d+ agents in parallel$/)
+    for (const id of ['1.1', '1.2', '1.3', '1.4', '1.5', '2.1']) {
+      const bars = screen.getByTestId(`lane-${id}`).querySelectorAll('i')
+      expect(bars, id).toHaveLength(1)
+      expect(bars[0].className).toBe('ma-lane-bar')
+      expect(bars[0].dataset.s, id).toMatch(/^(ok|wait|fail|q|run)$/)
+    }
+    expect(screen.getByTestId('lane-1.2').querySelector('i')!.dataset.s).toBe('wait')  // degraded: amber, caveats
+    expect(screen.getByTestId('lane-1.1').querySelector('i')!.dataset.s).toBe('ok')
+    cleanup()
+    render(<GanttView view={view} />)
+    expect(within(screen.getByTestId('gantt-lane-1.2')).getAllByRole('button').map((b) => b.dataset.kind)).toEqual(expect.arrayContaining(['judge', 'model', 'repair', 'wait']))
   })
 })

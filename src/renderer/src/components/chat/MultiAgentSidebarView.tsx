@@ -18,8 +18,6 @@ import { CoverageSection } from './CoveragePanel'
 import { GanttView } from './GanttView'
 import { PlanEditor } from './PlanEditor'
 import { RunActionsContext } from './RunActions'
-import { buildSegments } from '../../lib/gantt'
-import { SEGMENT_CLASS } from './GanttView'
 import { approvalQueues, argsSummary, bareTool, inboxSummary, nextWaiting, trustToolResponses } from '../../lib/approvalQueue'
 import { PlanningStage, PlanningStepper } from './PlanningStage'
 import { GraphView } from './GraphView'
@@ -279,8 +277,6 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
   const intervals = agents.filter((a) => a.startedAt).map((a) => [a.startedAt!, a.endedAt ?? end] as [number, number])
   const working = agents.filter((a) => isWorking(a.status)).length
   const peak = peakOverlap(intervals)
-  // Spec B 7c: each lane shows its real segments (model, tool, approval wait, judge, repair) over the status bar.
-  const gantt = useMemo(() => buildSegments(view, live ? now : undefined), [view, live, now])
   const caption = live && working > 1 ? `${working} agents running in parallel`
     : live && working === 1 ? '1 agent running'
     : peak > 1 ? `Peak: ${peak} agents in parallel`
@@ -303,10 +299,6 @@ function ConcurrencyTimeline({ view, live, now }: { view: RunView; live: boolean
             <div key={a.step.id} className="relative my-[5px] h-4" data-testid={`lane-${a.step.id}`}>
               <span className="absolute -left-px -top-px -translate-x-full pr-1.5 font-mono text-[10.5px] text-ma-mute">{a.step.id}</span>
               <i className="ma-lane-bar" data-s={state} style={{ left: `${left}%`, width: `${Math.max(right - left, 1.5)}%` }} />
-              {gantt.lanes.find((l) => l.id === a.step.id)?.segments.map((s, i) => (
-                <b key={i} data-kind={s.kind} className={cn('absolute top-[4px] h-[8px] rounded-[2px]', SEGMENT_CLASS[s.kind])}
-                  style={{ left: `${pos(s.start)}%`, width: `${Math.max(pos(s.end ?? end) - pos(s.start), 0.4)}%` }} />
-              ))}
             </div>
           )
         })}

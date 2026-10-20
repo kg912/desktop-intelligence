@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-// Dev-only page for the browser preview (npx vite --config vite.preview.config.ts → http://localhost:5174/gallery.html#d11 … #d14, #settings, #topbar, #r4): spec B's UI surfaces
+// Dev-only page for the browser preview (npx vite --config vite.preview.config.ts → http://localhost:5174/gallery.html#d11 … #d14, #settings, #topbar, #r4, #r5): spec B's UI surfaces
 // with the Istanbul fixture's data, to compare against specs/designs/11–14. Not part of the app build.
 import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
@@ -10,7 +10,7 @@ import { reduceRunEvents } from '../lib/multiAgentRunState'
 import { ClaimsDrawer } from '../components/chat/ClaimsDrawer'
 import type { ClaimTarget } from '../components/chat/ClaimsDrawer'
 import { ClaimLinksContext } from '../components/chat/ClaimLinks'
-import { FinalSynthesis } from '../components/chat/MultiAgentSidebarView'
+import { FinalSynthesis, MultiAgentSidebarView } from '../components/chat/MultiAgentSidebarView'
 import { AssessCard, CoverageMatrixView, RunTimeline } from '../components/chat/CoveragePanel'
 import { GanttView } from '../components/chat/GanttView'
 import { PlanEditor } from '../components/chat/PlanEditor'
@@ -171,6 +171,18 @@ function R4() {
   )
 }
 
-const SECTIONS: Record<string, () => React.ReactElement> = { d11: D11, d12: D12, d13: D13, d14: D14, settings: Settings, topbar: TopBarAt, r4: R4 }
+/** Rectification R5: the List view (its mini chart is the pre-7c status bars) at a given dock width (?w=). */
+function R5() {
+  const events = EVENTS_JSONL.split('\n').filter(Boolean).map((l: string) => JSON.parse(l) as AgentEvent)
+  const none = () => {}
+  return (
+    <div data-testid="r5-frame" style={{ width: Number(new URLSearchParams(location.search).get('w') ?? 760), height: '100vh', background: '#0a0a0a' }}>
+      <MultiAgentSidebarView view={reduceRunEvents(events[0].runId, events)} task="Verify the domestic flight legs" config={config} readOnly estimate={null}
+        permissionRequests={[]} onRespondPermission={none} onApprove={none} onCancel={none} onAbort={none} focusAgentId={null} onSelectAgent={none} onClose={none} />
+    </div>
+  )
+}
+
+const SECTIONS: Record<string, () => React.ReactElement> = { d11: D11, d12: D12, d13: D13, d14: D14, settings: Settings, topbar: TopBarAt, r4: R4, r5: R5 }
 const Section = SECTIONS[location.hash.slice(1)] ?? D11
 ReactDOM.createRoot(document.getElementById('root')!).render(<Section />)
