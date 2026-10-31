@@ -43,6 +43,10 @@ if (DEV_MODE) {
 // Must be registered before the app is ready.
 protocol.registerSchemesAsPrivileged([{ scheme: CHART_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
+// M1 Pro jank A/B (docs/perf/m1pro-round3.md): DI_GRAPHITE=0 turns Skia Graphite off.
+// The dedicated switch, not --disable-features=SkiaGraphite (unreliable on Mac ARM).
+if (process.env['DI_GRAPHITE'] === '0') app.commandLine.appendSwitch('disable-skia-graphite')
+
 // ----------------------------------------------------------------
 // Security: prevent renderer from loading arbitrary URLs
 // ----------------------------------------------------------------

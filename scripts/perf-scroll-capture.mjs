@@ -154,6 +154,8 @@ async function main() {
   await cdp.send('Page.enable')
   await cdp.send('Profiler.enable')
   await cdp.send('Profiler.setSamplingInterval', { interval: 100 })
+  // CPU_THROTTLE=2 slows the renderer ~2x — a rough stand-in for a slower CPU (M1 Pro vs M5 Pro).
+  if (process.env.CPU_THROTTLE) await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) })
 
   await openTargetChat(cdp)
   await new Promise(r => setTimeout(r, 500)) // let charts finish decoding/mounting
