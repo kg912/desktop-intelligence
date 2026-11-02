@@ -161,3 +161,13 @@ describe('SettingsPage tab', () => {
     expect(await screen.findByTestId('fs-access-settings')).toBeTruthy()
   })
 })
+
+describe('IPC failures read as plain sentences', () => {
+  it('a rejected save shows the message without the IPC wrapper', async () => {
+    save.mockReset().mockRejectedValue(new Error("Error invoking remote method 'fs:saveSettings': Error: Disk full"))
+    await renderPanel()
+    fireEvent.click(screen.getByRole('switch', { name: 'Let DI read and edit files in folders you allow' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Disk full')
+    expect(document.body.textContent).not.toContain('Error invoking remote method')
+  })
+})

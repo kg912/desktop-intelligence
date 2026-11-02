@@ -8,6 +8,7 @@ import {
   type FsRoot,
 } from '../../../../shared/fsAccess'
 import type { SandboxStatusInfo } from '../../../../shared/types'
+import { describeActionError } from '../../lib/actionErrors'
 
 // Settings → File System Access (specs/builtin-file-system-access.md 2.9,
 // mockup specs/designs/source/15-fs-access.html panel A). Every change is
@@ -66,9 +67,13 @@ export function FsAccessSettingsPanel() {
 
   const save = useCallback(async (next: FsAccessSettings) => {
     setSettings(next)
-    const r = await window.api.fsSaveSettings(next)
-    setSettings(r.settings)
-    setRejected(r.rejected)
+    try {
+      const r = await window.api.fsSaveSettings(next)
+      setSettings(r.settings)
+      setRejected(r.rejected)
+    } catch (err) {
+      setPickError(describeActionError(err))
+    }
   }, [])
 
   if (!settings) return null
@@ -79,9 +84,13 @@ export function FsAccessSettingsPanel() {
 
   const addFolder = async (): Promise<void> => {
     setPickError(null)
-    const r = await window.api.fsPickFolder('settings')
-    if (r.ok) void save({ ...settings, roots: [...settings.roots, r.root] })
-    else if ('reason' in r) setPickError(r.reason)
+    try {
+      const r = await window.api.fsPickFolder('settings')
+      if (r.ok) void save({ ...settings, roots: [...settings.roots, r.root] })
+      else if ('reason' in r) setPickError(r.reason)
+    } catch (err) {
+      setPickError(describeActionError(err))
+    }
   }
 
   const addPattern = (): void => {
@@ -94,8 +103,12 @@ export function FsAccessSettingsPanel() {
   }
 
   const revoke = async (g: FsChatGrantView): Promise<void> => {
-    await window.api.fsRevokeChatGrant(g.chatId, g.path)
-    setGrants(await window.api.fsListChatGrants())
+    try {
+      await window.api.fsRevokeChatGrant(g.chatId, g.path)
+      setGrants(await window.api.fsListChatGrants())
+    } catch (err) {
+      setPickError(describeActionError(err))
+    }
   }
 
   const credentialPaths = sandbox?.baselineDenyRead ?? []
