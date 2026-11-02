@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15 · File System Access</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0a; --page:#0f0f0f; --nav:#111; --elev:#1a1a1a;
+    --hair:0.5px solid rgba(255,255,255,0.05); --hair2:0.5px solid rgba(255,255,255,0.09);
+    --t1:rgba(255,255,255,0.88); --t2:rgba(255,255,255,0.6); --t3:rgba(255,255,255,0.38);
+    --red:rgba(229,57,53,1); --red6:rgba(229,57,53,0.6); --red15:rgba(229,57,53,0.15); --red08:rgba(229,57,53,0.08);
+    --green:#4ade80; --amber:#fbbf24;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--t1);font:13px/1.5 Inter,system-ui,sans-serif;padding:24px 16px}
+  h1{font-size:14px;font-weight:600;margin:0 0 4px} .cap{color:var(--t3);font-size:12px;margin:0 0 20px}
+  .label{font:500 11px var(--mono);color:var(--t3);margin:28px 0 8px}
+  .frame{border:var(--hair2);border-radius:10px;overflow:hidden;background:var(--page);max-width:1100px}
+  /* A: settings */
+  .settings{display:flex;min-height:560px}
+  .nav{width:220px;background:var(--nav);border-right:1px solid #1f1f1f;padding-top:24px;flex-shrink:0}
+  .tab{display:flex;align-items:center;gap:9px;padding:10px 12px;color:var(--t3);font-size:12px;border-bottom:0.5px solid rgba(255,255,255,0.03);position:relative}
+  .tab.on{color:var(--t1);font-weight:500} .tab.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--red6)}
+  .tab svg{width:14px;height:14px;opacity:.35} .tab.on svg{opacity:1;color:var(--red)}
+  .content{flex:1;padding:32px 40px;max-width:720px}
+  .h2{font-size:15px;font-weight:600;margin:0 0 4px} .sub{color:var(--t3);font-size:12px;margin:0 0 20px}
+  .row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:var(--hair)}
+  .switch{width:30px;height:17px;border-radius:9px;background:var(--red6);position:relative;flex-shrink:0}
+  .switch::after{content:"";position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+  .switch.off{background:#2a2a2a} .switch.off::after{right:auto;left:2px;background:#777}
+  .section{font-size:12px;font-weight:500;color:var(--t2);margin:26px 0 6px;display:flex;justify-content:space-between;align-items:center}
+  .path{font:12.5px var(--mono);color:var(--t1);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .seg{display:flex;border:var(--hair2);border-radius:6px;overflow:hidden;font:11px var(--mono)}
+  .seg span{padding:3px 8px;color:var(--t3)} .seg .on{background:var(--red15);color:var(--t1)}
+  .mini{font-size:11px;color:var(--t3);display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .x{color:var(--t3);font-size:14px;padding:0 4px}
+  .btn{border:var(--hair2);background:transparent;color:var(--t2);font:12px Inter;border-radius:6px;padding:6px 10px}
+  .btn.primary{background:#8b0000;border-color:#8b0000;color:#fff} .btn.ghost{border-color:transparent}
+  .err{color:#f87171;font-size:11.5px;margin-top:6px}
+  .chip{display:inline-flex;gap:6px;align-items:center;font:11.5px var(--mono);border:var(--hair2);border-radius:5px;padding:2px 7px;color:var(--t2);margin:0 6px 6px 0}
+  .muted{color:var(--t3);font-size:12px}
+  /* dialogs */
+  .stage{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:20px;max-width:1100px}
+  .backdrop{background:rgba(0,0,0,.7);border-radius:10px;padding:28px 18px;display:flex;justify-content:center;border:var(--hair2)}
+  .dlg{width:100%;max-width:440px;background:var(--elev);border:1px solid #2a2a2a;border-radius:12px;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.6)}
+  .dlg-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:14px}
+  .ico{width:34px;height:34px;border-radius:8px;background:var(--red08);border:0.5px solid rgba(229,57,53,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--red)}
+  .ico svg{width:16px;height:16px}
+  .dlg h3{margin:0;font-size:13.5px;font-weight:600} .dlg .s{color:var(--t3);font-size:11.5px;margin-top:2px}
+  .pathbox{font:12.5px var(--mono);background:rgba(0,0,0,.35);border:var(--hair2);border-radius:7px;padding:8px 10px;margin:6px 0 4px;word-break:break-all}
+  .quote{border-left:2px solid rgba(255,255,255,.12);padding:2px 0 2px 10px;color:var(--t2);font-size:12px;margin:10px 0}
+  .ql{font:10.5px var(--mono);color:var(--t3);margin-top:10px}
+  .radio{display:flex;gap:16px;margin:12px 0 4px;font-size:12px;color:var(--t2)}
+  .radio i{display:inline-block;width:11px;height:11px;border-radius:50%;border:1px solid #555;margin-right:6px;vertical-align:-1px}
+  .radio .on i{border-color:var(--red);box-shadow:inset 0 0 0 2.5px var(--elev);background:var(--red)}
+  .link{color:rgba(229,57,53,.85);font-size:11.5px;text-decoration:underline;text-underline-offset:2px}
+  .foot{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:8px;flex-wrap:wrap}
+  .foot .btns{display:flex;gap:6px}
+  .cd{font:10.5px var(--mono);color:var(--t3)}
+  .diff{font:11.5px/1.55 var(--mono);background:rgba(0,0,0,.4);border:var(--hair2);border-radius:7px;padding:8px 0;max-height:190px;overflow:auto;margin:8px 0}
+  .diff div{padding:0 10px;white-space:pre} .diff .a{background:rgba(74,222,128,.08);color:#a7f3c4} .diff .d{background:rgba(229,57,53,.1);color:#fca5a5} .diff .h{color:var(--t3)}
+  /* pills */
+  .chat{max-width:760px;background:var(--page);border:var(--hair2);border-radius:10px;padding:20px}
+  .pill{display:inline-flex;align-items:center;gap:8px;border:var(--hair2);border-radius:8px;padding:5px 10px;font-size:12px;color:var(--t2);margin:0 6px 8px 0;background:#121212}
+  .pill svg{width:13px;height:13px;color:var(--t3)} .pill b{font-weight:500;color:var(--t1);font-family:var(--mono);font-size:11.5px}
+  .pill .pm{font:11px var(--mono)} .plus{color:var(--green)} .minus{color:#f87171}
+  .pill.open{display:flex;flex-direction:column;align-items:stretch;width:100%}
+  @media (max-width:760px){.nav{display:none}.content{padding:20px 16px}.settings{min-height:0}}
+</style>
+</head>
+<body>
+<h1>15 · Built-in file system access</h1>
+<p class="cap">Mockup for specs/builtin-file-system-access.md. A: Settings tab. B: access request. C: edit approval. D: chat pills.</p>
+
+<div class="label">A · Settings → File System Access</div>
+<div class="frame settings">
+  <div class="nav">
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>Model</div>
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>Web Search</div>
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8z"/></svg>MCP Servers</div>
+    <div class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v2.5"/><rect x="14" y="17" width="8" height="5" rx="1"/><path d="M20 17v-2a2 2 0 1 0-4 0v2"/></svg>File System Access</div>
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>Backend</div>
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg>RAG</div>
+    <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M7 10v4h7"/></svg>Multi-Agent</div>
+  </div>
+  <div class="content">
+    <div class="h2">File System Access</div>
+    <p class="sub">DI can read and edit files only in the folders listed here, or in folders you allow from a chat. Everything runs inside the tool sandbox.</p>
+
+    <div class="row"><div class="switch"></div><div style="flex:1">Let DI read and edit files in folders you allow</div></div>
+
+    <div class="section"><span>Allowed folders</span><button class="btn">+ Add folder…</button></div>
+    <div class="row">
+      <span class="path">~/desktop-intelligence</span>
+      <span class="seg"><span>Read-only</span><span class="on">Read &amp; write</span></span>
+      <span class="mini"><span class="switch"></span>Ask before edits</span>
+      <span class="x">✕</span>
+    </div>
+    <div class="row">
+      <span class="path">~/LOCAL_OMSA/CS7643/Assignment_3</span>
+      <span class="seg"><span class="on">Read-only</span><span>Read &amp; write</span></span>
+      <span class="mini" style="opacity:.35"><span class="switch off"></span>Ask before edits</span>
+      <span class="x">✕</span>
+    </div>
+    <div class="err">Can't add your home folder. Choose a project folder inside it instead.</div>
+
+    <div class="section"><span>Allowed in chats this session</span></div>
+    <div class="row">
+      <span class="muted" style="width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Fix the README typo</span>
+      <span class="path">~/Certifications_and_upskilling/foundation-harness</span>
+      <span class="chip" style="margin:0">read &amp; write</span>
+      <button class="btn ghost">Revoke</button>
+    </div>
+
+    <div class="section"><span>Always blocked</span></div>
+    <p class="muted" style="margin:0 0 8px">▸ Credential paths (16) and DI's own data folder. Never readable, even inside an allowed folder.</p>
+    <div class="muted" style="margin:10px 0 6px">Blocked file names</div>
+    <span class="chip">.env ✕</span><span class="chip">.env.* ✕</span><span class="chip">*.pem ✕</span><span class="chip">*.key ✕</span><span class="chip">id_rsa* ✕</span><span class="chip">id_ed25519* ✕</span><span class="chip">.netrc ✕</span><span class="chip">.npmrc ✕</span><span class="chip">.pypirc ✕</span>
+    <div style="margin-top:6px"><input placeholder="Add a pattern (* and ? allowed)" style="background:rgba(0,0,0,.3);border:var(--hair2);border-radius:6px;color:var(--t1);font:12px var(--mono);padding:6px 9px;width:260px"></div>
+  </div>
+</div>
+
+<div class="label">B · Access request (fs_request_access) &nbsp;·&nbsp; C · Edit approval (fs_edit)</div>
+<div class="stage">
+  <div class="backdrop">
+    <div class="dlg">
+      <div class="dlg-head">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v2.5"/><rect x="14" y="17" width="8" height="5" rx="1"/><path d="M20 17v-2a2 2 0 1 0-4 0v2"/></svg></div>
+        <div><h3>DI wants to read and edit files in</h3><div class="s">Only this folder and what's inside it.</div></div>
+      </div>
+      <div class="pathbox">/Users/karangrover/Certifications_and_upskilling/foundation-harness</div>
+      <a class="link">Choose a different folder…</a>
+      <div class="ql">Reason from the model</div>
+      <div class="quote">You asked me to fix the typo in this project's README.md.</div>
+      <div class="radio"><span><i></i>Read-only</span><span class="on"><i></i>Read &amp; write</span></div>
+      <div class="foot">
+        <span class="cd">Auto-denies in 1:54</span>
+        <div class="btns"><button class="btn">Deny</button><button class="btn">Allow for this chat</button><button class="btn primary">Always allow</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="backdrop">
+    <div class="dlg">
+      <div class="dlg-head">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+        <div><h3>Allow this edit?</h3><div class="s">DI wants to change a file in a folder you allowed.</div></div>
+      </div>
+      <div class="pathbox">~/…/foundation-harness/README.md</div>
+      <div class="diff">
+        <div class="h">@@ -12,4 +12,4 @@</div>
+        <div> ## Getting started</div>
+        <div> </div>
+        <div class="d">-Instal the dependencies with npm.</div>
+        <div class="a">+Install the dependencies with npm.</div>
+        <div> </div>
+      </div>
+      <textarea placeholder="Optional: add context or reason..." rows="2" style="width:100%;background:rgba(0,0,0,.3);border:var(--hair2);border-radius:7px;color:var(--t1);font:12px var(--mono);padding:7px 9px;resize:none"></textarea>
+      <div class="foot">
+        <span></span>
+        <div class="btns"><button class="btn">Deny</button><button class="btn">Allow this session</button><button class="btn primary">Allow</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="label">D · Tool pills in the chat</div>
+<div class="chat">
+  <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v2.5"/></svg>Requested access to <b>~/…/foundation-harness</b> <span class="pm plus">granted</span></span>
+  <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16M4 4h16M4 12h10"/></svg>Listed <b>foundation-harness/</b></span>
+  <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Searched <b>"Instal"</b> in <b>./</b> · 1 file</span>
+  <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Read <b>README.md</b> · lines 1–48</span>
+  <div class="pill open">
+    <div style="display:flex;gap:8px;align-items:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edited <b>README.md</b> <span class="pm"><span class="plus">+1</span> <span class="minus">−1</span></span><span style="margin-left:auto;color:var(--t3)">▾</span></div>
+    <div class="diff" style="margin-bottom:0"><div class="h">@@ -14 +14 @@</div><div class="d">-Instal the dependencies with npm.</div><div class="a">+Install the dependencies with npm.</div></div>
+  </div>
+</div>
+</body>
+</html>
