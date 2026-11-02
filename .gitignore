@@ -40,5 +40,6 @@ coverage/
 # ── RAG eval corpus (local-only, not committed) ──────────────
 evals/
 
-# Python bytecode (resources/python/__pycache__/multi_agent_sidecar.*.pyc predates this rule and is still tracked)
+# Python bytecode (any depth)
 __pycache__/
+*.pyc
