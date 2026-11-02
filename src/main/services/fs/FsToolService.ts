@@ -18,6 +18,8 @@ import { resolveTarget, checkAccess, mergeGrants, isInside, type FsGrant, type F
 import type { FsGrantStore } from './FsGrantStore'
 import type { FsReadLedger } from './FsReadLedger'
 import type { FsOpResult } from './fsOps'
+import { FS_TOOLS, FS_REQUEST_TOOL } from './fsToolSchemas'
+import type { LMStudioTool } from '../McpServerManager'
 
 export type FsOp = 'read' | 'list' | 'glob' | 'grep' | 'edit' | 'write'
 
@@ -25,6 +27,15 @@ export const FS_UNAVAILABLE = 'File access is unavailable: the tool sandbox is n
 const FS_DISABLED = 'File access is turned off in Settings → File System Access.'
 const CANCELLED = 'The operation was cancelled.'
 const WORKER_RSS_MB = 512
+const APPROVAL_DIFF_LINES = 200
+const TOOL_OPS: Record<string, FsOp> = {
+  fs_list: 'list',
+  fs_glob: 'glob',
+  fs_grep: 'grep',
+  fs_read: 'read',
+  fs_edit: 'edit',
+  fs_write: 'write',
+}
 
 /** A failure whose message is plain and safe to show the model and the user. */
 export class FsToolError extends Error {
@@ -49,6 +60,10 @@ export interface FsToolServiceOptions {
   timeouts?: { default: number; grep: number; ready: number }
   /** Test only: the worker skips its own check, so Seatbelt is the only layer left. */
   testDisableWorkerCheck?: boolean
+  /** Edit approval (McpServerManager.requestBuiltinPermission); throws McpDeniedError on denial. */
+  requestEditApproval?: (chatId: string, toolName: string, args: { path: string; summary: string; diff: string }) => Promise<void>
+  /** fs_request_access handling (FsAccessBroker). */
+  broker?: { request: (chatId: string, args: Record<string, unknown>) => Promise<string>; cancelAll: () => void }
 }
 
 export interface FsCallOptions {
@@ -109,6 +124,7 @@ function defaultWorker(home: string): { args: string[]; codeDirs: string[] } {
 
 export class FsToolService {
   private worker: Worker | null = null
+  private active = new Set<AbortController>()
   private chain: Promise<unknown> = Promise.resolve()
   private nextId = 1
   private readonly workerCmd: { args: string[]; codeDirs: string[] }
@@ -127,6 +143,62 @@ export class FsToolService {
   effectiveGrants(chatId: string): FsGrant[] {
     const roots = this.o.getSettings().roots.map((r) => ({ path: r.path, access: r.access, askBeforeEdit: r.askBeforeEdit }))
     return mergeGrants(roots, this.o.grants.getGrants(chatId))
+  }
+
+  /**
+   * Tools for this chat's next request: none when file access is off or the
+   * sandbox is down; fs_request_access always; the six file tools once the
+   * chat has at least one effective grant.
+   */
+  getToolSchemas(chatId: string): LMStudioTool[] {
+    if (!this.isAvailable()) return []
+    return this.effectiveGrants(chatId).length > 0 ? FS_TOOLS : [FS_REQUEST_TOOL]
+  }
+
+  /**
+   * One model tool call. Edits under a root that asks first are computed
+   * without writing, shown for approval (throws McpDeniedError on denial),
+   * then written. Throws FsToolError with a plain message on failure.
+   */
+  async call(toolName: string, args: Record<string, unknown>, opts: FsCallOptions): Promise<FsOpResult> {
+    this.assertAvailable()
+    if (toolName === 'fs_request_access') {
+      if (!this.o.broker) throw new FsToolError(FS_UNAVAILABLE)
+      return { text: await this.o.broker.request(opts.chatId, args) }
+    }
+    const op = TOOL_OPS[toolName]
+    if (!op) throw new FsToolError(`Unknown file tool ${toolName}.`)
+    const ac = new AbortController()
+    this.active.add(ac)
+    const run = { ...opts, signal: ac.signal, dryRun: false }
+    try {
+      if ((op === 'edit' || op === 'write') && this.asksBeforeEdit(opts.chatId, args.path) && this.o.requestEditApproval) {
+        const dry = await this.run(op, args, { ...run, dryRun: true })
+        const lines = (dry.diff ?? '').split('\n')
+        const diff =
+          lines.length > APPROVAL_DIFF_LINES
+            ? [...lines.slice(0, APPROVAL_DIFF_LINES), `… ${lines.length - APPROVAL_DIFF_LINES} more lines`].join('\n')
+            : (dry.diff ?? '')
+        const real = resolveTarget(args.path as string, this.o.policyDeps)
+        await this.o.requestEditApproval(opts.chatId, toolName, { path: real.ok ? real.real : String(args.path), summary: dry.text, diff })
+      }
+      return await this.run(op, args, run)
+    } finally {
+      this.active.delete(ac)
+    }
+  }
+
+  private asksBeforeEdit(chatId: string, path: unknown): boolean {
+    const r = resolveTarget(path as string, this.o.policyDeps)
+    if (!r.ok) return false // run() reports the error
+    const c = checkAccess(r.real, 'write', this.effectiveGrants(chatId), this.o.getSettings().blockedNames, this.o.policyDeps)
+    return c.ok && c.grant.askBeforeEdit
+  }
+
+  /** Chat aborted: cancel in-flight file work and pending access dialogs. */
+  cancelAll(): void {
+    for (const ac of this.active) ac.abort()
+    this.o.broker?.cancelAll()
   }
 
   private assertAvailable(): void {

@@ -104,6 +104,7 @@ export interface LMStudioToolParam {
   properties?:  Record<string, LMStudioToolParam>
   required?:    string[]
   items?:       LMStudioToolParam
+  enum?:        string[]
 }
 
 export interface LMStudioTool {
@@ -433,6 +434,23 @@ export class McpServerManager extends EventEmitter {
     return { text: await run(), images: [], userNote: perm.userNote, approval: perm.approval }
   }
 
+  /**
+   * Approval for a built-in single-chat tool (the fs_edit / fs_write file
+   * tools): bypass-all → this chat's session allow-list → the dialog.
+   * Resolves when approved; throws McpDeniedError when denied (or drained).
+   */
+  async requestBuiltinPermission(
+    serverName: string,
+    toolName:   string,
+    args:       Record<string, unknown>,
+    chatId:     string,
+  ): Promise<void> {
+    if (this.bypassAllPermissions) return
+    if (this.sessionAllowList.has(`${chatId}__${serverName}__${toolName}`)) return
+    const perm = await this._awaitPermissionDialog(serverName, toolName, args, chatId)
+    if (!perm.approved) throw new McpDeniedError(perm.userNote)
+  }
+
   /** Throws McpDeniedError unless a layer approves (order in callToolForMultiAgent's doc). */
   private async _authorizeForMultiAgent(
     serverName:       string,
@@ -493,11 +511,13 @@ export class McpServerManager extends EventEmitter {
         return
       }
     }
-    if (response.approved && response.alwaysAllow === 'forever') {
+    // "Always" persists an MCP server's approval mode; a built-in (no such
+    // server) keeps it for this chat only, like "Allow this session".
+    if (response.approved && response.alwaysAllow === 'forever' && this.servers.has(pending.serverName)) {
       this._persistServerApprovalMode(pending.serverName, false)
       const entry = this.servers.get(pending.serverName)
       if (entry) entry.requiresApproval = false
-    } else if (response.approved && response.alwaysAllow === 'session') {
+    } else if (response.approved && response.alwaysAllow) {
       this.sessionAllowList.add(`${pending.chatId}__${pending.serverName}__${pending.toolName}`)
     }
     pending.resolve({ approved: response.approved, userNote: response.userNote })

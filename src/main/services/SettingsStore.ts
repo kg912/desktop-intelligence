@@ -16,6 +16,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import type { BackendProvider, MultiAgentConfig } from '../../shared/types'
+import type { FsAccessSettings } from '../../shared/fsAccess'
 
 export interface AppSettings {
   /** Context length (n_ctx) to use when loading the model. */
@@ -89,6 +90,8 @@ export interface AppSettings {
   multiAgentConfig?: MultiAgentConfig
   /** Preferred loopback port for the multi-agent sidecar (spec default 7823; busy → free port). */
   multiAgentSidecarPort?: number
+  /** Built-in file system access (sanitizeFsAccessSettings fills defaults). */
+  fsAccess?: FsAccessSettings
 }
 
 function settingsPath(): string {

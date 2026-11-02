@@ -68,7 +68,7 @@ function int(v: unknown, fallback: number, min: number, max: number): number {
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
 const sha256 = (b: Buffer): string => createHash('sha256').update(b).digest('hex')
 const isBinary = (b: Buffer): boolean => b.subarray(0, 8192).includes(0)
-const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+const byName = (a: string, b: string): number => Number(a > b) - Number(a < b)
 const numbered = (n: number, line: string): string => `${String(n).padStart(6)}\t${line}`
 
 function fmtSize(n: number): string {

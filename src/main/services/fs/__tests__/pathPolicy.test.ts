@@ -412,3 +412,54 @@ describe('mergeGrants and describeGrants', () => {
     expect(describeGrants([])).toBe('none yet')
   })
 })
+
+describe('realFsDeps', () => {
+  it('reports missing and non-folder paths, and paths under a file, without throwing', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'di-rfd-')))
+    writeFileSync(join(base, 'f'), 'x')
+    const d = realFsDeps({ homedir: join(base, 'nohome'), userDataDir: join(base, 'noud'), credentialEntries: [] })
+    expect(d.homedir).toBe(join(base, 'nohome'))
+    expect(d.isDirectory(base)).toBe(true)
+    expect(d.isDirectory(join(base, 'f'))).toBe(false)
+    expect(d.isDirectory(join(base, 'missing'))).toBeNull()
+    expect(d.isDirectory(join(base, 'f', 'x'))).toBeNull()
+    expect(d.lexists(join(base, 'f'))).toBe(true)
+    expect(d.lexists(join(base, 'f', 'x'))).toBe(false)
+    rmSync(base, { recursive: true, force: true })
+  })
+})
+
+describe('pathPolicy — more branches', () => {
+  const fake = (realpath: (p: string) => string): FsPolicyDeps => ({
+    realpath,
+    lexists: () => false,
+    isDirectory: () => null,
+    homedir: '/Users/u',
+    userDataDir: '/Users/u/ud',
+    credentialEntries: [],
+  })
+  it('an error without a code, and a path whose every ancestor is missing', () => {
+    expect(resolveTarget('/a/b', fake(() => { throw new Error('odd') }))).toEqual({ ok: false, reason: 'Cannot resolve /a/b (unknown error).' })
+    expect(resolveTarget('/a/b', fake(() => { throw Object.assign(new Error('x'), { code: 'ENOENT' }) }))).toEqual({ ok: false, reason: 'Cannot resolve /a/b (ENOENT).' })
+  })
+  it('mergeGrants keeps read when both are read', () => {
+    expect(mergeGrants([{ path: '/a', access: 'read', askBeforeEdit: true }], [{ path: '/a', access: 'read', askBeforeEdit: true }])).toEqual([
+      { path: '/a', access: 'read', askBeforeEdit: true },
+    ])
+  })
+  it('keeps working past the blocked-name matcher cache size', () => {
+    const d = fake((p) => p)
+    for (let i = 0; i < 25; i++) {
+      expect(checkAccess('/r/x', 'read', [{ path: '/r', access: 'read', askBeforeEdit: true }], [`n${i}`], d).ok).toBe(true)
+    }
+    expect(checkAccess('/r/n3', 'read', [{ path: '/r', access: 'read', askBeforeEdit: true }], ['n3'], d).ok).toBe(false)
+  })
+  it('a credential entry outside home is only checked as itself', () => {
+    const d = { ...fake((p) => p), credentialEntries: ['/etc/secret'], isDirectory: () => true }
+    expect(validateGrantRoot('/Volumes/x/y', d)).toEqual({ ok: true })
+    expect(validateGrantRoot('/Volumes/etc', { ...d, credentialEntries: ['/Volumes/etc/k'] })).toEqual({
+      ok: false,
+      reason: '/Volumes/etc is or contains a credential path (/Volumes/etc/k). Choose a folder without credentials.',
+    })
+  })
+})

@@ -406,3 +406,28 @@ describe('ObservabilityService', () => {
     })
   })
 })
+
+describe('emitFsAccess (built-in file access, spec 2.11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockReadSettings.mockReturnValue({ observabilityEnabled: true })
+  })
+
+  it('appends one fs_access line to fs-access-events.jsonl', async () => {
+    new ObservabilityService().emitFsAccess({ chatId: 'c1', path: '/Users/u/p', requested: 'write', decision: 'chat', scope: 'chat', granted: 'read' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockAppendFile).toHaveBeenCalledTimes(1)
+    const [file, line] = mockAppendFile.mock.calls[0]
+    expect(String(file).endsWith('fs-access-events.jsonl')).toBe(true)
+    const event = JSON.parse(String(line))
+    expect(event).toMatchObject({ type: 'fs_access', chatId: 'c1', path: '/Users/u/p', requested: 'write', decision: 'chat', scope: 'chat', granted: 'read' })
+    expect(typeof event.ts).toBe('number')
+  })
+
+  it('writes nothing when observability is off', async () => {
+    mockReadSettings.mockReturnValue({ observabilityEnabled: false })
+    new ObservabilityService().emitFsAccess({ chatId: 'c1', path: '/p', requested: 'read', decision: 'deny', scope: null })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockAppendFile).not.toHaveBeenCalled()
+  })
+})

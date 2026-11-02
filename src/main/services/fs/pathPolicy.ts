@@ -27,13 +27,15 @@ export interface FsPolicyDeps {
   userDataDir: string
   /** BASELINE_DENY_READ entries (tilde-relative or absolute). */
   credentialEntries: readonly string[]
+  /** Folders a root may not be inside (default SYSTEM_DIRS; tests narrow it). */
+  systemDirs?: readonly string[]
 }
 
 export type Resolved = { ok: true; real: string; exists: boolean } | { ok: false; reason: string }
 export type Verdict<T = object> = ({ ok: true } & T) | { ok: false; reason: string }
 
 const ABSOLUTE_HINT = 'Use an absolute path (for example /Users/you/project/src/app.ts).'
-const SYSTEM_DIRS = ['/System', '/Library', '/usr', '/bin', '/sbin', '/etc', '/private', '/var', '/cores', '/opt']
+export const SYSTEM_DIRS = ['/System', '/Library', '/usr', '/bin', '/sbin', '/etc', '/private', '/var', '/cores', '/opt']
 
 export function realFsDeps(opts: { homedir: string; userDataDir: string; credentialEntries: readonly string[] }): FsPolicyDeps {
   const canon = (p: string): string => {
@@ -194,7 +196,7 @@ export function validateGrantRoot(real: string, deps: FsPolicyDeps): Verdict {
   if (isInside(real, deps.homedir)) {
     return no(`${real} contains your home folder. Choose a specific project folder inside your home folder.`)
   }
-  if (SYSTEM_DIRS.some((d) => isInside(d, real))) return no(`${real} is a system folder. Choose a project folder.`)
+  if ((deps.systemDirs ?? SYSTEM_DIRS).some((d) => isInside(d, real))) return no(`${real} is a system folder. Choose a project folder.`)
   if (isInside(deps.userDataDir, real)) return no(`${real} holds Desktop Intelligence's own data. Choose a project folder.`)
   if (isInside(real, deps.userDataDir)) return no(`${real} contains Desktop Intelligence's own data. Choose a project folder.`)
   for (const prefix of credentialPrefixes(deps.credentialEntries, deps.homedir)) {

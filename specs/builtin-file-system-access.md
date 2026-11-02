@@ -66,7 +66,7 @@ There is no file tool in DI today. The user's own Filesystem MCP server (if conf
 5. Otherwise main emits `FS_ACCESS_REQUEST { requestId, chatId, path, access, reason, timeoutMs: 120000 }`. One dialog per chat at a time; further requests wait in a FIFO queue.
 6. The user answers `FS_ACCESS_RESPONSE { requestId, decision: 'deny' | 'chat' | 'always', access: 'read' | 'write', path }`. `path` may differ from the request if the user used **Choose a different folder…** (native `dialog.showOpenDialog`, `openDirectory`), and is re-validated in main. The user may downgrade `write` to `read`, never the other way round without choosing it explicitly in the dialog. A downgrade grants `read` and records a write denial for that path in this chat: a later `write` request for it (or a subfolder) is auto-denied like step 4, with `"Write access to <path> was declined in this chat; you have read-only access."`
 7. Timeout (120 s) or chat aborted → denied with `"No answer from the user."` (not recorded as a denial, so the model may ask once more in a later turn).
-8. Tool result on approval: `"Access granted: <real path> (read and write, this chat only). You can now use fs_list, fs_glob, fs_grep, fs_read, fs_edit and fs_write inside it."` On denial: `"Access to <path> was denied by the user. Do not request it again in this chat."`
+8. Tool result on approval: `"Access granted: <real path> (read and write, this chat only). You can now use fs_list, fs_glob, fs_grep, fs_read, fs_edit and fs_write inside it."` (a read grant names only `fs_list, fs_glob, fs_grep and fs_read`; "Always allow" says `saved in Settings` instead of `this chat only`; a downgrade appends `" Write access was declined; do not request it again in this chat."`). On denial: `"Access to <path> was denied by the user. Do not request it again in this chat."` Already covered: `"<path> is already accessible (<level>) through <root>. Use the fs_ tools directly; no request is needed."` A picked folder that fails re-validation: `"The folder chosen in the dialog cannot be used: <reason> Nothing was granted."` A missing reason is a tool error (`"Give a short reason; it is shown to the user."`). Queued requests are re-checked (coverage, denials) when their turn comes.
 
 Decision recorded here: the request is **not** checked against the user's message text (no substring matching of paths). The guarantees come from human approval, the policy denies and the one-denial rule. This avoids a text heuristic.
 
@@ -140,7 +140,7 @@ Names use the `fs_` prefix and no `__`, so they never reach the MCP branch. Sche
 ### 2.6 Edit approval
 
 - `fs_edit` and `fs_write` ask before writing when the governing grant has `askBeforeEdit: true` (chat grants always do).
-- Add `McpServerManager.requestBuiltinPermission(serverName, toolName, args, chatId)`: bypass-all → chat session allow-list (`chatId__fs__<tool>`) → `_awaitPermissionDialog`. Called with server `fs`, the tool name, and args `{ path, summary, diff }` (diff capped at 200 lines). The existing renderer queue and dialog handle it; "Allow this session" means "allow edits of this kind in this chat".
+- Add `McpServerManager.requestBuiltinPermission(serverName, toolName, args, chatId)`: bypass-all → chat session allow-list (`chatId__fs__<tool>`) → `_awaitPermissionDialog`. `resolvePermission` persists "Always" only for a configured MCP server; for a built-in (no such server) it is kept like "Allow this session" (this also stops the multi-agent `builtin` approvals from writing a phantom server entry). Called with server `fs`, the tool name, and args `{ path, summary, diff }` (diff capped at 200 lines). The existing renderer queue and dialog handle it; "Allow this session" means "allow edits of this kind in this chat".
 - `McpPermissionDialog`: when `serverName === 'fs'`, title "Allow this edit?", show the path and the diff (monospace, red and green line tints, scrollable), hide "Show arguments", subtitle "DI wants to change a file in a folder you allowed." Nothing else in the dialog changes.
 - Denied → `McpDeniedError` → existing handling (`buildDeniedToolMessage`, `TOOL_DONE` with `[Denied]`).
 
@@ -149,7 +149,8 @@ Names use the `fs_` prefix and no `__`, so they never reach the MCP branch. Sche
 - Tools: append `...fsToolService.getToolSchemas(chatId)` to `allTools` (after built-ins, before MCP).
 - Native dispatch: add `isFs = FS_TOOL_NAMES.has(toolName)` before the MCP branch. Call `fsToolService.call(toolName, args, { chatId, maxChars: getToolResultLimit(), signal })`. Emit `TOOL_START`/`TOOL_DONE` with `toolArgs` and the new optional `toolDiff`; errors → `TOOL_ERROR` with the plain message, and the same message goes to the model as the tool result (not `"Tool failed: … Use training knowledge."`, which would stop a recoverable file workflow).
 - Text-stream fallback: add the same `isFs` branch (today any non-Brave, non-MCP name becomes `Unknown tool`). Test both paths.
-- Abort: `chatService.abort()` cancels a pending access dialog (denied as "no answer") and kills an in-flight worker call.
+- Abort: `chatService.abort()` calls `fsToolService.cancelAll()`, which cancels pending access dialogs (answered "No answer from the user.") and kills an in-flight worker call. It is an explicit call, like `drainPendingPermissions()`, not the stream's `AbortSignal`: the text-stream fallback aborts the stream controller before it runs the tool.
+- Native parallel calls: file tools are de-duplicated by name **and arguments** (the existing key, `query || name`, would drop a second `fs_read` of a different file); other tools keep the existing key.
 - Do not touch the provider payload branches, stop sequences, `forceFinalAnswer` message injection, DSML handling or the repetition detector. The engineering invariants in `progress.md` and the multi-provider pattern stay as they are.
 
 ### 2.8 System prompt
@@ -189,7 +190,7 @@ Mockup: `specs/designs/source/15-fs-access.html` (panel A). Follows the existing
 
 ### 2.11 Observability
 
-`ObservabilityService`: add a trace event `fs_access` `{ chatId, path, requested, decision, scope }` for each request. Tool calls and results are already captured by the generic `tool_call` / `tool_result` events. Worker sandbox violations arrive with `source: 'fs-worker'` through the existing violation pipeline; a credential-path read raises the existing alert.
+`ObservabilityService`: add a trace event `fs_access` `{ chatId, path, requested, decision, scope, granted? }` for each request, written by `emitFsAccess` to `fs-access-events.jsonl` (standalone JSONL like sandbox violations: the broker decides outside the per-session trace buffer). Decisions: `deny`, `chat`, `always`, `auto-denied`, `no-answer`, `already-granted`, `refused`. Tool calls and results are already captured by the generic `tool_call` / `tool_result` events. Worker sandbox violations arrive with `source: 'fs-worker'` through the existing violation pipeline; a credential-path read raises the existing alert.
 
 ---
 

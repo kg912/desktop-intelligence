@@ -995,3 +995,63 @@ describe('multi-agent callable servers', () => {
     }
   })
 })
+
+describe('requestBuiltinPermission (built-in file edits)', () => {
+  const args = { path: '/Users/u/p/a.ts', summary: 'Edited /Users/u/p/a.ts', diff: '-a\n+b' }
+
+  it('bypass-all approves without a dialog', async () => {
+    const mgr = newMgr()
+    mgr.setBypassPermissions(true)
+    const onRequest = vi.fn()
+    mgr.on('permissionRequest', onRequest)
+    await expect(mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-1')).resolves.toBeUndefined()
+    expect(onRequest).not.toHaveBeenCalled()
+  })
+
+  it('asks with the server, tool, args and chat; "Allow this session" covers later edits of that kind in that chat only', async () => {
+    const mgr = newMgr()
+    const requests: McpToolPermissionRequest[] = []
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      requests.push(r)
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: 'session', userNote: '' })
+    })
+    await mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-1')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({ serverName: 'fs', toolName: 'fs_edit', chatId: 'chat-1', args })
+    await mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-1')
+    expect(requests).toHaveLength(1)
+    await mgr.requestBuiltinPermission('fs', 'fs_write', args, 'chat-1')
+    await mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-2')
+    expect(requests).toHaveLength(3)
+  })
+
+  it('a denial throws McpDeniedError with the note', async () => {
+    const mgr = newMgr()
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) =>
+      mgr.resolvePermission({ requestId: r.requestId, approved: false, alwaysAllow: false, userNote: 'not that file' }))
+    await expect(mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-1')).rejects.toMatchObject({
+      name: 'McpDeniedError',
+      userNote: 'not that file',
+    })
+  })
+
+  it('"Always allow" on a built-in is kept for this chat only and never persisted as an MCP server setting', async () => {
+    const mgr = newMgr()
+    const persist = vi.spyOn(mgr as any, '_persistServerApprovalMode')
+    let asked = 0
+    mgr.on('permissionRequest', (r: McpToolPermissionRequest) => {
+      asked++
+      mgr.resolvePermission({ requestId: r.requestId, approved: true, alwaysAllow: 'forever', userNote: '' })
+    })
+    await mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-1')
+    await mgr.requestBuiltinPermission('fs', 'fs_edit', args, 'chat-1')
+    expect(asked).toBe(1)
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('draining pending permissions (chat abort) denies', async () => {
+    const mgr = newMgr()
+    mgr.on('permissionRequest', () => setTimeout(() => mgr.drainPendingPermissions(), 0))
+    await expect(mgr.requestBuiltinPermission('fs', 'fs_write', args, 'chat-1')).rejects.toBeInstanceOf(McpDeniedError)
+  })
+})

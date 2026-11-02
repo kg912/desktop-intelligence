@@ -326,6 +326,18 @@ export class ObservabilityService {
       .catch((err) => console.warn('[ObservabilityService] sandbox violation write failed:', err))
   }
 
+  /**
+   * Emit an fs_access event (built-in file access spec 2.11): one per
+   * fs_request_access, in its own JSONL file like sandbox violations.
+   */
+  emitFsAccess(event: { chatId: string; path: string; requested: string; decision: string; scope: string | null; granted?: string }): void {
+    if (!this.isEnabled()) return
+    const line = JSON.stringify({ type: 'fs_access', ...event, ts: Date.now() }) + '\n'
+    fs.mkdir(this.logsDir, { recursive: true })
+      .then(() => fs.appendFile(path.join(this.logsDir, 'fs-access-events.jsonl'), line, 'utf8'))
+      .catch((err) => console.warn('[ObservabilityService] fs_access write failed:', err))
+  }
+
   private sandboxViolationsLogPath(): string {
     return path.join(this.logsDir, 'sandbox-violations.jsonl')
   }

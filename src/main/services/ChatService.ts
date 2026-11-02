@@ -33,6 +33,27 @@ import { mcpServerManager, McpDeniedError, buildApprovedToolResult, buildDeniedT
 import { BASE_SYSTEM_PROMPT, currentDateTimeLine } from "./SystemPromptService";
 import { countTokens } from "./tokenUtils";
 import { getCompactedSummary, clearCompactedSummary } from "./DatabaseService";
+import { fsToolService } from "./fs/fsAccessInstance";
+import { FS_TOOL_NAMES, fileAccessSystemPart } from "./fs/fsToolSchemas";
+import { FsToolError } from "./fs/FsToolService";
+
+/** Built-in file tool calls allowed per send() (spec 2.4); only Brave counts toward MAX_SEARCH_LOOPS. */
+export const MAX_FS_CALLS_PER_TURN = 60;
+const FS_CALL_LIMIT_MESSAGE = "File tool limit for this turn reached. Write your answer now.";
+
+/** One built-in file tool call, counted against the per-turn cap. */
+async function executeFsTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  chatId: string,
+  maxChars: number | null,
+  turn: { fsCalls: number },
+): Promise<{ text: string; diff?: string; capped: boolean }> {
+  if (turn.fsCalls >= MAX_FS_CALLS_PER_TURN) return { text: FS_CALL_LIMIT_MESSAGE, capped: true };
+  turn.fsCalls++;
+  const r = await fsToolService.call(toolName, args, { chatId, maxChars });
+  return { text: r.text, diff: r.diff, capped: false };
+}
 
 /** LM Studio OpenAI-compatible completions endpoint. Single source of truth. */
 const LMS_ENDPOINT = "http://localhost:1234/v1/chat/completions";
@@ -1468,6 +1489,7 @@ export class ChatService {
     let buffer = "";
     let searchLoopCount = 0;
     const MAX_SEARCH_LOOPS = appSettings.maxSearchLoops ?? 4;
+    const fsTurn = { fsCalls: 0 };
     console.log(
       `[ChatService] Max search loops: ${MAX_SEARCH_LOOPS} (read from settings)`,
     );
@@ -1575,6 +1597,7 @@ export class ChatService {
             ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
             TICKER_TOOL,
             STOCK_CHART_TOOL,
+            ...fsToolService.getToolSchemas(payload.chatId ?? ""),
             ...mcpTools,
           ];
           allTools.forEach((t) => validToolNames.add(t.function.name))
@@ -2055,7 +2078,8 @@ export class ChatService {
                 toolCallIntercepted = true;
 
                 const isMidBrave = detectedName === "brave_web_search";
-                const midMcpParts = !isMidBrave ? detectedName.split("__") : null;
+                const isMidFs = FS_TOOL_NAMES.has(detectedName);
+                const midMcpParts = !isMidBrave && !isMidFs ? detectedName.split("__") : null;
                 const isMidMcp = !isMidBrave && midMcpParts && midMcpParts.length === 2;
 
                 console.log(`[MCP] 🔍 Mid-stream tool call (text-fallback): "${detectedName}" query="${midQuery}" depth=${searchLoopCount + 1}`);
@@ -2079,6 +2103,22 @@ export class ChatService {
                       toolName:         detectedName,
                       results:          results.slice(0, 5).map((r) => ({ title: r.title, url: r.url })),
                       formattedContent: midStreamResult,
+                    });
+                  } else if (isMidFs) {
+                    const fsArgs: Record<string, unknown> = {};
+                    for (const [k, v] of Object.entries(detectedArgs)) {
+                      try { fsArgs[k] = JSON.parse(v); } catch { fsArgs[k] = v; }
+                    }
+                    const fsOut = await executeFsTool(detectedName, fsArgs, payload.chatId ?? "", getToolResultLimit(), fsTurn);
+                    if (fsOut.capped) searchLoopCount = MAX_SEARCH_LOOPS;
+                    midStreamResult = fsOut.text;
+                    send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                      query:            uiLabel,
+                      toolName:         detectedName,
+                      results:          [],
+                      formattedContent: fsOut.text,
+                      toolArgs:         fsArgs,
+                      ...(fsOut.diff ? { toolDiff: fsOut.diff } : {}),
                     });
                   } else if (isMidMcp && midMcpParts) {
                     const [midServerName, midToolName] = midMcpParts;
@@ -2113,7 +2153,9 @@ export class ChatService {
                   const errMsg = err instanceof Error ? err.message : String(err);
                   midStreamResult = isMidBrave
                     ? `Web search failed: ${errMsg}. Answer from training knowledge.`
-                    : `Tool "${detectedName}" failed: ${errMsg}.`;
+                    : err instanceof FsToolError
+                      ? errMsg
+                      : `Tool "${detectedName}" failed: ${errMsg}.`;
                   send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: uiLabel, toolName: detectedName, error: errMsg });
                 }
                 // 5h — tool_result capture (mid-stream fallback path)
@@ -2335,8 +2377,9 @@ export class ChatService {
             } catch {
               /* malformed args — proceed with empty query */
             }
-            // Dedup key: use query string for search tools, tool name for others
-            const dedupKey = query || tc.name;
+            // Dedup key: use query string for search tools, tool name for others.
+            // File tools key on name + arguments: parallel reads of different files all run.
+            const dedupKey = FS_TOOL_NAMES.has(tc.name) ? `${tc.name}:${tc.argsRaw}` : query || tc.name;
             if (!seenKeys.has(dedupKey)) {
               seenKeys.add(dedupKey);
               queries.push({
@@ -2404,8 +2447,9 @@ export class ChatService {
               const isTicker     = toolName === "get_ticker_price";
               const isStockChart = toolName === "get_stock_chart";
               const isBrave      = toolName === "brave_web_search";
-              const mcpParts = !isBrave && !isTicker && !isStockChart ? toolName.split("__") : null;
-              const isMcp = !isBrave && !isTicker && !isStockChart && mcpParts && mcpParts.length === 2;
+              const isFs         = FS_TOOL_NAMES.has(toolName);
+              const mcpParts = !isBrave && !isTicker && !isStockChart && !isFs ? toolName.split("__") : null;
+              const isMcp = !isBrave && !isTicker && !isStockChart && !isFs && mcpParts && mcpParts.length === 2;
               if (DEBUG)
                 console.log(
                   `[Debug][ChatService][ToolDispatch] toolName=${toolName} query="${query}" isBrave=${isBrave} isMcp=${!isBrave && !!mcpParts && mcpParts.length === 2}`,
@@ -2491,6 +2535,25 @@ export class ChatService {
                     formattedContent: section,
                   });
                   toolResult = section;
+                } else if (isFs) {
+                  // ── Built-in file tools (sandboxed worker) ────────────────
+                  let fsArgs: Record<string, unknown> = {};
+                  try {
+                    fsArgs = JSON.parse(argsRaw || "{}");
+                  } catch {
+                    /* use empty args */
+                  }
+                  const fsOut = await executeFsTool(toolName, fsArgs, payload.chatId ?? "", getToolResultLimit(), fsTurn);
+                  if (fsOut.capped) searchLoopCount = MAX_SEARCH_LOOPS;
+                  toolResult = fsOut.text;
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    query: uiLabel,
+                    toolName,
+                    results: [],
+                    formattedContent: fsOut.text,
+                    toolArgs: fsArgs,
+                    ...(fsOut.diff ? { toolDiff: fsOut.diff } : {}),
+                  });
                 } else if (isMcp && mcpParts) {
                   // ── MCP custom tool dispatch ──────────────────────────────
                   const [serverName, mcpToolName] = mcpParts;
@@ -2545,9 +2608,12 @@ export class ChatService {
               } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
                 const isDenied = err instanceof McpDeniedError;
+                // A file tool error is recoverable: the model gets the plain message.
                 const deniedContent = isDenied
                   ? buildDeniedToolMessage((err as McpDeniedError).userNote)
-                  : `Tool failed: ${errMsg}. Use training knowledge.`;
+                  : err instanceof FsToolError
+                    ? errMsg
+                    : `Tool failed: ${errMsg}. Use training knowledge.`;
                 if (isDenied) {
                   // Permission denied — emit TOOL_DONE (not TOOL_ERROR) so the pill
                   // transitions out of the "searching" spinner. Without this the pill
@@ -2765,6 +2831,7 @@ export class ChatService {
       this.controller = null;
     }
     mcpServerManager.drainPendingPermissions();
+    fsToolService.cancelAll();
   }
 
   // ----------------------------------------------------------------
@@ -2820,6 +2887,11 @@ export class ChatService {
     const DATE_INJECTION = currentDateTimeLine();
 
     const systemParts: string[] = [BASE_SYSTEM_PROMPT, DATE_INJECTION];
+    // FILE ACCESS rules only when file tools are offered (chats without pay nothing).
+    const fsChatId = payload.chatId ?? "";
+    if (fsToolService.getToolSchemas(fsChatId).length > 0) {
+      systemParts.push(fileAccessSystemPart(fsToolService.effectiveGrants(fsChatId)));
+    }
     if (braveEnabled) systemParts.push(buildWebSearchAddendum(appSettings.maxSearchLoops ?? 4));
     if (!braveEnabled) systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM);
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt);

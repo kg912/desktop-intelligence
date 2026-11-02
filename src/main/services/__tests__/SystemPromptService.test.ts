@@ -167,3 +167,15 @@ describe('currentDateTimeLine', () => {
     }
   })
 })
+
+describe('BASE_SYSTEM_PROMPT — built-in file access (spec 2.8)', () => {
+  it('no longer forbids file system tools in the Python rule (the Python rule stays)', () => {
+    expect(BASE_SYSTEM_PROMPT).toContain('Never use shell access or any external MCP to run Python code.')
+    expect(BASE_SYSTEM_PROMPT).not.toContain('file system tools')
+  })
+  it('narrows FAILURE IS DEFINITIVE: file tools follow the FILE ACCESS rules', () => {
+    expect(BASE_SYSTEM_PROMPT).toContain(
+      'One tool failure ends the tool-call phase unconditionally. File tools (fs_*) are the exception: follow the FILE ACCESS rules.'
+    )
+  })
+})
