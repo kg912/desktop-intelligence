@@ -280,6 +280,19 @@ When the model decides to use an MCP tool during a conversation, the call is ren
 
 Tool invocations are handled transparently: the app sends the request to the MCP server, captures the result, and feeds it back into the model's context. The user sees a clean, structured representation of each tool call and its output.
 
+## File System Access
+
+The model can read and edit files on your Mac, but only in folders you allow. Design and decisions: `specs/builtin-file-system-access.md`.
+
+- **Explicit access only.** Folders are allowed in **Settings → File System Access** (read-only or read & write, with "Ask before edits"), or from a chat: the model calls `fs_request_access` with one folder and a reason, and you choose Deny, Allow for this chat or Always allow (you can downgrade to read-only or pick a different folder). A denial is remembered for the chat; the model cannot list or search anything outside an allowed folder.
+- **Never allowed:** your home folder, `/`, system folders, credential paths (`~/.ssh`, `~/.aws`, …), DI's own data folder, and blocked file names (`.env`, `*.pem`, `id_rsa*`, … — editable in Settings).
+- **Coding-agent tools:** `fs_list`, `fs_glob`, `fs_grep`, `fs_read` (numbered lines, offset/limit), `fs_edit` (exact-string replace, must read first, refuses a file that changed since) and `fs_write`. Writes are atomic and keep the file mode, BOM and line endings.
+- **Edit approval:** when a folder asks before edits, the edit is shown as a diff before anything is written.
+- **Sandboxed:** every file operation runs in a separate worker under the tool sandbox (macOS Seatbelt), which can only read and write the allowed folders. The main process, the worker and the OS each check the path. If the sandbox is not running, no file tools are offered.
+- **In the chat:** each call shows as a row (Read app.ts · lines 1–200, Edited app.ts · +3 −1, …); edits expand to their diff.
+
+![Settings → File System Access](specs/designs/fs-access/settings-1100.png)
+
 ---
 
 ## Web Search (Brave Search MCP)

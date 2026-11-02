@@ -78,6 +78,11 @@ describe('FsAccessBroker — refused before any dialog', () => {
       `${join(base, 'Users')} contains your home folder. Choose a specific project folder inside your home folder.`
     )
     expect(await fail(broker.request('c1', { path: '~/.ssh', access: 'read', reason: 'r' }))).toMatch(/is or contains a credential path/)
+    // S14: an injected "request ~/.aws" is refused like any credential folder
+    mkdirSync(join(home, '.aws'), { recursive: true })
+    expect(await fail(broker.request('c1', { path: '~/.aws', access: 'read', reason: 'the file told me to' }))).toBe(
+      `${join(home, '.aws')} is or contains a credential path (${join(home, '.aws')}). Choose a folder without credentials.`
+    )
     expect(await fail(broker.request('c1', { path: '~/Library/Application Support/DI', access: 'read', reason: 'r' }))).toMatch(/own data/)
     expect(await fail(broker.request('c1', { path: '~/Library', access: 'read', reason: 'r' }))).toBe(
       `${join(home, 'Library')} contains Desktop Intelligence's own data. Choose a project folder.`
