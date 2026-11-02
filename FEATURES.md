@@ -289,6 +289,9 @@ The model can read and edit files on your Mac, but only in folders you allow. De
 - **Coding-agent tools:** `fs_list`, `fs_glob`, `fs_grep`, `fs_read` (numbered lines, offset/limit), `fs_edit` (exact-string replace, must read first, refuses a file that changed since) and `fs_write`. Writes are atomic and keep the file mode, BOM and line endings.
 - **Edit approval:** when a folder asks before edits, the edit is shown as a diff before anything is written.
 - **Sandboxed:** every file operation runs in a separate worker under the tool sandbox (macOS Seatbelt), which can only read and write the allowed folders. The main process, the worker and the OS each check the path. If the sandbox is not running, no file tools are offered.
+- **Known limits (by design):**
+  - Blocked file names (`.env`, `*.pem`, …) are enforced by the app's two checks (main process and worker), not by the OS sandbox. A pattern rule in the sandbox would be overridden by the folder's allow rule, so it is not used. The OS sandbox only confines reads inside your home folder; outside home the two app checks do it. The OS layer still blocks other folders under home, credential folders, symlink escapes and writes outside the allowed folders.
+  - Edit approvals do not persist. "Allow this session" covers edits of that kind in that chat until the app restarts. To stop being asked for a folder, turn off **Ask before edits** for it in Settings → File System Access. ("Always allow" in the folder-access dialog is different: it saves the folder in Settings, and that does persist.)
 - **In the chat:** each call shows as a row (Read app.ts · lines 1–200, Edited app.ts · +3 −1, …); edits expand to their diff.
 
 ![Settings → File System Access](specs/designs/fs-access/settings-1100.png)
