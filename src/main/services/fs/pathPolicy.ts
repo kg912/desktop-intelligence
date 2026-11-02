@@ -145,19 +145,24 @@ const deeper = (a: FsGrant, b: FsGrant): FsGrant => (b.path.length > a.path.leng
  * Decide whether `real` (already resolved) may be read or written under
  * `grants`. Credential paths, DI's data folder and blocked names are denied
  * whatever the grants. Returns the governing grant (most permissive).
+ *
+ * `shown` is the path as the caller gave it. Denials made before the path is
+ * known to be inside a grant name `shown`, never `real`: resolving a symlink
+ * outside the grants must not reveal where it points.
  */
 export function checkAccess(
   real: string,
   op: FsAccessLevel,
   grants: FsGrant[],
   blockedNames: string[],
-  deps: FsPolicyDeps
+  deps: FsPolicyDeps,
+  shown: string = real
 ): Verdict<{ grant: FsGrant }> {
   if (matchCredentialPath(real, deps.credentialEntries, deps.homedir)) {
-    return { ok: false, reason: `${real} is a credential path; access is always denied.` }
+    return { ok: false, reason: `${shown} is a credential path; access is always denied.` }
   }
   if (isInside(deps.userDataDir, real)) {
-    return { ok: false, reason: `${real} is in Desktop Intelligence's own data folder; access is always denied.` }
+    return { ok: false, reason: `${shown} is in Desktop Intelligence's own data folder; access is always denied.` }
   }
   const containing = grants.filter((g) => isInside(g.path, real))
   if (containing.length === 0) {
@@ -165,8 +170,8 @@ export function checkAccess(
       ok: false,
       reason:
         grants.length === 0
-          ? `${real} is not inside a granted folder. No folders are granted yet. Call fs_request_access to ask for one.`
-          : `${real} is not inside a granted folder. Granted folders: ${describeGrants(grants)}. Call fs_request_access to ask for another folder.`,
+          ? `${shown} is not inside a granted folder. No folders are granted yet. Call fs_request_access to ask for one.`
+          : `${shown} is not inside a granted folder. Granted folders: ${describeGrants(grants)}. Call fs_request_access to ask for another folder.`,
     }
   }
   // Blocked names apply below the root: a granted folder's own path never trips them.

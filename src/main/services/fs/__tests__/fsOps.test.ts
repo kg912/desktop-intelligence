@@ -234,7 +234,9 @@ describe('fsList', () => {
   it('S3: listing a symlink to outside a root is denied', async () => {
     mkdirSync(join(base, 'Documents'))
     symlinkSync(join(base, 'Documents'), join(root, 'link'))
-    expect(await err(fsList(ctx, { path: join(root, 'link') }))).toMatch(new RegExp(`^${join(base, 'Documents')} is not inside a granted folder`))
+    const msg = await err(fsList(ctx, { path: join(root, 'link') }))
+    expect(msg).toMatch(new RegExp(`^${join(root, 'link')} is not inside a granted folder`))
+    expect(msg).not.toContain('Documents')
   })
 })
 

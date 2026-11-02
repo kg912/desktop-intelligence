@@ -52,7 +52,7 @@ const glob = (fsp as unknown as { glob: GlobFn }).glob
 function target(ctx: FsOpsContext, path: unknown, op: FsAccessLevel): { real: string; exists: boolean; grant: FsGrant } {
   const r = resolveTarget(path as string, ctx.deps)
   if (!r.ok) throw new FsOpError(r.reason)
-  const c = checkAccess(r.real, op, ctx.grants, ctx.blockedNames, ctx.deps)
+  const c = checkAccess(r.real, op, ctx.grants, ctx.blockedNames, ctx.deps, String(path))
   if (!c.ok) throw new FsOpError(c.reason)
   return { real: r.real, exists: r.exists, grant: c.grant }
 }

@@ -217,7 +217,7 @@ export class FsToolService {
     const deps = this.o.policyDeps
     const r = resolveTarget(args.path as string, deps)
     if (!r.ok) throw new FsToolError(r.reason)
-    const c = checkAccess(r.real, level, this.effectiveGrants(opts.chatId), this.o.getSettings().blockedNames, deps)
+    const c = checkAccess(r.real, level, this.effectiveGrants(opts.chatId), this.o.getSettings().blockedNames, deps, String(args.path))
     if (!c.ok) throw new FsToolError(c.reason)
 
     // Only known model arguments pass; ledger hash, dryRun and maxChars are ours.

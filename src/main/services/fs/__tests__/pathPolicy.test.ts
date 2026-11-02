@@ -463,3 +463,51 @@ describe('pathPolicy — more branches', () => {
     })
   })
 })
+
+describe('denials never reveal what a path resolves to outside the grants', () => {
+  it('a symlink outside every grant: the message names only the given path and the granted folders', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'di-leak-')))
+    const home = join(base, 'home')
+    const granted = join(home, 'proj')
+    const secretDir = join(home, 'private-notes', 'tax-2026')
+    mkdirSync(granted, { recursive: true })
+    mkdirSync(secretDir, { recursive: true })
+    writeFileSync(join(secretDir, 'return.pdf'), 'x')
+    mkdirSync(join(home, 'elsewhere'))
+    symlinkSync(join(secretDir, 'return.pdf'), join(home, 'elsewhere', 'link'))
+    const deps = realFsDeps({ homedir: home, userDataDir: join(base, 'ud'), credentialEntries: CRED })
+    const given = join(home, 'elsewhere', 'link')
+    const r = resolveTarget(given, deps)
+    if (!r.ok) throw new Error(r.reason)
+    const v = checkAccess(r.real, 'read', [{ path: granted, access: 'read', askBeforeEdit: true }], BLOCKED, deps, given)
+    expect(v).toEqual({
+      ok: false,
+      reason: `${given} is not inside a granted folder. Granted folders: ${granted} (read-only). Call fs_request_access to ask for another folder.`,
+    })
+    expect((v as { reason: string }).reason).not.toContain('private-notes')
+    rmSync(base, { recursive: true, force: true })
+  })
+
+  it('a symlink to a credential file: the message does not reveal the target', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'di-leak-')))
+    const home = join(base, 'home')
+    mkdirSync(join(home, '.ssh'), { recursive: true })
+    writeFileSync(join(home, '.ssh', 'id_rsa'), 'k')
+    mkdirSync(join(home, 'proj'))
+    symlinkSync(join(home, '.ssh', 'id_rsa'), join(home, 'proj', 'key'))
+    const deps = realFsDeps({ homedir: home, userDataDir: join(base, 'ud'), credentialEntries: CRED })
+    const given = join(home, 'proj', 'key')
+    const r = resolveTarget(given, deps) as { real: string }
+    const v = checkAccess(r.real, 'read', [{ path: join(home, 'proj'), access: 'read', askBeforeEdit: true }], BLOCKED, deps, given)
+    expect(v).toEqual({ ok: false, reason: `${given} is a credential path; access is always denied.` })
+    rmSync(base, { recursive: true, force: true })
+  })
+
+  it('within a grant, messages and the governing grant are unchanged', () => {
+    const deps = { ...realFsDeps({ homedir: '/Users/u', userDataDir: '/Users/u/ud', credentialEntries: [] }) }
+    expect(checkAccess('/r/a.ts', 'write', [{ path: '/r', access: 'read', askBeforeEdit: true }], BLOCKED, deps, '/given/a.ts')).toEqual({
+      ok: false,
+      reason: '/r/a.ts is in a read-only folder (/r). Editing needs read and write access: call fs_request_access with access "write".',
+    })
+  })
+})
