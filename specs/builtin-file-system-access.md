@@ -1,6 +1,6 @@
 # Built-in file system access
 
-**Status:** Implemented 2026-11-02 (3.2.73–3.2.80, progress rows 449–456). Decisions taken while building are written into the sections below; the close-out (security table, what was and was not verified) is progress row 456.
+**Status:** Implemented 2026-11-02 (3.2.73–3.2.82, progress rows 449–458). Decisions taken while building are written into the sections below; the close-out (security table) is progress row 456; checklist items 2–4 and the packaged app were verified in the running app against a scripted local model server (row 458).
 **Read first:** `CLAUDE.md`, `progress.md` (every row), `specs/SANDBOX_ARCHITECTURE_SPEC.html` (sections 04, 07, 08, 16), and this spec end to end.
 **Rules:** TDD (failing test first, every time). No new dependencies (the stack is frozen). No keyword or regex heuristics for semantic decisions. Every path decision goes through one pure, tested policy module. Fail closed: if the sandbox is unavailable, the file tools are not offered.
 
