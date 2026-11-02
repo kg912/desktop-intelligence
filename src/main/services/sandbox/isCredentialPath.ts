@@ -10,32 +10,13 @@
 // entries) a translated regex.
 
 import { homedir } from 'os'
-import { join } from 'path'
 import { BASELINE_DENY_READ } from './BASELINE_DENY_READ'
+import { matchCredentialPath } from '../../../shared/credentialPathMatch'
 import type { SandboxViolationTraceEvent } from '../../../shared/types'
-
-function expandTilde(p: string): string {
-  return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
-}
-
-function globToRegExp(glob: string): RegExp {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '[^/]*')
-  return new RegExp(`^${escaped}$`)
-}
 
 /** True when `target` (an absolute path) matches a BASELINE_DENY_READ entry. */
 export function isCredentialPath(target: string): boolean {
-  for (const entry of BASELINE_DENY_READ) {
-    const expanded = expandTilde(entry)
-    if (expanded.includes('*')) {
-      if (globToRegExp(expanded).test(target)) return true
-    } else if (target === expanded || target.startsWith(expanded + '/')) {
-      return true
-    }
-  }
-  return false
+  return matchCredentialPath(target, BASELINE_DENY_READ, homedir()) !== null
 }
 
 /**
