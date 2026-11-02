@@ -117,3 +117,37 @@ export function memoryWatch(
     stopIntervalIfIdle()
   }
 }
+
+/**
+ * SIGKILL `pid` and every descendant. The tree is read from `ps` BEFORE any
+ * kill: once a shell wrapper dies its children are re-parented to launchd and
+ * can no longer be found by ppid (seen with the fs worker: killing the
+ * spawnPersistent shell left a worker stuck in a runaway regex alive).
+ */
+export function killProcessTree(pid: number): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('ps', ['-A', '-o', 'pid=,ppid='], (_err, stdout) => {
+      const children = new Map<number, number[]>()
+      for (const line of (stdout ?? '').trim().split('\n')) {
+        const [p, pp] = line.trim().split(/\s+/).map(Number)
+        if (Number.isFinite(p) && Number.isFinite(pp)) children.set(pp, [...(children.get(pp) ?? []), p])
+      }
+      const tree: number[] = []
+      const stack = [pid]
+      while (stack.length) {
+        const p = stack.pop()!
+        if (tree.includes(p)) continue
+        tree.push(p)
+        stack.push(...(children.get(p) ?? []))
+      }
+      for (const p of tree) {
+        try {
+          process.kill(p, 'SIGKILL')
+        } catch {
+          /* already gone */
+        }
+      }
+      resolve()
+    })
+  })
+}

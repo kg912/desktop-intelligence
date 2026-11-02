@@ -25,7 +25,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           // Forked per network policy by SrtBackend — see policyHost.ts.
-          sandboxPolicyHost: resolve(__dirname, 'src/main/services/sandbox/policyHost.ts')
+          sandboxPolicyHost: resolve(__dirname, 'src/main/services/sandbox/policyHost.ts'),
+          // Spawned sandboxed by FsToolService — see fs/fsWorker.ts.
+          fsWorker: resolve(__dirname, 'src/main/services/fs/fsWorker.ts')
         }
       }
     }

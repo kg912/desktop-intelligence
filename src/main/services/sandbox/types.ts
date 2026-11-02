@@ -29,6 +29,14 @@ export interface SandboxRunSpec {
   /** Caller-supplied deny-read paths — merged with BASELINE_DENY_READ (Section 07). */
   denyRead: string[]
   /**
+   * Paths re-allowed for reading inside denyRead regions (srt
+   * filesystem.allowRead; macOS emits them after the denies, and re-emits a
+   * literal deny nested inside them last). Optional: callers that omit it get
+   * exactly the old config. Used by the fs worker (denyRead [home] +
+   * allowRead [granted folders, app code]).
+   */
+  allowRead?: string[]
+  /**
    * Wall-clock timeout in milliseconds. Enforced by the backend for run()
    * (whole process group killed); 0 = none. Persistent processes are the
    * caller's to time out.

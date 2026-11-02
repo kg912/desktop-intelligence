@@ -113,13 +113,13 @@ Names use the `fs_` prefix and no `__`, so they never reach the MCP branch. Sche
 
 - New entry `src/main/services/fs/fsWorker.ts`, added to `electron.vite.config.ts` main `rollupOptions.input` as `fsWorker` (built to `out/main/fsWorker.js`; tsx fallback in vitest, exactly like `SrtBackend.defaultHost()`).
 - Pure file operations live in `src/main/services/fs/fsOps.ts` (no Electron imports). The worker is a thin NDJSON loop over `fsOps`: request `{ id, op, args }` → response `{ id, ok: true, result } | { id, ok: false, error }`.
-- `FsToolService` (main) owns the worker: lazy start on first call, a serial queue, per-call timeout 15 s (`fs_grep` 30 s). On timeout the worker is killed and restarted, and the call fails with `"The operation timed out."`. This also contains a pathological regex.
+- `FsToolService` (main) owns the worker: lazy start on first call, a serial queue, per-call timeout 15 s (`fs_grep` 30 s). On timeout the worker is killed and restarted, and the call fails with `"The operation timed out."`. This also contains a pathological regex. The kill takes the whole process tree (`killProcessTree` in `ResourceGovernor`: the tree is read from `ps` first, because `spawnPersistent` returns a shell wrapper and a worker stuck in a regex never notices stdin closing). The worker prints `{"ready":true}` first; replies carry `kind: 'op'` (an expected refusal, sent to the model as is) or `'system'` (sent as `"The file operation failed: <message>"`). A worker that exits mid-call fails it with `"The file worker stopped unexpectedly. Try again."`.
 - Spawn through `sandboxService.spawnPersistent()`:
   ```ts
   {
     workspaceDir: join(userData, 'sandboxes', 'fs-worker'),
     command: quote([process.execPath, workerEntry]),        // shell-quote, never interpolate
-    env: { ELECTRON_RUN_AS_NODE: '1', DI_FS_POLICY: JSON.stringify(policy) },
+    env: { ELECTRON_RUN_AS_NODE: '1', DI_FS_POLICY: JSON.stringify(policy), TMPDIR: workspaceDir },
     executionProfile: 'lightweight',
     allowedDomains: [],                                      // no network
     denyRead: [homedir()],                                   // + BASELINE_DENY_READ (merged by SrtBackend)
@@ -133,7 +133,7 @@ Names use the `fs_` prefix and no `__`, so they never reach the MCP branch. Sche
 - **`SandboxRunSpec.allowRead?: string[]`** (new, optional): `SrtBackend.buildPerSpecConfig` passes it as `filesystem.allowRead`. Existing callers pass nothing and behave exactly as before (test this).
 - **OS-level blocked names:** not passed to the sandbox. Phase 0 measured that `<root>/**/.env` in `denyRead` does **not** block `<root>/sub/.env`: the glob becomes a regex deny that the later `allowRead` subpath re-allows, and sandbox-runtime re-emits only literal denies after the allows. Blocked names are enforced in the two app layers only.
 - **Policy scope:** the worker's policy is the union of all effective grants across chats (one worker). Per-chat separation is enforced by the main-process policy. When the union changes (grant added, revoked, settings saved), the worker is marked stale and restarted before the next call.
-- **Worker checks again:** `fsOps` calls the same `checkAccess` with the policy from `DI_FS_POLICY` (defence in depth; a main-process bug alone cannot reach outside the union).
+- **Worker checks again:** `fsOps` calls the same `checkAccess` with the policy from `DI_FS_POLICY` (defence in depth; a main-process bug alone cannot reach outside the union). Inside the sandbox a path under home but outside the grants already fails `realpath` with EPERM, so the worker refuses it as `"Cannot resolve <path> (EPERM)."` before reading; outside home (where the OS allows reads) the refusal is the worker's own `"… is not inside a granted folder."`. The integration test uses a test-only `testDisableOwnCheck` policy flag (set only through `FsToolService`'s `testDisableWorkerCheck` option) to show Seatbelt refusing on its own.
 - **Atomic write:** write `<dir>/.<name>.di-tmp-<8 hex>`, `fsync`, set mode, `rename` over the target; remove the temp file on any failure.
 - **Fail closed:** if `getSandboxStatus().ready` is false, no fs tool is offered, the Settings tab shows why, and a direct call returns `"File access is unavailable: the tool sandbox is not running."`
 

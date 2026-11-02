@@ -228,7 +228,12 @@ export class SrtBackend implements SandboxExecutionBackend {
         deniedDomains: [],
         allowLocalBinding: spec.allowLocalBinding === true,
       },
-      filesystem: { denyRead: mergedDenyRead, allowWrite, denyWrite: [] },
+      filesystem: {
+        denyRead: mergedDenyRead,
+        allowWrite,
+        denyWrite: [],
+        ...(spec.allowRead ? { allowRead: [...new Set(spec.allowRead)] } : {}),
+      },
       enableWeakerNestedSandbox: false,
       enableWeakerNetworkIsolation: false,
     }

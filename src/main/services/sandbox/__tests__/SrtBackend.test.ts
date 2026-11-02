@@ -93,6 +93,24 @@ describe('SrtBackend.run', () => {
     expect(config.filesystem.allowWrite).toEqual(['/tmp/workspace', '/tmp/extra'])
   })
 
+  it('passes spec.allowRead through as filesystem.allowRead', async () => {
+    const result = await makeBackend().run({
+      ...baseSpec,
+      command: 'printf "%s" "$WRAP_CONFIG"',
+      denyRead: ['/Users/x'],
+      allowRead: ['/Users/x/proj', '/Users/x/app'],
+    })
+    const config = JSON.parse(Buffer.from(result.stdout, 'base64').toString())
+    expect(config.filesystem.allowRead).toEqual(['/Users/x/proj', '/Users/x/app'])
+  })
+
+  it('a spec without allowRead produces exactly the old filesystem config', async () => {
+    const result = await makeBackend().run({ ...baseSpec, command: 'printf "%s" "$WRAP_CONFIG"', denyRead: ['/secret'] })
+    const config = JSON.parse(Buffer.from(result.stdout, 'base64').toString())
+    expect(Object.keys(config.filesystem)).toEqual(['denyRead', 'allowWrite', 'denyWrite'])
+    expect(config.filesystem).toEqual({ denyRead: [...new Set([...BASELINE_DENY_READ, '/secret'])], allowWrite: ['/tmp/workspace'], denyWrite: [] })
+  })
+
   it('kills the whole process group when the wall-clock timeout expires (D6)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'srt-timeout-'))
     const pidFile = join(dir, 'grandchild.pid')
