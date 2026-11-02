@@ -417,11 +417,12 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Tool error: mark last search block as error ───────────────
     const unsubToolError = window.api.onChatStreamToolError(
-      ({ query: _q, toolName: _tn, error }: { query: string; toolName?: string; error: string }) => {
+      ({ query: _q, toolName: _tn, error, toolArgs }: { query: string; toolName?: string; error: string; toolArgs?: Record<string, unknown> }) => {
         if (DEBUG) console.log(`[Debug][useChat][ToolError] query="${_q}" toolName=${_tn ?? 'unknown'} error="${error}"`);
         updateLastBlock("search", {
           phase: "error",
           error,
+          ...(toolArgs ? { toolArgs } : {}),
         } as Partial<MessageBlock>);
         patchAssistant({ isSearching: false });
       },

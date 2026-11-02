@@ -3,7 +3,7 @@ import { IPC_CHANNELS } from '../../../shared/types'
 import type { ChatSendPayload } from '../../../shared/types'
 
 // Same mocking style as ChatService.e2e.test.ts, plus a fake fsToolService.
-const { mockFetch, mockReadSettings, fsMock, MockMcpDeniedError } = vi.hoisted(() => {
+const { mockFetch, mockReadSettings, fsMock, mcpMock, MockMcpDeniedError } = vi.hoisted(() => {
   class MockMcpDeniedError extends Error {
     userNote: string
     constructor(note: string) {
@@ -22,6 +22,7 @@ const { mockFetch, mockReadSettings, fsMock, MockMcpDeniedError } = vi.hoisted((
       call: vi.fn(),
       cancelAll: vi.fn(),
     },
+    mcpMock: { schemas: [] as unknown[], callTool: vi.fn() },
   }
 })
 
@@ -31,7 +32,7 @@ vi.mock('../ObservabilityService', () => ({
   observabilityService: { startSession: vi.fn().mockReturnValue('obs'), endSession: vi.fn().mockResolvedValue(undefined), capture: vi.fn() },
 }))
 vi.mock('../McpServerManager', () => ({
-  mcpServerManager: { getToolSchemas: () => [], callTool: vi.fn(), drainPendingPermissions: vi.fn() },
+  mcpServerManager: { getToolSchemas: () => mcpMock.schemas, callTool: (...a: unknown[]) => mcpMock.callTool(...a), drainPendingPermissions: vi.fn() },
   McpDeniedError: MockMcpDeniedError,
   buildApprovedToolResult: (t: string) => t,
   buildDeniedToolMessage: (n: string) => `Denied: ${n}`,
@@ -137,7 +138,12 @@ describe('ChatService — fs dispatch', () => {
     queue.push(sse(toolCalls([{ id: 'c1', name: 'fs_edit', args: { path: '/p/a.ts', old_string: 'x', new_string: 'y' } }])), sse(answer('done')))
     await chatService.send(payload(), 'qwen', wc as any)
     expect(sent(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR)).toEqual([
-      { query: 'fs_edit', toolName: 'fs_edit', error: 'old_string was not found in /p/a.ts. Read the file again and copy the text exactly.' },
+      {
+        query: 'fs_edit',
+        toolName: 'fs_edit',
+        error: 'old_string was not found in /p/a.ts. Read the file again and copy the text exactly.',
+        toolArgs: { path: '/p/a.ts', old_string: 'x', new_string: 'y' },
+      },
     ])
     expect(bodies()[1].messages.find((m: any) => m.role === 'tool').content).toBe(
       'old_string was not found in /p/a.ts. Read the file again and copy the text exactly.'
@@ -225,6 +231,18 @@ describe('ChatService — fs dispatch', () => {
     )
     await chatService.send(payload(), 'qwen', wc as any)
     expect(bodies()[1].messages.find((m: any) => m.role === 'tool').content).toBe('Read the file with fs_read before editing it.')
+    expect(sent(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR)).toEqual([
+      { query: 'fs_edit', toolName: 'fs_edit', error: 'Read the file with fs_read before editing it.', toolArgs: { path: '/p/a', old_string: 'a', new_string: 'b' } },
+    ])
+  })
+
+  it('an MCP tool failure keeps its TOOL_ERROR shape (no toolArgs)', async () => {
+    mcpMock.schemas = [{ type: 'function', function: { name: 'srv__lookup', description: '', parameters: { type: 'object', properties: {}, required: [] } } }]
+    mcpMock.callTool.mockRejectedValue(new Error('server down'))
+    queue.push(sse(toolCalls([{ id: 'c1', name: 'srv__lookup', args: { q: 'x' } }])), sse(answer('done')))
+    await chatService.send(payload(), 'qwen', wc as any)
+    expect(sent(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR)).toEqual([{ query: 'srv__lookup', toolName: 'srv__lookup', error: 'server down' }])
+    mcpMock.schemas = []
   })
 
   it('abort() cancels file work and pending access dialogs', () => {

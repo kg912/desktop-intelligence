@@ -2156,7 +2156,13 @@ export class ChatService {
                     : err instanceof FsToolError
                       ? errMsg
                       : `Tool "${detectedName}" failed: ${errMsg}.`;
-                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, { query: uiLabel, toolName: detectedName, error: errMsg });
+                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, {
+                    query: uiLabel,
+                    toolName: detectedName,
+                    error: errMsg,
+                    // File tools: the pill names the file even when the call failed.
+                    ...(isMidFs ? { toolArgs: Object.fromEntries(Object.entries(detectedArgs).map(([k, v]) => { try { return [k, JSON.parse(v)]; } catch { return [k, v]; } })) } : {}),
+                  });
                 }
                 // 5h — tool_result capture (mid-stream fallback path)
                 this._obsCapture({ type: 'tool_result', payload: { toolName: detectedName, result: midStreamResult }, ts: Date.now() })
@@ -2631,6 +2637,8 @@ export class ChatService {
                     query: uiLabel,
                     toolName,
                     error: errMsg,
+                    // File tools: the pill names the file even when the call failed.
+                    ...(isFs ? { toolArgs: (() => { try { return JSON.parse(argsRaw || "{}"); } catch { return {}; } })() } : {}),
                   });
                 }
                 currentMessages = [
