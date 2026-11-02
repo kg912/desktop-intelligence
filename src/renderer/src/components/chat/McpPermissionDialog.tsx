@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ShieldQuestion, Plug, ChevronDown, ChevronUp, Bot } from 'lucide-react'
+import { ShieldQuestion, Plug, ChevronDown, ChevronUp, Bot, FilePen } from 'lucide-react'
+import { DiffView } from './DiffView'
+import { isFsTool } from '../../lib/fsToolLabel'
+import { displayPath } from '../../../../shared/fsAccess'
 import type { McpToolPermissionRequest, McpToolPermissionResponse } from '../../../../shared/types'
 
 interface McpPermissionDialogProps {
@@ -22,6 +25,8 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
   const hasArgs     = Object.keys(request.args).length > 0
   const agent       = request.agent
   const remaining   = useCountdown(request.timeoutMs)
+  // Built-in file edit (fs_edit / fs_write): show the path and the diff instead of raw arguments.
+  const fileEdit    = request.serverName === 'fs' && isFsTool(request.toolName)
 
   const respond = async (
     approved: boolean,
@@ -48,16 +53,18 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
         {/* Icon + title */}
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-accent-950/60 border border-accent-900/40 flex items-center justify-center">
-            <ShieldQuestion className="w-4 h-4 text-accent-400" />
+            {fileEdit ? <FilePen className="w-4 h-4 text-accent-400" /> : <ShieldQuestion className="w-4 h-4 text-accent-400" />}
           </div>
           <div>
             <h3 className="text-sm font-semibold text-content-primary">
-              {agent ? `${agent.role} Agent needs approval` : 'Tool permission required'}
+              {fileEdit ? 'Allow this edit?' : agent ? `${agent.role} Agent needs approval` : 'Tool permission required'}
             </h3>
             <p className="text-xs text-content-muted mt-0.5" data-testid="permission-subtitle">
-              {agent
-                ? `${agent.role} Agent (${agent.model || 'default model'}) is requesting access to ${displayToolName}.`
-                : 'The assistant wants to call an MCP tool.'}
+              {fileEdit
+                ? 'DI wants to change a file in a folder you allowed.'
+                : agent
+                  ? `${agent.role} Agent (${agent.model || 'default model'}) is requesting access to ${displayToolName}.`
+                  : 'The assistant wants to call an MCP tool.'}
             </p>
             {remaining !== null && (
               <p className="text-[10px] text-content-muted mt-1">Auto-denies in {remaining}</p>
@@ -65,8 +72,25 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
           </div>
         </div>
 
+        {fileEdit && (
+          <div>
+            <div
+              data-testid="fs-edit-path"
+              className="font-mono text-[12.5px] text-content-primary bg-black/35 rounded-[7px] px-2.5 py-2 break-all"
+              style={{ border: '0.5px solid rgba(255,255,255,0.09)' }}
+            >
+              <span title={String(request.args.path ?? '')}>{displayPath(String(request.args.path ?? ''), '', 60)}</span>
+            </div>
+            {typeof request.args.diff === 'string' && request.args.diff && (
+              <div className="mt-2">
+                <DiffView diff={request.args.diff} />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tool info */}
-        <div className="space-y-1.5">
+        {!fileEdit && <div className="space-y-1.5">
           {agent && (
             <div className="flex items-center gap-2 text-xs">
               <Bot className="w-3.5 h-3.5 text-accent-500 flex-shrink-0" />
@@ -84,10 +108,10 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
             <span className="text-content-muted">Tool:</span>
             <span className="text-content-primary font-mono">{displayToolName}</span>
           </div>
-        </div>
+        </div>}
 
         {/* Args (collapsible) */}
-        {hasArgs && (
+        {hasArgs && !fileEdit && (
           <div>
             <button
               data-testid="args-toggle"
@@ -176,7 +200,7 @@ export function McpPermissionDialog({ request, onRespond, inline = false }: McpP
 }
 
 /** "4:59" until the dialog's auto-deny deadline, or null when it has none. */
-function useCountdown(timeoutMs: number | undefined): string | null {
+export function useCountdown(timeoutMs: number | undefined): string | null {
   const [deadline] = useState(() => (timeoutMs ? Date.now() + timeoutMs : null))
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Globe, Plug } from 'lucide-react'
+import { FileText, FilePen, Search, FolderOpen, FolderLock } from 'lucide-react'
+import { DiffView } from './DiffView'
+import { fsToolLabel, isFsTool, type FsPillIcon } from '../../lib/fsToolLabel'
 import { cn } from '../../lib/utils'
 import { ChevronIcon } from './ChevronIcon'
 
@@ -17,6 +19,8 @@ interface ToolCallNotificationProps {
   toolArgs?: Record<string, unknown>
   /** Image outputs returned by the tool (e.g. Puppeteer screenshots) */
   toolImages?: Array<{ mimeType: string; data: string }>
+  /** Unified diff of a built-in file edit (fs_edit / fs_write) */
+  toolDiff?: string
   className?: string
   autoCollapse?: boolean
   expanded?: boolean
@@ -116,6 +120,14 @@ export function SearchResult({
   )
 }
 
+const FS_ICONS: Record<FsPillIcon, typeof FileText> = {
+  read: FileText,
+  edit: FilePen,
+  search: Search,
+  list: FolderOpen,
+  access: FolderLock,
+}
+
 // ── ToolCallNotification ─────────────────────────────────────────
 export function ToolCallNotification({
   phase,
@@ -126,6 +138,7 @@ export function ToolCallNotification({
   formattedContent,
   toolArgs,
   toolImages,
+  toolDiff,
   className = '',
   autoCollapse,
   expanded: propExpanded,
@@ -166,6 +179,8 @@ export function ToolCallNotification({
     )
   }
 
+  const fs = isFsTool(toolName) ? fsToolLabel(toolName!, toolArgs ?? {}, { formattedContent, toolDiff }) : null
+
   // ── Error: title at full width, detail indented under rail ──────
   if (phase === 'error') {
     return (
@@ -175,7 +190,7 @@ export function ToolCallNotification({
             {webSearch ? 'Search failed' : 'Tool failed'}
           </span>
           <span className="font-mono text-[13px] text-white/20">
-            {label}
+            {fs ? fs.text : label}
           </span>
         </div>
         {errorMsg && (
@@ -213,6 +228,46 @@ export function ToolCallNotification({
         <div className={cn('accordion-body', expanded && 'open')}>
           <div style={{ overflow: 'hidden', paddingTop: 6 }}>
             <SearchResult query={label} results={results} isFirst />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Done — built-in file tool (spec 2.10, mockup 15 panel D) ────
+  if (fs) {
+    const Icon = FS_ICONS[fs.icon]
+    const isEdit = fs.icon === 'edit'
+    return (
+      <div className={cn('mb-2', className)}>
+        <button
+          onClick={handleToggle}
+          data-testid="fs-pill"
+          data-icon={fs.icon}
+          className="flex items-center gap-1.5 group/fs select-none text-left"
+        >
+          <Icon className="w-[13px] h-[13px] text-white/30 flex-shrink-0" />
+          <span className="font-mono text-[13px] leading-none text-white/55 group-hover/fs:text-white/75 transition-colors duration-100">
+            {isEdit && fs.added !== undefined ? fs.text.slice(0, fs.text.lastIndexOf(' · ')) : fs.text}
+          </span>
+          {isEdit && fs.added !== undefined && (
+            <span data-testid="fs-pill-counts" className="font-mono text-[11px] leading-none">
+              <span className="text-green-400">+{fs.added}</span> <span className="text-red-400">−{fs.removed}</span>
+            </span>
+          )}
+          {fs.status && (
+            <span className={cn('font-mono text-[11px] leading-none', fs.status === 'granted' ? 'text-green-400' : 'text-white/30')}>{fs.status}</span>
+          )}
+          <ChevronIcon open={expanded} className="text-white/20 group-hover/fs:text-white/35 transition-colors duration-150" />
+        </button>
+        <div className={cn('accordion-body', expanded && 'open')}>
+          <div style={{ overflow: 'hidden', paddingTop: 6 }}>
+            {expanded && isEdit && toolDiff && <DiffView diff={toolDiff} maxHeight={320} />}
+            {expanded && !isEdit && hasText && (
+              <pre className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap break-all overflow-x-auto max-h-48 overflow-y-auto">
+                {formattedContent}
+              </pre>
+            )}
           </div>
         </div>
       </div>

@@ -433,3 +433,10 @@ describe('fs tool schemas', () => {
     expect(byName.fs_grep.properties?.output_mode).toMatchObject({ enum: ['files', 'content', 'count'] })
   })
 })
+
+describe('renderer tool-name list', () => {
+  it('matches the main-process schemas', async () => {
+    const { FS_TOOL_NAME_LIST } = await import('../../../../shared/fsAccess')
+    expect([...FS_TOOL_NAME_LIST]).toEqual([...FS_TOOL_NAMES])
+  })
+})

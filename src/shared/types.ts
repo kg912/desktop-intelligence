@@ -141,6 +141,8 @@ export type MessageBlock =
       toolArgs?:        Record<string, unknown>
       /** Image outputs returned by the tool (e.g. Puppeteer screenshots) */
       toolImages?:      Array<{ mimeType: string; data: string }>
+      /** Unified diff of a built-in file edit (fs_edit / fs_write); renderer only, never sent to the model */
+      toolDiff?:        string
       phase:            'searching' | 'done' | 'error'
       error?:           string
     }

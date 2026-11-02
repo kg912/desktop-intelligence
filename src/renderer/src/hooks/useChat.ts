@@ -391,6 +391,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         formattedContent,
         toolArgs,
         toolImages,
+        toolDiff,
       }: {
         query: string;
         toolName?: string;
@@ -398,6 +399,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         formattedContent: string;
         toolArgs?: Record<string, unknown>;
         toolImages?: Array<{ mimeType: string; data: string }>;
+        toolDiff?: string;
       }) => {
         if (DEBUG) console.log(`[Debug][useChat][ToolDone] query="${query}" toolName=${toolName ?? 'brave_web_search'} resultsCount=${results.length} formattedLen=${formattedContent.length}`);
         updateLastBlock("search", {
@@ -407,6 +409,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           ...(toolName   ? { toolName }   : {}),
           ...(toolArgs   ? { toolArgs }   : {}),
           ...(toolImages ? { toolImages } : {}),
+          ...(toolDiff   ? { toolDiff }   : {}),
         } as Partial<MessageBlock>);
         patchAssistant({ isSearching: false });
       },

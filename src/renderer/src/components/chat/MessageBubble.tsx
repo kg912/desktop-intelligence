@@ -6,7 +6,8 @@
  */
 
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
-import { Paperclip, Plug } from 'lucide-react'
+import { Paperclip, Plug, FileText } from 'lucide-react'
+import { isFsTool } from '../../lib/fsToolLabel'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { StatsBar } from './StatsBar'
@@ -623,7 +624,9 @@ function RailSegment({
                   </svg>
                 )}
                 {iconType === 'mcp' && (
-                  <Plug size={8} style={{ color: 'rgba(229,57,53,0.7)' }} />
+                  group.kind === 'single' && group.block.type === 'search' && isFsTool(group.block.toolName)
+                    ? <FileText size={8} style={{ color: 'rgba(229,57,53,0.7)' }} />
+                    : <Plug size={8} style={{ color: 'rgba(229,57,53,0.7)' }} />
                 )}
               </div>
               {/* Connecting line from bottom of this icon to top of next block */}
@@ -692,6 +695,7 @@ function RailSegment({
                   formattedContent={group.block.formattedContent}
                   toolArgs={group.block.toolArgs}
                   toolImages={group.block.toolImages}
+                  toolDiff={group.block.toolDiff}
                   autoCollapse={hasNonSearch}
                   className="mb-0"
                   expanded={isExpanded}

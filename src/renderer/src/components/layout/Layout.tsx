@@ -14,6 +14,8 @@ import { useChat } from '../../hooks/useChat'
 import { useModelConfig, useModelRuntime } from '../../store/ModelStore'
 import { CompactingGate } from '../chat/CompactingGate'
 import { McpPermissionDialog } from '../chat/McpPermissionDialog'
+import { FsAccessDialog } from '../chat/FsAccessDialog'
+import type { FsAccessRequestEvent, FsAccessResponse } from '../../../../shared/fsAccess'
 import { SandboxViolationToast } from '../chat/SandboxViolationToast'
 import { ResumeRunsBanner } from '../chat/ResumeRunsBanner'
 import { ClaimsDrawer } from '../chat/ClaimsDrawer'
@@ -44,6 +46,8 @@ export function Layout() {
   const [settingsOpen,         setSettingsOpen]         = useState(false)
   const [settingsTab,          setSettingsTab]          = useState<SettingsTab>('model')
   const [mcpPermissionRequests, setMcpPermissionRequests] = useState<McpToolPermissionRequest[]>([])
+  // fs_request_access dialogs (main sends at most one per chat at a time)
+  const [fsAccessRequests, setFsAccessRequests] = useState<FsAccessRequestEvent[]>([])
   const [mcpActivity,          setMcpActivity]          = useState<{ serverName: string; toolName: string } | null>(null)
   // The multi-agent run lives in the sidebar, widened ('agents' mode) — no separate pane.
   const [focusAgentId,   setFocusAgentId]   = useState<string | null>(null)
@@ -384,6 +388,12 @@ export function Layout() {
     const unsubExpired = window.api.onMcpToolPermissionExpired((requestId) => {
       setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== requestId))
     })
+    const unsubFsRequest = window.api.onFsAccessRequest((req) => {
+      setFsAccessRequests((current) => current.some((r) => r.requestId === req.requestId) ? current : [...current, req])
+    })
+    const unsubFsExpired = window.api.onFsAccessExpired((requestId) => {
+      setFsAccessRequests((current) => current.filter((r) => r.requestId !== requestId))
+    })
     const unsubStart = window.api.onChatStreamToolStart((payload) => {
       // Show activity only for MCP tools (namespaced with __)
       if (payload.query && payload.query.includes('__')) {
@@ -397,7 +407,7 @@ export function Layout() {
     const unsubError = window.api.onChatStreamToolError(() => {
       setMcpActivity(null)
     })
-    return () => { unsubPerm(); unsubExpired(); unsubStart(); unsubDone(); unsubError() }
+    return () => { unsubPerm(); unsubExpired(); unsubFsRequest(); unsubFsExpired(); unsubStart(); unsubDone(); unsubError() }
   }, [])
 
   // ── Sandbox credential-path violation toast (Phase 3) ──────────
@@ -602,6 +612,12 @@ export function Layout() {
     catch (err) { console.warn('[Layout] mcpRespondToPermission failed:', err) }
     finally { setMcpPermissionRequests((current) => current.filter((pending) => pending.requestId !== response.requestId)) }
   }, [])
+  const respondToFsAccess = useCallback(async (response: FsAccessResponse) => {
+    try { await window.api.fsRespondAccess(response) }
+    catch (err) { console.warn('[Layout] fsRespondAccess failed:', err) }
+    finally { setFsAccessRequests((current) => current.filter((r) => r.requestId !== response.requestId)) }
+  }, [])
+  const pickFsFolder = useCallback(() => window.api.fsPickFolder('request'), [])
   const modalPermissionRequests = useMemo(
     // Inline in the agent's card while the dock shows the run; modal otherwise, so it cannot be missed.
     () => mcpPermissionRequests.filter((r) => !(dockOpen && r.agent && shownRun && !shownRun.review && r.agent.runId === shownRun.view.runId)),
@@ -726,8 +742,11 @@ export function Layout() {
             {/* MCP tool permission dialogs. Requests from agents of the run on
                 screen render inline in their agent card (non-blocking, spec §07);
                 everything else stays modal so it cannot be missed. */}
-            {modalPermissionRequests.length > 0 && (
+            {(modalPermissionRequests.length > 0 || fsAccessRequests.length > 0) && (
               <div {...layerProps('approvals')} className="absolute inset-0 flex flex-wrap content-center justify-center gap-4 overflow-y-auto bg-black/70 p-6 backdrop-blur-sm">
+                {fsAccessRequests.map((request) => (
+                  <FsAccessDialog key={request.requestId} request={request} onRespond={respondToFsAccess} pickFolder={pickFsFolder} />
+                ))}
                 {modalPermissionRequests.map((request) => (
                   <McpPermissionDialog key={request.requestId} inline request={request} onRespond={respondToPermission} />
                 ))}

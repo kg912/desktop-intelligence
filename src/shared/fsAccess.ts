@@ -169,3 +169,6 @@ export function displayPath(path: string, home: string, max = 56): string {
   const head = parts[0] === '' ? '/' + parts[1] : parts[0]
   return tail.length + head.length + 3 > max ? `…/${parts.at(-1)}` : `${head}/…/${tail}`
 }
+
+/** The built-in file tool names (main's fsToolSchemas is the source; a test keeps them equal). */
+export const FS_TOOL_NAME_LIST: readonly string[] = ['fs_request_access', 'fs_list', 'fs_glob', 'fs_grep', 'fs_read', 'fs_edit', 'fs_write']

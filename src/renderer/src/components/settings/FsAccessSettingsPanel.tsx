@@ -147,8 +147,8 @@ export function FsAccessSettingsPanel() {
       />
       {settings.roots.length === 0 && <p className="text-xs text-content-muted py-2">No folders allowed yet.</p>}
       {settings.roots.map((r) => (
-        <div key={r.path} data-testid="fs-root-row" className="flex items-center gap-3 py-3" style={{ borderBottom: HAIR }}>
-          <span className="flex-1 min-w-0 truncate font-mono text-[12.5px] text-content-primary" title={r.path}>
+        <div key={r.path} data-testid="fs-root-row" className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3" style={{ borderBottom: HAIR }}>
+          <span className="flex-1 min-w-[200px] truncate font-mono text-[12.5px] text-content-primary" title={r.path}>
             {displayPath(r.path, home)}
           </span>
           <span className="flex overflow-hidden rounded-md font-mono text-[11px]" style={{ border: HAIR2 }}>
@@ -192,11 +192,11 @@ export function FsAccessSettingsPanel() {
       <Section title="Allowed in chats this session" />
       {grants.length === 0 && <p className="text-xs text-content-muted py-2">No folders allowed from chats yet.</p>}
       {grants.map((g) => (
-        <div key={`${g.chatId}|${g.path}`} data-testid="fs-chat-grant-row" className="flex items-center gap-3 py-3" style={{ borderBottom: HAIR }}>
+        <div key={`${g.chatId}|${g.path}`} data-testid="fs-chat-grant-row" className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3" style={{ borderBottom: HAIR }}>
           <span className="w-[150px] truncate text-xs text-content-muted" title={g.chatTitle}>
             {g.chatTitle}
           </span>
-          <span className="flex-1 min-w-0 truncate font-mono text-[12.5px] text-content-primary" title={g.path}>
+          <span className="flex-1 min-w-[200px] truncate font-mono text-[12.5px] text-content-primary" title={g.path}>
             {displayPath(g.path, home)}
           </span>
           <span className="rounded font-mono text-[11.5px] text-content-secondary px-1.5 py-0.5" style={{ border: HAIR2 }}>
