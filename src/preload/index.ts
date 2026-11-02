@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer, shell, webUtils, webFrame } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import type { OpenRouterModelInfo } from '../shared/multiAgentModels'
+import type { FsAccessRequestEvent, FsAccessResponse, FsAccessSettings, FsChatGrantView, FsPickResult, FsSaveResult, FsSettingsView } from '../shared/fsAccess'
 import type {
   ConnectionState,
   DaemonState,
@@ -252,6 +253,24 @@ const api = {
     const h = (_: Electron.IpcRendererEvent, requestId: string): void => cb(requestId)
     ipcRenderer.on(IPC_CHANNELS.MCP_TOOL_PERMISSION_EXPIRED, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MCP_TOOL_PERMISSION_EXPIRED, h)
+  },
+
+  // ── Built-in file system access ───────────────────────────────
+  fsGetSettings: (): Promise<FsSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.FS_GET_SETTINGS),
+  fsSaveSettings: (settings: FsAccessSettings): Promise<FsSaveResult> => ipcRenderer.invoke(IPC_CHANNELS.FS_SAVE_SETTINGS, settings),
+  fsPickFolder: (purpose: 'settings' | 'request'): Promise<FsPickResult> => ipcRenderer.invoke(IPC_CHANNELS.FS_PICK_FOLDER, purpose),
+  fsListChatGrants: (): Promise<FsChatGrantView[]> => ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_CHAT_GRANTS),
+  fsRevokeChatGrant: (chatId: string, path: string): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.FS_REVOKE_CHAT_GRANT, chatId, path),
+  fsRespondAccess: (response: FsAccessResponse): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.FS_ACCESS_RESPONSE, response),
+  onFsAccessRequest: (cb: (req: FsAccessRequestEvent) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, req: FsAccessRequestEvent): void => cb(req)
+    ipcRenderer.on(IPC_CHANNELS.FS_ACCESS_REQUEST, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.FS_ACCESS_REQUEST, h)
+  },
+  onFsAccessExpired: (cb: (requestId: string) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, requestId: string): void => cb(requestId)
+    ipcRenderer.on(IPC_CHANNELS.FS_ACCESS_EXPIRED, h)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.FS_ACCESS_EXPIRED, h)
   },
 
   // ── Sandbox violations (Phase 2) ──────────────────────────────

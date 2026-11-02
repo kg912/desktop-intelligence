@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Settings, Globe, Info, Plug, Server, Bug, Database, Workflow } from "lucide-react";
+import { Settings, Globe, Info, Plug, Server, Bug, Database, Workflow, FolderLock } from "lucide-react";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import { McpToolsPanel } from "./McpToolsPanel";
@@ -7,9 +7,10 @@ import { InferenceProviderSettingsPanel } from "./InferenceProviderSettingsPanel
 import { DebugSettings } from "./DebugSettings";
 import { RagSettings } from "./RagSettings";
 import { MultiAgentSettingsPanel } from "./MultiAgentSettingsPanel";
+import { FsAccessSettingsPanel } from "./FsAccessSettingsPanel";
 import { version, author } from "../../../../../package.json";
 
-export type SettingsTab = "model" | "websearch" | "tools" | "backend" | "rag" | "agents" | "debug" | "about";
+export type SettingsTab = "model" | "websearch" | "tools" | "files" | "backend" | "rag" | "agents" | "debug" | "about";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -238,6 +239,12 @@ export function SettingsPage({ onClose, onReloadingChange, initialTab = "model" 
               onClick={() => setTab("tools")}
             />
             <TabItem
+              icon={<FolderLock size={15} />}
+              label="File System Access"
+              active={tab === "files"}
+              onClick={() => setTab("files")}
+            />
+            <TabItem
               icon={<Server size={15} />}
               label="Backend"
               active={tab === "backend"}
@@ -280,6 +287,7 @@ export function SettingsPage({ onClose, onReloadingChange, initialTab = "model" 
           {tab === "model"     && <ModelSettingsPanel onReloadingChange={handleReloadingChange} />}
           {tab === "websearch" && <MCPSettingsPanel />}
           {tab === "tools"     && <McpToolsPanel />}
+          {tab === "files"     && <FsAccessSettingsPanel />}
           {tab === "backend"   && <InferenceProviderSettingsPanel />}
           {tab === "rag"       && <RagSettings />}
           {tab === "agents"    && <MultiAgentSettingsPanel />}

@@ -458,6 +458,15 @@ export const IPC_CHANNELS = {
   /** main→renderer push, credential-path denials only (see SrtBackend.subscribeToViolations) */
   SANDBOX_VIOLATION_ALERT: 'sandbox:violationAlert',
   SANDBOX_GET_STATUS: 'sandbox:getStatus',
+  // Built-in file system access (specs/builtin-file-system-access.md 2.9)
+  FS_GET_SETTINGS:      'fs:getSettings',
+  FS_SAVE_SETTINGS:     'fs:saveSettings',
+  FS_PICK_FOLDER:       'fs:pickFolder',
+  FS_LIST_CHAT_GRANTS:  'fs:listChatGrants',
+  FS_REVOKE_CHAT_GRANT: 'fs:revokeChatGrant',
+  FS_ACCESS_REQUEST:    'fs:accessRequest',   // main→renderer
+  FS_ACCESS_RESPONSE:   'fs:accessResponse',  // renderer→main
+  FS_ACCESS_EXPIRED:    'fs:accessExpired',   // main→renderer (timed out / chat aborted)
 
   // ── Sandbox violations — observability panel (Phase 3) ────────
   OBS_LIST_SANDBOX_VIOLATIONS:  'obs:listSandboxViolations',

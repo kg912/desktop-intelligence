@@ -9,6 +9,9 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { registerRagSettingsHandlers } from './ipc/ragSettingsHandlers'
+import { registerFsAccessHandlers } from './ipc/fsAccessHandlers'
+import { fsAccessBroker } from './services/fs/fsAccessInstance'
+import type { FsAccessRequestEvent } from '../shared/fsAccess'
 import { registerRagDiagnosticsHandlers } from './ipc/ragDiagnosticsHandlers'
 import { modelConnectionManager, mtplxConnectionManager } from './managers/ModelConnectionManager'
 import { lmsDaemonManager } from './managers/LMSDaemonManager'
@@ -192,6 +195,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers(() => mainWindow?.webContents ?? null)
   registerRagSettingsHandlers()
   registerRagDiagnosticsHandlers()
+  void registerFsAccessHandlers()
 
   // ── Fullscreen state bridge ───────────────────────────────────
   // Renderer needs to know fullscreen state so TopBar can conditionally
@@ -404,6 +408,13 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.MCP_TOOL_PERMISSION_EXPIRED, requestId)
     }
+  })
+  // Built-in file access requests (fs_request_access) — same queue as MCP approvals.
+  fsAccessBroker.on('request', (req: FsAccessRequestEvent) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_CHANNELS.FS_ACCESS_REQUEST, req)
+  })
+  fsAccessBroker.on('expired', (requestId: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_CHANNELS.FS_ACCESS_EXPIRED, requestId)
   })
 
   app.on('activate', () => {

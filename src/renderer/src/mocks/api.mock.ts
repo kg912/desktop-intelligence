@@ -6,6 +6,7 @@
 
 import type { ElectronAPI } from '../../../preload/index'
 import { DEFAULT_MULTI_AGENT_CONFIG } from '../../../shared/types'
+import { defaultFsAccessSettings, type FsAccessSettings } from '../../../shared/fsAccess'
 import { multiAgentDemoApi, seedAgentChats } from './multiAgentDemo'
 import { observabilityMock } from './observabilityDemo'
 import type {
@@ -245,6 +246,16 @@ export const mockApi: ElectronAPI = {
   mcpRestartServer:           async () => {},
   mcpRemoveServer:            async () => {},
   onMcpServerStatusChanged:   () => () => {},
+
+  // ── Built-in file system access stubs ─────────────────────────
+  fsGetSettings: async () => ({ settings: defaultFsAccessSettings(), dataFolder: '/mock/userData', home: '/Users/you' }),
+  fsSaveSettings: async (settings: FsAccessSettings) => ({ settings, rejected: [] }),
+  fsPickFolder: async () => ({ ok: false as const, cancelled: true as const }),
+  fsListChatGrants: async () => [],
+  fsRevokeChatGrant: async () => true,
+  fsRespondAccess: async () => {},
+  onFsAccessRequest: () => () => {},
+  onFsAccessExpired: () => () => {},
 
   // ── Sandbox violations stub (Phase 2) ──────────────────────────
   onSandboxViolationAlert: () => () => {},

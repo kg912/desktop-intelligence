@@ -110,3 +110,62 @@ export function sanitizeFsAccessSettings(raw: unknown): FsAccessSettings {
   }
   return out
 }
+
+// ── IPC shapes (main ↔ renderer) ─────────────────────────────────────────────
+
+/** FS_ACCESS_REQUEST (main → renderer): one fs_request_access dialog. */
+export interface FsAccessRequestEvent {
+  requestId: string
+  chatId: string
+  /** Real path of the requested folder. */
+  path: string
+  access: FsAccessLevel
+  /** The model's reason, cut to 300 characters. */
+  reason: string
+  timeoutMs: number
+}
+
+/** FS_ACCESS_RESPONSE (renderer → main). `path` differs when the person picked another folder. */
+export interface FsAccessResponse {
+  requestId: string
+  decision: 'deny' | 'chat' | 'always'
+  access: FsAccessLevel
+  path: string
+}
+
+/** FS_GET_SETTINGS result. */
+export interface FsSettingsView {
+  settings: FsAccessSettings
+  /** DI's own data folder (always blocked). */
+  dataFolder: string
+  /** Home folder, to show paths as ~/… */
+  home: string
+}
+
+/** FS_SAVE_SETTINGS result: what was saved, and roots main refused. */
+export interface FsSaveResult {
+  settings: FsAccessSettings
+  rejected: Array<{ path: string; reason: string }>
+}
+
+/** FS_PICK_FOLDER result. */
+export type FsPickResult = { ok: true; root: FsRoot } | { ok: false; reason: string } | { ok: false; cancelled: true }
+
+/** FS_LIST_CHAT_GRANTS row. */
+export interface FsChatGrantView {
+  chatId: string
+  chatTitle: string
+  path: string
+  access: FsAccessLevel
+  addedAt: number
+}
+
+/** Show a path as ~/… under home, cut in the middle when longer than `max`. */
+export function displayPath(path: string, home: string, max = 56): string {
+  const p = home && (path === home || path.startsWith(home + '/')) ? '~' + path.slice(home.length) : path
+  if (p.length <= max) return p
+  const parts = p.split('/')
+  const tail = parts.slice(-2).join('/')
+  const head = parts[0] === '' ? '/' + parts[1] : parts[0]
+  return tail.length + head.length + 3 > max ? `…/${parts.at(-1)}` : `${head}/…/${tail}`
+}

@@ -570,9 +570,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
     createChat(id, title, mode === 'multi-agent' ? 'multi-agent' : 'single')
   )
 
-  ipcMain.handle(IPC_CHANNELS.DB_DELETE_CHAT, (_, chatId: string): void =>
+  ipcMain.handle(IPC_CHANNELS.DB_DELETE_CHAT, async (_, chatId: string): Promise<void> => {
     deleteChatById(chatId)
-  )
+    // A deleted chat loses its file-access grants, denials and read ledger.
+    const { forgetFsChat } = await import('../services/fs/fsAccessInstance')
+    forgetFsChat(chatId)
+  })
 
   ipcMain.handle(IPC_CHANNELS.DB_RENAME_CHAT, (_, chatId: string, title: string): void =>
     renameChatById(chatId, title)

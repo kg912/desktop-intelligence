@@ -9,26 +9,12 @@
 
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
-import { describeAccess, type FsAccessLevel } from '../../../shared/fsAccess'
+import { describeAccess, type FsAccessLevel, type FsAccessRequestEvent, type FsAccessResponse } from '../../../shared/fsAccess'
 import { resolveTarget, validateGrantRoot, checkAccess, type FsGrant, type FsPolicyDeps } from './pathPolicy'
 import type { FsGrantStore } from './FsGrantStore'
 import { FsToolError } from './FsToolService'
 
-export interface FsAccessRequestEvent {
-  requestId: string
-  chatId: string
-  path: string
-  access: FsAccessLevel
-  reason: string
-  timeoutMs: number
-}
-
-export interface FsAccessResponse {
-  requestId: string
-  decision: 'deny' | 'chat' | 'always'
-  access: FsAccessLevel
-  path: string
-}
+export type { FsAccessRequestEvent, FsAccessResponse }
 
 export interface FsAccessTrace {
   chatId: string

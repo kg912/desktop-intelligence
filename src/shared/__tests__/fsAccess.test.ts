@@ -6,6 +6,7 @@ import {
   validateBlockedName,
   blockedNameMatcher,
   describeAccess,
+  displayPath,
 } from '../fsAccess'
 
 describe('defaultFsAccessSettings', () => {
@@ -122,5 +123,19 @@ describe('describeAccess', () => {
   it('names the levels', () => {
     expect(describeAccess('write')).toBe('read and write')
     expect(describeAccess('read')).toBe('read-only')
+  })
+})
+
+describe('displayPath', () => {
+  it('shows home as ~ and keeps short paths whole', () => {
+    expect(displayPath('/Users/u/desktop-intelligence', '/Users/u')).toBe('~/desktop-intelligence')
+    expect(displayPath('/Users/u', '/Users/u')).toBe('~')
+    expect(displayPath('/Users/ux/a', '/Users/u')).toBe('/Users/ux/a')
+    expect(displayPath('/Volumes/Ext/code', '/Users/u')).toBe('/Volumes/Ext/code')
+  })
+  it('cuts long paths in the middle, keeping the first and last two segments', () => {
+    expect(displayPath('/Users/u/Certifications_and_upskilling/deep/foundation-harness/src', '/Users/u', 40)).toBe('~/…/foundation-harness/src')
+    expect(displayPath('/Volumes/Ext/a/b/c/d/e/f/g/h/project/src', '', 30)).toBe('/Volumes/…/project/src')
+    expect(displayPath('/x/' + 'y'.repeat(60) + '/z', '', 30)).toBe('…/z')
   })
 })
