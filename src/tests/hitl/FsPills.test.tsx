@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { McpPermissionDialog } from '../../renderer/src/components/chat/McpPermissionDialog'
 import { ToolCallNotification } from '../../renderer/src/components/chat/ToolCallNotification'
+import { DiffView } from '../../renderer/src/components/chat/DiffView'
 import type { MessageBlock, McpToolPermissionRequest } from '../../shared/types'
 
 afterEach(cleanup)
@@ -80,5 +81,28 @@ describe('ToolCallNotification — file pills', () => {
     const reloaded = JSON.parse(JSON.stringify([block]))[0] as Extract<MessageBlock, { type: 'search' }>
     render(<ToolCallNotification phase={reloaded.phase} query={reloaded.query} toolName={reloaded.toolName} toolArgs={reloaded.toolArgs} toolDiff={reloaded.toolDiff} expanded />)
     expect(screen.getByTestId('diff-view').textContent).toContain('-Instal the dependencies with npm.')
+  })
+})
+
+describe('DiffView — vertical scroll only, tint spans the full row', () => {
+  const long = '+' + 'a very long added line '.repeat(20)
+  const d = ['@@ -0,0 +1,2 @@', long, ' short context'].join('\n')
+
+  it('scrolls vertically only: no horizontal scrolling on the container', () => {
+    render(<DiffView diff={d} />)
+    const box = screen.getByTestId('diff-view')
+    expect(box.classList.contains('overflow-y-auto')).toBe(true)
+    expect(box.classList.contains('overflow-x-hidden')).toBe(true)
+    expect(box.classList.contains('overflow-auto')).toBe(false)
+    expect(box.classList.contains('overflow-x-auto')).toBe(false)
+  })
+
+  it('long lines wrap inside the row, so the red / green tint never runs past the visible width', () => {
+    render(<DiffView diff={d} />)
+    const row = screen.getByTestId('diff-view').querySelector('[data-kind="add"]') as HTMLElement
+    expect(row.classList.contains('whitespace-pre-wrap')).toBe(true)
+    expect(row.classList.contains('whitespace-pre')).toBe(false)
+    expect(row.className).toContain('[overflow-wrap:anywhere]')
+    expect(row.textContent).toBe(long)
   })
 })

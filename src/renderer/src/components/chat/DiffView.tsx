@@ -25,11 +25,11 @@ export function DiffView({ diff, maxHeight = 190 }: { diff: string; maxHeight?: 
   return (
     <div
       data-testid="diff-view"
-      className="font-mono text-[11.5px] leading-[1.55] rounded-[7px] bg-black/40 py-2 overflow-auto"
+      className="font-mono text-[11.5px] leading-[1.55] rounded-[7px] bg-black/40 py-2 overflow-y-auto overflow-x-hidden"
       style={{ maxHeight, border: '0.5px solid rgba(255,255,255,0.09)' }}
     >
       {lines.map((l, i) => (
-        <div key={i} data-kind={KIND(l)} className={`px-2.5 whitespace-pre ${STYLE[KIND(l)]}`}>
+        <div key={i} data-kind={KIND(l)} className={`px-2.5 whitespace-pre-wrap [overflow-wrap:anywhere] ${STYLE[KIND(l)]}`}>
           {l || ' '}
         </div>
       ))}
