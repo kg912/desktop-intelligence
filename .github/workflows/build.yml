@@ -30,7 +30,10 @@ jobs:
           npm -v
 
       - name: Install dependencies
-        run: npm install
+        # sharp (via @xenova/transformers) downloads its prebuilt binary from GitHub on every
+        # run (the lockfile version bump busts the npm cache); a failed download falls back to
+        # a source build that can't link on the runner. Retry once on a transient failure.
+        run: npm install || (sleep 20 && npm install)
 
       - name: Package Electron App
         run: npm run package
