@@ -111,7 +111,7 @@ function WorkingIndicator() {
  * isStreaming=true  → inline shimmer "Reasoning" header + scrolling thought content
  * isStreaming=false → collapses to "Thought process › Xs" pill, toggleable
  */
-function ThinkingAccordion({
+export function ThinkingAccordion({
   content,
   isStreaming,
   className,
@@ -204,8 +204,10 @@ function ThinkingAccordion({
   }
 
   // Update scroll shadows when state or size changes
+  // Collapsed and finished: shadows aren't rendered, so skip the geometry read (it forces layout on every
+  // virtualized row mount — round 5 §6).
   useEffect(() => {
-    if (!scrollRef.current) return
+    if ((!open && !isStreaming) || !scrollRef.current) return
     updateScrollShadows(scrollRef.current)
   }, [open, isStreaming, measuredHeight])
 

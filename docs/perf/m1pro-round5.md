@@ -149,3 +149,33 @@ From `scripts/perf-scroll-capture.mjs` (`lines 135–146, 188–190`):
 1. **Physical M1 Pro (`MacBookPro18,3`) trace (G5):** No M1 Pro machine is connected to this environment. All measurements use the M5 Pro baseline and the 2× renderer CPU throttle (`Emulation.setCPUThrottlingRate({ rate: 2 })`) on the packaged build.
 2. **Skia Graphite vs. Ganesh on Apple Silicon (§2.1):** Untestable in Electron 44 without changing Electron major versions, because `--disable-skia-graphite` and `--disable-features=SkiaGraphite` disable hardware GPU acceleration entirely on macOS arm64 (`Viz` jumps from `27 ms` → `999 ms`).
 3. **Live A/B trace of `backdrop-filter` in a multi-agent active run (§6.4):** Skipped per §5/§6.4 because the fork test proved the scroll jank is renderer main-thread CPU-bound (`Viz` flat at `27 ms`), and none of the `backdrop-filter` scrims are mounted in single-chat scroll.
+
+---
+
+## 8. Result of the §6 change (measured 2026-11-05, 3.2.89)
+
+The guard shipped as recommended (`MessageBubble.tsx`, the `updateScrollShadows` effect returns early when `!open && !isStreaming`).
+Unit tests: `src/tests/hitl/ThinkingAccordion.test.tsx` (collapsed mount reads neither `scrollHeight` nor `clientHeight`;
+opening still shows the bottom shadow only; streaming starting still reads the geometry).
+
+A/B on the M5 Pro, two packaged `--dir` builds of the same tree that differ only in that one line (confirmed by diffing the
+two renderer bundles), same chat (`"what is -log(p)"`) and window as round 3 (scroll container 634 px tall at (794,369) in
+all six runs), 1× CPU, N = 3, run back to back: `scripts/perf-r5-{base,change}-{a,b,c}.json`.
+
+| Metric | Baseline (no guard) | Change (guard) | Δ median |
+|---|---:|---:|---:|
+| Renderer main busy ms | **705** (679–756) | **684** (663–722) | −21 (−3%) |
+| `updateScrollShadows` self ms (CPU profile) | **77** (75–80) | **0** (0–0) | −77 |
+| `(program)` self ms (Blink native) | 490 (462–506) | 550 (524–556) | +60 |
+| Tasks > 8.33 ms | 23 (20–26) | 22 (21–25) | −1 |
+| Tasks > 16 ms | 2 (2–3) | 2 (1–4) | 0 |
+| Wheel p95 ms | 27.8 (23.4–29.0) | 28.5 (22.6–30.5) | +0.7 |
+| Dropped frames (smooth) | 15 (1) | 12 (1) | −3 |
+
+(The round 3 `perf-r3-gon-a` profile gives 80 ms for `updateScrollShadows` with the same self-time method, so the baseline matches.)
+
+**Verdict: no clear win.** The function's 77 ms is gone, but about 60 ms of it reappears as Blink native `(program)` time:
+the forced layout the effect triggered still has to happen at the next frame's normal layout, so the effect was mostly
+moving layout earlier, not adding it. The −21 ms median busy change is smaller than the 77 ms baseline spread, and frame
+metrics (long tasks, wheel p95) did not move. The change stays in because it removes wasted JS with no behaviour change,
+but it does not fix the jank; the remaining cost is layout/style of remounted rows (`(program)`), which this guard cannot touch.
