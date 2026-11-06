@@ -7,6 +7,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
 import { MCPSettingsPanel } from '../../renderer/src/components/settings/MCPSettingsPanel'
 import { ToolCallNotification, SearchingIndicator } from '../../renderer/src/components/chat/ToolCallNotification'
+import { MessageBubble } from '../../renderer/src/components/chat/MessageBubble'
 import { buildExaRequest, normalizeWebSearchSettings } from '../../shared/webSearch'
 import type { WebSearchSettingsPayload } from '../../shared/webSearch'
 
@@ -161,6 +162,22 @@ describe('search accordion', () => {
     expect(s.textContent).toBe('EXA SYNTHESIS · VERIFY AGAINST SOURCESWebb confirmed X 13.')
     expect([...s.querySelectorAll('p span')].map((e) => e.textContent)).toEqual(['1', '3'])
     expect(s.compareDocumentPosition(screen.getByText('Webb highlights')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('two searches in one turn (merged group) keep each one\'s synthesis, footer and Sent to model; old blocks get none', () => {
+    const block = (id: string, extra: object) => ({ id, type: 'search', query: id, phase: 'done', toolName: 'web_search', results: RESULTS, ...extra })
+    const message = { id: 'm', role: 'assistant', content: '', isThinking: false, isStreaming: false, isSearching: false, stats: null, error: null,
+      blocks: [
+        block('q1', { provider: 'exa', mode: 'deep', contentMode: 'highlights', searchTimeMs: 16_400, costDollars: 0.012,
+          synthesis: { text: 'Deep answer [1].' }, formattedContent: 'full 1', sentToModel: 'sent 1' }),
+        block('q2', { provider: 'exa', mode: 'deep', contentMode: 'highlights', searchTimeMs: 9_000, formattedContent: 'full 2' }),
+        block('q3', {}),
+      ] } as never
+    render(<MessageBubble message={message} />)
+    expect(screen.getByText('6 results · 3 searches')).toBeTruthy()
+    expect(screen.getAllByTestId('search-synthesis').map((e) => e.textContent)).toEqual(['EXA SYNTHESIS · VERIFY AGAINST SOURCESDeep answer 1.'])
+    expect(screen.getAllByTestId('search-footer').map((e) => e.textContent)).toEqual(['exa · type deep · 16.4 s · $0.012 · highlights', 'exa · type deep · 9.0 s · highlights'])
+    expect(screen.getAllByTestId('sent-to-model').map((e) => e.querySelector('pre')?.textContent)).toEqual(['sent 1', 'full 2'])
   })
 
   it('Brave with provider metadata gets the Brave footer', () => {

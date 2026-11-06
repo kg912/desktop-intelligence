@@ -103,6 +103,37 @@ function SearchFooter({ provider, mode, contentMode, searchTimeMs, costDollars, 
   return <div data-testid="search-footer" className="font-mono text-[10.5px] text-white/[0.22] pl-1.5 mt-1.5">{parts.join(' · ')}</div>
 }
 
+/** Deep-mode synthesis box (renders nothing without synthesis text). */
+export function SearchSynthesis({ synthesis }: { synthesis?: WebSearchMeta['synthesis'] }) {
+  if (!synthesis?.text) return null
+  return (
+    <div data-testid="search-synthesis" className="border-l-2 border-[#7aa2f7] bg-[#7aa2f7]/[0.05] rounded-r-md px-3 py-2 mb-2 flex flex-col gap-1.5">
+      <span className="font-mono text-[9.5px] font-medium tracking-[0.04em] text-[#7aa2f7]">EXA SYNTHESIS · VERIFY AGAINST SOURCES</span>
+      <p className="m-0 text-[12px] leading-[1.55] text-white/60 whitespace-pre-wrap max-h-48 overflow-y-auto">{withCitations(synthesis.text)}</p>
+    </div>
+  )
+}
+
+/** Footer plus the "Sent to model" disclosure; nothing for blocks saved before provider metadata existed. */
+export function SearchMetaRows({ provider, sent, ...footer }: {
+  provider?: WebSearchProvider; mode?: ExaSearchType; contentMode?: string; searchTimeMs?: number; costDollars?: number; count: number; sent?: string
+}) {
+  if (!provider) return null
+  return (
+    <>
+      <SearchFooter provider={provider} {...footer} />
+      {sent && (
+        <details data-testid="sent-to-model" className="ml-1.5 mt-1">
+          <summary className="font-mono text-[10.5px] text-white/[0.22] hover:text-white/40 cursor-pointer py-0.5 select-none">Sent to model</summary>
+          <pre className="mt-1.5 max-h-[190px] overflow-auto whitespace-pre-wrap break-words rounded-lg border-[0.5px] border-white/[0.09] bg-[#0c0c0c] p-3 font-mono text-[11px] leading-[1.55] text-white/60">
+            {sent}
+          </pre>
+        </details>
+      )}
+    </>
+  )
+}
+
 // Format the query label for display.
 // MCP tools have double underscores e.g. "mcpServer__toolName".
 // Show them as "mcpServer: toolName" in the UI.
@@ -324,24 +355,10 @@ export function ToolCallNotification({
 
         <div className={cn('accordion-body', expanded && 'open')}>
           <div style={{ overflow: 'hidden', paddingTop: 6 }}>
-            {synthesis?.text && (
-              <div data-testid="search-synthesis" className="border-l-2 border-[#7aa2f7] bg-[#7aa2f7]/[0.05] rounded-r-md px-3 py-2 mb-2 flex flex-col gap-1.5">
-                <span className="font-mono text-[9.5px] font-medium tracking-[0.04em] text-[#7aa2f7]">EXA SYNTHESIS · VERIFY AGAINST SOURCES</span>
-                <p className="m-0 text-[12px] leading-[1.55] text-white/60 whitespace-pre-wrap max-h-48 overflow-y-auto">{withCitations(synthesis.text)}</p>
-              </div>
-            )}
+            <SearchSynthesis synthesis={synthesis} />
             <SearchResult query={label} results={results} isFirst />
-            {provider && (
-              <SearchFooter provider={provider} mode={mode} contentMode={contentMode} searchTimeMs={searchTimeMs} costDollars={costDollars} count={results.length} />
-            )}
-            {provider && (sentToModel ?? formattedContent) && (
-              <details data-testid="sent-to-model" className="ml-1.5 mt-1">
-                <summary className="font-mono text-[10.5px] text-white/[0.22] hover:text-white/40 cursor-pointer py-0.5 select-none">Sent to model</summary>
-                <pre className="mt-1.5 max-h-[190px] overflow-auto whitespace-pre-wrap break-words rounded-lg border-[0.5px] border-white/[0.09] bg-[#0c0c0c] p-3 font-mono text-[11px] leading-[1.55] text-white/60">
-                  {sentToModel ?? formattedContent}
-                </pre>
-              </details>
-            )}
+            <SearchMetaRows provider={provider} mode={mode} contentMode={contentMode} searchTimeMs={searchTimeMs}
+              costDollars={costDollars} count={results.length} sent={sentToModel ?? formattedContent} />
           </div>
         </div>
       </div>

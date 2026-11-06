@@ -13,7 +13,7 @@ import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { StatsBar } from './StatsBar'
 import { CopyMessageButton } from './CopyMessageButton'
 import { messageCopyText } from '../../lib/markdownUtils'
-import { ToolCallNotification, SearchResult, ProviderChip, SearchingIndicator } from './ToolCallNotification'
+import { ToolCallNotification, SearchResult, ProviderChip, SearchingIndicator, SearchSynthesis, SearchMetaRows } from './ToolCallNotification'
 import { isWebSearchToolName } from '../../../../shared/webSearch'
 import { ChevronIcon } from './ChevronIcon'
 import { cn } from '../../lib/utils'
@@ -473,12 +473,15 @@ function MergedSearchGroup({
           <div className="mt-0.5 flex flex-col gap-0">
             {blocks.map((b, idx) => (
               <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
+                <SearchSynthesis synthesis={b.synthesis} />
                 <SearchResult
                   query={b.query}
                   results={b.results ?? []}
                   isFirst={idx === 0}
                   showDot
                 />
+                <SearchMetaRows provider={b.provider} mode={b.mode} contentMode={b.contentMode} searchTimeMs={b.searchTimeMs}
+                  costDollars={b.costDollars} count={b.results?.length ?? 0} sent={b.sentToModel ?? b.formattedContent} />
               </div>
             ))}
           </div>
