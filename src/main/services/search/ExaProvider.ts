@@ -63,7 +63,10 @@ export function exaErrorMessage(status: number, body: string): string {
   let message = body
   try {
     const j = JSON.parse(body) as { error?: unknown; tag?: unknown }
-    if (typeof j.error === 'string') message = typeof j.tag === 'string' ? `${j.error} (${j.tag})` : j.error
+    if (typeof j.error === 'string') {
+      const text = j.error.trim().replace(/\.$/, '')
+      message = typeof j.tag === 'string' ? `${text} (${j.tag})` : text
+    }
   } catch { /* not JSON: use the body */ }
   const hint = status === 401 ? ' Check the Exa API key in Settings → Web Search.'
     : status === 402 ? ' Add credits at dashboard.exa.ai or raise the key\'s budget.'
