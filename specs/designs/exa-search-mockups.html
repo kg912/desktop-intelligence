@@ -1,0 +1,454 @@
+<title>Exa Search Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout concept: a tabbed bench. Each tab shows one DI window state in the app's own dark language: Settings, chat accordion, deep research. */
+:root{
+  --bg:#0a0a0a; --panel:#0f0f0f; --nav:#111111; --card:#141414; --input:#111111;
+  --hair:rgba(255,255,255,.05); --line:rgba(255,255,255,.09);
+  --fg:rgba(255,255,255,.88); --fg2:rgba(255,255,255,.62); --muted:rgba(255,255,255,.4); --faint:rgba(255,255,255,.22);
+  --red:#e53935; --red-60:rgba(229,57,53,.6); --red-12:rgba(229,57,53,.12); --red-btn:#991b1b; --red-btn-h:#b91c1c;
+  --green:#10b981; --amber:#f59e0b; --exa:#7aa2f7; --exa-12:rgba(122,162,247,.12); --brave:#fb923c; --brave-12:rgba(251,146,60,.12);
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:13px;line-height:1.5;
+  padding-block:24px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{font-size:15px;font-weight:600;margin:0;text-wrap:balance}
+.sub{color:var(--muted);font-size:12px;margin:2px 0 0}
+.bench{display:flex;gap:4px;flex-wrap:wrap;border-bottom:.5px solid var(--line)}
+.bench button{font:500 12px var(--mono);color:var(--muted);background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;cursor:pointer}
+.bench button:hover{color:var(--fg2)}
+.bench button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--red)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:1px solid var(--red-60);outline-offset:2px}
+.view[hidden]{display:none}
+.tag{font:400 10px var(--mono);color:var(--muted);border:.5px solid var(--line);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.tag.red{color:var(--red);border-color:var(--red-60)}
+.note{color:var(--muted);font-size:12px;margin:0 0 10px;max-width:70ch}
+
+/* window frame */
+.frame{background:var(--panel);border:.5px solid var(--line);border-radius:10px;overflow:hidden}
+.win{display:grid;grid-template-columns:210px minmax(0,1fr)}
+.snav{background:var(--nav);border-right:1px solid #1f1f1f;padding-top:56px}
+.snav div{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:.5px solid rgba(255,255,255,.03);border-left:2px solid transparent;font-size:12px;color:var(--muted)}
+.snav div.on{border-left-color:var(--red-60);color:var(--fg);font-weight:500}
+.snav i{width:12px;height:12px;border-radius:3px;background:rgba(255,255,255,.18);display:block}
+.snav div.on i{background:var(--red)}
+.spane{padding:36px 40px 40px;min-width:0}
+.inner{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0}
+.card{background:var(--card);border:.5px solid var(--line);border-radius:12px;overflow:hidden}
+.row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 20px}
+.sec{padding:16px 20px 18px;border-top:.5px solid var(--hair);display:flex;flex-direction:column;gap:10px;min-width:0}
+.tile{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font:600 12px var(--mono);flex:none}
+.tile.exa{background:var(--exa-12);color:var(--exa)} .tile.brave{background:var(--brave-12);color:var(--brave)}
+.ttl{font-size:13px;font-weight:500;color:#fff;margin:0}
+.mut{font-size:12px;color:var(--muted);margin:0}
+label.l{font-size:12px;font-weight:500;color:var(--fg2)}
+.tog{position:relative;width:36px;height:20px;border-radius:99px;background:#2a2a2a;border:0;cursor:pointer;flex:none;transition:background .2s}
+.tog::after{content:"";position:absolute;top:3px;left:4px;width:14px;height:14px;border-radius:50%;background:#e8e8e8;transition:transform .2s}
+.tog[aria-checked=true]{background:var(--red-btn)} .tog[aria-checked=true]::after{transform:translateX(16px)}
+.tog:disabled{opacity:.4;cursor:not-allowed}
+.seg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.seg button,.opt{text-align:left;background:var(--input);border:.5px solid var(--line);border-radius:10px;padding:12px;color:var(--fg);cursor:pointer;display:flex;gap:10px;align-items:flex-start;font:inherit;min-width:0}
+.seg button[aria-pressed=true],.opt[aria-checked=true]{border-color:var(--red-60);background:var(--red-12)}
+.seg button:hover,.opt:hover{border-color:rgba(255,255,255,.18)}
+.opts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.opt{flex-direction:column;gap:4px;position:relative}
+.opt .h{display:flex;justify-content:space-between;gap:8px;width:100%;align-items:baseline}
+.opt b{font-weight:500;font-size:13px}
+.opt .m{font:400 11px var(--mono);color:var(--muted)}
+.opt p{margin:0;font-size:11.5px;color:var(--muted);line-height:1.45}
+.opt .def{font:500 9.5px var(--mono);color:var(--red);letter-spacing:.04em}
+input[type=password],input[type=text],select{background:var(--input);border:.5px solid var(--line);border-radius:8px;padding:8px 12px;color:#fff;font:13px var(--mono);min-width:0}
+select{font-family:var(--sans);font-size:12px;padding:7px 10px}
+select:disabled{opacity:.4}
+input[type=range]{width:100%;accent-color:#b91c1c;cursor:pointer}
+.btn{font:500 12px var(--sans);border-radius:8px;padding:7px 16px;border:.5px solid var(--line);background:#1c1c1c;color:var(--fg2);cursor:pointer}
+.btn.pri{background:var(--red-btn);border-color:transparent;color:#fff} .btn.pri:hover{background:var(--red-btn-h)}
+.btn.pri:disabled{background:#222;color:var(--muted);cursor:not-allowed}
+.line{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.ok{color:var(--green);font-size:12px;margin:0} .warn{color:var(--amber);font-size:12px;margin:0}
+a.lnk{color:var(--red);text-decoration:none} a.lnk:hover{text-decoration:underline}
+pre.code{margin:0;background:#0c0c0c;border:.5px solid var(--line);border-radius:8px;padding:12px;font:400 11px/1.55 var(--mono);color:var(--fg2);overflow-x:auto;max-width:100%}
+.kv{display:flex;justify-content:space-between;gap:12px;font:400 11.5px var(--mono);color:var(--muted)}
+.kv b{color:var(--fg);font-weight:500}
+
+/* chat */
+.chat{padding:28px 32px 32px;display:flex;flex-direction:column;gap:18px;max-width:780px;margin:0 auto;min-height:420px}
+.user{align-self:flex-end;background:#1a1a1a;border:.5px solid var(--line);border-radius:12px;padding:10px 14px;max-width:82%}
+.mono{font-family:var(--mono)}
+.acc{margin:0}
+.acc-h{display:flex;align-items:center;gap:8px;background:none;border:0;padding:0;cursor:pointer;font:500 13px var(--mono);color:rgba(255,255,255,.4);flex-wrap:wrap}
+.acc-h:hover{color:rgba(255,255,255,.6)}
+.acc-h .via{color:var(--faint);font-weight:400}
+.chip{display:inline-flex;align-items:center;gap:6px;font:500 11px var(--mono);border-radius:5px;padding:2px 7px;border:.5px solid var(--line);color:var(--fg2);background:rgba(255,255,255,.02)}
+.chip i{width:6px;height:6px;border-radius:50%;display:block}
+.chip.exa i{background:var(--exa)} .chip.brave i{background:var(--brave)}
+.chev{width:10px;height:10px;transition:transform .2s;color:var(--faint)}
+.acc-h[aria-expanded=true] .chev{transform:rotate(90deg)}
+.acc-h .cnt{color:var(--faint);font-weight:400}
+.acc-b{padding:8px 0 0 0;display:flex;flex-direction:column;gap:8px}
+.acc-b[hidden]{display:none}
+.q{font:400 10.5px var(--mono);color:rgba(255,255,255,.3)}
+.res{display:flex;gap:12px;align-items:baseline;padding:2px 6px;border-radius:4px;min-width:0}
+.res:hover{background:rgba(255,255,255,.03)}
+.res .n{font:400 11px var(--mono);color:var(--faint);width:16px;flex:none}
+.res .t{font-size:12px;color:rgba(255,255,255,.75);max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.res .u{font:400 10px var(--mono);color:rgba(255,255,255,.3);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.brief{border-left:2px solid var(--exa);background:rgba(122,162,247,.05);padding:8px 12px;border-radius:0 6px 6px 0;display:flex;flex-direction:column;gap:6px}
+.brief .lab{font:500 9.5px var(--mono);color:var(--exa);letter-spacing:.04em}
+.brief p{margin:0;font-size:12px;color:var(--fg2);line-height:1.55}
+.cite{font:400 10px var(--mono);color:var(--exa);border:.5px solid rgba(122,162,247,.4);border-radius:3px;padding:0 4px;margin-left:2px}
+.meta{font:400 10.5px var(--mono);color:var(--faint);padding-left:6px}
+.shim{font:400 13px var(--mono);letter-spacing:.03em;background:linear-gradient(90deg,rgba(255,255,255,.25) 0%,rgba(255,255,255,.8) 50%,rgba(255,255,255,.25) 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:sh 1.6s linear infinite}
+@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}
+.err{color:var(--red);font:500 13px var(--mono)} .errm{font:400 11px var(--mono);color:rgba(229,57,53,.55);margin:2px 0 0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chips button{font:400 11px var(--mono);background:var(--card);color:var(--muted);border:.5px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+.chips button[aria-pressed=true]{color:var(--fg);border-color:var(--red-60);background:var(--red-12)}
+.sent{margin-left:6px}.sent summary{font:400 10.5px var(--mono);color:var(--faint);cursor:pointer;padding:2px 0}.sent summary:hover{color:var(--muted)}.sent pre{margin-top:6px;max-height:190px;overflow:auto;white-space:pre-wrap}
+.ans{color:var(--fg2);font-size:13px;line-height:1.65;margin:0}
+
+/* deep research */
+.blk{border:.5px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden;max-width:620px}
+.blk .hd{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;border-bottom:.5px solid var(--hair);flex-wrap:wrap}
+.blk .bd{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.eff{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.eff button{background:var(--input);border:.5px solid var(--line);border-radius:8px;padding:8px 6px;color:var(--fg);cursor:pointer;font:inherit;text-align:center;display:flex;flex-direction:column;gap:2px}
+.eff button[aria-pressed=true]{border-color:var(--red-60);background:var(--red-12)}
+.eff b{font:500 12px var(--mono)} .eff span{font:400 10px var(--mono);color:var(--muted)}
+.bar{height:2px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;position:relative}
+.bar::after{content:"";position:absolute;inset:0 auto 0 0;width:30%;background:var(--red);animation:slide 1.4s ease-in-out infinite}
+@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(340%)}}
+.log{font:400 11px/1.7 var(--mono);color:var(--muted);max-height:170px;overflow:auto;background:#0c0c0c;border:.5px solid var(--line);border-radius:8px;padding:8px 12px}
+.log .t{color:var(--faint);margin-right:10px}
+.status{font:500 11px var(--mono);padding:2px 8px;border-radius:5px}
+.status.run{color:var(--amber);background:rgba(245,158,11,.1)} .status.done{color:var(--green);background:rgba(16,185,129,.1)} .status.fail{color:var(--red);background:var(--red-12)}
+.report h4{margin:0 0 2px;font-size:12px;font-weight:600;color:var(--fg)}
+.report p{margin:0 0 10px;font-size:12.5px;color:var(--fg2);line-height:1.6}
+.src{display:flex;gap:8px;font:400 11px var(--mono);color:var(--muted)} .src span:first-child{color:var(--exa)}
+@media (max-width:760px){.win{grid-template-columns:1fr}.snav{display:none}.spane{padding:24px 16px}.opts,.seg{grid-template-columns:1fr}.eff{grid-template-columns:repeat(2,minmax(0,1fr))}.chat{padding:20px 14px}.res .t{max-width:100%}.res .u{display:none}}
+@media (prefers-reduced-motion:reduce){.shim,.bar::after{animation:none}.tog,.tog::after,.chev{transition:none}}
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>Exa search integration · UI mockups</h1>
+    <p class="sub">Interactive. Example data only. Matches the existing Settings and tool-call accordion language.</p>
+  </div>
+  <div class="bench" role="tablist" id="bench">
+    <button role="tab" aria-selected="true" data-v="settings">1 · Settings</button>
+    <button role="tab" aria-selected="false" data-v="chat">2 · Search accordion</button>
+    <button role="tab" aria-selected="false" data-v="dr">3 · Deep research</button>
+  </div>
+
+  <!-- ============ 1. SETTINGS ============ -->
+  <section class="view" id="v-settings">
+    <p class="note">Web Search tab. One provider active at a time (either/or). The depth cards drive a live preview of the exact request DI would send, so what is and is not allowed per mode is visible.</p>
+    <div class="frame win">
+      <aside class="snav">
+        <div><i></i>Model</div><div class="on"><i></i>Web Search</div><div><i></i>MCP Servers</div><div><i></i>File System Access</div>
+        <div><i></i>Backend</div><div><i></i>RAG</div><div><i></i>Multi-Agent</div><div><i></i>Debug</div><div><i></i>About</div>
+      </aside>
+      <div class="spane"><div class="inner">
+        <h2 class="eyebrow">Web Search</h2>
+
+        <div class="card">
+          <div class="row">
+            <div class="line" style="gap:12px;flex-wrap:nowrap">
+              <div class="tile exa" id="hdTile">Ex</div>
+              <div><p class="ttl">Web search</p><p class="mut">Models that support tool calling search the web when needed</p></div>
+            </div>
+            <button class="tog" role="switch" aria-checked="true" aria-label="Enable web search" id="enTog"></button>
+          </div>
+          <div class="sec">
+            <label class="l">Provider</label>
+            <div class="seg" id="provSeg">
+              <button aria-pressed="false" data-p="brave"><div class="tile brave">Br</div><div><p class="ttl">Brave Search</p><p class="mut">Snippets, DI fetches top pages · $5 / 1k</p></div></button>
+              <button aria-pressed="true" data-p="exa"><div class="tile exa">Ex</div><div><p class="ttl">Exa</p><p class="mut">Neural search, page text included · from $4 / 1k</p></div></button>
+            </div>
+            <p class="mut">Only the selected provider is used. Keys for both can stay saved.</p>
+          </div>
+
+          <!-- Brave pane -->
+          <div id="pane-brave" hidden>
+            <div class="sec">
+              <label class="l" for="bk">API key</label>
+              <div class="line"><input class="grow" type="password" id="bk" value="BSAxxxxxxxxxxxxxxxxxxxxxxxx"><button class="btn" type="button">Show</button></div>
+              <p class="mut">Get your API key at <a class="lnk" href="#" onclick="return false">brave.com/search/api</a> · $5 per 1,000 queries</p>
+              <p class="ok">✓ Web search active</p>
+              <p class="mut">Page fetch: on. Results are fetched in parallel (5 s timeout) because Brave snippets are short.</p>
+            </div>
+          </div>
+
+          <!-- Exa pane -->
+          <div id="pane-exa">
+            <div class="sec">
+              <label class="l" for="ek">API key</label>
+              <div class="line"><input class="grow" type="password" id="ek" value="exa_xxxxxxxxxxxxxxxxxxxxxxxx"><button class="btn" type="button">Show</button></div>
+              <p class="mut">Create a key at <a class="lnk" href="#" onclick="return false">dashboard.exa.ai/api-keys</a> · new accounts start with free credits</p>
+              <p class="ok">✓ Web search active</p>
+            </div>
+
+            <div class="sec">
+              <label class="l">Search depth</label>
+              <div class="opts" id="depth" role="radiogroup" aria-label="Search depth"></div>
+            </div>
+
+            <div class="sec">
+              <div class="line" style="justify-content:space-between">
+                <label class="l">What the model receives per result</label>
+              </div>
+              <div class="seg" id="contSeg">
+                <button aria-pressed="true" data-c="highlights"><div><p class="ttl">Highlights</p><p class="mut">Query-relevant excerpts. Smallest context. Recommended.</p></div></button>
+                <button aria-pressed="false" data-c="text"><div><p class="ttl">Full text</p><p class="mut">Page body, capped per result. Larger context.</p></div></button>
+              </div>
+              <div id="maxcharsBox" hidden>
+                <div class="kv"><span>Max characters per page</span><b id="mcVal">3000</b></div>
+                <input type="range" id="mc" min="1000" max="10000" step="500" value="3000">
+              </div>
+              <p class="mut">Page text arrives with the results in one request. DI does not fetch pages itself when Exa is selected.</p>
+            </div>
+
+            <div class="sec">
+              <div class="kv"><span>Results per search</span><b id="nVal">5</b></div>
+              <input type="range" id="nR" min="3" max="10" step="1" value="5">
+              <div class="line" style="justify-content:space-between;margin-top:4px">
+                <label class="l" for="fresh">Page freshness</label>
+                <select id="fresh"><option value="default">Default (cache, fetch if needed)</option><option value="24h">Newer than 24 hours</option><option value="0">Always fetch fresh</option></select>
+              </div>
+              <p class="mut" id="freshNote"></p>
+            </div>
+
+            <div class="sec">
+              <div class="line" style="justify-content:space-between"><label class="l">Request preview</label><span class="tag" id="rpTag">POST /search</span></div>
+              <pre class="code" id="rp"></pre>
+              <p class="mut" id="rejected"></p>
+              <div class="kv"><span>Cost</span><b id="cost"></b></div>
+            </div>
+          </div>
+
+          <!-- shared -->
+          <div class="sec">
+            <div class="kv"><span>Max search rounds</span><b id="rVal">4</b></div>
+            <input type="range" id="rR" min="1" max="8" step="1" value="4">
+            <p class="mut">How many times the model can search mid-response before being forced to answer. Default is 4.</p>
+            <p class="warn" id="rWarn" hidden></p>
+          </div>
+          <div class="sec">
+            <div class="row" style="padding:0">
+              <div><p class="ttl" style="font-size:12px">Prior search results in context</p><p class="mut">Keep earlier results in the context window for multi-turn research, at the cost of more tokens.</p></div>
+              <button class="tog" role="switch" aria-checked="true" id="keepTog" aria-label="Prior search results in context"></button>
+            </div>
+          </div>
+
+          <!-- Phase 2 -->
+          <div class="sec" id="agentSec">
+            <div class="row" style="padding:0">
+              <div><div class="line"><p class="ttl" style="font-size:12px">Deep research (Exa Agent)</p><span class="tag">Phase 2</span></div>
+              <p class="mut">Adds a “Deep research” button to the input bar. Runs for minutes, billed per run, always asks before starting.</p></div>
+              <button class="tog" role="switch" aria-checked="false" id="agTog" aria-label="Enable deep research"></button>
+            </div>
+            <div id="agBox" hidden class="line" style="gap:16px;align-items:flex-end">
+              <div><label class="l" for="agEff">Default effort</label><br><select id="agEff"><option>low · $0.025</option><option>medium · $0.10</option><option>high · $0.50</option><option selected>auto · metered</option><option>ultra · metered</option></select></div>
+              <div class="grow" style="min-width:180px"><div class="kv"><span>Budget cap per run</span><b id="capVal">$5</b></div><input type="range" id="cap" min="1" max="20" step="1" value="5"></div>
+            </div>
+          </div>
+
+          <div class="sec" style="flex-direction:row;justify-content:space-between;align-items:center">
+            <span class="ok" id="saved" style="visibility:hidden">✓ Settings saved</span>
+            <button class="btn pri" id="save" disabled>Save</button>
+          </div>
+        </div>
+
+        <div>
+          <h2 class="eyebrow" style="margin-bottom:8px">Compatible models</h2>
+          <p class="mut">Tool calling works with models trained for function calling. The app detects tool call responses automatically.</p>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ============ 2. CHAT ACCORDION ============ -->
+  <section class="view" id="v-chat" hidden>
+    <p class="note">The existing “Searched the web” accordion gains a provider chip and the search depth. Deep modes add a labelled synthesis block. The footer line shows request time and cost from the response.</p>
+    <div class="chips" id="chatChips"></div>
+    <div class="frame"><div class="chat" id="chatBody"></div></div>
+  </section>
+
+  <!-- ============ 3. DEEP RESEARCH ============ -->
+  <section class="view" id="v-dr" hidden>
+    <p class="note">Phase 2. User-initiated only, never called by the model on its own, and hidden in Multi-agent mode. Four states: confirm with cost, running, report, failed. Run ID is saved on the chat so a run survives closing the app.</p>
+    <div class="chips" id="drChips"></div>
+    <div class="frame"><div class="chat" id="drBody"></div></div>
+  </section>
+</div>
+
+<script>
+(function(){
+  var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
+  var timers=[]; function clearTimers(){timers.forEach(clearInterval);timers=[]}
+
+  /* ---------- view tabs ---------- */
+  $$('#bench button').forEach(function(b){b.addEventListener('click',function(){
+    clearTimers();
+    $$('#bench button').forEach(function(x){x.setAttribute('aria-selected',x===b)});
+    ['settings','chat','dr'].forEach(function(v){$('#v-'+v).hidden=(v!==b.dataset.v)});
+    if(b.dataset.v==='chat') renderChat(); if(b.dataset.v==='dr') renderDr();
+  })});
+
+  /* ---------- settings ---------- */
+  var MODES={
+    'lite':{label:'Fast',type:'lite',lat:'~450 ms',price:'$4 / 1k',p:0.004,fresh:false,synth:false,desc:'Cached pages only, no synthesis. Cheapest and quickest. Good for small local models.'},
+    'auto':{label:'Balanced',type:'auto',lat:'~1 s',price:'$7 / 1k',p:0.007,fresh:true,synth:false,def:true,desc:'Best default for quality and speed. Supports freshness control.'},
+    'deep-lite':{label:'Deep-lite',type:'deep-lite',lat:'~4 s',price:'$12 / 1k',p:0.012,fresh:true,synth:true,desc:'Light query expansion plus a short grounded brief.'},
+    'deep':{label:'Deep',type:'deep',lat:'4–15 s',price:'$12 / 1k',p:0.012,fresh:true,synth:true,desc:'Iterative search that checks evidence and refines. For multi-part questions.'}
+  };
+  var S={provider:'exa',mode:'auto',content:'highlights',maxChars:3000,n:5,fresh:'default',rounds:4};
+  var dirty=false;
+  function markDirty(){dirty=true;$('#save').disabled=false;$('#saved').style.visibility='hidden'}
+
+  function renderDepth(){
+    $('#depth').innerHTML=Object.keys(MODES).map(function(k){var m=MODES[k];
+      return '<button class="opt" role="radio" aria-checked="'+(S.mode===k)+'" data-m="'+k+'"><div class="h"><b>'+m.label+(m.def?' <span class="def">DEFAULT</span>':'')+'</b><span class="m">'+m.lat+'</span></div><span class="m">type: '+m.type+' · '+m.price+'</span><p>'+m.desc+'</p></button>'}).join('');
+  }
+  function renderSettings(){
+    var m=MODES[S.mode], isExa=S.provider==='exa';
+    $('#pane-brave').hidden=isExa; $('#pane-exa').hidden=!isExa;
+    $$('#provSeg button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.p===S.provider)});
+    var t=$('#hdTile'); t.className='tile '+S.provider; t.textContent=isExa?'Ex':'Br';
+    $$('#contSeg button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.c===S.content)});
+    $('#maxcharsBox').hidden=S.content!=='text';
+    $('#mcVal').textContent=S.maxChars; $('#nVal').textContent=S.n; $('#rVal').textContent=S.rounds;
+    var f=$('#fresh'); f.disabled=!m.fresh; if(!m.fresh) f.value='default';
+    $('#freshNote').textContent=m.fresh?'Use “Always fetch fresh” for prices, scores and other live pages. It adds latency.':'Fast serves cached pages only, so freshness control is off.';
+    var body={query:'<written by the model>',type:m.type,numResults:S.n,contents:S.content==='highlights'?{highlights:true}:{text:{maxCharacters:S.maxChars}}};
+    if(m.fresh&&f.value!=='default') body.contents.maxAgeHours=f.value==='24h'?24:0;
+    if(m.synth) body.outputSchema={type:'text',description:'Concise evidence brief: key facts, figures, dates'};
+    body.objective='<goal of this search turn>';
+    $('#rp').textContent=JSON.stringify(body,null,2);
+    $('#rejected').textContent=m.type==='lite'?'Fast rejects outputSchema, systemPrompt and maxAgeHours with a 400, so DI never sends them in this mode.':(m.synth?'The brief is passed to your model next to the sources, labelled as a synthesis to verify.':'No synthesis step. Your model reads the results directly.');
+    $('#cost').textContent='$'+m.p.toFixed(3)+' per search · up to $'+(m.p*S.rounds).toFixed(3)+' per answer';
+    var w=$('#rWarn'); var slow=(m.type==='deep'||m.type==='deep-lite')&&S.rounds>2;
+    w.hidden=!slow; if(slow) w.textContent='⚠ '+m.label+' takes '+m.lat+' per round. '+S.rounds+' rounds could wait up to '+(S.rounds*(m.type==='deep'?15:4))+' s. DI caps deep modes at 2 rounds.';
+    renderDepth();
+  }
+  document.addEventListener('click',function(e){
+    var o=e.target.closest('.opt[data-m]'); if(o){S.mode=o.dataset.m;markDirty();renderSettings()}
+    var p=e.target.closest('#provSeg button'); if(p){S.provider=p.dataset.p;markDirty();renderSettings()}
+    var c=e.target.closest('#contSeg button'); if(c){S.content=c.dataset.c;markDirty();renderSettings()}
+  });
+  $('#mc').addEventListener('input',function(e){S.maxChars=+e.target.value;markDirty();renderSettings()});
+  $('#nR').addEventListener('input',function(e){S.n=+e.target.value;markDirty();renderSettings()});
+  $('#rR').addEventListener('input',function(e){S.rounds=+e.target.value;markDirty();renderSettings()});
+  $('#fresh').addEventListener('change',function(){markDirty();renderSettings()});
+  $('#cap').addEventListener('input',function(e){$('#capVal').textContent='$'+e.target.value;markDirty()});
+  $('#agEff').addEventListener('change',markDirty);
+  ['enTog','keepTog','agTog'].forEach(function(id){$('#'+id).addEventListener('click',function(e){
+    var b=e.currentTarget; b.setAttribute('aria-checked',b.getAttribute('aria-checked')!=='true'); markDirty();
+    if(id==='agTog') $('#agBox').hidden=b.getAttribute('aria-checked')!=='true';
+  })});
+  $('#save').addEventListener('click',function(){dirty=false;this.disabled=true;var s=$('#saved');s.style.visibility='visible';setTimeout(function(){s.style.visibility='hidden'},2500)});
+  $$('.btn:not(.pri)').forEach(function(b){b.addEventListener('click',function(){var i=b.previousElementSibling;if(i&&i.tagName==='INPUT'){var show=i.type==='password';i.type=show?'text':'password';b.textContent=show?'Hide':'Show'}})});
+  renderSettings();
+
+  /* ---------- chat accordion ---------- */
+  var RES=[['GPU cloud pricing overview','gpu-cloud.example/pricing'],['On-demand and reserved rates compared','infra-notes.example/gpu-rates'],['Hourly rates by provider, updated monthly','pricewatch.example/h100'],['What a training run actually costs','ml-ops.example/blog/training-cost'],['Spot vs on-demand: a field guide','cloud-field.example/spot-guide']];
+  var CH=[
+    {id:'search',label:'Searching',kind:'searching',prov:'exa',mode:'deep'},
+    {id:'lite',label:'Exa · Fast',kind:'done',prov:'exa',mode:'lite',n:5,time:'0.5 s',cost:'$0.004'},
+    {id:'auto',label:'Exa · Balanced',kind:'done',prov:'exa',mode:'auto',n:5,time:'1.3 s',cost:'$0.007'},
+    {id:'dl',label:'Exa · Deep-lite',kind:'done',prov:'exa',mode:'deep-lite',n:5,time:'4.2 s',cost:'$0.012',brief:true},
+    {id:'deep',label:'Exa · Deep',kind:'done',prov:'exa',mode:'deep',n:5,time:'11.8 s',cost:'$0.012',brief:true},
+    {id:'brave',label:'Brave (today)',kind:'done',prov:'brave',n:5},
+    {id:'err',label:'Error',kind:'error',prov:'exa',mode:'auto'}
+  ];
+  var chatSel='auto', openAcc=true;
+  function sentText(c){
+    var s=c.brief?'Exa synthesis (verify against sources):\nThree of the five sources list on-demand H100 rates... [1][3]\n\n':'';
+    s+=RES.slice(0,c.n).map(function(r,i){return '['+(i+1)+'] '+r[0]+'\n'+r[1]+'\n'+(c.prov==='exa'?'(query-relevant excerpts from the page, example)':'(page text fetched by DI, first 3000 characters, example)')}).join('\n\n');
+    return s;
+  }
+  function chev(){return '<svg class="chev" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 1.5 7 5 3 8.5"/></svg>'}
+  function provChip(p,mode){return '<span class="chip '+p+'"><i></i>'+(p==='exa'?'Exa':'Brave')+(mode?' · '+mode:'')+'</span>'}
+  function renderChat(){
+    clearTimers();
+    $('#chatChips').innerHTML=CH.map(function(c){return '<button aria-pressed="'+(c.id===chatSel)+'" data-c="'+c.id+'">'+c.label+'</button>'}).join('');
+    var c=CH.filter(function(x){return x.id===chatSel})[0], h='';
+    h+='<div class="user">What do H100 rentals cost per hour right now, and how do providers compare?</div><div>';
+    if(c.kind==='searching'){
+      h+='<div class="line"><span class="shim">Working</span>'+provChip(c.prov,c.mode)+'<span class="mono" style="font-size:11px;color:var(--faint)" id="el">0.0 s</span></div><p class="mut mono" style="font-size:11px;margin-top:4px">Deep search usually takes 4–15 s.</p>';
+    } else if(c.kind==='error'){
+      h+='<div class="line"><span class="err">Search failed</span>'+provChip(c.prov,c.mode)+'<span class="mono" style="font-size:13px;color:var(--faint)">H100 hourly rate</span></div><p class="errm">Exa API error 429: rate limit reached. Retry in a moment. (example)</p>';
+    } else {
+      h+='<button class="acc-h" aria-expanded="'+openAcc+'" id="accH"><span>Searched the web</span><span class="via">via</span>'+provChip(c.prov,c.mode==='lite'?'fast':c.mode)+chev()+'<span class="cnt">'+c.n+' results</span></button>';
+      h+='<div class="acc-b" id="accB"'+(openAcc?'':' hidden')+'><div class="q">"H100 on-demand hourly rate by cloud provider"</div>';
+      if(c.brief) h+='<div class="brief"><span class="lab">EXA SYNTHESIS · VERIFY AGAINST SOURCES</span><p>Three of the five sources list on-demand H100 rates, and they differ by provider and region. Reserved terms are priced separately.<span class="cite">1</span><span class="cite">3</span></p></div>';
+      h+=RES.slice(0,c.n).map(function(r,i){return '<div class="res"><span class="n">'+(i+1)+'.</span><span class="t">'+r[0]+'</span><span class="u">'+r[1]+'</span></div>'}).join('');
+      h+=c.prov==='exa'?'<div class="meta">exa · type '+c.mode+' · '+c.time+' · '+c.cost+' · highlights</div>':'<div class="meta">brave · 5 results · page fetch on</div>';
+      h+='<details class="sent"><summary>Sent to model</summary><pre class="code">'+sentText(c)+'</pre></details>';
+      h+='</div>';
+    }
+    h+='</div>';
+    if(c.kind==='done') h+='<p class="ans">Rates vary by provider and region; the sources above list on-demand hourly figures you can compare directly.</p>';
+    $('#chatBody').innerHTML=h;
+    if(c.kind==='searching'){var t0=Date.now();timers.push(setInterval(function(){var e=$('#el');if(e)e.textContent=((Date.now()-t0)/1000).toFixed(1)+' s'},100))}
+    var ah=$('#accH'); if(ah) ah.addEventListener('click',function(){openAcc=!openAcc;renderChat()});
+  }
+  $('#chatChips').addEventListener('click',function(e){var b=e.target.closest('button');if(b){chatSel=b.dataset.c;renderChat()}});
+
+  /* ---------- deep research ---------- */
+  var DR=[{id:'gate',label:'Confirm'},{id:'run',label:'Running'},{id:'done',label:'Report'},{id:'fail',label:'Failed'}];
+  var drSel='gate', eff='auto', cap=5;
+  var EFF={low:['$0.025',1],medium:['$0.10',1],high:['$0.50',1],auto:['metered',0],ultra:['metered',0]};
+  var LOG=[['00:00','run queued'],['00:02','run started'],['00:06','searching: speculative decoding local inference'],['00:14','source added: 6'],['00:31','reading and condensing pages'],['00:52','searching: draft-model vs self-speculative'],['01:20','source added: 14'],['01:48','verifying claims against sources'],['02:30','source added: 22'],['03:05','assembling report']];
+  function drChrome(inner){return '<div class="user">Research how speculative decoding is used for local inference on Apple Silicon and compare the main approaches.</div>'+inner}
+  function renderDr(){
+    clearTimers();
+    $('#drChips').innerHTML=DR.map(function(c){return '<button aria-pressed="'+(c.id===drSel)+'" data-c="'+c.id+'">'+c.label+'</button>'}).join('');
+    var h='';
+    if(drSel==='gate'){
+      var e=EFF[eff], fixed=e[1];
+      h=drChrome('<div class="blk"><div class="hd"><b style="font-weight:500">Run deep research with Exa Agent?</b><span class="tag red">cloud · billed</span></div><div class="bd">'
+        +'<p class="mut" style="max-width:60ch">Your question goes to Exa’s cloud agent. It runs for minutes, searches many angles and returns a cited report. You can then have your chosen model rewrite it.</p>'
+        +'<div><label class="l">Effort</label><div class="eff" style="margin-top:6px">'+Object.keys(EFF).map(function(k){return '<button aria-pressed="'+(k===eff)+'" data-e="'+k+'"><b>'+k+'</b><span>'+EFF[k][0]+'</span></button>'}).join('')+'</div></div>'
+        +(fixed?'<div class="kv"><span>Cost</span><b>'+e[0]+' flat per run</b></div>':'<div><div class="kv"><span>Budget cap</span><b id="capV">$'+cap+'</b></div><input type="range" id="capR" min="1" max="'+(eff==='ultra'?25:10)+'" value="'+cap+'"><p class="mut" style="margin-top:4px">Billed on usage, never above the cap. Short runs cost less.</p></div>')
+        +'<div class="line" style="justify-content:flex-end"><button class="btn" data-go="x">Cancel</button><button class="btn pri" data-go="run">Start run</button></div></div></div>');
+    } else if(drSel==='run'){
+      h=drChrome('<div class="blk"><div class="hd"><div class="line"><b style="font-weight:500">Deep research</b><span class="status run">running</span></div><span class="mono" style="font-size:11px;color:var(--faint)" id="drEl">00:00</span></div><div class="bd"><div class="bar"></div>'
+        +'<div class="kv"><span>Sources so far</span><b id="srcN">0</b></div><div class="kv"><span>Effort</span><b>'+eff+(EFF[eff][1]?'':' · cap $'+cap)+'</b></div>'
+        +'<div class="log" id="log"></div><p class="mut">Run ID is saved to this chat. You can close DI and reopen it to pick the run back up.</p>'
+        +'<div class="line" style="justify-content:flex-end"><button class="btn" data-go="fail">Cancel run</button></div></div></div>');
+    } else if(drSel==='done'){
+      h=drChrome('<div class="blk"><div class="hd"><div class="line"><b style="font-weight:500">Deep research</b><span class="status done">completed</span></div><span class="mono" style="font-size:11px;color:var(--faint)">3m 41s · $1.84 · 27 sources</span></div><div class="bd report">'
+        +'<div><h4>Summary</h4><p>Speculative decoding speeds up generation by letting a cheap predictor propose several tokens that the main model verifies in one pass.<span class="cite">1</span> The main families differ in where the proposals come from.<span class="cite">2</span><span class="cite">4</span></p></div>'
+        +'<div><h4>Approaches compared</h4><p>A separate draft model needs extra memory but is simple to deploy. Self-speculative methods reuse the target model and avoid a second set of weights.<span class="cite">3</span></p></div>'
+        +'<div><h4>Sources</h4><div class="src"><span>[1]</span><span>specdec-primer.example/intro</span></div><div class="src"><span>[2]</span><span>inference-notes.example/draft-models</span></div><div class="src"><span>[3]</span><span>arxiv-mirror.example/self-spec</span></div></div>'
+        +'<p class="mut">Example report. Citations come from the run’s grounding output.</p>'
+        +'<div class="line" style="justify-content:flex-end"><button class="btn">Copy report</button><button class="btn pri">Rewrite with my model</button></div></div></div>');
+    } else {
+      h=drChrome('<div class="blk"><div class="hd"><div class="line"><b style="font-weight:500">Deep research</b><span class="status fail">failed</span></div><span class="mono" style="font-size:11px;color:var(--faint)">0m 52s</span></div><div class="bd"><p class="errm" style="font-size:12px">Run ended before a report was produced. Error code and message from Exa are shown here. (example)</p>'
+        +'<div class="line" style="justify-content:flex-end"><button class="btn">View event log</button><button class="btn pri" data-go="gate">Try again</button></div></div></div>');
+    }
+    $('#drBody').innerHTML=h;
+    if(drSel==='run'){
+      var i=0,t0=Date.now(),src=0,lg=$('#log');
+      function add(){ if(i<LOG.length){lg.insertAdjacentHTML('beforeend','<div><span class="t">'+LOG[i][0]+'</span>'+LOG[i][1]+'</div>');lg.scrollTop=lg.scrollHeight;var m=/added: (\d+)/.exec(LOG[i][1]);if(m){src=+m[1];$('#srcN').textContent=src}i++} }
+      add(); timers.push(setInterval(add,1100));
+      timers.push(setInterval(function(){var s=Math.floor((Date.now()-t0)/1000),el=$('#drEl');if(el)el.textContent=('0'+Math.floor(s/60)).slice(-2)+':'+('0'+(s%60)).slice(-2)},500));
+    }
+    var r=$('#capR'); if(r) r.addEventListener('input',function(ev){cap=+ev.target.value;$('#capV').textContent='$'+cap});
+  }
+  $('#drChips').addEventListener('click',function(e){var b=e.target.closest('button');if(b){drSel=b.dataset.c;renderDr()}});
+  $('#drBody').addEventListener('click',function(e){
+    var k=e.target.closest('[data-e]'); if(k){eff=k.dataset.e;cap=eff==='ultra'?20:5;renderDr();return}
+    var g=e.target.closest('[data-go]'); if(g){var v=g.dataset.go; if(v==='x')return; drSel=v;renderDr()}
+  });
+})();
+</script>

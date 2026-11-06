@@ -1,0 +1,95 @@
+{
+  "resolvedSearchType": "",
+  "results": [
+    {
+      "id": "https://exa.ai/",
+      "title": "Exa — The world's data for AI agents",
+      "url": "https://exa.ai/",
+      "highlights": [
+        "# Exa — The world's data for AI agents\n\n> Search the largest index of public web and private information.\n\nIntroducing Exa 3.0: Our largest ever improvement to search quality. Learn more.\n\nFor the complete site-wide index, see llms.txt.\n\nJoin 900,000+ developers building AI on top of the world's information.\n\n...\n\n## Products\n\n- Search API\n- Contents API\n- Agent API\n- Monitors API\n- Websets\n- Exa Connect\n- MCP Server\n- Integrations\n\n## Exa leads across benchmarks\n\nExa 3.0 tops public evals and the verticals customers rely on most\n\n### Agentic search\n\nExa 3.0 leads on BrowseComp, DSQA, and WideSearch, the standard benchmarks for search agents.\n\n| Benchmark (accuracy %) | Exa 3.0 | Perplexity | Brave | Parallel |\n| --- | --- | --- | --- | --- |\n| BrowseComp | 91.8 | 91.5 | 83.5 | 72.7 |\n| DSQA | 88.2 | 87.6 | 78.6 | 85.3 |\n| WideSearch | 56.1 | 54.0 | 54.8 | 55.4 |\n\n### Search verticals\n\nBest-in-class across code, finance, and GTM intelligence, not just general web queries.\n\n...\n\n| --- | --- | --- | --- | --- |\n\n...\n\n| FinSearchComp | 71.4 | 63.4 | 57.6 | 68.0 |\n| ATLAS | 44.5 | 37.3 | 27.7 | 32.5 |\n\n...\n\n### Cost\n\n...\n\n| --- | --- | --- |\n\n...\n\n| Exa 3.0 Lite | 79.2 | $0.0444 |\n| Perplexity Medium | 80.0 | $0.0703 |\n\n...\n\n| Parallel Advanced | 74.8 | $0.0592 |\n\n...\n\n## Designed to make your agent smarter\n\n- Web-scale index: comprehensive coverage over all search verticals so your agent has the right context to solve its problem.\n- The docs your coding agent needs: powers coding agents with smart, token-efficient search across docs and repos.\n- Token-efficient contents with highlights: a specialized model trained to extract the most relevant excerpts from the web. Up to 25T tokens passed to models each week are concise excerpts powered by highlights.\n- Low-latency to deep research in one API: configure for fast results or deep research with structured outputs and grounded citations\n\n## Enterprise\n\nEnterprise-grade security and controls:\n\n- SOC 2 Type II — independently audited controls for security, availability, and confidentiality.\n- GDPR — EU data-subject rights honored, with lawful-basis handling for personal data.\n- CCPA — California consumer privacy rights, including access and deletion requests.\n- HIPAA — safeguards for protected health information, with a BAA available.\n- Zero data retention — your queries and results are never stored or trained on.\n- Enterprise agreements — BAA discussions, DPA documentation, and custom data-security arrangements."
+      ],
+      "entities": [
+        {
+          "id": "https://exa.ai/library/organization/dlfjbwz0qky",
+          "type": "company",
+          "version": 1,
+          "properties": {
+            "name": "Exa",
+            "foundedYear": null,
+            "description": "Exa is an applied AI research lab organizing human knowledge, starting with the web.\n\nExa Search is the highest quality search API at every latency. It accepts natural language queries and produces token-efficient results with citations.\n\nExa Agent is a high-compute web agent that synthesizes information from across the web to handle the most complex deep research, list-building, and enrichment workflows.\n\nThese products power Cursor, Cognition, Hubspot, OpenRouter, Monday.com, and agents built by over 500,000 developers.\n\nWe are a worldwide team of engineers and researchers. We're hiring: exa.ai/careers",
+            "workforce": {
+              "total": 243
+            },
+            "headquarters": {
+              "address": "430 Shotwell St, San Francisco, California 94110, US",
+              "city": "San Francisco",
+              "postalCode": null,
+              "country": "United States"
+            },
+            "financials": {
+              "revenueAnnual": null,
+              "fundingTotal": 362125000,
+              "fundingLatestRound": {
+                "name": "Series c",
+                "date": "2026-05-01",
+                "amount": 250000000
+              }
+            },
+            "webTraffic": {
+              "visitsMonthly": 909787,
+              "countryRank": 24731,
+              "avgDurationSeconds": 224,
+              "history": [
+                {
+                  "value": 832753,
+                  "dateFrom": "2026-05",
+                  "dateTo": "2026-05"
+                },
+                {
+                  "value": 761379,
+                  "dateFrom": "2026-06",
+                  "dateTo": "2026-06"
+                },
+                {
+                  "value": 756616,
+                  "dateFrom": "2026-07",
+                  "dateTo": "2026-07"
+                },
+                {
+                  "value": 846784,
+                  "dateFrom": "2026-08",
+                  "dateTo": "2026-08"
+                },
+                {
+                  "value": 930827,
+                  "dateFrom": "2026-09",
+                  "dateTo": "2026-09"
+                },
+                {
+                  "value": 909787,
+                  "dateFrom": "2026-10",
+                  "dateTo": "2026-10"
+                }
+              ]
+            },
+            "research": null
+          }
+        }
+      ]
+    }
+  ],
+  "searchTime": 1935,
+  "costDollars": {
+    "total": 0.007,
+    "search": {
+      "neural": 0.007
+    }
+  },
+  "warnings": [
+    {
+      "code": "IGNORED_FIELD",
+      "path": "/useAutoprompt",
+      "message": "useAutoprompt is no longer supported and is ignored. Remove it from the request."
+    }
+  ]
+}

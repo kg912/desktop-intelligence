@@ -1,0 +1,5 @@
+{
+  "error": "Payment required to access this resource",
+  "tag": "X402_PAYMENT_REQUIRED",
+  "x402Version": 2
+}

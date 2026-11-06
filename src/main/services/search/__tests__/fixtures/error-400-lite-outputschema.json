@@ -1,0 +1,4 @@
+{
+  "error": "Invalid request body | Not supported with type \"lite\": outputSchema. Use type \"auto\" for other parameters.",
+  "tag": "INVALID_REQUEST_BODY"
+}
