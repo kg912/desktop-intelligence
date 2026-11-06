@@ -1,6 +1,5 @@
 import { net } from 'electron'
 import { readSettings } from './SettingsStore'
-import type { LMStudioTool } from './McpServerManager'
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 
@@ -10,10 +9,14 @@ export interface BraveSearchResult {
   description: string
 }
 
+/** What Brave was sent and returned, for observability (spec 8a); the key header is never included. */
+export interface BraveExchange { url: string; status: number; raw: unknown }
+
 export async function braveSearch(
   query:  string,
   apiKey: string,
-  count = 5
+  count = 5,
+  onExchange?: (x: BraveExchange) => void,
 ): Promise<BraveSearchResult[]> {
   const url = new URL(BRAVE_SEARCH_URL)
   url.searchParams.set('q', query)
@@ -28,12 +31,15 @@ export async function braveSearch(
   })
 
   if (!response.ok) {
-    throw new Error(`Brave Search API error ${response.status}: ${await response.text()}`)
+    const body = await response.text()
+    onExchange?.({ url: url.toString(), status: response.status, raw: body })
+    throw new Error(`Brave Search API error ${response.status}: ${body}`)
   }
 
   const data = await response.json() as {
     web?: { results?: Array<{ title?: string; url?: string; description?: string }> }
   }
+  onExchange?.({ url: url.toString(), status: response.status, raw: data })
 
   return (data.web?.results ?? []).map(r => ({
     title:       r.title       ?? '',
@@ -115,11 +121,19 @@ function extractTextFromHtml(html: string): string {
     .slice(0, 3000)
 }
 
+/** Per-result page fetch outcome (spec 8a item 2: not visible before). */
+export type PageFetchOutcome =
+  | { url: string; outcome: 'fetched'; chars: number }
+  | { url: string; outcome: 'skipped_domain' }
+  | { url: string; outcome: 'failed'; reason: string }
+
 async function fetchPageText(
   url: string,
-  timeoutMs = 5000
+  timeoutMs = 5000,
+  report: (o: PageFetchOutcome) => void = () => {},
 ): Promise<string | null> {
   if (shouldSkipFetch(url)) {
+    report({ url, outcome: 'skipped_domain' })
     if (typeof __DEV_MODE__ !== 'undefined' && __DEV_MODE__) {
       console.log(`[BraveSearch] ⏭ Skipped fetch for ${url} (domain blocklist)`)
     }
@@ -136,20 +150,23 @@ async function fetchPageText(
       },
     } as RequestInit)
     clearTimeout(timer)
-    if (!response.ok) return null
+    if (!response.ok) { report({ url, outcome: 'failed', reason: `HTTP ${response.status}` }); return null }
     const contentType = response.headers.get('content-type') ?? ''
-    if (!contentType.includes('text/html')) return null
+    if (!contentType.includes('text/html')) { report({ url, outcome: 'failed', reason: `not HTML (${contentType || 'no content-type'})` }); return null }
     const html = await response.text()
     const text = extractTextFromHtml(html)
     if (text.length > 100) {
       if (typeof __DEV_MODE__ !== 'undefined' && __DEV_MODE__) {
         console.log(`[BraveSearch] 📄 Fetched ${url.slice(0, 60)} — ${text.length} chars`)
       }
+      report({ url, outcome: 'fetched', chars: text.length })
       return text
     }
+    report({ url, outcome: 'failed', reason: `page text under 100 chars (${text.length})` })
     return null
-  } catch {
-    return null  // timeout, network error, CSP block — all silent
+  } catch (err) {
+    report({ url, outcome: 'failed', reason: err instanceof Error ? err.message : String(err) })
+    return null  // timeout, network error, CSP block — all silent to the model
   }
 }
 
@@ -167,13 +184,13 @@ export async function augmentAndFormatResults(
   results: BraveSearchResult[],
   /** keepSnippet: put Brave's own snippet on the first body line above fetched page text (multi-agent workers,
    *  spec A Phase 7 — the sidecar trims page text for the worker's view but always keeps that line). */
-  opts: { keepSnippet?: boolean } = {}
+  opts: { keepSnippet?: boolean; outcomes?: PageFetchOutcome[] } = {}
 ): Promise<string> {
   if (results.length === 0) return 'No results found.'
 
   // Fetch all results in parallel — skip only blocklisted domains
   const fetched = await Promise.allSettled(
-    results.map(r => fetchPageText(r.url))
+    results.map((r, i) => fetchPageText(r.url, 5000, (o) => { if (opts.outcomes) opts.outcomes[i] = o }))
   )
 
   const sanitise = (s: string): string =>
@@ -197,44 +214,4 @@ export async function augmentAndFormatResults(
       return `[${i + 1}] ${sanitise(r.title)}\n${r.url}\n${body}`
     })
     .join('\n\n')
-}
-
-// ── Multi-agent workers ─────────────────────────────────────────────────────
-// Workers get web search as a native function-calling tool, namespaced like an
-// MCP tool (builtin__brave_web_search) so the sidecar can route it; Electron runs
-// it here, after the multi-agent permission layers. Description as in ChatService.
-
-const BRAVE_WORKER_TOOL: LMStudioTool = {
-  type: 'function',
-  function: {
-    name: 'builtin__brave_web_search',
-    description:
-      'Search the web for CURRENT or REAL-TIME information only. ' +
-      'Use ONLY for: live data (prices, weather, scores), recent news/events, ' +
-      'or when the user explicitly asks to search. ' +
-      'Do NOT use for general knowledge, concepts, history, coding, math, or creative tasks.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Specific, concise search query for current/real-time information.' },
-      },
-      required: ['query'],
-    },
-  },
-}
-
-export const braveWorkerTools = {
-  /** Offered only when web search is enabled and has a key (Settings → Web Search). */
-  getToolSchemas(): LMStudioTool[] {
-    return readSettings().braveSearchEnabled && resolveBraveApiKey() ? [BRAVE_WORKER_TOOL] : []
-  },
-  /** Same search + page augmentation as the single-chat brave_web_search path. */
-  async call(toolName: string, args: Record<string, unknown>): Promise<string> {
-    if (toolName !== 'brave_web_search') throw new Error(`Unknown built-in tool: ${toolName}`)
-    const key = resolveBraveApiKey()
-    if (!key) throw new Error('Brave Search is not configured')
-    const query = String(args.query ?? '').trim()
-    if (!query) throw new Error('brave_web_search needs a non-empty query')
-    return augmentAndFormatResults(await braveSearch(query, key, 5), { keepSnippet: true })
-  },
 }

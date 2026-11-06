@@ -51,6 +51,7 @@ export interface RunSummary {
 export interface Anomaly {
   kind: 'length' | 'served_model_differs' | 'fallback_plan' | 'repetition' | 'retry' | 'error' | 'cancelled' | 'tool_denied' | 'tool_rejected' | 'reconciliation' | 'capped' | 'tool_limit'
     | 'degraded' | 'context_compacted' | 'plan_step_removed' | 'approval_wait'
+    | 'search_depth_capped' | 'search_retry_429' | 'search_empty' | 'search_notices' | 'search_error'
   message: string
   /** Link target inside the run directory, e.g. "agent-1.1.md#call-7". */
   ref?: string
@@ -96,6 +97,36 @@ export interface CallRecord {
   denied?: boolean
   /** Spec A Phase 9: how the tool call was approved (timing then also carries waitMs and toolMs). */
   approvalMode?: 'trusted' | 'asked' | 'auto'
+}
+
+/** Written by Electron (webSearchWorkerTools), not the sidecar: one provider call behind a worker's web search tool call. */
+export interface SearchRecord {
+  schema: 1
+  runId: string
+  chatId: string
+  kind: 'search_call'
+  role: 'worker'
+  agentId: string
+  attempt: number
+  toolRound: number
+  callId: string
+  name: string
+  timing: { startedAt: number; endedAt: number; ms: number }
+  capped?: Array<{ field: string; originalChars: number }> | null
+  search: {
+    provider: string
+    query: string
+    requestedType?: string
+    effectiveType?: string
+    caps: Array<{ kind: string; from: string | number; to: string | number }>
+    request: { url: string; method: string; headers: Record<string, string>; body?: unknown }
+    status: number | null
+    rawResponse: unknown
+    pageFetches?: unknown[]
+    formatted: { chars: number }
+    retries: Array<{ status: number; waitMs: number }>
+    error: string | null
+  }
 }
 
 interface ActiveRun {
@@ -301,7 +332,7 @@ export function parseJsonl<T>(text: string): T[] {
   return out
 }
 
-export async function readRun(dir: string): Promise<{ meta: RunLogMeta; events: AgentEvent[]; records: CallRecord[] }> {
+export async function readRun(dir: string): Promise<{ meta: RunLogMeta; events: AgentEvent[]; records: CallRecord[]; searches: SearchRecord[] }> {
   const meta = JSON.parse(await fs.readFile(path.join(dir, 'run.meta.json'), 'utf8')) as RunLogMeta
   const files = await fs.readdir(dir)
   const read = async (name: string): Promise<string> => fs.readFile(path.join(dir, name), 'utf8').catch(() => '')
@@ -311,7 +342,66 @@ export async function readRun(dir: string): Promise<{ meta: RunLogMeta; events: 
     if (name.endsWith('.jsonl') && name !== 'events.jsonl') records.push(...parseJsonl<CallRecord>(await read(name)))
   }
   records.sort((a, b) => a.seq - b.seq)
-  return { meta, events, records }
+  // Search records come from Electron (no sidecar seq); they are rendered next to their tool call.
+  const searches = (records as unknown as Array<CallRecord | SearchRecord>).filter((r): r is SearchRecord => r.kind === 'search_call')
+  return { meta, events, records: records.filter((r) => (r.kind as string) !== 'search_call'), searches }
+}
+
+export function searchAnchor(s: SearchRecord): string {
+  return `search-${safeId(s.callId || String(s.timing.startedAt))}`
+}
+
+const searchRef = (s: SearchRecord): string => `agent-${safeId(s.agentId)}.md#${searchAnchor(s)}`
+
+function rawOf(s: SearchRecord): Record<string, unknown> | null {
+  const raw = s.search.rawResponse
+  return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null
+}
+
+/** Result count from the raw response (Exa `results`, Brave `web.results`); null when the raw body is not JSON. */
+export function searchResultCount(s: SearchRecord): number | null {
+  const raw = rawOf(s)
+  const list = raw?.results ?? (raw?.web as { results?: unknown } | undefined)?.results
+  return Array.isArray(list) ? list.length : null
+}
+
+export function searchCostUsd(s: SearchRecord): number {
+  const total = (rawOf(s)?.costDollars as { total?: unknown } | undefined)?.total
+  return typeof total === 'number' ? total : 0
+}
+
+function renderSearchCall(s: SearchRecord): string {
+  const x = s.search
+  const type = x.effectiveType ? `, type ${x.effectiveType}${x.requestedType && x.requestedType !== x.effectiveType ? ` (selected ${x.requestedType})` : ''}` : ''
+  const lines = [
+    `<a id="${searchAnchor(s)}"></a>`,
+    `##### Search call: ${x.provider}${type} for ${s.callId || s.name}`,
+    '',
+    `Query: ${cell(x.query)}. Status: ${x.status ?? 'no response'}${x.error ? `, error: ${cell(x.error)}` : ''}. Duration: ${s.timing.ms} ms. Cost: ${usd(searchCostUsd(s))}. Results: ${searchResultCount(s) ?? '?'}. Sent to the model: ${x.formatted.chars} chars.`,
+    '',
+  ]
+  if (x.caps.length) lines.push(`Caps: ${x.caps.map((c) => `${c.kind} ${c.from} → ${c.to}`).join(', ')}.`, '')
+  if (x.retries.length) lines.push(`Retries: ${x.retries.map((r) => `HTTP ${r.status}, waited ${r.waitMs} ms`).join('; ')}.`, '')
+  if (s.capped?.length) lines.push(`Cut fields: ${s.capped.map((c) => `${c.field} (${c.originalChars} chars)`).join(', ')}.`, '')
+  lines.push(details('Request (as sent)', JSON.stringify(x.request, null, 2), 'json'), '')
+  if (x.pageFetches) lines.push(details('Page fetches', JSON.stringify(x.pageFetches, null, 2), 'json'), '')
+  lines.push(details('Raw response (as received)', typeof x.rawResponse === 'string' ? x.rawResponse : JSON.stringify(x.rawResponse, null, 2), 'json'), '')
+  return lines.join('\n')
+}
+
+export function searchAnomalies(searches: SearchRecord[]): Anomaly[] {
+  const out: Anomaly[] = []
+  for (const s of searches) {
+    const ref = searchRef(s)
+    const who = `${s.name} for agent ${s.agentId}`
+    for (const c of s.search.caps) out.push({ kind: 'search_depth_capped', message: `${who}: ${c.kind} ${c.from} → ${c.to}`, ref })
+    for (const r of s.search.retries) out.push({ kind: 'search_retry_429', message: `${who}: HTTP ${r.status}, retried after ${r.waitMs} ms`, ref })
+    if (s.search.error) out.push({ kind: 'search_error', message: `${who} failed: ${s.search.error}`, ref })
+    else if (searchResultCount(s) === 0) out.push({ kind: 'search_empty', message: `${who} returned no results for "${s.search.query}"`, ref })
+    const notices = rawOf(s)?.notices
+    if (Array.isArray(notices) && notices.length) out.push({ kind: 'search_notices', message: `${who}: ${notices.map((n) => (typeof n === 'string' ? n : JSON.stringify(n))).join('; ')}`, ref })
+  }
+  return out
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
@@ -419,15 +509,24 @@ function eventsOf<T extends AgentEvent['type']>(events: AgentEvent[], type: T): 
   return events.filter((e): e is Ev<T> => e.type === type)
 }
 
-function renderAgentFile(agentId: string, records: CallRecord[], events: AgentEvent[], step: { label?: string; role?: string } | undefined): string {
+function renderAgentFile(agentId: string, records: CallRecord[], events: AgentEvent[], step: { label?: string; role?: string } | undefined, searches: SearchRecord[] = []): string {
   const lines = [`# Agent ${agentId}${step?.role ? `: ${step.role}` : ''}`, '', step?.label ? `Subtask: ${step.label}` : '', '', '[Back to run](run.md)', '']
-  const attempts = [...new Set(records.map((r) => r.attempt))].sort((a, b) => a - b)
+  const attempts = [...new Set([...records, ...searches].map((r) => r.attempt))].sort((a, b) => a - b)
   for (const attempt of attempts) {
     lines.push(`## Attempt ${attempt}`, '')
     const mine = records.filter((r) => r.attempt === attempt)
     const work = mine.filter((r) => r.role === 'worker').sort((a, b) => (a.toolRound ?? 0) - (b.toolRound ?? 0) || a.seq - b.seq)
+    const pending = searches.filter((x) => x.attempt === attempt)
     lines.push('### Work', '')
-    for (const r of work) lines.push(renderCall(r))
+    for (const r of work) {
+      lines.push(renderCall(r))
+      // The provider call behind this tool call (same call id), right under it.
+      for (const x of pending.filter((p) => r.kind === 'tool' && p.callId && p.callId === r.callId)) {
+        lines.push(renderSearchCall(x))
+        pending.splice(pending.indexOf(x), 1)
+      }
+    }
+    for (const x of pending) lines.push(renderSearchCall(x))
     const reflections = mine.filter((r) => r.role === 'reflection')
     const verdict = events.find((e): e is Ev<'reflection_result'> => e.type === 'reflection_result' && e.agentId === agentId && (e.attempt ?? 0) === attempt)
     if (reflections.length || verdict) {
@@ -472,7 +571,7 @@ export function peakConcurrency(records: CallRecord[]): number {
   return peak
 }
 
-export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallRecord[]): RunSummary {
+export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallRecord[], searches: SearchRecord[] = []): RunSummary {
   const model = records.filter((r) => r.kind === 'model')
   const tools = records.filter((r) => r.kind === 'tool')
   const terminal = events.find((e): e is Ev<'task_complete'> => e.type === 'task_complete')
@@ -486,7 +585,7 @@ export function summarise(meta: RunLogMeta, events: AgentEvent[], records: CallR
     durationMs: meta.endedAt ? meta.endedAt - meta.startedAt : null,
     reportedCostUsd: terminal ? terminal.totalCostUsd : null,
     reportedTokens: terminal ? terminal.totalTokens : null,
-    anomalies: findAnomalies(meta, events, records, costUsd, tokens),
+    anomalies: [...findAnomalies(meta, events, records, costUsd, tokens), ...searchAnomalies(searches)],
   }
 }
 
@@ -733,7 +832,7 @@ function mermaidId(id: string): string {
   return `s_${id.replace(/\W/g, '_')}`
 }
 
-export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: CallRecord[], summary: RunSummary): string {
+export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: CallRecord[], summary: RunSummary, searches: SearchRecord[] = []): string {
   const plan = eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []
   const runConfig = eventsOf(events, 'run_config').at(-1)
   const t0 = Math.min(meta.startedAt, ...records.map((r) => r.timing.startedAt ?? Infinity))
@@ -808,6 +907,15 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     L.push(`| ${r.seq} | ${start} | ${r.timing.ms ?? ''} | ${r.kind === 'tool' ? `tool ${cell(r.name)}` : 'model'} | ${r.role} | ${r.agentId ?? ''} | ${r.attempt} | ${r.kind === 'model' ? `\`${cell(r.model)}\`` : ''} | ${r.kind === 'model' ? tokensOf(r) : ''} | ${r.kind === 'model' ? usd(r.usage?.costUsd) : ''} | ${cell(finish)} | [${callRef(r)}](${callRef(r)}) |`)
   }
   L.push('')
+  if (searches.length) {
+    // Rows start with "s" so the call-record checks (numbered rows) are unchanged.
+    L.push('Search calls (run by Electron behind the web search tool calls above):', '')
+    L.push('| # | Start (+ms) | Duration (ms) | Provider | Type | Agent | Attempt | Round | Results | Cost | Status | Record |', '|---|---|---|---|---|---|---|---|---|---|---|---|')
+    for (const [i, x] of [...searches].sort((a, b) => a.timing.startedAt - b.timing.startedAt).entries()) {
+      L.push(`| s${i + 1} | ${x.timing.startedAt - t0} | ${x.timing.ms} | ${x.search.provider} | ${cell(x.search.effectiveType ?? '')} | ${x.agentId} | ${x.attempt} | ${x.toolRound} | ${searchResultCount(x) ?? ''} | ${usd(searchCostUsd(x))} | ${x.search.error ? 'error' : x.search.status ?? ''} | [${searchRef(x)}](${searchRef(x)}) |`)
+    }
+    L.push('')
+  }
 
   L.push('## Agents', '')
   L.push('| Agent | Role | Attempts | Reflection scores | Outcome | Tools used | Cost |', '|---|---|---|---|---|---|---|')
@@ -839,6 +947,19 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     const rs = records.filter((r) => r.kind === 'model' && r.model === id)
     L.push(`| \`${cell(id)}\` | ${rs.length} | ${rs.reduce((s, r) => s + tokensOf(r), 0)} | ${usd(rs.reduce((s, r) => s + (r.usage?.costUsd ?? 0), 0))} |`)
   }
+  if (searches.length) {
+    L.push('', '| Search provider | Type | Calls | Cost |', '|---|---|---|---|')
+    const groups = new Map<string, SearchRecord[]>()
+    for (const x of searches) {
+      const k = `${x.search.provider}\u0000${x.search.effectiveType ?? ''}`
+      groups.set(k, [...(groups.get(k) ?? []), x])
+    }
+    for (const [k, xs] of groups) {
+      const [provider, type] = k.split('\u0000')
+      L.push(`| ${provider} | ${type} | ${xs.length} | ${usd(xs.reduce((s, x) => s + searchCostUsd(x), 0))} |`)
+    }
+    L.push('', `Search spend: ${usd(searches.reduce((s, x) => s + searchCostUsd(x), 0))} (billed by the search provider, not part of the model totals below).`)
+  }
   L.push('', `Sum of call records: ${summary.modelCalls} model calls, ${summary.toolCalls} tool calls, ${summary.tokens} tokens, ${usd(summary.costUsd)}.`)
   if (summary.reportedCostUsd != null) {
     L.push(`Reported by the run: ${summary.reportedTokens} tokens, ${usd(summary.reportedCostUsd)}.`, '')
@@ -855,16 +976,16 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
 
 /** Renders every markdown file and refreshes run.meta.json's summary from the files on disk. */
 export async function renderRun(dir: string, secrets: string[] = []): Promise<RunLogMeta> {
-  const { meta, events, records } = await readRun(dir)
-  const summary = summarise(meta, events, records)
+  const { meta, events, records, searches } = await readRun(dir)
+  const summary = summarise(meta, events, records, searches)
   const plan = eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []
   const out = new Map<string, string>()
-  out.set('run.md', renderRunMd(meta, events, records, summary))
+  out.set('run.md', renderRunMd(meta, events, records, summary, searches))
   out.set('planner.md', renderSimpleFile('Planner', records.filter((r) => r.role === 'planner')))
   out.set('synthesis.md', renderSimpleFile('Synthesis', records.filter((r) => r.role === 'synthesis')))
-  const agentIds = [...new Set([...plan.map((s) => s.id), ...records.filter((r) => r.agentId).map((r) => r.agentId!)])]
+  const agentIds = [...new Set([...plan.map((s) => s.id), ...records.filter((r) => r.agentId).map((r) => r.agentId!), ...searches.map((x) => x.agentId)])]
   for (const id of agentIds) {
-    out.set(`agent-${safeId(id)}.md`, renderAgentFile(id, records.filter((r) => r.agentId === id), events, plan.find((s) => s.id === id)))
+    out.set(`agent-${safeId(id)}.md`, renderAgentFile(id, records.filter((r) => r.agentId === id), events, plan.find((s) => s.id === id), searches.filter((x) => x.agentId === id)))
   }
   const updated: RunLogMeta = { ...meta, summary }
   out.set('run.meta.json', JSON.stringify(updated, null, 2))
@@ -926,8 +1047,8 @@ export function rowFromMeta(meta: RunLogMeta, active: boolean): RunListRow {
 }
 
 export async function runDetail(dir: string): Promise<RunDetail> {
-  const { meta, events, records } = await readRun(dir)
-  const summary = meta.summary ?? summarise(meta, events, records)
+  const { meta, events, records, searches } = await readRun(dir)
+  const summary = meta.summary ?? summarise(meta, events, records, searches)
   const t0 = Math.min(...records.map((r) => r.timing.startedAt ?? r.timing.endedAt), Infinity)
   const flagged = new Set(summary.anomalies.map((a) => a.ref))
   const plan = eventsOf(events, 'orchestrator_plan').at(-1)?.steps ?? []

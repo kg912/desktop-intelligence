@@ -269,7 +269,7 @@ describe('MultiAgentRunCoordinator events', () => {
     expect(h.mcp.callBuiltinForMultiAgent).toHaveBeenCalledWith('brave_web_search', { query: 'hotels Füssen' }, {
       chatId: 'chat-1', runId: 'run-1', agentId: '1.1', role: 'Researcher', model: 'w/m', requirePermissions: false, hitlTimeoutMs: 42_000,
     }, expect.any(Function))
-    expect(h.builtin.call).toHaveBeenCalledWith('brave_web_search', { query: 'hotels Füssen' })
+    expect(h.builtin.call).toHaveBeenCalledWith('brave_web_search', { query: 'hotels Füssen' }, expect.objectContaining({ runId: 'run-1', chatId: 'chat-1', agentId: '1.1', record: expect.any(Function) }))
     expect(h.mcp.callToolForMultiAgent).not.toHaveBeenCalled()
     expect(h.sidecar.respondHitl).toHaveBeenCalledWith({ runId: 'run-1', agentId: '1.1', approved: true, result: 'search-results' })
   })

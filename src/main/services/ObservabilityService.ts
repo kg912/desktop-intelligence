@@ -49,6 +49,7 @@ export type ObsEventType =
   | 'answer_delta'
   | 'tool_call'
   | 'tool_result'
+  | 'search_call'
   | 'image_artifact'
   | 'code_artifact'
   | 'chart_image'
@@ -69,7 +70,8 @@ export interface ObsEvent {
 type TraceEvent =
   | { kind: 'thinking';       text: string }
   | { kind: 'text';           text: string }
-  | { kind: 'tool_call';      toolName: string; args: Record<string, unknown>; result?: string }
+  | { kind: 'tool_call';      toolName: string; args: Record<string, unknown>; result?: string; truncated?: { originalChars: number } }
+  | { kind: 'search_call';    record: Record<string, unknown> }
   | { kind: 'chart_image';    label: string; base64: string; pySource?: string }
   | { kind: 'image_artifact'; label: string; ext: string; base64: string }
 
@@ -104,6 +106,30 @@ interface SessionMeta {
 }
 
 // No truncation limit — observability logs capture full content
+
+function searchCallTitle(r: Record<string, unknown>): string {
+  const type = r.effectiveType ? ` · type ${String(r.effectiveType)}${r.requestedType && r.requestedType !== r.effectiveType ? ` (selected ${String(r.requestedType)})` : ''}` : ''
+  return `${String(r.provider)}${type}`
+}
+
+function searchCallSummary(r: Record<string, unknown>): string {
+  const t = r.timing as { ms?: number } | undefined
+  const caps = (r.caps as Array<{ kind: string; from: unknown; to: unknown }> | undefined) ?? []
+  const retries = (r.retries as Array<{ status: number; waitMs: number }> | undefined) ?? []
+  const cost = ((r.rawResponse as { costDollars?: { total?: unknown } } | null)?.costDollars?.total)
+  return [
+    `Query: ${String(r.query ?? '')}`,
+    `Status: ${r.status ?? 'no response'}${r.error ? ` · error: ${String(r.error)}` : ''} · ${t?.ms ?? ''} ms${typeof cost === 'number' ? ` · $${cost}` : ''}`,
+    `Caps: ${caps.length ? caps.map((c) => `${c.kind} ${String(c.from)} → ${String(c.to)}`).join(', ') : 'none'} · Retries: ${retries.length ? retries.map((x) => `HTTP ${x.status} waited ${x.waitMs} ms`).join(', ') : 'none'}`,
+    `Sent to the model: ${(r.formatted as { chars?: number } | undefined)?.chars ?? 0} chars (the tool result below)`,
+  ].join('\n')
+}
+
+function mdDetails(summary: string, body: string): string {
+  const longest = Math.max(2, ...(body.match(/`+/g) ?? []).map((m) => m.length))
+  const f = '`'.repeat(longest + 1)
+  return `<details><summary>${summary}</summary>\n\n${f}json\n${body}\n${f}\n\n</details>`
+}
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -140,7 +166,8 @@ export class ObservabilityService {
       secrets: async () => {
         const s = readSettings()
         return [
-          s.openrouterApiKey, s.braveSearchApiKey, s.nvidiaApiKey, s.ollamaApiKey, process.env.BRAVE_SEARCH_API_KEY,
+          s.openrouterApiKey, s.braveSearchApiKey, s.exaApiKey, s.nvidiaApiKey, s.ollamaApiKey,
+          process.env.BRAVE_SEARCH_API_KEY, process.env.EXA_API_KEY,
           ...(await this.extraSecrets()),
         ].filter((v): v is string => !!v)
       },
@@ -257,9 +284,18 @@ export class ObservabilityService {
           .find((e): e is Extract<TraceEvent, { kind: 'tool_call' }> =>
             e.kind === 'tool_call' && e.toolName === name && e.result === undefined
           )
-        if (entry) entry.result = String(event.payload.result ?? '')
+        if (entry) {
+          entry.result = String(event.payload.result ?? '')
+          const truncated = event.payload.truncated as { originalChars: number } | undefined
+          if (truncated) entry.truncated = truncated
+        }
         break
       }
+
+      // spec 8a: the provider request and raw response, in order just before the matching tool result
+      case 'search_call':
+        buf.trace.push({ kind: 'search_call', record: event.payload })
+        break
 
       case 'session_end':
         buf.finishReason  = String(event.payload.finishReason ?? '')
@@ -611,8 +647,19 @@ export class ObservabilityService {
             if (event.result === undefined) {
               lines.push('Result: [no result captured]')
             } else {
+              if (event.truncated) lines.push(`Truncated: yes (original ${event.truncated.originalChars} chars)`)
               lines.push(`Result: ${event.result}`)
             }
+            break
+          }
+
+          case 'search_call': {
+            const r = event.record
+            lines.push(`▶ SEARCH CALL  ${searchCallTitle(r)}`)
+            lines.push(searchCallSummary(r))
+            lines.push(`Request: ${JSON.stringify(r.request, null, 2)}`)
+            if (r.pageFetches) lines.push(`Page fetches: ${JSON.stringify(r.pageFetches, null, 2)}`)
+            lines.push(`Raw response: ${typeof r.rawResponse === 'string' ? r.rawResponse : JSON.stringify(r.rawResponse, null, 2)}`)
             break
           }
 
@@ -737,11 +784,23 @@ export class ObservabilityService {
             if (event.result === undefined) {
               mdLines.push('Result: [no result captured]')
             } else {
-              mdLines.push('Result:')
+              mdLines.push(event.truncated ? `Result (truncated for the provider; original ${event.truncated.originalChars} chars):` : 'Result:')
               mdLines.push('```')
               mdLines.push(event.result)
               mdLines.push('```')
             }
+            break
+          }
+
+          case 'search_call': {
+            const r = event.record
+            mdLines.push(`### 🔎 Search Call — ${searchCallTitle(r)}`)
+            mdLines.push('')
+            mdLines.push(searchCallSummary(r))
+            mdLines.push('')
+            mdLines.push(mdDetails('Request (as sent)', JSON.stringify(r.request, null, 2)))
+            if (r.pageFetches) mdLines.push('', mdDetails('Page fetches', JSON.stringify(r.pageFetches, null, 2)))
+            mdLines.push('', mdDetails('Raw response (as received)', typeof r.rawResponse === 'string' ? r.rawResponse : JSON.stringify(r.rawResponse, null, 2)))
             break
           }
 

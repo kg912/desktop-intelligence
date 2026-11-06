@@ -62,7 +62,8 @@ import { sanitizeMultiAgentConfig } from '../../shared/multiAgentModels'
 import type { OpenRouterModelInfo } from '../../shared/multiAgentModels'
 import { DEFAULT_MODEL_ID } from '../../shared/types'
 import type { AgentStep } from '../../shared/types'
-import { cloudModelState, daemonReady, buildLmsLoadArgs, definedOnly, stripEosFromMessages } from './handlerHelpers'
+import { cloudModelState, daemonReady, buildLmsLoadArgs, definedOnly, stripEosFromMessages, sanitizeWebSearchPatch, webSearchSettingsPayload } from './handlerHelpers'
+import type { WebSearchSettingsPayload } from '../../shared/webSearch'
 import { readSettings, writeSettings } from '../services/SettingsStore'
 import { mcpServerManager } from '../services/McpServerManager'
 
@@ -996,27 +997,12 @@ export function registerIpcHandlers(webContents: () => WebContents | null): void
   )
 
   // ── MCP Settings ─────────────────────────────────────────────────
-  ipcMain.handle(IPC_CHANNELS.MCP_GET_SETTINGS, async () => {
-    const s = readSettings()
-    return {
-      braveEnabled:                s.braveSearchEnabled         ?? false,
-      braveApiKey:                 s.braveSearchApiKey          ?? '',
-      maxSearchLoops:              s.maxSearchLoops             ?? 4,
-      keepSearchResultsInContext:  s.keepSearchResultsInContext ?? false,
-    }
-  })
+  ipcMain.handle(IPC_CHANNELS.MCP_GET_SETTINGS, async () => webSearchSettingsPayload(readSettings()))
 
   ipcMain.handle(
     IPC_CHANNELS.MCP_SAVE_SETTINGS,
-    async (_, patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number; keepSearchResultsInContext?: boolean }) => {
-      // Only include defined fields — spreading undefined would erase existing keys
-      writeSettings(definedOnly({
-        braveSearchEnabled:         patch.braveEnabled,
-        braveSearchApiKey:          patch.braveApiKey,
-        maxSearchLoops:             patch.maxSearchLoops,
-        keepSearchResultsInContext: patch.keepSearchResultsInContext,
-      }))
-    }
+    // Validated and clamped here; only defined fields are written (undefined would erase a key).
+    async (_, patch: Partial<WebSearchSettingsPayload>) => writeSettings(sanitizeWebSearchPatch(patch ?? {}))
   )
 
   ipcMain.handle(IPC_CHANNELS.MCP_GET_ENV_KEY_STATUS, () => ({

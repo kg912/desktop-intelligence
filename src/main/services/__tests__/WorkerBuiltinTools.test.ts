@@ -27,7 +27,7 @@ beforeEach(() => {
 
 describe('workerBuiltinTools', () => {
   it('always offers the ticker tool; Brave only when enabled and keyed', () => {
-    expect(names()).toEqual(['builtin__brave_web_search', 'builtin__get_ticker_price'])
+    expect(names()).toEqual(['builtin__web_search', 'builtin__get_ticker_price'])
     settings.braveSearchEnabled = false
     expect(names()).toEqual(['builtin__get_ticker_price'])
     settings.braveSearchEnabled = true

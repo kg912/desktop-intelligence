@@ -226,6 +226,8 @@ class Run:
     quick_plan: bool = False
     # agentId → {approvalMode, waitMs, toolMs} of its last answered tool approval (spec A Phase 9).
     approval_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # agentId → {callId, toolRound} of the worker tool call about to pause (sent with hitl_pause).
+    tool_where: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Spec B Phase 1: the planner's acceptance checklist ([] = ledger disabled), each ended step's final claims and
     # statuses ({"claims", "statuses"}; a failed step has none), and the coverage ledger computed from them.
     checklist: list[dict[str, Any]] = field(default_factory=list)
@@ -299,7 +301,11 @@ class Run:
     async def wait_for_approval(self, agent_id: str, role: str, model: str, tool_name: str, server_name: str, args: dict[str, Any]) -> tuple[bool, str]:
         future: asyncio.Future[tuple[bool, str]] = asyncio.get_running_loop().create_future()
         self.approvals[agent_id] = future
-        await self.emit("hitl_pause", agentId=agent_id, role=role, model=model, toolName=tool_name, serverName=server_name, args=args, **self.attempt_of(agent_id))
+        # Worker tool calls only (set by run_worker): callId and toolRound, so Electron files its own
+        # call record (the web search provider call) under the right tool round.
+        where = self.tool_where.pop(agent_id, {})
+        await self.emit("hitl_pause", agentId=agent_id, role=role, model=model, toolName=tool_name, serverName=server_name, args=args,
+                        **where, **self.attempt_of(agent_id))
         try:
             return await asyncio.wait_for(future, timeout=self.config.hitlTimeoutMs / 1000)
         except asyncio.TimeoutError:
@@ -2285,6 +2291,7 @@ async def run_worker(run: Run, step: dict[str, Any], prior: dict[str, str]) -> s
                         record_tool(content, False, False, str(exc))
                     else:
                         try:
+                            run.tool_where[agent_id] = {"callId": call_id, "toolRound": _round}
                             approved, result = await run.wait_for_approval(agent_id, role, model, local, server, args)
                         except AgentFailed as exc:  # approval timed out: auto-denied, the agent fails
                             record_tool(None, False, True, str(exc))

@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer, shell, webUtils, webFrame } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import type { OpenRouterModelInfo } from '../shared/multiAgentModels'
+import type { WebSearchMeta, WebSearchSettingsPayload } from '../shared/webSearch'
 import type { FsAccessRequestEvent, FsAccessResponse, FsAccessSettings, FsChatGrantView, FsPickResult, FsSaveResult, FsSettingsView } from '../shared/fsAccess'
 import type {
   ConnectionState,
@@ -103,20 +104,21 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_END, h)
   },
 
-  onChatStreamToolStart: (cb: (payload: { query: string }) => void): (() => void) => {
-    const h = (_: Electron.IpcRendererEvent, p: { query: string }): void => cb(p)
+  onChatStreamToolStart: (cb: (payload: { query: string; toolName?: string } & WebSearchMeta) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { query: string; toolName?: string } & WebSearchMeta): void => cb(p)
     ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_TOOL_START, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_TOOL_START, h)
   },
 
-  onChatStreamToolDone: (cb: (payload: { query: string; results: Array<{ title: string; url: string }>; formattedContent: string }) => void): (() => void) => {
-    const h = (_: Electron.IpcRendererEvent, p: { query: string; results: Array<{ title: string; url: string }>; formattedContent: string }): void => cb(p)
+  /** Web search adds provider metadata, and sentToModel when the model got a different string (truncation, EOS strip). */
+  onChatStreamToolDone: (cb: (payload: { query: string; results: Array<{ title: string; url: string }>; formattedContent: string; sentToModel?: string } & WebSearchMeta) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { query: string; results: Array<{ title: string; url: string }>; formattedContent: string; sentToModel?: string } & WebSearchMeta): void => cb(p)
     ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, h)
   },
 
-  onChatStreamToolError: (cb: (payload: { query: string; error: string }) => void): (() => void) => {
-    const h = (_: Electron.IpcRendererEvent, p: { query: string; error: string }): void => cb(p)
+  onChatStreamToolError: (cb: (payload: { query: string; error: string } & WebSearchMeta) => void): (() => void) => {
+    const h = (_: Electron.IpcRendererEvent, p: { query: string; error: string } & WebSearchMeta): void => cb(p)
     ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, h)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_TOOL_ERROR, h)
   },
@@ -168,10 +170,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.APP_INITIALIZE, payload),
 
   // ── MCP / Tool settings ──────────────────────────────────────────
-  mcpGetSettings: (): Promise<{ braveEnabled: boolean; braveApiKey: string; maxSearchLoops: number; keepSearchResultsInContext: boolean }> =>
+  mcpGetSettings: (): Promise<WebSearchSettingsPayload> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_SETTINGS),
 
-  mcpSaveSettings: (patch: { braveEnabled?: boolean; braveApiKey?: string; maxSearchLoops?: number; keepSearchResultsInContext?: boolean }): Promise<void> =>
+  mcpSaveSettings: (patch: Partial<WebSearchSettingsPayload>): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MCP_SAVE_SETTINGS, patch),
 
   mcpGetEnvKeyStatus: (): Promise<{ hasEnvKey: boolean }> =>

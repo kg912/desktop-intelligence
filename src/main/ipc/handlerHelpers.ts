@@ -4,6 +4,8 @@
  */
 import type { ConnectionState, DaemonState } from '../../shared/types'
 import type { AppSettings } from '../services/SettingsStore'
+import { normalizeWebSearchSettings, EXA_TYPES } from '../../shared/webSearch'
+import type { WebSearchSettingsPayload } from '../../shared/webSearch'
 
 /** Synthetic always-ready connection state for a cloud provider. */
 export function cloudModelState(
@@ -46,5 +48,47 @@ export function stripEosFromMessages<T extends { content: unknown }>(msgs: T[]):
     if (typeof m.content !== 'string') return m
     const content = m.content.replace(EOS_RE, '')
     return content === m.content ? m : { ...m, content }
+  })
+}
+
+/** Settings > Web Search as the renderer sees it: saved values with defaults (old files have no Exa fields). */
+export function webSearchSettingsPayload(s: AppSettings): WebSearchSettingsPayload {
+  const ws = normalizeWebSearchSettings(s)
+  return {
+    braveEnabled:               s.braveSearchEnabled         ?? false,
+    braveApiKey:                s.braveSearchApiKey          ?? '',
+    maxSearchLoops:             s.maxSearchLoops             ?? 4,
+    keepSearchResultsInContext: s.keepSearchResultsInContext ?? false,
+    webSearchProvider:          ws.provider,
+    exaApiKey:                  s.exaApiKey                  ?? '',
+    exaSearchType:              ws.exaSearchType,
+    exaContentMode:             ws.exaContentMode,
+    exaMaxCharacters:           ws.exaMaxCharacters,
+    exaNumResults:              ws.exaNumResults,
+    exaFreshness:               ws.exaFreshness,
+  }
+}
+
+/**
+ * A save from the renderer, validated in the main process: unknown provider / type / mode /
+ * freshness values are dropped (the saved value stays), numbers are clamped to their ranges,
+ * and undefined fields are left out (writeSettings would erase them).
+ */
+export function sanitizeWebSearchPatch(patch: Partial<WebSearchSettingsPayload>): Partial<AppSettings> {
+  const clamped = normalizeWebSearchSettings(patch)
+  const valid = <T>(v: unknown, ok: boolean, value: T): T | undefined => (v !== undefined && ok ? value : undefined)
+  return definedOnly({
+    braveSearchEnabled:         typeof patch.braveEnabled === 'boolean' ? patch.braveEnabled : undefined,
+    braveSearchApiKey:          typeof patch.braveApiKey === 'string' ? patch.braveApiKey : undefined,
+    maxSearchLoops:             typeof patch.maxSearchLoops === 'number' && Number.isFinite(patch.maxSearchLoops)
+      ? Math.min(8, Math.max(1, Math.round(patch.maxSearchLoops))) : undefined,
+    keepSearchResultsInContext: typeof patch.keepSearchResultsInContext === 'boolean' ? patch.keepSearchResultsInContext : undefined,
+    webSearchProvider:          valid(patch.webSearchProvider, patch.webSearchProvider === 'brave' || patch.webSearchProvider === 'exa', clamped.provider),
+    exaApiKey:                  typeof patch.exaApiKey === 'string' ? patch.exaApiKey : undefined,
+    exaSearchType:              valid(patch.exaSearchType, EXA_TYPES.includes(patch.exaSearchType as never), clamped.exaSearchType),
+    exaContentMode:             valid(patch.exaContentMode, patch.exaContentMode === 'highlights' || patch.exaContentMode === 'text', clamped.exaContentMode),
+    exaMaxCharacters:           valid(patch.exaMaxCharacters, typeof patch.exaMaxCharacters === 'number' && Number.isFinite(patch.exaMaxCharacters), clamped.exaMaxCharacters),
+    exaNumResults:              valid(patch.exaNumResults, typeof patch.exaNumResults === 'number' && Number.isFinite(patch.exaNumResults), clamped.exaNumResults),
+    exaFreshness:               valid(patch.exaFreshness, ['default', '24h', 'always'].includes(patch.exaFreshness as string), clamped.exaFreshness),
   })
 }

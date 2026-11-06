@@ -17,16 +17,31 @@ import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import type { BackendProvider, MultiAgentConfig } from '../../shared/types'
 import type { FsAccessSettings } from '../../shared/fsAccess'
+import type { ExaContentMode, ExaFreshness, ExaSearchType, WebSearchProvider } from '../../shared/webSearch'
 
 export interface AppSettings {
   /** Context length (n_ctx) to use when loading the model. */
   contextLength?: number
   /** LM Studio model identifier chosen by the user (e.g. "mlx-community/Qwen3.5-35B-A3B-6bit"). */
   modelId?: string
-  /** Whether Brave Search is enabled. */
+  /** Whether web search is enabled (either provider; the name predates Exa and is kept to avoid a migration). */
   braveSearchEnabled?: boolean
   /** User-entered Brave Search API key (superseded by BRAVE_SEARCH_API_KEY env var). */
   braveSearchApiKey?:  string
+  /** Web search provider. Default: 'brave' (normalizeWebSearchSettings fills the Exa defaults). */
+  webSearchProvider?: WebSearchProvider
+  /** Exa API key. */
+  exaApiKey?: string
+  /** Exa search type. Default: 'auto' */
+  exaSearchType?: ExaSearchType
+  /** What Exa returns per result. Default: 'highlights' */
+  exaContentMode?: ExaContentMode
+  /** Text mode only: characters per page, 1000–10000. Default: 3000 */
+  exaMaxCharacters?: number
+  /** Results per Exa search, 3–10. Default: 5 */
+  exaNumResults?: number
+  /** contents.maxAgeHours: 'default' sends none, '24h' → 24, 'always' → 0. Ignored for lite. */
+  exaFreshness?: ExaFreshness
   /** Maximum number of mid-stream search rounds before forcing a final answer. Default: 4. */
   maxSearchLoops?: number
   /** When true, previous tool (search result) messages are kept verbatim in context. Default: false. */
@@ -122,8 +137,18 @@ export function writeSettings(patch: Partial<AppSettings>): void {
     const current = readSettings()
     const next    = { ...current, ...patch }
     writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8')
-    console.log('[SettingsStore] Saved:', next)
+    console.log('[SettingsStore] Saved:', redactSettings(next))
   } catch (err) {
     console.error('[SettingsStore] write failed:', err)
   }
 }
+
+/** Key fields shown as [redacted] (writeSettings used to print every key on each save). */
+export function redactSettings(s: AppSettings): AppSettings {
+  const out: Record<string, unknown> = { ...s }
+  for (const k of ['braveSearchApiKey', 'exaApiKey', 'nvidiaApiKey', 'ollamaApiKey', 'openrouterApiKey'] as const) {
+    if (out[k]) out[k] = '[redacted]'
+  }
+  return out as AppSettings
+}
+

@@ -142,6 +142,7 @@ describe('ChatService Agent Loop E2E integration', () => {
       maxOutputTokens: 1024,
       repeatPenalty: 1.1,
       braveSearchEnabled: true,
+      braveSearchApiKey: 'mock-api-key',
     })
 
     // Setup URL-aware fetch mock: isolates LLM calls from stock ticker fetches
@@ -261,7 +262,7 @@ describe('ChatService Agent Loop E2E integration', () => {
 
     // Assert that the Agent Loop runs end to end, calling LLM twice
     expect(mockFetch).toHaveBeenCalledTimes(2)
-    expect(mockBraveSearch).toHaveBeenCalledWith('apple stock', 'mock-api-key', 5)
+    expect(mockBraveSearch).toHaveBeenCalledWith('apple stock', 'mock-api-key', 5, expect.any(Function))
 
     const sendCalls = mockWebContents.send.mock.calls
     
@@ -307,6 +308,7 @@ describe('ChatService Agent Loop E2E integration', () => {
       maxOutputTokens: 1024,
       repeatPenalty: 1.1,
       braveSearchEnabled: true,
+      braveSearchApiKey: 'mock-api-key',
     })
 
     const payload: ChatSendPayload = {
@@ -603,7 +605,7 @@ describe('ChatService Agent Loop E2E integration', () => {
 
     // Should perform mid-stream search and call LLM twice
     expect(mockFetch).toHaveBeenCalledTimes(2)
-    expect(mockBraveSearch).toHaveBeenCalledWith('tesla price', 'mock-api-key', 5)
+    expect(mockBraveSearch).toHaveBeenCalledWith('tesla price', 'mock-api-key', 5, expect.any(Function))
 
     const sendCalls = mockWebContents.send.mock.calls
     const toolStart = sendCalls.find(([channel]) => channel === IPC_CHANNELS.CHAT_STREAM_TOOL_START)
@@ -854,6 +856,7 @@ describe('ChatService Agent Loop E2E integration', () => {
       backendProvider: 'lmstudio',
       maxSearchLoops: 1,
       braveSearchEnabled: true,
+      braveSearchApiKey: 'mock-api-key',
     })
 
     // Loop 0: native tool call path
@@ -975,6 +978,7 @@ describe('ChatService Agent Loop E2E integration', () => {
       backendProvider: 'lmstudio',
       maxSearchLoops: 1,
       braveSearchEnabled: true,
+      braveSearchApiKey: 'mock-api-key',
     })
 
     // Loop 0: native search
@@ -1035,6 +1039,7 @@ describe('ChatService Agent Loop E2E integration', () => {
       backendProvider: 'lmstudio',
       maxSearchLoops: 3, // plenty of budget
       braveSearchEnabled: true,
+      braveSearchApiKey: 'mock-api-key',
     })
 
     // Loop 0: mid-stream text-format tool call (not native delta.tool_calls)
@@ -1074,7 +1079,7 @@ describe('ChatService Agent Loop E2E integration', () => {
     ).toHaveLength(1)
 
     // Search was executed for loop 0
-    expect(mockBraveSearch).toHaveBeenCalledWith('NVDA stock', 'mock-api-key', 5)
+    expect(mockBraveSearch).toHaveBeenCalledWith('NVDA stock', 'mock-api-key', 5, expect.any(Function))
 
     // Both LLM calls happened
     expect(mockFetch).toHaveBeenCalledTimes(2)

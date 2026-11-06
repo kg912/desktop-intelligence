@@ -913,10 +913,13 @@ describe.skipIf(!ENABLED)('multi-agent sidecar — real process, real sandbox, f
     // Approval path: the permission dialog carried the agent's identity; then Electron ran the search.
     expect(permissions).toHaveLength(1)
     expect(permissions[0]).toMatchObject({ serverName: 'builtin', toolName: 'brave_web_search', agent: { agentId: '1.1', role: 'Scout', model: 'fake/worker' } })
-    expect(search).toHaveBeenCalledWith('brave_web_search', { query: 'hotels near Neuschwanstein' })
     // Sanitised like single chat: no EOS tokens reach the model or the trace. Since the claims contract
     // (reflection hardening Phase 3) the model's copy is headed by the call id, so the worker can cite it.
     const start = sent.find((e) => e.type === 'tool_start') as Extract<AgentEvent, { type: 'tool_start' }>
+    // Exa spec 8a: the sidecar's hitl_pause carries the call id and round, so Electron files its search record under them.
+    expect(search).toHaveBeenCalledWith('brave_web_search', { query: 'hotels near Neuschwanstein' }, {
+      runId: start.runId, chatId: 'chat-search', agentId: '1.1', attempt: 0, toolRound: 0, callId: start.callId, record: expect.any(Function),
+    })
     const toolMessage = workerPrompts[1].body.messages.find((m) => m.role === 'tool')
     // Spec A Phase 2: in snippet mode the result is one labelled snippet (S<n-th call>.1).
     expect(toolMessage?.content).toBe(`[callId: ${start.callId}]\n[S1.1] Hotel Müller — 300 m from the castle`)

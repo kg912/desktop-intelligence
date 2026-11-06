@@ -56,6 +56,16 @@ export function sanitizeToolResult(text: string): string {
     : clean
 }
 
+export interface BuiltinCallContext {
+  runId: string
+  chatId: string
+  agentId: string
+  attempt?: number
+  toolRound?: number
+  callId?: string
+  record: (record: unknown) => void
+}
+
 export interface CoordinatorDeps {
   sidecar: {
     on(event: 'event', listener: (event: AgentEvent) => void): unknown
@@ -95,10 +105,11 @@ export interface CoordinatorDeps {
     clearRunTrust(runId: string): void
     cancelRunPermissions(runId: string): void
   }
-  /** Electron-side tools workers may call (server "builtin"), e.g. Brave web search when configured. */
+  /** Electron-side tools workers may call (server "builtin"), e.g. web search when configured. */
   builtin: {
     getToolSchemas(): LMStudioTool[]
-    call(toolName: string, args: Record<string, unknown>): Promise<string>
+    /** ctx: which run, agent and tool round the call belongs to; `record` appends a call record to the run log. */
+    call(toolName: string, args: Record<string, unknown>, ctx?: BuiltinCallContext): Promise<string>
   }
   /** Push to the renderer (MULTI_AGENT_EVENT). */
   sendEvent(event: AgentEvent): void
@@ -473,7 +484,13 @@ export class MultiAgentRunCoordinator {
     }
     try {
       const result = pause.serverName === BUILTIN_SERVER
-        ? await this.deps.mcp.callBuiltinForMultiAgent(pause.toolName, pause.args, ctx, () => this.deps.builtin.call(pause.toolName, pause.args))
+        ? await this.deps.mcp.callBuiltinForMultiAgent(pause.toolName, pause.args, ctx, () => this.deps.builtin.call(pause.toolName, pause.args, {
+            runId: run.runId, chatId: run.chatId, agentId: pause.agentId,
+            ...(pause.attempt !== undefined ? { attempt: pause.attempt } : {}),
+            ...(pause.toolRound !== undefined ? { toolRound: pause.toolRound } : {}),
+            ...(pause.callId !== undefined ? { callId: pause.callId } : {}),
+            record: (record) => this.guard(() => this.deps.runLog?.record(run.runId, record)),
+          }))
         : await this.deps.mcp.callToolForMultiAgent(pause.serverName, pause.toolName, pause.args, ctx)
       await reply(true, sanitizeToolResult(buildApprovedToolResult(result.text, result.userNote)), result.approval)
     } catch (err) {

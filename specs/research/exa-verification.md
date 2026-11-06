@@ -68,3 +68,7 @@ Error JSON is `{ requestId, error: string, tag: string }`.
 ## 8. Phase 2 (Agent API)
 
 Not run; Phase 2 is out of scope for this change.
+
+## 9. `objective`
+
+`objective` (the optional tool argument from section 5) is accepted on `lite`, `auto` and `deep-lite` with no error or warning. A made-up field (`zzUnknownField`) is also accepted silently, so these calls cannot prove Exa uses `objective`; DI sends it as the spec and mockup show.

@@ -145,6 +145,15 @@ export type MessageBlock =
       toolDiff?:        string
       phase:            'searching' | 'done' | 'error'
       error?:           string
+      /** Web search only (optional; older blocks have none and render as before). */
+      provider?:        import('./webSearch').WebSearchProvider
+      mode?:            import('./webSearch').ExaSearchType
+      contentMode?:     import('./webSearch').ExaContentMode
+      searchTimeMs?:    number
+      costDollars?:     number
+      synthesis?:       { text: string; citations?: Array<{ title: string; url: string }> }
+      /** The exact tool text the model got, when it differs from formattedContent (provider truncation). */
+      sentToModel?:     string
     }
   | {
       id:      string
@@ -1039,6 +1048,9 @@ export interface HitlPauseEvent extends AgentEventBase, AgentAttempt {
   args:       Record<string, unknown>
   /** Model of the requesting agent — shown on the approval popup. */
   model?:     string
+  /** The worker's tool call id and round (absent on older traces); Electron files its search record under them. */
+  callId?:    string
+  toolRound?: number
 }
 
 export interface MultiAgentToolDefinition {

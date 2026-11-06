@@ -10,7 +10,8 @@ const netFetch = vi.hoisted(() => ({ impl: async (): Promise<unknown> => { throw
 vi.mock('electron', () => ({ net: { fetch: vi.fn((...a: unknown[]) => (netFetch.impl as (...x: unknown[]) => Promise<unknown>)(...a)) } }))
 vi.mock('../SettingsStore', () => ({ readSettings: () => settings }))
 
-import { augmentAndFormatResults, braveWorkerTools } from '../BraveSearchService'
+import { augmentAndFormatResults } from '../BraveSearchService'
+import { webSearchWorkerTools as braveWorkerTools } from '../search/webSearchTools'
 
 const fetchMock = vi.fn()
 beforeEach(() => {
@@ -22,8 +23,8 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('braveWorkerTools', () => {
-  it('offers builtin__brave_web_search only when enabled and a key is saved', () => {
-    expect(braveWorkerTools.getToolSchemas().map((t) => t.function.name)).toEqual(['builtin__brave_web_search'])
+  it('offers builtin__web_search (Brave selected) only when enabled and a key is saved', () => {
+    expect(braveWorkerTools.getToolSchemas().map((t) => t.function.name)).toEqual(['builtin__web_search'])
     settings.braveSearchEnabled = false
     expect(braveWorkerTools.getToolSchemas()).toEqual([])
     settings.braveSearchEnabled = true
@@ -59,7 +60,7 @@ describe('braveWorkerTools', () => {
     await expect(braveWorkerTools.call('exec', {})).rejects.toThrow('Unknown built-in tool: exec')
     await expect(braveWorkerTools.call('brave_web_search', { query: ' ' })).rejects.toThrow('brave_web_search needs a non-empty query')
     settings.braveSearchApiKey = ''
-    await expect(braveWorkerTools.call('brave_web_search', { query: 'x' })).rejects.toThrow('Brave Search is not configured')
+    await expect(braveWorkerTools.call('brave_web_search', { query: 'x' })).rejects.toThrow('Web search is not configured')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

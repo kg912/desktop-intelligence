@@ -24,11 +24,17 @@ import type {
 import { readSettings } from "./SettingsStore";
 import { observabilityService } from "./ObservabilityService";
 import type { ObsEvent } from "./ObservabilityService";
+import { runWebSearch, webSearchToolSchema } from "./search/webSearchTools";
+import type { SearchCap, SearchCallRecord, SearchOutcome } from "./search/SearchProvider";
 import {
-  braveSearch,
-  augmentAndFormatResults,
-  resolveBraveApiKey,
-} from "./BraveSearchService";
+  effectiveSearchRounds,
+  isWebSearchReady,
+  isWebSearchToolName,
+  normalizeWebSearchSettings,
+  LEGACY_WEB_SEARCH_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+} from "../../shared/webSearch";
+import type { WebSearchMeta } from "../../shared/webSearch";
 import { mcpServerManager, McpDeniedError, buildApprovedToolResult, buildDeniedToolMessage } from "./McpServerManager";
 import { BASE_SYSTEM_PROMPT, currentDateTimeLine } from "./SystemPromptService";
 import { countTokens } from "./tokenUtils";
@@ -175,6 +181,36 @@ const OLLAMA_MAX_TOOL_RESULT_CHARS = 12_000
 const CLOUD_MAX_TOOL_RESULT_CHARS  = 50_000
 
 /**
+ * The exact tool message content the model receives: provider truncation (limit), then the
+ * EOS strip the request body gets anyway. `truncated` is set when the limit applied (spec 8a item 1).
+ */
+export function toModelToolContent(
+  result: string,
+  limit: number | null,
+): { content: string; truncated?: { originalChars: number } } {
+  const cut = limit && result.length > limit
+    ? result.slice(0, limit) + `\n\n[Result truncated at ${limit.toLocaleString()} chars to fit provider limit.]`
+    : result;
+  return {
+    content: cut.replace(EOS_TOKENS_RE, ""),
+    ...(cut !== result ? { truncated: { originalChars: result.length } } : {}),
+  };
+}
+
+/** Stream-event and block metadata for one finished web search (spec 5). */
+function webSearchMeta(out: SearchOutcome): WebSearchMeta {
+  const n = out.normalized;
+  return {
+    provider: n.provider,
+    ...(n.mode ? { mode: n.mode } : {}),
+    ...(n.contentMode ? { contentMode: n.contentMode } : {}),
+    searchTimeMs: n.searchTimeMs,
+    ...(n.costDollars !== undefined ? { costDollars: n.costDollars } : {}),
+    ...(n.synthesis ? { synthesis: { text: n.synthesis.text, ...(n.synthesis.grounding ? { citations: n.synthesis.grounding } : {}) } } : {}),
+  };
+}
+
+/**
  * Repetition detector state.
  * Tracks the last N trimmed non-empty lines seen in the stream.
  * If the same line appears REPETITION_THRESHOLD times consecutively,
@@ -182,33 +218,6 @@ const CLOUD_MAX_TOOL_RESULT_CHARS  = 50_000
  */
 const REPETITION_WINDOW = 3; // consecutive identical lines to trigger abort
 const REPETITION_MAX_LEN = 200; // only track lines up to this length (ignore long prose)
-
-const BRAVE_SEARCH_TOOL = {
-  type: "function",
-  function: {
-    name: "brave_web_search",
-    description:
-      "Search the web for CURRENT or REAL-TIME information only. " +
-      "Use ONLY for: live data (prices, weather, scores), recent news/events, " +
-      "or when the user explicitly asks to search. " +
-      "Do NOT use for general knowledge, concepts, history, coding, math, or creative tasks.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description:
-            "Specific, concise search query for current/real-time information.",
-        },
-        count: {
-          type: "number",
-          description: "Number of results (1-10, default 5).",
-        },
-      },
-      required: ["query"],
-    },
-  },
-} as const;
 
 export const TICKER_TOOL = {
   type: "function",
@@ -261,7 +270,7 @@ const STOCK_CHART_TOOL = {
 
 function buildWebSearchAddendum(maxSearchRounds: number): string {
   return `
-You have access to a real-time web search tool: brave_web_search.
+You have access to a real-time web search tool: ${WEB_SEARCH_TOOL_NAME}.
 
 SEARCH ONLY when the question genuinely requires it:
 - Live or fast-changing data: stock prices, weather, live scores, breaking news, today's events
@@ -273,7 +282,7 @@ DO NOT search for:
 - Information that is unlikely to have changed in a meaningful way
 - Topics where you have solid knowledge and the user has not asked for current data
 
-You may call brave_web_search at most ${maxSearchRounds} time(s) per turn. After each result, re-run the sufficiency check (step 4 of the agent loop). If you have enough to answer — write the answer. If the budget is exhausted, produce the best answer from what is already in context and say so plainly.
+You may call ${WEB_SEARCH_TOOL_NAME} at most ${maxSearchRounds} time(s) per turn. After each result, re-run the sufficiency check (step 4 of the agent loop). If you have enough to answer — write the answer. If the budget is exhausted, produce the best answer from what is already in context and say so plainly.
 
 CRITICAL — DATA INTEGRITY:
 - Your answer must be grounded in what the search results actually say.
@@ -684,7 +693,7 @@ export function detectMidStreamToolCall(
       // (memory writes, etc.) we intercept even without a query field.
       if (raw && raw.name) {
         const q = raw.args["query"] ?? "";
-        const isBrave = raw.name === "brave_web_search";
+        const isBrave = isWebSearchToolName(raw.name);
         // For Brave Search specifically: skip if query is empty — still accumulating.
         if (isBrave && !q) { /* fall through */ } else {
           return {
@@ -1452,8 +1461,9 @@ export class ChatService {
     // 5i — session_start
     this.obsSessionId = observabilityService.startSession(payload.chatId ?? '', modelId, provider)
 
-    const resolvedKey = resolveBraveApiKey();
-    const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
+    // Web search: on, and the selected provider (Settings → Web Search) has a key.
+    const braveEnabled = isWebSearchReady(appSettings);
+    const webSearch = normalizeWebSearchSettings(appSettings);
 
     // ── Build base messages ────────────────────────────────────────
     const _rawBuilt = this.buildMessages(payload, isNvidia || isOllama || isOpenRouter);
@@ -1488,7 +1498,33 @@ export class ChatService {
     let promptTokens = 0; // cumulative prompt size from server usage field
     let buffer = "";
     let searchLoopCount = 0;
-    const MAX_SEARCH_LOOPS = appSettings.maxSearchLoops ?? 4;
+    const configuredSearchLoops = appSettings.maxSearchLoops ?? 4;
+    // Deep Exa types take up to 15 s a round: at most 2 rounds (spec 2.3), recorded on each search.
+    const MAX_SEARCH_LOOPS = braveEnabled ? effectiveSearchRounds(configuredSearchLoops, webSearch) : configuredSearchLoops;
+    const searchCaps: SearchCap[] = MAX_SEARCH_LOOPS < configuredSearchLoops
+      ? [{ kind: "deep_round_cap", from: configuredSearchLoops, to: MAX_SEARCH_LOOPS }]
+      : [];
+    /** Provider and type shown on the searching / error accordion before a result exists. */
+    const searchStartMeta: WebSearchMeta = webSearch.provider === "exa"
+      ? { provider: "exa", mode: webSearch.exaSearchType }
+      : { provider: "brave" };
+    /** One search through the selected provider; its search_call record is logged before the tool result. */
+    const doWebSearch = async (query: string, args: Record<string, unknown>): Promise<SearchOutcome> => {
+      try {
+        const out = await runWebSearch(query, {
+          objective: typeof args.objective === "string" ? args.objective : undefined,
+          signal: this.controller?.signal,
+          caps: searchCaps,
+          settings: appSettings,
+        });
+        this._obsCapture({ type: "search_call", payload: out.record as unknown as Record<string, unknown>, ts: Date.now() });
+        return out;
+      } catch (err) {
+        const rec = (err as { record?: SearchCallRecord }).record;
+        if (rec) this._obsCapture({ type: "search_call", payload: rec as unknown as Record<string, unknown>, ts: Date.now() });
+        throw err;
+      }
+    };
     const fsTurn = { fsCalls: 0 };
     console.log(
       `[ChatService] Max search loops: ${MAX_SEARCH_LOOPS} (read from settings)`,
@@ -1594,13 +1630,16 @@ export class ChatService {
           if (forceFinalAnswer) return {}; // strip tools — force synthesis pass
           const mcpTools = mcpServerManager.getToolSchemas();
           const allTools = [
-            ...(braveEnabled ? [BRAVE_SEARCH_TOOL] : []),
+            // MTPLX serves small local models: no optional `objective` parameter there.
+            ...(braveEnabled ? [webSearchToolSchema(appSettings, { lite: isMtplx })] : []),
             TICKER_TOOL,
             STOCK_CHART_TOOL,
             ...fsToolService.getToolSchemas(payload.chatId ?? ""),
             ...mcpTools,
           ];
           allTools.forEach((t) => validToolNames.add(t.function.name))
+          // Legacy alias: persisted chats replay brave_web_search calls, and some models repeat them.
+          if (braveEnabled) validToolNames.add(LEGACY_WEB_SEARCH_TOOL_NAME)
           if (DEBUG) {
             console.log(
               `[DEBUG] Tools sent (${allTools.length}):`,
@@ -2077,7 +2116,7 @@ export class ChatService {
 
                 toolCallIntercepted = true;
 
-                const isMidBrave = detectedName === "brave_web_search";
+                const isMidBrave = isWebSearchToolName(detectedName);
                 const isMidFs = FS_TOOL_NAMES.has(detectedName);
                 const midMcpParts = !isMidBrave && !isMidFs ? detectedName.split("__") : null;
                 const isMidMcp = !isMidBrave && midMcpParts && midMcpParts.length === 2;
@@ -2087,23 +2126,27 @@ export class ChatService {
                 this._obsCapture({ type: 'tool_call', payload: { toolName: detectedName, args: detectedArgs }, ts: Date.now() })
 
                 this.abort();
+                // Re-armed before the tool runs (not after), so Stop during a search or tool aborts it.
+                this.controller = new AbortController();
                 loopAborted = true;
                 flushChunkBuffer();
 
                 const uiLabel = isMidBrave ? midQuery || detectedName : detectedName;
-                send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: uiLabel, toolName: detectedName });
+                send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, { query: uiLabel, toolName: detectedName, ...(isMidBrave ? searchStartMeta : {}) });
 
                 let midStreamResult: string;
+                let midSearchDone: Record<string, unknown> | null = null;
                 try {
                   if (isMidBrave) {
-                    const results = await braveSearch(midQuery, resolvedKey!, 5);
-                    midStreamResult = await augmentAndFormatResults(results);
-                    send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                    const out = await doWebSearch(midQuery, detectedArgs);
+                    midStreamResult = out.formatted;
+                    midSearchDone = {
                       query:            midQuery,
                       toolName:         detectedName,
-                      results:          results.slice(0, 5).map((r) => ({ title: r.title, url: r.url })),
+                      results:          out.normalized.results.slice(0, out.normalized.provider === "brave" ? 5 : undefined).map((r) => ({ title: r.title, url: r.url })),
                       formattedContent: midStreamResult,
-                    });
+                      ...webSearchMeta(out),
+                    };
                   } else if (isMidFs) {
                     const fsArgs: Record<string, unknown> = {};
                     for (const [k, v] of Object.entries(detectedArgs)) {
@@ -2150,6 +2193,7 @@ export class ChatService {
                     });
                   }
                 } catch (err) {
+                  if ((err as Error).name === "AbortError") throw err; // Stop during the search: end the turn
                   const errMsg = err instanceof Error ? err.message : String(err);
                   midStreamResult = isMidBrave
                     ? `Web search failed: ${errMsg}. Answer from training knowledge.`
@@ -2162,16 +2206,17 @@ export class ChatService {
                     error: errMsg,
                     // File tools: the pill names the file even when the call failed.
                     ...(isMidFs ? { toolArgs: Object.fromEntries(Object.entries(detectedArgs).map(([k, v]) => { try { return [k, JSON.parse(v)]; } catch { return [k, v]; } })) } : {}),
+                    ...(isMidBrave ? searchStartMeta : {}),
                   });
                 }
-                // 5h — tool_result capture (mid-stream fallback path)
-                this._obsCapture({ type: 'tool_result', payload: { toolName: detectedName, result: midStreamResult }, ts: Date.now() })
 
                 const toolCallId = `call_${Date.now()}`;
-                const limit = getToolResultLimit()
-                const toolContent = limit && typeof midStreamResult === 'string' && midStreamResult.length > limit
-                  ? midStreamResult.slice(0, limit) + `\n\n[Result truncated at ${limit.toLocaleString()} chars to fit provider limit.]`
-                  : midStreamResult
+                const midModel = toModelToolContent(midStreamResult, getToolResultLimit());
+                const toolContent = midModel.content;
+                // Web search: "Sent to model" shows the exact string when it differs from the result text.
+                if (midSearchDone) send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, { ...midSearchDone, ...(toolContent !== midStreamResult ? { sentToModel: toolContent } : {}) });
+                // 5h — tool_result capture (mid-stream fallback path): the string the model gets
+                this._obsCapture({ type: 'tool_result', payload: { toolName: detectedName, result: toolContent, ...(midModel.truncated ? { truncated: midModel.truncated } : {}) }, ts: Date.now() })
                 currentMessages = [
                   ...currentMessages,
                   {
@@ -2194,8 +2239,7 @@ export class ChatService {
                   } as { role: string; content: string },
                 ];
 
-                this.controller = new AbortController();
-                // Only Brave Search counts toward MAX_SEARCH_LOOPS — MCP tool calls are unlimited.
+                // Only web search counts toward MAX_SEARCH_LOOPS — MCP tool calls are unlimited.
                 if (isMidBrave) searchLoopCount++;
                 break;
               }
@@ -2452,7 +2496,7 @@ export class ChatService {
               // Dispatch: Ticker, StockChart, Brave Search, or MCP custom tool (namespaced as serverName__toolName)
               const isTicker     = toolName === "get_ticker_price";
               const isStockChart = toolName === "get_stock_chart";
-              const isBrave      = toolName === "brave_web_search";
+              const isBrave      = isWebSearchToolName(toolName);
               const isFs         = FS_TOOL_NAMES.has(toolName);
               const mcpParts = !isBrave && !isTicker && !isStockChart && !isFs ? toolName.split("__") : null;
               const isMcp = !isBrave && !isTicker && !isStockChart && !isFs && mcpParts && mcpParts.length === 2;
@@ -2468,6 +2512,7 @@ export class ChatService {
               send(IPC_CHANNELS.CHAT_STREAM_TOOL_START, {
                 query: uiLabel,
                 toolName,
+                ...(isBrave ? searchStartMeta : {}),
               });
               // 5g — tool_call capture (native tool path)
               this._obsCapture({
@@ -2479,6 +2524,7 @@ export class ChatService {
                 ts: Date.now(),
               })
 
+              let searchDone: Record<string, unknown> | null = null;
               try {
                 let toolResult: string;
 
@@ -2524,22 +2570,25 @@ export class ChatService {
                     `Do not describe the chart in text — it is already visible. ` +
                     `Provide your analysis directly.`
                 } else if (isBrave) {
-                  // ── Existing Brave Search path — DO NOT MODIFY ────────────
-                  const results = await braveSearch(query, resolvedKey!, 5);
-                  const formatted = await augmentAndFormatResults(results);
+                  // ── Web search (Brave unchanged: braveSearch + page fetch; or Exa) ────
+                  const out = await doWebSearch(query, (() => { try { return JSON.parse(argsRaw || '{}') as Record<string, unknown> } catch { return {} } })());
+                  const formatted = out.formatted;
                   const section =
                     queries.length > 1
                       ? `## Results for: "${query}"\n${formatted}`
                       : formatted;
-                  const links = results
-                    .slice(0, 3)
+                  // Brave shows its top 3 links (as before); Exa shows every result it returned.
+                  const links = out.normalized.results
+                    .slice(0, out.normalized.provider === "brave" ? 3 : undefined)
                     .map((r) => ({ title: r.title, url: r.url }));
-                  send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, {
+                  // Sent after provider truncation below, so "Sent to model" can show the exact string.
+                  searchDone = {
                     query: uiLabel,
                     toolName,
                     results: links,
                     formattedContent: section,
-                  });
+                    ...webSearchMeta(out),
+                  };
                   toolResult = section;
                 } else if (isFs) {
                   // ── Built-in file tools (sandboxed worker) ────────────────
@@ -2597,13 +2646,11 @@ export class ChatService {
                     formattedContent: toolResult,
                   });
                 }
-                // 5h — tool_result capture (native tool path)
-                this._obsCapture({ type: 'tool_result', payload: { toolName, result: toolResult }, ts: Date.now() })
-
-                const limit = getToolResultLimit()
-                const toolContent = limit && typeof toolResult === 'string' && toolResult.length > limit
-                  ? toolResult.slice(0, limit) + `\n\n[Result truncated at ${limit.toLocaleString()} chars to fit provider limit.]`
-                  : toolResult
+                const toModel = toModelToolContent(toolResult, getToolResultLimit())
+                const toolContent = toModel.content
+                if (searchDone) send(IPC_CHANNELS.CHAT_STREAM_TOOL_DONE, { ...searchDone, ...(toolContent !== toolResult ? { sentToModel: toolContent } : {}) })
+                // 5h — tool_result capture (native tool path): the string the model gets
+                this._obsCapture({ type: 'tool_result', payload: { toolName, result: toolContent, ...(toModel.truncated ? { truncated: toModel.truncated } : {}) }, ts: Date.now() })
                 currentMessages = [
                   ...currentMessages,
                   { role: "tool", tool_call_id: id, content: toolContent } as {
@@ -2612,6 +2659,7 @@ export class ChatService {
                   },
                 ];
               } catch (err) {
+                if ((err as Error).name === "AbortError") throw err; // Stop during the search: end the turn
                 const errMsg = err instanceof Error ? err.message : String(err);
                 const isDenied = err instanceof McpDeniedError;
                 // A file tool error is recoverable: the model gets the plain message.
@@ -2639,6 +2687,7 @@ export class ChatService {
                     error: errMsg,
                     // File tools: the pill names the file even when the call failed.
                     ...(isFs ? { toolArgs: (() => { try { return JSON.parse(argsRaw || "{}"); } catch { return {}; } })() } : {}),
+                    ...(isBrave ? searchStartMeta : {}),
                   });
                 }
                 currentMessages = [
@@ -2656,7 +2705,7 @@ export class ChatService {
             // Only Brave Search counts toward MAX_SEARCH_LOOPS — MCP tool calls
             // are unlimited and should never trigger the search-limit guard.
             const hadBraveCall = queries.some(
-              (q) => q.name === "brave_web_search",
+              (q) => isWebSearchToolName(q.name),
             );
             if (hadBraveCall) searchLoopCount++;
 
@@ -2885,10 +2934,9 @@ export class ChatService {
     const msgs: Array<{ role: string; content: string | ContentPart[] }> = [];
 
     // ── System prompt: explicit + document injections ────────────
-    // Read brave settings so we can inject the correct web-search addendum
+    // Read web search settings so we can inject the correct web-search addendum
     const appSettings = readSettings();
-    const resolvedKey = resolveBraveApiKey();
-    const braveEnabled = !!(appSettings.braveSearchEnabled && resolvedKey);
+    const braveEnabled = isWebSearchReady(appSettings);
 
     // Inject current date so models use the right year in search queries and
     // time-sensitive reasoning — training cutoff is no longer the reference.
@@ -2900,7 +2948,7 @@ export class ChatService {
     if (fsToolService.getToolSchemas(fsChatId).length > 0) {
       systemParts.push(fileAccessSystemPart(fsToolService.effectiveGrants(fsChatId)));
     }
-    if (braveEnabled) systemParts.push(buildWebSearchAddendum(appSettings.maxSearchLoops ?? 4));
+    if (braveEnabled) systemParts.push(buildWebSearchAddendum(effectiveSearchRounds(appSettings.maxSearchLoops ?? 4, normalizeWebSearchSettings(appSettings))));
     if (!braveEnabled) systemParts.push(WEB_SEARCH_DISABLED_ADDENDUM);
     if (payload.systemPrompt) systemParts.push(payload.systemPrompt);
 
