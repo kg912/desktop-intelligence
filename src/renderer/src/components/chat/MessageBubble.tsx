@@ -13,7 +13,8 @@ import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { StatsBar } from './StatsBar'
 import { CopyMessageButton } from './CopyMessageButton'
 import { messageCopyText } from '../../lib/markdownUtils'
-import { ToolCallNotification, SearchResult } from './ToolCallNotification'
+import { ToolCallNotification, SearchResult, ProviderChip, SearchingIndicator } from './ToolCallNotification'
+import { isWebSearchToolName } from '../../../../shared/webSearch'
 import { ChevronIcon } from './ChevronIcon'
 import { cn } from '../../lib/utils'
 import type { GenerationStats, MessageBlock } from '../../../../shared/types'
@@ -382,7 +383,7 @@ type BlockGroup =
   | { kind: 'single'; block: MessageBlock; index: number }
 
 function isWebSearchBlock(b: SearchBlock): boolean {
-  if (b.toolName !== undefined) return b.toolName === 'brave_web_search'
+  if (b.toolName !== undefined) return isWebSearchToolName(b.toolName)
   return !b.query.includes('__')
 }
 
@@ -459,6 +460,8 @@ function MergedSearchGroup({
                          group-hover/sh:text-white/60 transition-colors duration-100">
           Searched the web
         </span>
+        <span className="font-mono text-[13px] leading-none text-white/[0.22]">via</span>
+        <ProviderChip provider={blocks[0].provider} mode={blocks[0].mode} />
         <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
         <span className="font-mono text-[13px] leading-none text-white/20">
           {totalResults} results · {blocks.length} searches
@@ -698,6 +701,13 @@ function RailSegment({
                   toolArgs={group.block.toolArgs}
                   toolImages={group.block.toolImages}
                   toolDiff={group.block.toolDiff}
+                  provider={group.block.provider}
+                  mode={group.block.mode}
+                  contentMode={group.block.contentMode}
+                  searchTimeMs={group.block.searchTimeMs}
+                  costDollars={group.block.costDollars}
+                  synthesis={group.block.synthesis}
+                  sentToModel={group.block.sentToModel}
                   autoCollapse={hasNonSearch}
                   className="mb-0"
                   expanded={isExpanded}
@@ -711,7 +721,13 @@ function RailSegment({
       {/* Live search: no gutter node — plain WorkingIndicator aligned with the body column */}
       {hasLiveSearch && (
         <div style={{ paddingLeft: 30 }}>
-          <WorkingIndicator />
+          {(() => {
+            // Web search with a provider (new blocks): Working + provider chip + elapsed timer.
+            const live = lastBlock as SearchBlock
+            return live.provider && isWebSearchBlock(live)
+              ? <SearchingIndicator key={live.id} provider={live.provider} mode={live.mode} />
+              : <WorkingIndicator />
+          })()}
         </div>
       )}
     </div>

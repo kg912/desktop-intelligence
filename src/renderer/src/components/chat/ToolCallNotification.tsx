@@ -4,6 +4,8 @@ import { DiffView } from './DiffView'
 import { fsToolLabel, isFsTool, type FsPillIcon } from '../../lib/fsToolLabel'
 import { cn } from '../../lib/utils'
 import { ChevronIcon } from './ChevronIcon'
+import { isWebSearchToolName } from '../../../../shared/webSearch'
+import type { WebSearchMeta, WebSearchProvider, ExaSearchType } from '../../../../shared/webSearch'
 
 interface ToolCallNotificationProps {
   phase:    'searching' | 'done' | 'error'
@@ -21,10 +23,84 @@ interface ToolCallNotificationProps {
   toolImages?: Array<{ mimeType: string; data: string }>
   /** Unified diff of a built-in file edit (fs_edit / fs_write) */
   toolDiff?: string
+  /** Web search: provider chip, deep-mode synthesis, footer; absent on older blocks. */
+  provider?: WebSearchMeta['provider']
+  mode?: WebSearchMeta['mode']
+  contentMode?: WebSearchMeta['contentMode']
+  searchTimeMs?: number
+  costDollars?: number
+  synthesis?: WebSearchMeta['synthesis']
+  /** Exact text the model got when it differs from formattedContent (provider truncation). */
+  sentToModel?: string
   className?: string
   autoCollapse?: boolean
   expanded?: boolean
   onToggle?: () => void
+}
+
+// ── Web search provider chip (mockup tab 2) ──────────────────────
+const PROVIDER_DOT: Record<WebSearchProvider, string> = { exa: '#7aa2f7', brave: '#fb923c' }
+
+/** "Exa · auto" / "Exa · fast" / "Brave". Older blocks carry no provider: they were all Brave. */
+export function ProviderChip({ provider = 'brave', mode }: { provider?: WebSearchProvider; mode?: ExaSearchType }) {
+  const label = provider === 'exa' ? `Exa${mode ? ` · ${mode === 'lite' ? 'fast' : mode}` : ''}` : 'Brave'
+  return (
+    <span
+      data-testid="provider-chip"
+      data-provider={provider}
+      className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium leading-none rounded-[5px] px-[7px] py-[3px]
+                 border-[0.5px] border-white/[0.09] text-white/60 bg-white/[0.02]"
+    >
+      <i className="block w-1.5 h-1.5 rounded-full" style={{ background: PROVIDER_DOT[provider] }} />
+      {label}
+    </span>
+  )
+}
+
+/** Live search: shimmer "Working", the provider chip and an elapsed timer. */
+export function SearchingIndicator({ provider, mode }: { provider?: WebSearchProvider; mode?: ExaSearchType }) {
+  const [started] = useState(() => Date.now())
+  const [now, setNow] = useState(started)
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(t)
+  }, [])
+  const deep = mode === 'deep' || mode === 'deep-lite'
+  return (
+    <div className="py-0.5">
+      <div className="flex items-center gap-2">
+        <span className="shimmer-text font-mono text-[13px] tracking-wide" style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}>
+          Working
+        </span>
+        <ProviderChip provider={provider} mode={mode} />
+        <span data-testid="search-elapsed" className="font-mono text-[11px] text-white/[0.22]">{((now - started) / 1000).toFixed(1)} s</span>
+      </div>
+      {deep && (
+        <p className="font-mono text-[11px] text-white/40 mt-1">
+          {mode === 'deep' ? 'Deep search usually takes 4–15 s.' : 'Deep-lite search usually takes 3–4 s.'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** "[1]" markers in the brief as small citation chips. */
+function withCitations(text: string) {
+  return text.split(/(\[\d+\])/g).map((part, i) =>
+    /^\[\d+\]$/.test(part)
+      ? <span key={i} className="font-mono text-[10px] text-[#7aa2f7] border-[0.5px] border-[#7aa2f7]/40 rounded-[3px] px-1 ml-0.5">{part.slice(1, -1)}</span>
+      : part,
+  )
+}
+
+function SearchFooter({ provider, mode, contentMode, searchTimeMs, costDollars, count }: {
+  provider: WebSearchProvider; mode?: ExaSearchType; contentMode?: string; searchTimeMs?: number; costDollars?: number; count: number
+}) {
+  const parts = provider === 'exa'
+    ? ['exa', ...(mode ? [`type ${mode}`] : []), ...(searchTimeMs !== undefined ? [`${(searchTimeMs / 1000).toFixed(1)} s`] : []),
+       ...(costDollars !== undefined ? [`$${costDollars.toFixed(3)}`] : []), ...(contentMode ? [contentMode === 'text' ? 'full text' : contentMode] : [])]
+    : ['brave', `${count} ${count === 1 ? 'result' : 'results'}`, 'page fetch on']
+  return <div data-testid="search-footer" className="font-mono text-[10.5px] text-white/[0.22] pl-1.5 mt-1.5">{parts.join(' · ')}</div>
 }
 
 // Format the query label for display.
@@ -42,7 +118,7 @@ function formatQueryLabel(query: string): string {
 // Prefers the authoritative toolName field; falls back to the query-based
 // heuristic for old persisted blocks that don't have toolName.
 function resolveIsWebSearch(toolName?: string, query?: string): boolean {
-  if (toolName !== undefined) return toolName === 'brave_web_search'
+  if (toolName !== undefined) return isWebSearchToolName(toolName)
   // Legacy fallback: Brave search queries never contain '__'
   return !(query ?? '').includes('__')
 }
@@ -139,6 +215,13 @@ export function ToolCallNotification({
   toolArgs,
   toolImages,
   toolDiff,
+  provider,
+  mode,
+  contentMode,
+  searchTimeMs,
+  costDollars,
+  synthesis,
+  sentToModel,
   className = '',
   autoCollapse,
   expanded: propExpanded,
@@ -175,8 +258,9 @@ export function ToolCallNotification({
     }
   }, [autoCollapse, webSearch, phase, onToggle])
 
-  // ── Searching: shimmer "Working" ──────────────────────────────
+  // ── Searching: shimmer "Working" (web search: plus provider chip and timer) ──
   if (phase === 'searching') {
+    if (webSearch && provider) return <div className={`mb-2 ${className}`}><SearchingIndicator provider={provider} mode={mode} /></div>
     return (
       <div className={`mb-2 py-0.5 ${className}`}>
         <span
@@ -199,6 +283,7 @@ export function ToolCallNotification({
           <span className="text-[13px] text-accent-700 font-medium font-mono">
             {webSearch ? 'Search failed' : 'Tool failed'}
           </span>
+          {webSearch && provider && <ProviderChip provider={provider} mode={mode} />}
           <span className="font-mono text-[13px] text-white/20">
             {fs ? fs.text : label}
           </span>
@@ -229,6 +314,8 @@ export function ToolCallNotification({
                            group-hover/sh:text-white/60 transition-colors duration-100">
             Searched the web
           </span>
+          <span className="font-mono text-[13px] leading-none text-white/[0.22]">via</span>
+          <ProviderChip provider={provider} mode={mode} />
           <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
           <span className="font-mono text-[13px] leading-none text-white/20">
             {results.length} {results.length === 1 ? 'result' : 'results'}
@@ -237,7 +324,24 @@ export function ToolCallNotification({
 
         <div className={cn('accordion-body', expanded && 'open')}>
           <div style={{ overflow: 'hidden', paddingTop: 6 }}>
+            {synthesis?.text && (
+              <div data-testid="search-synthesis" className="border-l-2 border-[#7aa2f7] bg-[#7aa2f7]/[0.05] rounded-r-md px-3 py-2 mb-2 flex flex-col gap-1.5">
+                <span className="font-mono text-[9.5px] font-medium tracking-[0.04em] text-[#7aa2f7]">EXA SYNTHESIS · VERIFY AGAINST SOURCES</span>
+                <p className="m-0 text-[12px] leading-[1.55] text-white/60 whitespace-pre-wrap max-h-48 overflow-y-auto">{withCitations(synthesis.text)}</p>
+              </div>
+            )}
             <SearchResult query={label} results={results} isFirst />
+            {provider && (
+              <SearchFooter provider={provider} mode={mode} contentMode={contentMode} searchTimeMs={searchTimeMs} costDollars={costDollars} count={results.length} />
+            )}
+            {provider && (sentToModel ?? formattedContent) && (
+              <details data-testid="sent-to-model" className="ml-1.5 mt-1">
+                <summary className="font-mono text-[10.5px] text-white/[0.22] hover:text-white/40 cursor-pointer py-0.5 select-none">Sent to model</summary>
+                <pre className="mt-1.5 max-h-[190px] overflow-auto whitespace-pre-wrap break-words rounded-lg border-[0.5px] border-white/[0.09] bg-[#0c0c0c] p-3 font-mono text-[11px] leading-[1.55] text-white/60">
+                  {sentToModel ?? formattedContent}
+                </pre>
+              </details>
+            )}
           </div>
         </div>
       </div>

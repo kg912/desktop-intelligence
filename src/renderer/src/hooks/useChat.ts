@@ -53,6 +53,16 @@ import {
   type BufferContext,
 } from "../lib/chunkBuffer";
 import { buildWireMessages } from "../lib/wireMessages";
+import type { WebSearchMeta } from "../../../shared/webSearch";
+
+/** Web search metadata from a tool event, for the search block (absent fields stay absent). */
+function searchMetaOf(e: WebSearchMeta & { sentToModel?: string }): Partial<MessageBlock> {
+  const out: Record<string, unknown> = {};
+  for (const k of ["provider", "mode", "contentMode", "searchTimeMs", "costDollars", "synthesis", "sentToModel"] as const) {
+    if (e[k] !== undefined) out[k] = e[k];
+  }
+  return out as Partial<MessageBlock>;
+}
 import {
   completedMessages,
   streamingMessage,
@@ -357,7 +367,8 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Tool start: flush buffer, close active block, append search block ──
     const unsubToolStart = window.api.onChatStreamToolStart(
-      ({ query, toolName }: { query: string; toolName?: string }) => {
+      (event: { query: string; toolName?: string } & WebSearchMeta) => {
+        const { query, toolName } = event;
         // Flush any buffered text before the search begins
         processBuffer();
 
@@ -377,22 +388,14 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         commitBlocksToState();
 
         if (DEBUG) console.log(`[Debug][useChat][ToolStart] query="${query}" toolName=${toolName ?? 'brave_web_search'}`);
-        appendBlock({ id: uuid(), type: "search", query, toolName, phase: "searching" });
+        appendBlock({ id: uuid(), type: "search", query, toolName, phase: "searching", ...searchMetaOf(event) } as MessageBlock);
         patchAssistant({ isSearching: true, isThinking: false });
       },
     );
 
     // ── Tool done: update last search block with results ──────────
     const unsubToolDone = window.api.onChatStreamToolDone(
-      ({
-        query,
-        toolName,
-        results,
-        formattedContent,
-        toolArgs,
-        toolImages,
-        toolDiff,
-      }: {
+      (event: {
         query: string;
         toolName?: string;
         results: Array<{ title: string; url: string }>;
@@ -400,7 +403,9 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
         toolArgs?: Record<string, unknown>;
         toolImages?: Array<{ mimeType: string; data: string }>;
         toolDiff?: string;
-      }) => {
+        sentToModel?: string;
+      } & WebSearchMeta) => {
+        const { query, toolName, results, formattedContent, toolArgs, toolImages, toolDiff } = event;
         if (DEBUG) console.log(`[Debug][useChat][ToolDone] query="${query}" toolName=${toolName ?? 'brave_web_search'} resultsCount=${results.length} formattedLen=${formattedContent.length}`);
         updateLastBlock("search", {
           phase: "done",
@@ -410,6 +415,7 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
           ...(toolArgs   ? { toolArgs }   : {}),
           ...(toolImages ? { toolImages } : {}),
           ...(toolDiff   ? { toolDiff }   : {}),
+          ...searchMetaOf(event),
         } as Partial<MessageBlock>);
         patchAssistant({ isSearching: false });
       },
@@ -417,12 +423,14 @@ export function useChat({ chatId = null, onChatCreated }: UseChatOptions = {}) {
 
     // ── Tool error: mark last search block as error ───────────────
     const unsubToolError = window.api.onChatStreamToolError(
-      ({ query: _q, toolName: _tn, error, toolArgs }: { query: string; toolName?: string; error: string; toolArgs?: Record<string, unknown> }) => {
+      (event: { query: string; toolName?: string; error: string; toolArgs?: Record<string, unknown> } & WebSearchMeta) => {
+        const { query: _q, toolName: _tn, error, toolArgs } = event;
         if (DEBUG) console.log(`[Debug][useChat][ToolError] query="${_q}" toolName=${_tn ?? 'unknown'} error="${error}"`);
         updateLastBlock("search", {
           phase: "error",
           error,
           ...(toolArgs ? { toolArgs } : {}),
+          ...searchMetaOf(event),
         } as Partial<MessageBlock>);
         patchAssistant({ isSearching: false });
       },

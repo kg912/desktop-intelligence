@@ -9,6 +9,7 @@
  */
 
 import type { WireMessage, MessageBlock } from '../../../shared/types'
+import { isWebSearchToolName } from '../../../shared/webSearch'
 import type { Message } from '../components/chat/MessageBubble'
 
 /**
@@ -60,7 +61,7 @@ export function buildWireMessages(
       const isLast      = i === lastToolCallIndex;
       const funcName    = doneSearchBlock.toolName ?? 'brave_web_search';
       const funcArgs    =
-        funcName === 'brave_web_search'
+        isWebSearchToolName(funcName)
           ? JSON.stringify({ query: doneSearchBlock.query })
           : JSON.stringify({});
       const resultText  = isLast
