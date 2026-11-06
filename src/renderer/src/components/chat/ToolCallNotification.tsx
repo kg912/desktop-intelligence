@@ -150,6 +150,16 @@ export function ToolCallNotification({
   // MCP tools: collapsed by default — header shows server·tool summary.
   const [localExpanded, setLocalExpanded] = useState(webSearch)
   const expanded = propExpanded !== undefined ? propExpanded : localExpanded
+  // File-pill body stays mounted ~300 ms after collapse so the .accordion-body
+  // close transition (0.28s) animates real content instead of an empty box.
+  const [bodyMounted, setBodyMounted] = useState(expanded)
+  const showBody = expanded || bodyMounted
+  useEffect(() => {
+    if (expanded) { setBodyMounted(true); return }
+    if (!bodyMounted) return
+    const t = setTimeout(() => setBodyMounted(false), 300)
+    return () => clearTimeout(t)
+  }, [expanded, bodyMounted])
 
   const handleToggle = () => {
     if (onToggle) {
@@ -262,8 +272,8 @@ export function ToolCallNotification({
         </button>
         <div className={cn('accordion-body', expanded && 'open')}>
           <div style={{ overflow: 'hidden', paddingTop: 6 }}>
-            {expanded && isEdit && toolDiff && <DiffView diff={toolDiff} maxHeight={320} />}
-            {expanded && !isEdit && hasText && (
+            {showBody && isEdit && toolDiff && <DiffView diff={toolDiff} maxHeight={320} />}
+            {showBody && !isEdit && hasText && (
               <pre className="font-mono text-[11px] text-white/30 leading-relaxed whitespace-pre-wrap break-all overflow-x-auto max-h-48 overflow-y-auto">
                 {formattedContent}
               </pre>

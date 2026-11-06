@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { McpPermissionDialog } from '../../renderer/src/components/chat/McpPermissionDialog'
 import { ToolCallNotification } from '../../renderer/src/components/chat/ToolCallNotification'
 import { DiffView } from '../../renderer/src/components/chat/DiffView'
@@ -104,5 +104,63 @@ describe('DiffView — vertical scroll only, tint spans the full row', () => {
     expect(row.classList.contains('whitespace-pre')).toBe(false)
     expect(row.className).toContain('[overflow-wrap:anywhere]')
     expect(row.textContent).toBe(long)
+  })
+})
+
+describe('ToolCallNotification — file pill collapse animates (body stays mounted ~300 ms)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const editPill = () => <ToolCallNotification phase="done" query="fs_edit" toolName="fs_edit" toolArgs={{ path: '/p/README.md' }} toolDiff={diff} />
+  const readPill = () => <ToolCallNotification phase="done" query="fs_read" toolName="fs_read" toolArgs={{ path: '/p/README.md' }} formattedContent="READ-BODY-TEXT" />
+  const toggle = () => fireEvent.click(screen.getByTestId('fs-pill'))
+  const body = () => document.querySelector('.accordion-body') as HTMLElement
+
+  it('edit pill: diff stays mounted while the close transition runs, then unmounts', () => {
+    render(editPill())
+    toggle()
+    expect(body().classList.contains('open')).toBe(true)
+    toggle()
+    expect(body().classList.contains('open')).toBe(false)
+    expect(screen.queryByTestId('diff-view')).not.toBeNull()
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(screen.queryByTestId('diff-view')).toBeNull()
+  })
+
+  it('read pill: output <pre> stays mounted while closing, then unmounts', () => {
+    render(readPill())
+    toggle()
+    toggle()
+    expect(body().classList.contains('open')).toBe(false)
+    expect(body().querySelector('pre')?.textContent).toBe('READ-BODY-TEXT')
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(body().querySelector('pre')).toBeNull()
+  })
+
+  it('re-expanding within 300 ms keeps the content mounted', () => {
+    render(editPill())
+    toggle()
+    toggle()
+    act(() => { vi.advanceTimersByTime(150) })
+    toggle()
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(body().classList.contains('open')).toBe(true)
+    expect(screen.queryByTestId('diff-view')).not.toBeNull()
+  })
+
+  it('never expanded: no diff; expanded prop shows it on the first render', () => {
+    const { unmount } = render(editPill())
+    expect(screen.queryByTestId('diff-view')).toBeNull()
+    unmount()
+    render(<ToolCallNotification phase="done" query="fs_edit" toolName="fs_edit" toolArgs={{ path: '/p/README.md' }} toolDiff={diff} expanded />)
+    expect(screen.queryByTestId('diff-view')).not.toBeNull()
+  })
+
+  it('leaves no timer running after unmount', () => {
+    const { unmount } = render(editPill())
+    toggle()
+    toggle()
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
