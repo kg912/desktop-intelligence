@@ -179,6 +179,23 @@ describe('worker search in the per-run log', () => {
     for (const f of allFiles(root)) expect(readFileSync(f, 'utf8')).not.toContain(KEY)
   })
 
+  it('Brave reports no cost: run.md says "not reported", never $0', async () => {
+    h.settings = { braveSearchEnabled: true, webSearchProvider: 'brave', braveSearchApiKey: 'bk' }
+    const root = join(TMP, 'brave-cost')
+    const logger = new MultiAgentRunLogger(root, { secrets: () => [] })
+    logger.begin({ runId: 'run-1', chatId: 'chat-1', chatTitle: 'b', task: 't', config: CONFIG })
+    replies = [{ status: 200, body: JSON.stringify({ web: { results: [{ title: 'T', url: 'https://t.example', description: 'd' }] } }) }]
+    await webSearchWorkerTools.call('web_search', { query: 'q' }, { runId: 'run-1', chatId: 'chat-1', agentId: '1.1', callId: 'call_b', record: (r) => logger.record('run-1', r as CallRecord) })
+    logger.record('run-1', toolRecord(2, 'call_b', 0))
+    logger.event(ev(3, { type: 'task_complete', finalOutput: 'x', totalCostUsd: 0, totalTokens: 0 }))
+    await logger.flush()
+    const runMd = readFileSync(join(logger.runDir('chat-1', 'run-1'), 'run.md'), 'utf8')
+    expect(runMd).toContain('| brave |  | 1 | not reported |')
+    expect(runMd).toContain('Search spend: not reported (billed by the search provider')
+    expect(runMd).toMatch(/\| s1 \| .* \| brave \|  \| 1\.1 \| 0 \| 0 \| 1 \| not reported \| 200 \|/)
+    expect(readFileSync(join(logger.runDir('chat-1', 'run-1'), 'agent-1.1.md'), 'utf8')).toContain('Cost: not reported. Results: 1.')
+  })
+
   it('a run that is not recorded (observability off) writes nothing', async () => {
     const root = join(TMP, 'off')
     const logger = new MultiAgentRunLogger(root, { secrets: () => [KEY] })

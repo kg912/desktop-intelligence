@@ -224,7 +224,7 @@ describe('single chat with Exa', () => {
     }
     expect(log).toContain('▶ SEARCH CALL  exa · type lite')
     expect(log).toContain('Caps: none · Retries: none')
-    expect(log).toContain(`Sent to the model: ${formatted.length} chars`)
+    expect(log).toContain(`Provider output: ${formatted.length} chars (the tool result below is the exact string the model got)`)
     expect(log).toContain(`Truncated: yes (original ${formatted.length} chars)\nResult: ${expected}`)
     expect(log).not.toContain(KEY)
   })

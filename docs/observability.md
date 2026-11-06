@@ -55,8 +55,9 @@ row actions open `run.md`, reveal the folder, copy the run id, or delete the run
    frames never reach the renderer.
 3. `MultiAgentRunLogger` (in `src/main/services/MultiAgentRunLogger.ts`) appends
    each record to the right `.jsonl` file as it arrives. Credentials are removed
-   from every line before it is written: the OpenRouter, Brave, NVIDIA and Ollama
-   keys, and every MCP server env value and HTTP header.
+   from every line before it is written: the OpenRouter, Brave, Exa, NVIDIA and
+   Ollama keys, the `BRAVE_SEARCH_API_KEY` and `EXA_API_KEY` environment
+   variables, and every MCP server env value and HTTP header.
 4. When the run ends, `run.meta.json` gets its final status, and the markdown is
    rendered from the `.jsonl` files on disk.
 
@@ -99,6 +100,11 @@ panel renders whatever was captured.
 | `plan_step_removed` | The planner's final merge step was dropped before approval; the synthesizer merges (spec A Phase 4) |
 | `approval_wait` | A person took more than 20 s to answer a worker's tool approval, and that agent is on the critical path. Uses Electron's `waitMs` (spec A Phase 9); older runs fall back to pause → resume, which also holds the tool's own time, and say so |
 | `reconciliation` | The call records and the run's own totals disagree |
+| `search_depth_capped` | A worker's web search ran a lower Exa type than selected (`worker_depth_cap`: workers run `lite` or `auto` only) |
+| `search_retry_429` | Exa returned 429 and the search was retried once after a short jittered wait |
+| `search_empty` | A web search returned no results |
+| `search_notices` | Exa returned `notices` (they are also passed to the model) |
+| `search_error` | A web search failed (the mapped error is in the record) |
 
 ## Reading an agent file
 
@@ -139,6 +145,34 @@ when the step was accepted with caveats.
 
 Tool executions have `kind: "tool"` with `callId`, `name`, `args` (the raw
 string), `result`, `approved`, `denied`, `error` and `timing`.
+
+Web search provider calls have `kind: "search_call"`. Electron writes them (not the
+sidecar), so they have no sidecar `seq`; they carry the worker's `agentId`,
+`attempt`, `toolRound` and `callId` (sent by the sidecar with `hitl_pause`), and
+`search`: `provider`, `query`, `requestedType`, `effectiveType`, `caps`,
+`request` (`url`, `method`, `headers` with the key as `[redacted]`, `body`),
+`status`, `rawResponse` (the JSON exactly as received; capped at 2 MB with the
+usual `capped` marker), `pageFetches` (Brave only: fetched chars, skipped by the
+domain list, or failed, per result), `formatted.chars`, `retries` and `error`.
+`agent-<id>.md` shows each one under the tool call with the same `callId`, with
+the request and raw response in `<details>`. `run.md` lists them under the
+timeline (rows `s1`, `s2`, … so the call-record checks are unchanged) and adds
+search spend by provider and type under Totals. Search spend is billed by the
+search provider and is not part of the model cost reconciliation.
+
+What Exa does not return cannot be logged: `deep` and `deep-lite` responses carry
+results, the `output` brief and its `grounding` citations, but no internal query
+planning (checked in Phase 0, `specs/research/exa-verification.md`), so the log
+shows exactly those.
+
+## Single-chat web search
+
+With observability on, each single-chat search adds a `search_call` entry to the
+session trace, just before the matching tool result: the same `search` fields as
+above (request, raw response, caps such as `deep_round_cap`, retries, timing).
+The tool result in the trace is the exact string the model received, after
+formatting, EOS stripping and provider truncation; when truncation applied it
+says so with the original length. Session logs are not truncated.
 
 `response.truncated` means the same as `truncated` on the UI's `agent_complete`
 and `task_complete` events: which limit ended a `length` finish. Fields cut in

@@ -121,7 +121,7 @@ function searchCallSummary(r: Record<string, unknown>): string {
     `Query: ${String(r.query ?? '')}`,
     `Status: ${r.status ?? 'no response'}${r.error ? ` · error: ${String(r.error)}` : ''} · ${t?.ms ?? ''} ms${typeof cost === 'number' ? ` · $${cost}` : ''}`,
     `Caps: ${caps.length ? caps.map((c) => `${c.kind} ${String(c.from)} → ${String(c.to)}`).join(', ') : 'none'} · Retries: ${retries.length ? retries.map((x) => `HTTP ${x.status} waited ${x.waitMs} ms`).join(', ') : 'none'}`,
-    `Sent to the model: ${(r.formatted as { chars?: number } | undefined)?.chars ?? 0} chars (the tool result below)`,
+    `Provider output: ${(r.formatted as { chars?: number } | undefined)?.chars ?? 0} chars (the tool result below is the exact string the model got)`,
   ].join('\n')
 }
 

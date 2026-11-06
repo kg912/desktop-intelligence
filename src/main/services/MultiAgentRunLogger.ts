@@ -365,9 +365,16 @@ export function searchResultCount(s: SearchRecord): number | null {
   return Array.isArray(list) ? list.length : null
 }
 
-export function searchCostUsd(s: SearchRecord): number {
+/** Exa reports costDollars; Brave reports no cost (null, shown as "not reported", never as $0). */
+export function searchCostUsd(s: SearchRecord): number | null {
   const total = (rawOf(s)?.costDollars as { total?: unknown } | undefined)?.total
-  return typeof total === 'number' ? total : 0
+  return typeof total === 'number' ? total : null
+}
+
+const searchUsd = (n: number | null): string => (n == null ? 'not reported' : usd(n))
+const sumCosts = (xs: SearchRecord[]): number | null => {
+  const known = xs.map(searchCostUsd).filter((c): c is number => c != null)
+  return known.length ? known.reduce((a, c) => a + c, 0) : null
 }
 
 function renderSearchCall(s: SearchRecord): string {
@@ -377,7 +384,7 @@ function renderSearchCall(s: SearchRecord): string {
     `<a id="${searchAnchor(s)}"></a>`,
     `##### Search call: ${x.provider}${type} for ${s.callId || s.name}`,
     '',
-    `Query: ${cell(x.query)}. Status: ${x.status ?? 'no response'}${x.error ? `, error: ${cell(x.error)}` : ''}. Duration: ${s.timing.ms} ms. Cost: ${usd(searchCostUsd(s))}. Results: ${searchResultCount(s) ?? '?'}. Sent to the model: ${x.formatted.chars} chars.`,
+    `Query: ${cell(x.query)}. Status: ${x.status ?? 'no response'}${x.error ? `, error: ${cell(x.error)}` : ''}. Duration: ${s.timing.ms} ms. Cost: ${searchUsd(searchCostUsd(s))}. Results: ${searchResultCount(s) ?? '?'}. Sent to the model: ${x.formatted.chars} chars.`,
     '',
   ]
   if (x.caps.length) lines.push(`Caps: ${x.caps.map((c) => `${c.kind} ${c.from} → ${c.to}`).join(', ')}.`, '')
@@ -912,7 +919,7 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     L.push('Search calls (run by Electron behind the web search tool calls above):', '')
     L.push('| # | Start (+ms) | Duration (ms) | Provider | Type | Agent | Attempt | Round | Results | Cost | Status | Record |', '|---|---|---|---|---|---|---|---|---|---|---|---|')
     for (const [i, x] of [...searches].sort((a, b) => a.timing.startedAt - b.timing.startedAt).entries()) {
-      L.push(`| s${i + 1} | ${x.timing.startedAt - t0} | ${x.timing.ms} | ${x.search.provider} | ${cell(x.search.effectiveType ?? '')} | ${x.agentId} | ${x.attempt} | ${x.toolRound} | ${searchResultCount(x) ?? ''} | ${usd(searchCostUsd(x))} | ${x.search.error ? 'error' : x.search.status ?? ''} | [${searchRef(x)}](${searchRef(x)}) |`)
+      L.push(`| s${i + 1} | ${x.timing.startedAt - t0} | ${x.timing.ms} | ${x.search.provider} | ${cell(x.search.effectiveType ?? '')} | ${x.agentId} | ${x.attempt} | ${x.toolRound} | ${searchResultCount(x) ?? ''} | ${searchUsd(searchCostUsd(x))} | ${x.search.error ? 'error' : x.search.status ?? ''} | [${searchRef(x)}](${searchRef(x)}) |`)
     }
     L.push('')
   }
@@ -956,9 +963,9 @@ export function renderRunMd(meta: RunLogMeta, events: AgentEvent[], records: Cal
     }
     for (const [k, xs] of groups) {
       const [provider, type] = k.split('\u0000')
-      L.push(`| ${provider} | ${type} | ${xs.length} | ${usd(xs.reduce((s, x) => s + searchCostUsd(x), 0))} |`)
+      L.push(`| ${provider} | ${type} | ${xs.length} | ${searchUsd(sumCosts(xs))} |`)
     }
-    L.push('', `Search spend: ${usd(searches.reduce((s, x) => s + searchCostUsd(x), 0))} (billed by the search provider, not part of the model totals below).`)
+    L.push('', `Search spend: ${searchUsd(sumCosts(searches))} (billed by the search provider, not part of the model totals below).`)
   }
   L.push('', `Sum of call records: ${summary.modelCalls} model calls, ${summary.toolCalls} tool calls, ${summary.tokens} tokens, ${usd(summary.costUsd)}.`)
   if (summary.reportedCostUsd != null) {
