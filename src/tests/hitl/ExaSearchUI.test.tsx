@@ -164,7 +164,9 @@ describe('search accordion', () => {
     expect(s.compareDocumentPosition(screen.getByText('Webb highlights')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('two searches in one turn (merged group) keep each one\'s synthesis, footer and Sent to model; old blocks get none', () => {
+  // Rewritten for specs/search-selector.md §5 (mockup tab 1): each search's synthesis and Sent to model sit behind two
+  // collapsed toggles; blocks merge only when provider and Exa type match, so the old (Brave) block stays separate.
+  it('two searches in one turn (merged group): per-search toggles collapsed, totals in the header; old blocks do not merge with Exa', () => {
     const block = (id: string, extra: object) => ({ id, type: 'search', query: id, phase: 'done', toolName: 'web_search', results: RESULTS, ...extra })
     const message = { id: 'm', role: 'assistant', content: '', isThinking: false, isStreaming: false, isSearching: false, stats: null, error: null,
       blocks: [
@@ -174,10 +176,40 @@ describe('search accordion', () => {
         block('q3', {}),
       ] } as never
     render(<MessageBubble message={message} />)
-    expect(screen.getByText('6 results · 3 searches')).toBeTruthy()
-    expect(screen.getAllByTestId('search-synthesis').map((e) => e.textContent)).toEqual(['EXA SYNTHESIS · VERIFY AGAINST SOURCESDeep answer 1.'])
-    expect(screen.getAllByTestId('search-footer').map((e) => e.textContent)).toEqual(['exa · type deep · 16.4 s · $0.012 · highlights', 'exa · type deep · 9.0 s · highlights'])
-    expect(screen.getAllByTestId('sent-to-model').map((e) => e.querySelector('pre')?.textContent)).toEqual(['sent 1', 'full 2'])
+    expect(screen.getByTestId('merged-search-counts').textContent).toBe('4 results · 2 searches · $0.012 · 25.4 s')
+    expect(screen.getAllByTestId('search-meta').map((e) => e.textContent)).toEqual(['exa · type deep · 16.4 s · $0.012', 'exa · type deep · 9.0 s'])
+    expect(screen.getAllByTestId('toggle-synthesis').map((e) => e.textContent)).toEqual(['Synthesis · 3 words'])
+    expect(screen.getAllByTestId('toggle-sent').map((e) => e.textContent)).toEqual(['Sent to model · 6 chars', 'Sent to model · 6 chars'])
+    expect([...screen.getAllByTestId('toggle-synthesis'), ...screen.getAllByTestId('toggle-sent')].every((b) => b.getAttribute('aria-expanded') === 'false')).toBe(true)
+    expect(screen.queryByTestId('search-synthesis')).toBeNull()
+    expect(screen.queryByTestId('sent-to-model-text')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('toggle-synthesis'))
+    expect(screen.getByTestId('search-synthesis').textContent).toBe('EXA SYNTHESIS · VERIFY AGAINST SOURCESDeep answer 1.')
+    fireEvent.click(screen.getByText('expand details'))
+    expect(screen.getAllByTestId('sent-to-model-text').map((e) => e.textContent)).toEqual(['sent 1', 'full 2'])
+    fireEvent.click(screen.getByText('collapse details'))
+    expect(screen.queryByTestId('sent-to-model-text')).toBeNull()
+    expect(screen.queryByTestId('search-synthesis')).toBeNull()
+    // The old block (no provider) is its own, unmerged search with today's look.
+    expect(screen.getAllByText('Searched the web')).toHaveLength(2)
+  })
+
+  it('a depth change starts a new block; a collapsed group with briefs shows the "N briefs" badge; Brave groups get no synthesis toggle', () => {
+    const block = (id: string, extra: object) => ({ id, type: 'search', query: id, phase: 'done', toolName: 'web_search', results: RESULTS, ...extra })
+    const deep = { provider: 'exa', mode: 'deep', synthesis: { text: 'Brief.' }, formattedContent: 'x' }
+    const message = { id: 'm', role: 'assistant', content: '', isThinking: false, isStreaming: false, isSearching: false, stats: null, error: null,
+      blocks: [block('d1', deep), block('d2', deep), block('a1', { provider: 'exa', mode: 'auto', formattedContent: 'y' }),
+        block('b1', { provider: 'brave', formattedContent: 'z' }), block('b2', { provider: 'brave', formattedContent: 'w' })] } as never
+    render(<MessageBubble message={message} />)
+    // d1+d2 merge (same provider and type); a1 stands alone; b1+b2 merge.
+    expect(screen.getAllByTestId('merged-search-counts').map((e) => e.textContent)).toEqual(['4 results · 2 searches', '4 results · 2 searches'])
+    expect(screen.getAllByText('Searched the web')).toHaveLength(3)
+    expect(screen.getAllByTestId('toggle-synthesis')).toHaveLength(2)
+    expect(screen.getAllByTestId('toggle-sent')).toHaveLength(4)
+    expect(screen.queryByTestId('briefs-badge')).toBeNull()
+    fireEvent.click(screen.getAllByTestId('merged-search-counts')[0].closest('button')!)
+    expect(screen.getByTestId('briefs-badge').textContent).toBe('2 briefs')
   })
 
   it('Brave with provider metadata gets the Brave footer', () => {

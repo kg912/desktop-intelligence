@@ -13,7 +13,7 @@ import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { StatsBar } from './StatsBar'
 import { CopyMessageButton } from './CopyMessageButton'
 import { messageCopyText } from '../../lib/markdownUtils'
-import { ToolCallNotification, SearchResult, ProviderChip, SearchingIndicator, SearchSynthesis, SearchMetaRows } from './ToolCallNotification'
+import { ToolCallNotification, ResultRows, ProviderChip, SearchingIndicator, SearchSynthesis, SearchDetailToggle } from './ToolCallNotification'
 import { isWebSearchToolName } from '../../../../shared/webSearch'
 import { ChevronIcon } from './ChevronIcon'
 import { cn } from '../../lib/utils'
@@ -387,6 +387,9 @@ function isWebSearchBlock(b: SearchBlock): boolean {
   return !b.query.includes('__')
 }
 
+/** Searches merge only with the same provider and Exa type: a change starts a new block. Old blocks (no provider) were Brave. */
+const searchKey = (b: SearchBlock): string => (b.provider === 'exa' ? `exa:${b.mode ?? ''}` : 'brave')
+
 function groupBlocks(blocks: MessageBlock[]): BlockGroup[] {
   const groups: BlockGroup[] = []
   let i = 0
@@ -399,7 +402,8 @@ function groupBlocks(blocks: MessageBlock[]): BlockGroup[] {
         i < blocks.length &&
         blocks[i].type === 'search' &&
         (blocks[i] as SearchBlock).phase === 'done' &&
-        isWebSearchBlock(blocks[i] as SearchBlock)
+        isWebSearchBlock(blocks[i] as SearchBlock) &&
+        searchKey(blocks[i] as SearchBlock) === searchKey(b)
       ) {
         run.push(blocks[i] as SearchBlock)
         i++
@@ -435,6 +439,25 @@ function MergedSearchGroup({
   const [localExpanded, setLocalExpanded] = useState(true)
   const expanded = propExpanded !== undefined ? propExpanded : localExpanded
   const totalResults = blocks.reduce((sum, b) => sum + (b.results?.length ?? 0), 0)
+  // Per search: which detail toggles are open (all collapsed by default).
+  const [open, setOpen] = useState<Record<string, { syn?: boolean; sent?: boolean }>>({})
+  const details = blocks.map((b) => ({
+    id: b.id,
+    syn: b.provider === 'exa' && !!b.synthesis?.text,
+    sent: !!b.provider && !!(b.sentToModel ?? b.formattedContent),
+  }))
+  const briefs = details.filter((d) => d.syn).length
+  const allOpen = details.every((d) => (!d.syn || open[d.id]?.syn) && (!d.sent || open[d.id]?.sent))
+  const hasDetails = details.some((d) => d.syn || d.sent)
+  const flip = (id: string, k: 'syn' | 'sent') => setOpen((o) => ({ ...o, [id]: { ...o[id], [k]: !o[id]?.[k] } }))
+  const setAll = (v: boolean) => setOpen(Object.fromEntries(details.map((d) => [d.id, { syn: v, sent: v }])))
+  const exa = blocks[0].provider === 'exa'
+  const costs = blocks.flatMap((b) => (b.costDollars !== undefined ? [b.costDollars] : []))
+  const times = blocks.flatMap((b) => (b.searchTimeMs !== undefined ? [b.searchTimeMs] : []))
+  const totals = exa ? [
+    ...(costs.length ? [`$${costs.reduce((a, c) => a + c, 0).toFixed(3)}`] : []),
+    ...(times.length ? [`${(times.reduce((a, c) => a + c, 0) / 1000).toFixed(1)} s`] : []),
+  ] : []
 
   const handleToggle = () => {
     if (onToggle) {
@@ -452,9 +475,11 @@ function MergedSearchGroup({
 
   return (
     <div className={cn('mb-2', className)}>
+      <div className="flex items-center justify-between gap-2.5 flex-wrap">
       <button
         onClick={handleToggle}
-        className="flex items-center gap-1.5 mb-0 py-0 group/sh select-none"
+        aria-expanded={expanded}
+        className="flex items-center gap-1.5 mb-0 py-0 group/sh select-none flex-wrap text-left"
       >
         <span className="font-mono text-[13px] leading-none text-white/40 font-medium
                          group-hover/sh:text-white/60 transition-colors duration-100">
@@ -463,27 +488,62 @@ function MergedSearchGroup({
         <span className="font-mono text-[13px] leading-none text-white/[0.22]">via</span>
         <ProviderChip provider={blocks[0].provider} mode={blocks[0].mode} />
         <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
-        <span className="font-mono text-[13px] leading-none text-white/20">
-          {totalResults} results · {blocks.length} searches
+        <span className="font-mono text-[13px] leading-none text-white/20" data-testid="merged-search-counts">
+          {[`${totalResults} results`, `${blocks.length} searches`, ...totals].join(' · ')}
         </span>
+        {!expanded && briefs > 0 && (
+          <span data-testid="briefs-badge" className="font-mono text-[10px] leading-none text-[#7aa2f7] border-[0.5px] border-[#7aa2f7]/40 rounded-[5px] px-1.5 py-[3px] bg-[#7aa2f7]/[0.07]">
+            {briefs} {briefs === 1 ? 'brief' : 'briefs'}
+          </span>
+        )}
       </button>
+      {expanded && hasDetails && (
+        <button data-testid="details-link" onClick={() => setAll(!allOpen)}
+          className="font-mono text-[10.5px] text-white/40 hover:text-white/60 underline underline-offset-[3px] decoration-white/20 py-0.5">
+          {allOpen ? 'collapse details' : 'expand details'}
+        </button>
+      )}
+      </div>
 
       <div className={cn('accordion-body', expanded && 'open')}>
         <div style={{ overflow: 'hidden', paddingTop: 6 }}>
           <div className="mt-0.5 flex flex-col gap-0">
-            {blocks.map((b, idx) => (
-              <div key={b.id} className={idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/[0.05]' : ''}>
-                <SearchSynthesis synthesis={b.synthesis} />
-                <SearchResult
-                  query={b.query}
-                  results={b.results ?? []}
-                  isFirst={idx === 0}
-                  showDot
-                />
-                <SearchMetaRows provider={b.provider} mode={b.mode} contentMode={b.contentMode} searchTimeMs={b.searchTimeMs}
-                  costDollars={b.costDollars} count={b.results?.length ?? 0} sent={b.sentToModel ?? b.formattedContent} />
-              </div>
-            ))}
+            {blocks.map((b, idx) => {
+              const d = details[idx]
+              const sent = b.sentToModel ?? b.formattedContent ?? ''
+              const meta = b.provider && [b.provider, ...(b.provider === 'exa' && b.mode ? [`type ${b.mode}`] : []),
+                ...(b.searchTimeMs !== undefined ? [`${(b.searchTimeMs / 1000).toFixed(1)} s`] : []),
+                ...(b.provider === 'exa' && b.costDollars !== undefined ? [`$${b.costDollars.toFixed(3)}`] : [])].join(' · ')
+              return (
+                <div key={b.id} data-testid="merged-search-row" className={cn('flex flex-col gap-1.5', idx > 0 && 'mt-2.5 pt-3 border-t-[0.5px] border-white/[0.05]')}>
+                  <div className="flex justify-between gap-2.5 flex-wrap items-baseline">
+                    <span className="font-mono text-[10.5px] text-white/30 min-w-0 break-words">• "{b.query}"</span>
+                    {meta && <span data-testid="search-meta" className="font-mono text-[10.5px] text-white/[0.22] whitespace-nowrap">{meta}</span>}
+                  </div>
+                  {(d.syn || d.sent) && (
+                    <div className="flex gap-1.5 flex-wrap">
+                      {d.syn && (
+                        <SearchDetailToggle synthesis open={!!open[b.id]?.syn} onToggle={() => flip(b.id, 'syn')} testId="toggle-synthesis">
+                          Synthesis · {b.synthesis!.text.split(/\s+/).filter(Boolean).length} words
+                        </SearchDetailToggle>
+                      )}
+                      {d.sent && (
+                        <SearchDetailToggle open={!!open[b.id]?.sent} onToggle={() => flip(b.id, 'sent')} testId="toggle-sent">
+                          Sent to model · {sent.length.toLocaleString('en-US')} chars
+                        </SearchDetailToggle>
+                      )}
+                    </div>
+                  )}
+                  {d.syn && open[b.id]?.syn && <SearchSynthesis synthesis={b.synthesis} />}
+                  {d.sent && open[b.id]?.sent && (
+                    <pre data-testid="sent-to-model-text" className="m-0 max-h-[170px] overflow-auto whitespace-pre-wrap break-words rounded-lg border-[0.5px] border-white/[0.09] bg-[#0c0c0c] px-3 py-2.5 font-mono text-[11px] leading-[1.55] text-white/60">
+                      {sent}
+                    </pre>
+                  )}
+                  <ResultRows results={b.results ?? []} />
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>

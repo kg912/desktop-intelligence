@@ -41,9 +41,9 @@ interface ToolCallNotificationProps {
 // ── Web search provider chip (mockup tab 2) ──────────────────────
 const PROVIDER_DOT: Record<WebSearchProvider, string> = { exa: '#7aa2f7', brave: '#fb923c' }
 
-/** "Exa · auto" / "Exa · fast" / "Brave". Older blocks carry no provider: they were all Brave. */
-export function ProviderChip({ provider = 'brave', mode }: { provider?: WebSearchProvider; mode?: ExaSearchType }) {
-  const label = provider === 'exa' ? `Exa${mode ? ` · ${mode === 'lite' ? 'fast' : mode}` : ''}` : 'Brave'
+/** "Exa · auto" / "Exa · fast" / "Brave" (or `label`). Older blocks carry no provider: they were all Brave. */
+export function ProviderChip({ provider = 'brave', mode, label: given }: { provider?: WebSearchProvider; mode?: ExaSearchType; label?: string }) {
+  const label = given ?? (provider === 'exa' ? `Exa${mode ? ` · ${mode === 'lite' ? 'fast' : mode}` : ''}` : 'Brave')
   return (
     <span
       data-testid="provider-chip"
@@ -198,8 +198,15 @@ export function SearchResult({
           "{query}"
         </span>
       </div>
-      {/* Results */}
-      {results.length > 0 && (
+      <ResultRows results={results} />
+    </div>
+  )
+}
+
+/** Up to five result rows: number, title, url (opens externally). */
+export function ResultRows({ results }: { results: Array<{ title: string; url: string }> }) {
+  if (results.length === 0) return null
+  return (
         <div className="flex flex-col gap-0">
           {results.slice(0, 5).map((r, i) => (
             <button
@@ -222,8 +229,27 @@ export function SearchResult({
             </button>
           ))}
         </div>
+  )
+}
+
+/** "Synthesis · 214 words" / "Sent to model · 9,840 chars" toggle in a merged search group (mockup tab 1). */
+export function SearchDetailToggle({ open, onToggle, synthesis = false, children, testId }: {
+  open: boolean; onToggle: () => void; synthesis?: boolean; children: React.ReactNode; testId: string
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-expanded={open}
+      data-testid={testId}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-[5px] border-[0.5px] px-2 py-0.5 font-mono text-[10.5px] transition-colors duration-100',
+        synthesis ? 'text-[#8fb0f8] border-[#7aa2f7]/[0.32]' : 'text-white/40 border-white/[0.09] hover:text-white/60 hover:border-white/[0.16]',
+        open && 'bg-white/[0.04]',
       )}
-    </div>
+    >
+      <ChevronIcon open={open} size={9} />
+      {children}
+    </button>
   )
 }
 
