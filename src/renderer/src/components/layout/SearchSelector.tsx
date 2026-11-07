@@ -21,6 +21,8 @@ export interface SearchSelectorState {
 
 export const MENU_WIDTH = 300
 const MENU_INSET = 8
+/** Space between the button's top edge and the menu. */
+export const MENU_GAP = 6
 const MA_LOCK_TOOLTIP = 'Multi-agent runs use Balanced'
 export const RUN_LOCK_TOOLTIP = 'Applies to the next run'
 
@@ -76,7 +78,7 @@ export function SearchSelector({ multiAgent, locked = false, onOpenSettings }: {
     if (refocus) buttonRef.current?.focus()
   }, [])
 
-  // Above the input bar, clamped inside it (8 px each side) at narrow widths.
+  // Just above the button; horizontally clamped inside the input bar (8 px each side) at narrow widths.
   const place = useCallback(() => {
     const btn = buttonRef.current
     // The input bar's frame (first child of .ib-cq); the parent element when rendered on its own.
@@ -85,7 +87,7 @@ export function SearchSelector({ multiAgent, locked = false, onOpenSettings }: {
     const b = bar.getBoundingClientRect()
     const r = btn.getBoundingClientRect()
     const { left, width } = placeOverlay({ left: r.left - b.left, width: r.width }, MENU_WIDTH, b.width, MENU_INSET)
-    setPos({ left: b.left + left, bottom: window.innerHeight - b.top + MENU_INSET, width })
+    setPos({ left: b.left + left, bottom: window.innerHeight - r.top + MENU_GAP, width })
   }, [])
 
   useLayoutEffect(() => {

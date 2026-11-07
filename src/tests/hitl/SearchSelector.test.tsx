@@ -175,7 +175,8 @@ describe('search selector: menu', () => {
     expect(MENU_WIDTH).toBe(300)
     expect(menu.style.width).toBe('284px')
     expect(menu.style.left).toBe('108px')
-    expect(menu.style.bottom).toBe(`${window.innerHeight - 500 + 8}px`)
+    // Right above the button (top 560), not above the whole bar (top 500).
+    expect(menu.style.bottom).toBe(`${window.innerHeight - 560 + 6}px`)
   })
 })
 
