@@ -91,8 +91,12 @@ export function SearchSelector({ multiAgent, locked = false, onOpenSettings }: {
   useLayoutEffect(() => {
     if (!open) return
     place()
+    // The bar resizes without the window too (the multi-agent dock narrows the chat column).
+    const bar = buttonRef.current?.closest('.ib-cq')
+    const ro = typeof ResizeObserver !== 'undefined' && bar ? new ResizeObserver(place) : null
+    if (ro && bar) ro.observe(bar)
     window.addEventListener('resize', place)
-    return () => window.removeEventListener('resize', place)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', place) }
   }, [open, place])
 
   // Focus the checked option (or the first enabled one) once the menu is up.
