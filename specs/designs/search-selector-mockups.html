@@ -1,0 +1,473 @@
+<title>Search Selector Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout concept: one bench, four tabs. Each tab is a DI window state built from the app's real tokens and the real input-bar breakpoints. */
+:root{
+  --bg:#0a0a0a; --panel:#0f0f0f; --card:#141414; --input:#111111;
+  --hair:rgba(255,255,255,.05); --line:rgba(255,255,255,.09);
+  --fg:rgba(255,255,255,.88); --fg2:rgba(255,255,255,.62); --muted:rgba(255,255,255,.4); --faint:rgba(255,255,255,.22);
+  --red:#e53935; --red-60:rgba(229,57,53,.6); --red-12:rgba(229,57,53,.12);
+  --green:#10b981; --amber:#f59e0b; --exa:#7aa2f7; --brave:#fb923c;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:13px;line-height:1.5;
+  padding-block:24px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{font-size:15px;font-weight:600;margin:0}
+.sub{color:var(--muted);font-size:12px;margin:2px 0 0}
+.bench{display:flex;gap:4px;flex-wrap:wrap;border-bottom:.5px solid var(--line)}
+.bench button{font:500 12px var(--mono);color:var(--muted);background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;cursor:pointer}
+.bench button:hover{color:var(--fg2)}
+.bench button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--red)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:1px solid var(--red-60);outline-offset:2px}
+.note{color:var(--muted);font-size:12px;margin:0;max-width:74ch}
+.frame{background:var(--panel);border:.5px solid var(--line);border-radius:12px;overflow:hidden}
+.mut{color:var(--muted)} .faint{color:var(--faint)}
+.mono{font-family:var(--mono)}
+.new{font:500 9px var(--mono);color:var(--red);border:.5px solid var(--red-60);border-radius:3px;padding:0 4px;margin-left:6px;letter-spacing:.03em;vertical-align:middle}
+svg.i{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.ctl{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.ctl button,.ctl label{font:400 11px var(--mono);background:var(--card);color:var(--muted);border:.5px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+.ctl button[aria-pressed=true]{color:var(--fg);border-color:var(--red-60);background:var(--red-12)}
+.ctl label:has(input:checked){color:var(--fg);border-color:var(--red-60);background:var(--red-12)}
+.ctl input{accent-color:#b91c1c}
+
+/* ---------- provider chip ---------- */
+.chip{display:inline-flex;align-items:center;gap:6px;font:500 11px var(--mono);border-radius:5px;padding:2px 7px;border:.5px solid var(--line);color:var(--fg2);background:rgba(255,255,255,.02);white-space:nowrap}
+.chip i{width:6px;height:6px;border-radius:50%;display:block}
+.chip.exa i{background:var(--exa)} .chip.brave i{background:var(--brave)}
+
+/* ---------- thread rail ---------- */
+.thread{padding:22px 26px 22px;display:flex;flex-direction:column}
+.user{align-self:flex-end;background:#1a1a1a;border:.5px solid var(--line);border-radius:12px;padding:10px 14px;max-width:82%;margin-bottom:18px}
+.step{display:grid;grid-template-columns:22px minmax(0,1fr);column-gap:12px;position:relative;padding-bottom:12px}
+.step::before{content:"";position:absolute;left:10.5px;top:24px;bottom:0;width:1px;background:rgba(255,255,255,.08)}
+.step:last-child{padding-bottom:0} .step:last-child::before{display:none}
+.node{width:22px;height:22px;border-radius:50%;border:1px solid rgba(255,255,255,.14);background:#111;display:grid;place-items:center;color:var(--muted);margin-top:0}
+.node.dot::after{content:"";width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.45)}
+.node.red{border-color:rgba(229,57,53,.35);color:rgba(229,57,53,.7)}
+.sb{min-width:0}
+.thought{font:400 13px var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px;height:22px}
+.shrow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;min-height:22px}
+.sh{display:flex;align-items:center;gap:8px;background:none;border:0;padding:0;cursor:pointer;font:500 13px var(--mono);color:rgba(255,255,255,.4);flex-wrap:wrap;text-align:left}
+.sh:hover{color:rgba(255,255,255,.6)}
+.sh .via{color:var(--faint);font-weight:400}
+.sh .cnt{color:var(--faint);font-weight:400}
+.chev{width:10px;height:10px;transition:transform .2s;color:var(--faint);flex:none}
+[aria-expanded=true]>.chev{transform:rotate(90deg)}
+.sh[aria-expanded=true]>.chev.d{transform:none}
+.badge{font:500 10px var(--mono);color:var(--exa);border:.5px solid rgba(122,162,247,.4);border-radius:5px;padding:1px 6px;background:rgba(122,162,247,.07)}
+.lnk{font:400 10.5px var(--mono);color:var(--muted);background:none;border:0;cursor:pointer;padding:2px 0;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(255,255,255,.2)}
+.lnk:hover{color:var(--fg2)}
+.sg{padding-top:8px;display:flex;flex-direction:column;gap:6px}
+.sg+.sg{margin-top:10px;border-top:.5px solid var(--hair);padding-top:12px}
+.qrow{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline}
+.q{font:400 10.5px var(--mono);color:rgba(255,255,255,.3);min-width:0;overflow-wrap:anywhere}
+.qm{font:400 10.5px var(--mono);color:var(--faint);white-space:nowrap}
+.drow{display:flex;gap:6px;flex-wrap:wrap}
+.dt{display:inline-flex;align-items:center;gap:6px;font:400 10.5px var(--mono);color:var(--muted);background:none;border:.5px solid var(--line);border-radius:5px;padding:2px 8px;cursor:pointer}
+.dt:hover{color:var(--fg2);border-color:rgba(255,255,255,.16)}
+.dt .chev{width:8px;height:8px}
+.dt.syn{color:#8fb0f8;border-color:rgba(122,162,247,.32)}
+.dt[aria-expanded=true]{background:rgba(255,255,255,.04)}
+.brief{border-left:2px solid var(--exa);background:rgba(122,162,247,.05);padding:8px 12px;border-radius:0 6px 6px 0;display:flex;flex-direction:column;gap:6px;max-height:150px;overflow:auto}
+.brief .lab{font:500 9.5px var(--mono);color:var(--exa);letter-spacing:.04em}
+.brief p{margin:0;font-size:12px;color:var(--fg2);line-height:1.55}
+.cite{font:400 10px var(--mono);color:var(--exa);border:.5px solid rgba(122,162,247,.4);border-radius:3px;padding:0 4px;margin-left:2px}
+pre.code{margin:0;background:#0c0c0c;border:.5px solid var(--line);border-radius:8px;padding:10px 12px;font:400 11px/1.55 var(--mono);color:var(--fg2);overflow:auto;max-height:170px;white-space:pre-wrap;overflow-wrap:anywhere}
+.res{display:flex;gap:12px;align-items:baseline;padding:2px 6px;border-radius:4px;min-width:0}
+.res:hover{background:rgba(255,255,255,.03)}
+.res .n{font:400 11px var(--mono);color:var(--faint);width:16px;flex:none}
+.res .t{font-size:12px;color:rgba(255,255,255,.75);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.res .u{font:400 10px var(--mono);color:rgba(255,255,255,.3);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sep-note{font:400 10.5px var(--mono);color:var(--faint);border-top:.5px dashed var(--line);margin:10px 0 10px 34px;padding-top:6px}
+
+/* ---------- input bar (mirrors InputBar.tsx) ---------- */
+.ib-cq{container-type:inline-size;padding:8px 16px 16px;position:relative;flex:none}
+.bar{position:relative;background:#111;border:1px solid rgba(255,255,255,.1);border-radius:16px;box-shadow:0 -1px 32px rgba(0,0,0,.3)}
+.bar.ma{border-color:rgba(153,27,27,.7);box-shadow:0 0 0 1px rgba(220,38,38,.35),0 0 22px rgba(220,38,38,.2)}
+.r1{display:flex;align-items:flex-end;gap:10px;padding:12px 12px 6px}
+.ico{background:none;border:0;color:var(--faint);padding:6px;display:grid;place-items:center}
+.ico svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ph{flex:1;min-width:0;color:var(--faint);font-size:14px;padding:6px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sendb{width:32px;height:32px;border-radius:12px;border:1px solid var(--line);background:#111;color:var(--muted);display:grid;place-items:center;flex:none}
+.sendb svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.r2{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 12px 10px}
+.lf{display:flex;align-items:center;gap:6px;min-width:0}
+.ib-hint{margin:0;font-size:10px;color:var(--muted);white-space:nowrap}
+.ib-hint kbd{font:400 10px var(--mono)}
+.tb{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;white-space:nowrap;font:500 10px/1.5 var(--sans);border:1px solid transparent;background:none;color:var(--muted);cursor:pointer;position:relative;transition:color .15s,background .15s,border-color .15s}
+.tb:hover{color:var(--fg2)}
+.tb.think{color:#ef6b66;background:rgba(229,57,53,.11);border-color:rgba(229,57,53,.3)}
+.tb.ma{color:rgba(229,57,53,.7);border-color:rgba(229,57,53,.2)}
+.tb.ma.on{color:#f08a86;background:rgba(229,57,53,.11);border-color:rgba(229,57,53,.5)}
+.tb.sp.brave{color:#fb923c;background:rgba(251,146,60,.09);border-color:rgba(251,146,60,.38)}
+.tb.sp.exa{color:#8fb0f8;background:rgba(122,162,247,.09);border-color:rgba(122,162,247,.38)}
+.tb.sp.off{color:var(--faint);border-color:rgba(255,255,255,.12);border-style:dashed}
+.tb.sp.warn{color:var(--amber);background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.38)}
+.tb.sp:hover{filter:brightness(1.2)}
+.s-mode{opacity:.75}
+.s-abbr{display:none;font:500 9px var(--mono)}
+.s-caret{opacity:.6;width:8px!important;height:8px!important}
+/* existing rules */
+@container (max-width:600px){ .ib-hint{display:none} }
+/* existing rule: icon-only toggles, label stays as the accessible name */
+@container (max-width:420px){ .ib-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap} .s-caret{display:none} }
+.io .s-mode{display:none} .io .s-abbr{display:inline}
+.io .ib-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap} .io .s-caret{display:none}
+
+/* ---------- menu ---------- */
+.menu{position:absolute;bottom:calc(100% + 8px);left:8px;z-index:20;width:300px;background:#141414;border:.5px solid rgba(255,255,255,.13);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.6);padding:6px;display:flex;flex-direction:column;gap:1px}
+.menu[hidden]{display:none}
+.mhd{display:flex;justify-content:space-between;padding:4px 8px 6px;font:500 10px var(--mono);color:var(--faint)}
+.msep{height:1px;background:var(--hair);margin:4px 2px}
+.mopt{position:relative;display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;border-radius:6px;color:var(--fg);padding:6px 8px 6px 12px;cursor:pointer;font:inherit}
+.mopt:hover,.mopt:focus-visible{background:rgba(255,255,255,.05);outline:none}
+.mopt .acc{position:absolute;left:0;top:5px;bottom:5px;width:2px;border-radius:2px;background:transparent}
+.mopt[aria-checked=true]{background:rgba(229,57,53,.07)}
+.mopt[aria-checked=true] .acc{background:var(--red-60)}
+.mopt .mt{display:flex;flex-direction:column;min-width:0;flex:1}
+.mopt b{font-weight:500;font-size:12px}
+.mopt small{font-size:10.5px;color:var(--muted)}
+.mopt .mm{font:400 10.5px var(--mono);color:var(--muted);white-space:nowrap}
+.mopt .ck{width:12px;height:12px;stroke:var(--red);opacity:0;stroke-width:2.4}
+.mopt[aria-checked=true] .ck{opacity:1}
+.mopt.head b{font-weight:600}
+.mopt.sub{padding-left:30px}
+.mopt[aria-disabled=true]{opacity:.38;cursor:not-allowed}
+.mopt[aria-disabled=true]:hover{background:none}
+.dd{width:7px;height:7px;border-radius:50%;flex:none}
+.dd.brave{background:var(--brave)} .dd.exa{background:var(--exa)}
+.mhead{display:flex;align-items:center;gap:8px;padding:6px 8px 4px 12px}
+.mhead b{font-weight:600;font-size:12px}
+.mhead small{font-size:10.5px;color:var(--muted);flex:1}
+.mkey{font:500 10px var(--mono);color:var(--amber);border:.5px solid rgba(245,158,11,.4);border-radius:4px;padding:1px 6px;background:none;cursor:pointer}
+.mnote{font-size:10.5px;color:var(--muted);padding:4px 10px 6px;line-height:1.45}
+.mnote.warn{color:var(--amber)}
+.mfoot{display:flex;justify-content:space-between;padding:6px 10px;font:400 10.5px var(--mono);color:var(--muted);border-radius:6px;cursor:pointer;background:none;border:0;width:100%}
+.mfoot:hover{color:var(--fg2);background:rgba(255,255,255,.04)}
+.tag{font:500 9px var(--mono);color:var(--red);letter-spacing:.04em}
+.toast{position:absolute;right:20px;top:-14px;font:400 10.5px var(--mono);color:var(--fg2);background:#1a1a1a;border:.5px solid var(--line);border-radius:6px;padding:3px 9px;z-index:30}
+.toast[hidden]{display:none}
+
+/* ---------- stages ---------- */
+.stage{display:flex;flex-direction:column;justify-content:flex-end;min-height:400px;padding-top:24px}
+.stage .fake{padding:0 28px 14px;color:var(--faint);font:400 11px var(--mono)}
+.livebox{overflow-x:auto;padding-top:340px}
+.fx{display:flex;flex-direction:column;gap:6px}
+.cap{font:400 11px var(--mono);color:var(--muted)} .cap b{color:var(--fg);font-weight:500}
+.fxbox{overflow-x:auto;max-width:100%;border:.5px solid var(--line);border-radius:10px;background:var(--panel)}
+.fxbox.open{overflow:visible;padding-top:350px}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.tile2{border:.5px solid var(--line);border-radius:10px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.tile2 .pr{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+table.lad{border-collapse:collapse;width:100%;font-size:12px}
+table.lad th,table.lad td{text-align:left;padding:7px 10px;border-bottom:.5px solid var(--hair);vertical-align:top}
+table.lad th{font:500 10px var(--mono);color:var(--muted)}
+table.lad td:first-child{font-family:var(--mono);white-space:nowrap;color:var(--fg)}
+.tblwrap{overflow-x:auto}
+.rng{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.rng input{accent-color:#b91c1c;flex:1;min-width:160px}
+
+/* ---------- multi-agent run ---------- */
+.runbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-bottom:.5px solid var(--hair);background:var(--card);font:400 11px var(--mono);color:var(--muted)}
+.runbar .l,.runbar .r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.dotg{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block}
+.wc{margin:16px;border:.5px solid var(--line);border-radius:14px;background:#101010;overflow:hidden}
+.wh{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:.5px solid var(--hair);flex-wrap:wrap}
+.wh .wt{display:flex;flex-direction:column;min-width:0;flex:1}
+.wh .wt b{font-weight:500;font-size:13px;overflow-wrap:anywhere}
+.wh .wt span{font:400 11px var(--mono);color:var(--muted)}
+.pass{font:500 11px var(--mono);color:var(--green);border:.5px solid rgba(16,185,129,.4);background:rgba(16,185,129,.08);border-radius:6px;padding:3px 9px}
+.sqb{width:28px;height:28px;border-radius:8px;border:.5px solid var(--line);background:none;color:var(--muted);display:grid;place-items:center}
+.wb{padding:12px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.tools{margin:0;font:400 11px var(--mono);color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lab2{font:400 12px var(--sans);color:var(--fg2);height:22px;display:flex;align-items:center}
+.tcb{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#0d0d0d;border:.5px solid var(--line);border-radius:10px;padding:9px 12px;cursor:pointer;color:var(--fg);font:inherit;min-width:0;flex-wrap:wrap}
+.tcb:hover{border-color:rgba(255,255,255,.16)}
+.tcb .tn{font:500 12px var(--mono);color:#f0928e}
+.tcb .ta{font:400 11px var(--mono);color:var(--muted);flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tcb .tc{font:400 11px var(--mono);color:var(--faint)}
+.tcx{border:.5px solid var(--line);border-top:0;border-radius:0 0 10px 10px;margin-top:-6px;padding:12px 12px 10px;display:flex;flex-direction:column;gap:8px;background:#0b0b0b}
+.tcmeta{font:400 10.5px var(--mono);color:var(--faint)}
+.tlab{font:400 11px var(--mono);color:var(--muted);height:22px;display:flex;align-items:center}
+@media (max-width:640px){.thread{padding:18px 14px}.res .u{display:none}.res .t{max-width:100%}.wc{margin:10px}}
+@media (prefers-reduced-motion:reduce){.tb,.chev{transition:none}}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></symbol>
+  <symbol id="i-net" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect x="13" y="13" width="8" height="8" rx="2"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+  <symbol id="i-cr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-cd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-cu" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-exp" viewBox="0 0 24 24"><path d="m15 3 6 0 0 6"/><path d="M9 21H3v-6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/></symbol>
+</svg>
+
+<div class="wrap">
+  <div>
+    <h1>Search selector · mockups</h1>
+    <p class="sub">Interactive. Example data only. Uses the input bar's real breakpoints (hints hide at 600 px, icons only at 420 px) and the existing 10 px toggle style.</p>
+  </div>
+  <div class="bench" role="tablist" id="bench">
+    <button role="tab" aria-selected="true" data-v="t1">1 · Merged search blocks</button>
+    <button role="tab" aria-selected="false" data-v="t2">2 · Selector and menu</button>
+    <button role="tab" aria-selected="false" data-v="t3">3 · Widths</button>
+    <button role="tab" aria-selected="false" data-v="t4">4 · Multi-agent</button>
+  </div>
+
+  <section id="t1">
+    <p class="note">Consecutive searches stay merged. For Exa each search gets one row of two toggles, Synthesis and Sent to model, both collapsed. A collapsed block still shows a "briefs" badge so the hidden content is discoverable. Blocks only merge when provider and depth match.</p>
+    <div class="ctl" id="t1ctl" style="margin:10px 0 12px"></div>
+    <div class="frame"><div class="thread" id="t1body"></div></div>
+  </section>
+
+  <section id="t2" hidden>
+    <p class="note">Click the colored button. Menu opens upward, Brave is a heading you can pick, Exa is a heading with its four depths. A pick saves to Settings immediately. Try the toggles to see Multi-Agent, missing key and Search off.</p>
+    <div class="ctl" id="t2ctl" style="margin:10px 0 12px">
+      <label><input type="checkbox" data-k="ma"> Multi-agent mode on</label>
+      <label><input type="checkbox" data-k="nokey"> Exa key missing</label>
+      <label><input type="checkbox" data-k="off"> Web search off in Settings</label>
+    </div>
+    <div class="frame stage"><div class="fake">Chat area</div><div id="t2bar"></div></div>
+    <h2 style="font-size:12px;font-weight:600;margin:20px 0 8px;color:var(--fg2)">Button states: full width, then icon-only (≤ 420 px)</h2>
+    <div class="gal" id="t2gal"></div>
+  </section>
+
+  <section id="t3" hidden>
+    <p class="note">The bar reads its own width, not the window's, because the multi-agent panel narrows the chat column. Drag the slider. The search button follows the same rules as the other toggles: label when there is room, icon only when the bar is narrow.</p>
+    <div class="rng" style="margin:10px 0"><span class="mono mut" style="font-size:11px">content width</span><input type="range" id="w3" min="280" max="760" step="10" value="460" aria-label="Input bar content width"><b class="mono" id="w3v" style="font-size:11px;font-weight:500"></b></div>
+    <div class="frame livebox" id="w3live"></div>
+    <div class="tblwrap" style="margin:14px 0 6px"><table class="lad">
+      <tr><th>Content width</th><th>What the bar shows</th><th>Status</th></tr>
+      <tr><td>&gt; 600</td><td>Labels and keyboard hints. Search reads "Brave" or "Exa · balanced".</td><td>existing</td></tr>
+      <tr><td>421 – 600</td><td>Hints hidden. Search keeps its label.</td><td>existing</td></tr>
+      <tr><td>≤ 420</td><td>Every toggle goes icon-only, search included. The label becomes the tooltip and accessible name.</td><td>existing rule</td></tr>
+    </table></div>
+    <p class="note" style="margin-bottom:12px">No new breakpoint: search reuses the bar's existing 420 px rule. In icon-only mode the depth is in the tooltip and the menu's check mark, and a missing key is the amber tint.</p>
+    <div class="fx-list" id="t3fx" style="display:flex;flex-direction:column;gap:18px"></div>
+  </section>
+
+  <section id="t4" hidden>
+    <p class="note">The provider is shown wherever multi-agent shows tools: a run-level chip (what the run actually used, snapshotted at start), the worker's Tools line, and every tool call. Expand the first call to see request details and Sent to model.</p>
+    <div class="ctl" id="t4ctl" style="margin:10px 0 12px"></div>
+    <div class="frame" id="t4body"></div>
+  </section>
+</div>
+
+<script>
+(function(){
+  var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
+  function ic(n,c){return '<svg class="i '+(c||'')+'" viewBox="0 0 24 24"><use href="#i-'+n+'"/></svg>'}
+  function chev(c){return '<svg class="chev '+(c||'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-cr"/></svg>'}
+  function chip(p,label){return '<span class="chip '+p+'"><i></i>'+label+'</span>'}
+  var MODES={fast:{l:'fast',N:'Fast',a:'F',t:'~0.5 s',p:'$4 / 1k'},auto:{l:'balanced',N:'Balanced',a:'',t:'~1 s',p:'$7 / 1k'},'deep-lite':{l:'deep-lite',N:'Deep-lite',a:'DL',t:'~4 s',p:'$12 / 1k'},deep:{l:'deep',N:'Deep',a:'D',t:'4–15 s',p:'$12 / 1k'}};
+
+  /* ---------- tabs ---------- */
+  var built={};
+  $$('#bench button').forEach(function(b){b.addEventListener('click',function(){
+    $$('#bench button').forEach(function(x){x.setAttribute('aria-selected',x===b)});
+    ['t1','t2','t3','t4'].forEach(function(v){$('#'+v).hidden=(v!==b.dataset.v)});
+    if(!built[b.dataset.v]){built[b.dataset.v]=true; ({t1:function(){},t2:buildT2,t3:buildT3,t4:renderT4})[b.dataset.v]()}
+  })});
+
+  /* ================= TAB 1 ================= */
+  var A=[["Daily AI Engineering Brief - 2026-11-06 - Zinbiel's Tech Blog","https://zinbiel.net/daily-ai-engineering-brief-2026-11-06/"],["AI News This Week for Builders: Nov 2–8, 2026","https://trustloud.com/ai-news-this-week-nov-2-8-2026/"],["AI Updates Today (November 2026) – Latest AI Model Releases","https://llm-stats.com/llm-updates"],["Radar Trends to Watch: November 2026 – O'Reilly","https://www.oreilly.com/radar/radar-trends-to-watch-november-2026/"],["2026-11-06 - TLDR AI","https://ai.tldr.tech/p/2026-11-06-tldr-ai"]];
+  var B=[["Archive - State of AI newsletter","https://nathanbenaich.substack.com/archive"],["InfoQ AI, ML and Data Engineering Trends Report - 2026 - InfoQ","https://www.infoq.com/articles/ai-ml-data-engineering-tre…"],["Better tools and context make agents more capable | State of AI Report 2026","https://www.stateof.ai/2026-explore/agents"],["State of AI Report 2026 | AI Research, Industry and Policy","https://www.stateof.ai/"],["State of AI 2026,","https://aitechnologies.co/assets/pdf/stateai26_aitechnologies_compressed.pdf"]];
+  var Q1="LLM AI development trends November 2026 AI engineer new technologies";
+  var Q2="agentic AI context engineering inference scaling reasoning models 2026 state of AI report";
+  var SYN1=["Example brief. The sources frame recent change as work around the model: agent harnesses, context handling and feedback loops, alongside a steady stream of model releases.<span class=\"cite\">1</span><span class=\"cite\">4</span>","Weekly roundups agree on the practical items for builders this week, with release notes and tooling updates listed in dated order.<span class=\"cite\">2</span><span class=\"cite\">5</span>"];
+  var SYN2=["Example brief. The State of AI material groups its findings by agents, reasoning and inference economics.<span class=\"cite\">3</span><span class=\"cite\">4</span>","Trend reports from the practitioner side stress context engineering and evaluation as the areas teams invest in next.<span class=\"cite\">2</span>"];
+  function sentText(res,syn){var s=syn?"Exa synthesis (verify against sources):\n"+syn.replace(/<[^>]+>/g,"")+"\n\n":"";return s+res.slice(0,3).map(function(r,i){return "["+(i+1)+"] "+r[0]+"\n"+r[1]+"\n(query-relevant excerpts from the page, example)"}).join("\n\n")+"\n\n… "+(res.length-3)+" more results"}
+  var GROUPS={
+    exa:{id:'exa',prov:'exa',chipL:'Exa · deep',type:'deep',searches:[{q:Q1,res:A,syn:SYN1[0],words:214,chars:9840,t:'16.4 s',c:'$0.012'},{q:Q2,res:B,syn:SYN2[0],words:187,chars:8312,t:'11.7 s',c:'$0.012'}]},
+    brave:{id:'brave',prov:'brave',chipL:'Brave',searches:[{q:Q1,res:A,chars:11204,t:'4.1 s'},{q:Q2,res:B,chars:10877,t:'3.6 s'}]},
+    braveOne:{id:'braveOne',prov:'brave',chipL:'Brave',searches:[{q:Q1,res:A,chars:11204,t:'4.1 s'},{q:Q2,res:B,chars:10877,t:'3.6 s'}]}
+  };
+  var GS={};
+  function resetGS(preset){
+    GS={exa:{open:true,syn:[false,false],sent:[false,false]},brave:{open:true,syn:[false,false],sent:[false,false]},braveOne:{open:true,syn:[false,false],sent:[false,false]}};
+    if(preset==='collapsed')GS.exa.open=false;
+    if(preset==='syn1')GS.exa.syn[0]=true;
+    if(preset==='all'){GS.exa.syn=[true,true];GS.exa.sent=[true,true]}
+  }
+  var preset1='expanded';
+  var PRESETS=[['collapsed','Block collapsed'],['expanded','Expanded, details collapsed'],['syn1','Synthesis open'],['all','All details open'],['mixed','Provider changed mid-chat'],['brave','Brave (today)']];
+  function groupHTML(g){
+    var st=GS[g.id], exa=g.prov==='exa', n=g.searches.reduce(function(a,s){return a+s.res.length},0), briefs=exa?g.searches.length:0;
+    var allOpen=exa?(st.syn.every(Boolean)&&st.sent.every(Boolean)):st.sent.every(Boolean);
+    var cost=exa?'· $'+(0.012*g.searches.length).toFixed(3)+' · '+g.searches.reduce(function(a,s){return a+parseFloat(s.t)},0).toFixed(1)+' s':'';
+    var h='<div class="shrow"><button class="sh" data-act="grp" data-g="'+g.id+'" aria-expanded="'+st.open+'"><span>Searched the web</span><span class="via">via</span>'+chip(g.prov,g.chipL)+chev()+'<span class="cnt">'+n+' results · '+g.searches.length+' searches '+cost+'</span>'+((!st.open&&briefs)?'<span class="badge">'+briefs+' briefs</span>':'')+'</button>';
+    if(st.open)h+='<button class="lnk" data-act="all" data-g="'+g.id+'">'+(allOpen?'collapse details':'expand details')+'</button>';
+    h+='</div>';
+    if(st.open){
+      g.searches.forEach(function(s,i){
+        h+='<div class="sg"><div class="qrow"><span class="q">• "'+s.q+'"</span><span class="qm">'+g.prov+(exa?' · type '+g.type:'')+' · '+s.t+(exa?' · '+s.c:'')+'</span></div><div class="drow">';
+        if(exa)h+='<button class="dt syn" data-act="syn" data-g="'+g.id+'" data-i="'+i+'" aria-expanded="'+st.syn[i]+'">'+chev()+'Synthesis · '+s.words+' words</button>';
+        h+='<button class="dt" data-act="sent" data-g="'+g.id+'" data-i="'+i+'" aria-expanded="'+st.sent[i]+'">'+chev()+'Sent to model · '+s.chars.toLocaleString('en-US')+' chars</button></div>';
+        if(exa&&st.syn[i])h+='<div class="brief"><span class="lab">EXA SYNTHESIS · VERIFY AGAINST SOURCES</span><p>'+s.syn+'</p></div>';
+        if(st.sent[i])h+='<pre class="code">'+sentText(s.res,exa?s.syn:null).replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>';
+        h+=s.res.map(function(r,k){return '<div class="res"><span class="n">'+(k+1)+'.</span><span class="t">'+r[0].replace(/&/g,'&amp;')+'</span><span class="u">'+r[1]+'</span></div>'}).join('');
+        h+='</div>';
+      });
+    }
+    return h;
+  }
+  function stepWrap(inner,kind){return '<div class="step"><div class="node '+(kind||'')+'">'+(kind==='s'?ic('search'):'')+'</div><div class="sb">'+inner+'</div></div>'}
+  function renderT1(){
+    $('#t1ctl').innerHTML=PRESETS.map(function(p){return '<button aria-pressed="'+(p[0]===preset1)+'" data-p="'+p[0]+'">'+p[1]+'</button>'}).join('');
+    var h='<div class="user">Identify the top 5 high-impact LLM and AI development trends recently. Tell me only about the latest technologies that an AI engineer would need to know.</div>';
+    h+='<div class="step"><div class="node dot"></div><div class="sb"><div class="thought">Thought Process '+chev()+'</div></div></div>';
+    if(preset1==='mixed'){
+      h+=stepWrap(groupHTML(GROUPS.braveOne),'s');
+      h+='<div class="sep-note">Provider changed from Brave to Exa. A new block starts, nothing is merged across providers or depths.</div>';
+      var g2={id:'exa',prov:'exa',chipL:'Exa · deep',type:'deep',searches:[GROUPS.exa.searches[0]]};
+      h+=stepWrap(groupHTML(g2),'s');
+    } else if(preset1==='brave'){
+      h+=stepWrap(groupHTML(GROUPS.brave),'s');
+    } else {
+      h+=stepWrap(groupHTML(GROUPS.exa),'s');
+    }
+    h+='<div class="step"><div class="node dot"></div><div class="sb"><div class="thought">Thought Process '+chev()+'</div></div></div>';
+    $('#t1body').innerHTML=h;
+  }
+  $('#t1ctl').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;preset1=b.dataset.p;resetGS(preset1);renderT1()});
+  $('#t1body').addEventListener('click',function(e){
+    var b=e.target.closest('[data-act]');if(!b)return;var st=GS[b.dataset.g],i=+b.dataset.i,a=b.dataset.act,exa=b.dataset.g==='exa';
+    if(a==='grp')st.open=!st.open;
+    if(a==='syn')st.syn[i]=!st.syn[i];
+    if(a==='sent')st.sent[i]=!st.sent[i];
+    if(a==='all'){var all=exa?(st.syn.every(Boolean)&&st.sent.every(Boolean)):st.sent.every(Boolean);st.syn=st.syn.map(function(){return !all});st.sent=st.sent.map(function(){return !all})}
+    if(preset1==='mixed'&&b.dataset.g==='exa'){/* second group uses one search */}
+    renderT1();
+  });
+  resetGS('expanded'); renderT1();
+
+  /* ================= input bar ================= */
+  function pillHTML(s,open){
+    var eff=(s.ma&&s.prov==='exa')?'auto':s.mode, M=MODES[eff], cls='tb sp ', title, label;
+    if(s.enabled===false){cls+='off';label='Search off';title='Web search is off. Click to choose a provider.'}
+    else if(s.prov==='brave'){cls+='brave';label='Brave';title='Web search: Brave. Click to change.'}
+    else if(s.exaKey===false){cls+='exa warn';label='Exa · key needed';title='Exa needs an API key. Click for options.'}
+    else{cls+='exa';label='Exa · '+M.l;title='Web search: Exa · '+M.l+(s.ma&&s.mode!=='auto'?' (multi-agent uses Balanced; your saved depth is '+MODES[s.mode].l+')':'')+'. Click to change.'}
+    return '<button class="'+cls+'" title="'+title+'" aria-label="'+title.replace(/ Click.*$/,'')+'" aria-haspopup="menu" aria-expanded="'+!!open+'">'+ic('globe')+'<span class="ib-label">'+label+'</span>'+ic('cu','s-caret')+'</button>';
+  }
+  function menuHTML(s){
+    var ma=s.ma, eff=(ma&&s.prov==='exa')?'auto':s.mode, h='<div class="mhd"><span>Web search</span><span>saved to Settings</span></div>';
+    if(s.enabled===false)h+='<div class="mnote warn">Web search is off in Settings. Picking a provider turns it on.</div>';
+    h+='<button class="mopt head" role="menuitemradio" aria-checked="'+(s.prov==='brave'&&s.enabled!==false)+'" data-p="brave"><i class="acc"></i><span class="dd brave"></span><span class="mt"><b>Brave</b><small>Snippets · DI fetches top pages</small></span><span class="mm">$5 / 1k</span>'+ic('check','ck')+'</button>';
+    h+='<div class="msep"></div><div class="mhead"><span class="dd exa"></span><b>Exa</b><small>Neural search · page text included</small>'+(s.exaKey===false?'<button class="mkey" data-act="key">Add API key</button>':'')+'</div>';
+    Object.keys(MODES).forEach(function(k){
+      var m=MODES[k], locked=ma&&k!=='auto', dis=locked||s.exaKey===false;
+      h+='<button class="mopt sub" role="menuitemradio" aria-checked="'+(s.prov==='exa'&&s.enabled!==false&&eff===k)+'" aria-disabled="'+dis+'" data-p="exa" data-m="'+k+'"'+(locked?' title="Multi-agent runs use Balanced"':'')+'><i class="acc"></i><span class="mt"><b>'+m.N+'</b></span>'+(k==='auto'&&!locked?'<span class="tag">DEFAULT</span>':'')+'<span class="mm">'+m.t+' · '+m.p+'</span>'+(locked?ic('lock'):ic('check','ck'))+'</button>';
+    });
+    if(ma){h+='<div class="mnote">Multi-agent runs use Brave or Exa Balanced, so parallel workers stay quick and cost predictable.'+(s.prov==='exa'&&s.mode!=='auto'?' Your saved depth, '+MODES[s.mode].N+', is kept for normal chats.':'')+'</div>'}
+    h+='<div class="msep"></div><button class="mfoot" data-act="settings"><span>Web Search settings</span><span>›</span></button>';
+    return h;
+  }
+  function createBar(cfg){
+    var s={prov:cfg.prov||'brave',mode:cfg.mode||'auto',ma:!!cfg.ma,exaKey:cfg.exaKey!==false,enabled:cfg.enabled!==false}, open=!!cfg.open, tt;
+    var wrap=document.createElement('div'); wrap.className='ib-cq';
+    wrap.innerHTML='<div class="bar"><div class="r1"><button class="ico" tabindex="-1" aria-label="Attach">'+ic('clip').replace('class="i ','class="').replace('<svg','<svg')+'</button><div class="ph"></div><button class="sendb" tabindex="-1" aria-label="Send">'+ic('up')+'</button></div><div class="r2"><div class="lf"><button class="tb think" title="Thinking mode">'+ic('brain')+'<span class="ib-label">Thinking</span></button><button class="tb perm" title="Permissions required">'+ic('shield')+'<span class="ib-label">Require Permissions</span></button><button class="tb ma" title="Multi-agent mode">'+ic('net')+'<span class="ib-label">Multi-Agent</span></button><span class="slot"></span></div><p class="ib-hint"><kbd>⏎</kbd> send &nbsp;·&nbsp; <kbd>⇧⏎</kbd> newline</p></div><div class="menu" role="menu" hidden></div></div><div class="toast" hidden></div>';
+    var bar=$('.bar',wrap), menu=$('.menu',wrap), slot=$('.slot',wrap), ph=$('.ph',wrap), maBtn=$('.tb.ma',wrap), toast=$('.toast',wrap);
+    function place(){var br=bar.getBoundingClientRect(),pill=$('.sp',slot);if(!pill||!br.width)return;var pr=pill.getBoundingClientRect(),mw=Math.min(300,br.width-16);menu.style.width=mw+'px';var left=pr.left-br.left;menu.style.left=Math.max(8,Math.min(left,br.width-mw-8))+'px'}
+    function render(){
+      bar.classList.toggle('ma',s.ma); maBtn.classList.toggle('on',s.ma);
+      ph.textContent=s.ma?'Describe a complex task for the agent':'Message… (Shift+Enter for newline)';
+      slot.innerHTML=pillHTML(s,open); menu.hidden=!open;
+      if(open){menu.innerHTML=menuHTML(s);place()}
+    }
+    function say(t){toast.textContent=t;toast.hidden=false;clearTimeout(tt);tt=setTimeout(function(){toast.hidden=true},1800)}
+    function close(focus){open=false;render();if(focus){var p=$('.sp',slot);if(p)p.focus()}}
+    if(!cfg.static){
+      wrap.addEventListener('click',function(e){
+        var sp=e.target.closest('.sp');if(sp&&slot.contains(sp)){open=!open;render();if(open){var c=$('[aria-checked=true]',menu)||$('.mopt:not([aria-disabled=true])',menu);if(c)c.focus()}return}
+        var m=e.target.closest('.tb.ma');if(m){s.ma=!s.ma;render();return}
+        var o=e.target.closest('.mopt');
+        if(o){if(o.getAttribute('aria-disabled')==='true')return;
+          if(o.dataset.p==='brave'){s.prov='brave';say('Saved · Brave')}else{s.prov='exa';s.mode=o.dataset.m;say('Saved · Exa · '+MODES[s.mode].l)}
+          s.enabled=true; if(cfg.onChange)cfg.onChange(s); close(true)}
+      });
+      wrap.addEventListener('keydown',function(e){
+        if(!open)return;
+        if(e.key==='Escape'){e.preventDefault();close(true)}
+        if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();var it=$$('.mopt:not([aria-disabled=true])',menu),i=it.indexOf(document.activeElement);i=e.key==='ArrowDown'?(i+1)%it.length:(i-1+it.length)%it.length;it[i].focus()}
+      });
+      document.addEventListener('mousedown',function(e){if(open&&!wrap.contains(e.target))close(false)});
+    }
+    wrap.api={set:function(k,v){s[k]=v;render()},place:place,render:render};
+    render(); return wrap;
+  }
+
+  /* ================= TAB 2 ================= */
+  function buildT2(){
+    var bar=createBar({prov:'exa',mode:'auto',ma:false}); $('#t2bar').appendChild(bar);
+    $('#t2ctl').addEventListener('change',function(e){
+      var k=e.target.dataset.k, v=e.target.checked;
+      if(k==='ma')bar.api.set('ma',v); if(k==='nokey')bar.api.set('exaKey',!v); if(k==='off')bar.api.set('enabled',!v);
+    });
+    var G=[[{prov:'brave'},'Brave'],[{prov:'exa',mode:'fast'},'Exa · Fast'],[{prov:'exa',mode:'auto'},'Exa · Balanced (default)'],[{prov:'exa',mode:'deep-lite'},'Exa · Deep-lite'],[{prov:'exa',mode:'deep'},'Exa · Deep'],[{prov:'exa',mode:'auto',exaKey:false},'Exa selected, key missing'],[{enabled:false},'Search off in Settings'],[{prov:'exa',mode:'deep',ma:true},'Multi-agent on, saved depth Deep (shows Balanced)']];
+    $('#t2gal').innerHTML=G.map(function(g){var s={prov:g[0].prov||'brave',mode:g[0].mode||'auto',ma:!!g[0].ma,exaKey:g[0].exaKey!==false,enabled:g[0].enabled!==false};
+      return '<div class="tile2"><div class="cap"><b>'+g[1]+'</b></div><div class="pr"><span>'+pillHTML(s,false)+'</span><span class="io">'+pillHTML(s,false)+'</span></div></div>'}).join('');
+  }
+
+  /* ================= TAB 3 ================= */
+  function rung(w){return w>600?'labels and hints':w>420?'hints hidden':'icons only'}
+  function buildT3(){
+    var live=createBar({prov:'exa',mode:'deep'}); $('#w3live').appendChild(live);
+    function setW(){var w=+$('#w3').value;live.style.width=(w+32)+'px';$('#w3v').textContent=w+' px · '+rung(w);live.api.place()}
+    $('#w3').addEventListener('input',setW); setW();
+    var FX=[{w:700,cap:'700 px · labels and hints',cfg:{prov:'exa',mode:'auto'}},{w:560,cap:'560 px · hints hidden',cfg:{prov:'brave'}},{w:460,cap:'460 px · hints hidden',cfg:{prov:'exa',mode:'deep'}},{w:380,cap:'380 px · icons only. Typical inside the multi-agent panel',cfg:{prov:'exa',mode:'auto',ma:true}},{w:300,cap:'300 px · icons only, menu clamps inside the bar. Click to try',cfg:{prov:'exa',mode:'deep-lite',open:true},live:true}];
+    $('#t3fx').innerHTML='';
+    FX.forEach(function(f){
+      var box=document.createElement('div');box.className='fx';
+      var cap=document.createElement('div');cap.className='cap';cap.innerHTML='<b>'+f.cap.split(' · ')[0]+'</b> · '+f.cap.split(' · ').slice(1).join(' · ');
+      var fb=document.createElement('div');fb.className='fxbox'+(f.live?' open':'');
+      var c=JSON.parse(JSON.stringify(f.cfg));c.static=!f.live;var bar=createBar(c);bar.style.width=(f.w+32)+'px';fb.appendChild(bar);
+      box.appendChild(cap);box.appendChild(fb);$('#t3fx').appendChild(box);
+      if(f.live)requestAnimationFrame(function(){bar.api.place()});
+    });
+  }
+
+  /* ================= TAB 4 ================= */
+  var maProv='exa', tcOpen=[true,false], sentOpen=false;
+  function renderT4(){
+    var ex=maProv==='exa', c=ex?chip('exa','Exa · balanced'):chip('brave','Brave'), cs=ex?chip('exa','Exa'):chip('brave','Brave');
+    $('#t4ctl').innerHTML=[['exa','Run used Exa · balanced'],['brave','Run used Brave']].map(function(p){return '<button aria-pressed="'+(p[0]===maProv)+'" data-p="'+p[0]+'">'+p[1]+'</button>'}).join('');
+    var calls=[{t:ex?'1.6 s':'13.7 s',q:'Salzwelten Hallstatt winter opening hours 2026',ch:ex?'16,654':'16,654',cost:'$0.007'},{t:ex?'1.2 s':'10.3 s',q:'salzwelten.at Hallstatt Öffnungszeiten Winter',ch:'12,664',cost:'$0.007'}];
+    var h='<div class="runbar"><div class="l"><span><span class="dotg"></span> Running</span><span>00:42</span><span>4 workers</span><span>$0.081</span></div><div class="r"><span>Web search</span><span title="Snapshot taken when the run started">'+c+'</span><span>'+(ex?'9 searches · $0.063':'9 searches')+'</span><span class="new">new</span></div></div>';
+    h+='<div class="wc"><div class="wh"><span class="dotg"></span><div class="wt"><b>1.1 Find Salzwelten Hallstatt winter opening hours</b><span>Attraction hours researcher · deepseek-v4.1-flash</span></div><span class="pass">Pass 5/5</span><button class="sqb" aria-label="Expand">'+ic('exp')+'</button><button class="sqb" aria-label="Collapse">'+ic('cu')+'</button></div><div class="wb">';
+    h+='<p class="tools">Tools: web_search '+cs+' , +1 <span class="new">new</span></p>';
+    h+='<div class="step"><div class="node"></div><div class="sb"><div class="lab2">Answer</div><div style="font-size:13px;color:var(--fg2);margin-top:4px">I\'ll research the Salzwelten Hallstatt winter opening hours.</div></div></div>';
+    calls.forEach(function(k,i){
+      var open=tcOpen[i];
+      var inner='<div class="tlab">Tool call · '+k.t+'</div><button class="tcb" data-act="tc" data-i="'+i+'" aria-expanded="'+open+'"><span class="tn">web_search</span>'+cs+'<span class="ta">{"query":"'+k.q+'"}</span><span class="tc">'+k.ch+' chars</span></button>';
+      if(open){
+        inner+='<div class="tcx"><div class="tcmeta">'+(ex?'exa · type auto · '+k.t+' · '+k.cost+' · highlights · 5 results':'brave · 5 results · 5 pages fetched · '+k.t)+'</div><div class="drow"><button class="dt" data-act="sent4" aria-expanded="'+sentOpen+'">'+chev()+'Sent to model · '+k.ch+' chars</button></div>'+(sentOpen?'<pre class="code">'+sentText(A,null).replace(/&/g,'&amp;')+'</pre>':'')+'</div>';
+      }
+      h+='<div class="step"><div class="node red"></div><div class="sb">'+inner+'</div></div>';
+    });
+    h+='</div></div>';
+    $('#t4body').innerHTML=h;
+  }
+  $('#t4ctl').addEventListener('click',function(e){var b=e.target.closest('button');if(b){maProv=b.dataset.p;renderT4()}});
+  $('#t4body').addEventListener('click',function(e){
+    var b=e.target.closest('[data-act]');if(!b)return;
+    if(b.dataset.act==='tc'){var i=+b.dataset.i;tcOpen[i]=!tcOpen[i]}
+    if(b.dataset.act==='sent4')sentOpen=!sentOpen;
+    renderT4();
+  });
+})();
+</script>
