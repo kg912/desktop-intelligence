@@ -41,15 +41,19 @@ interface ToolCallNotificationProps {
 // ── Web search provider chip (mockup tab 2) ──────────────────────
 const PROVIDER_DOT: Record<WebSearchProvider, string> = { exa: '#7aa2f7', brave: '#fb923c' }
 
+/** In a 13 px chat-rail header the chip (18 px) must not make the row taller, or the row's centre drops below the rail
+ *  icon's: it keeps its look but takes no extra height. */
+export const CHIP_IN_HEADER = '-my-[3px]'
+
 /** "Exa · auto" / "Exa · fast" / "Brave" (or `label`). Older blocks carry no provider: they were all Brave. */
-export function ProviderChip({ provider = 'brave', mode, label: given }: { provider?: WebSearchProvider; mode?: ExaSearchType; label?: string }) {
+export function ProviderChip({ provider = 'brave', mode, label: given, className }: { provider?: WebSearchProvider; mode?: ExaSearchType; label?: string; className?: string }) {
   const label = given ?? (provider === 'exa' ? `Exa${mode ? ` · ${mode === 'lite' ? 'fast' : mode}` : ''}` : 'Brave')
   return (
     <span
       data-testid="provider-chip"
       data-provider={provider}
-      className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium leading-none rounded-[5px] px-[7px] py-[3px]
-                 border-[0.5px] border-white/[0.09] text-white/60 bg-white/[0.02]"
+      className={cn('inline-flex items-center gap-1.5 font-mono text-[11px] font-medium leading-none rounded-[5px] px-[7px] py-[3px]',
+        'border-[0.5px] border-white/[0.09] text-white/60 bg-white/[0.02]', className)}
     >
       <i className="block w-1.5 h-1.5 rounded-full" style={{ background: PROVIDER_DOT[provider] }} />
       {label}
@@ -340,7 +344,7 @@ export function ToolCallNotification({
           <span className="text-[13px] text-accent-700 font-medium font-mono">
             {webSearch ? 'Search failed' : 'Tool failed'}
           </span>
-          {webSearch && provider && <ProviderChip provider={provider} mode={mode} />}
+          {webSearch && provider && <ProviderChip provider={provider} mode={mode} className={CHIP_IN_HEADER} />}
           <span className="font-mono text-[13px] text-white/20">
             {fs ? fs.text : label}
           </span>
@@ -372,7 +376,7 @@ export function ToolCallNotification({
             Searched the web
           </span>
           <span className="font-mono text-[13px] leading-none text-white/[0.22]">via</span>
-          <ProviderChip provider={provider} mode={mode} />
+          <ProviderChip provider={provider} mode={mode} className={CHIP_IN_HEADER} />
           <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
           <span className="font-mono text-[13px] leading-none text-white/20">
             {results.length} {results.length === 1 ? 'result' : 'results'}

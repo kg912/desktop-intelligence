@@ -13,7 +13,7 @@ import { ClaimLinkedMarkdown } from './ClaimLinks'
 import { StatsBar } from './StatsBar'
 import { CopyMessageButton } from './CopyMessageButton'
 import { messageCopyText } from '../../lib/markdownUtils'
-import { ToolCallNotification, ResultRows, ProviderChip, SearchingIndicator, SearchSynthesis, SearchDetailToggle } from './ToolCallNotification'
+import { ToolCallNotification, ResultRows, ProviderChip, SearchingIndicator, SearchSynthesis, SearchDetailToggle, CHIP_IN_HEADER } from './ToolCallNotification'
 import { isWebSearchToolName } from '../../../../shared/webSearch'
 import { ChevronIcon } from './ChevronIcon'
 import { cn } from '../../lib/utils'
@@ -225,13 +225,15 @@ export function ThinkingAccordion({
         disabled={isStreaming}
         onClick={handleToggle}
         className={cn(
-          "flex items-center gap-2 mb-0 py-0 text-left select-none transition-colors duration-100 min-w-0 overflow-hidden",
+          // No overflow-hidden here: the labels are leading-none (13 px box) and glyphs reach past it, so a clip
+          // on this button cut them. The streaming label truncates on its own.
+          "flex items-center gap-2 mb-0 py-0 text-left select-none transition-colors duration-100 min-w-0",
           isStreaming ? "cursor-default" : "cursor-pointer group/tp"
         )}
       >
         {isStreaming ? (
           <span
-            className="shimmer-text font-mono text-[13px] leading-none font-medium text-white/45 tracking-[0.03em] select-none truncate"
+            className="shimmer-text font-mono text-[13px] leading-none font-medium text-white/45 tracking-[0.03em] select-none truncate py-[3px] -my-[3px]"
             style={{ fontFamily: "'SF Mono', 'Fira Code', ui-monospace, monospace" }}
           >
             Reasoning
@@ -486,20 +488,20 @@ function MergedSearchGroup({
           Searched the web
         </span>
         <span className="font-mono text-[13px] leading-none text-white/[0.22]">via</span>
-        <ProviderChip provider={blocks[0].provider} mode={blocks[0].mode} />
+        <ProviderChip provider={blocks[0].provider} mode={blocks[0].mode} className={CHIP_IN_HEADER} />
         <ChevronIcon open={expanded} className="text-white/20 group-hover/sh:text-white/35 transition-colors duration-150" />
         <span className="font-mono text-[13px] leading-none text-white/20" data-testid="merged-search-counts">
           {[`${totalResults} results`, `${blocks.length} searches`, ...totals].join(' · ')}
         </span>
         {!expanded && briefs > 0 && (
-          <span data-testid="briefs-badge" className="font-mono text-[10px] leading-none text-[#7aa2f7] border-[0.5px] border-[#7aa2f7]/40 rounded-[5px] px-1.5 py-[3px] bg-[#7aa2f7]/[0.07]">
+          <span data-testid="briefs-badge" className="-my-[3px] font-mono text-[10px] leading-none text-[#7aa2f7] border-[0.5px] border-[#7aa2f7]/40 rounded-[5px] px-1.5 py-[3px] bg-[#7aa2f7]/[0.07]">
             {briefs} {briefs === 1 ? 'brief' : 'briefs'}
           </span>
         )}
       </button>
       {expanded && hasDetails && (
         <button data-testid="details-link" onClick={() => setAll(!allOpen)}
-          className="font-mono text-[10.5px] text-white/40 hover:text-white/60 underline underline-offset-[3px] decoration-white/20 py-0.5">
+          className="font-mono text-[10.5px] leading-none text-white/40 hover:text-white/60 underline underline-offset-[3px] decoration-white/20">
           {allOpen ? 'collapse details' : 'expand details'}
         </button>
       )}
