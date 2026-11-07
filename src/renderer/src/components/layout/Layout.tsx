@@ -816,6 +816,7 @@ export function Layout() {
               disabled={shownRunActive}
               lockedMessage={shownRunActive && shownRun ? inputLockMessage(shownRun.view) : null}
               modeLock={chatMode}
+              onOpenSearchSettings={() => { if (!isStreaming && !navLocked) { setSettingsTab('websearch'); setSettingsOpen(true) } }}
             />
           </div>
         </>

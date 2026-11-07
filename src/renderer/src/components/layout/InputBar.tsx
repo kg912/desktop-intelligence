@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils'
 import { useModelStore } from '../../store/ModelStore'
 import { isStreamingSignal } from '../../signals/chatSignals'
 import { InputTextArea } from './InputTextArea'
+import { SearchSelector } from './SearchSelector'
 import type { ChatMode } from '../../../../shared/types'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 MB
@@ -150,6 +151,8 @@ export interface InputBarProps {
   lockedMessage?: string | null
   /** Mode of the active chat once it has messages; null for a new chat (either mode). */
   modeLock?: ChatMode | null
+  /** Opens Settings > Web Search (from the search selector). */
+  onOpenSearchSettings?: () => void
 }
 
 const MAX_TEXTAREA_HEIGHT = 200
@@ -164,6 +167,7 @@ export const InputBar = memo(function InputBar({
   mcpActivity = null,
   lockedMessage = null,
   modeLock = null,
+  onOpenSearchSettings,
 }: InputBarProps) {
   const isStreaming = isStreamingSignal.value
   const { thinkingMode, setThinkingMode, multiAgentMode, setMultiAgentMode } = useModelStore();
@@ -225,6 +229,7 @@ export const InputBar = memo(function InputBar({
           position: absolute; width: 1px; height: 1px; overflow: hidden;
           clip: rect(0 0 0 0); white-space: nowrap;
         }
+        .ib-caret { display: none; }
       }
       .ma-pulse {
         animation: ma-pulse-kf 1.8s ease-in-out infinite alternate;
@@ -545,6 +550,11 @@ export const InputBar = memo(function InputBar({
           {isOpenRouter === true && (
             <MultiAgentModeButton active={multiAgentMode} onToggle={setMultiAgentMode} locked={modeLock} />
           )}
+          <SearchSelector
+            multiAgent={modeLock ? modeLock === 'multi-agent' : isOpenRouter === true && multiAgentMode}
+            locked={disabled}
+            onOpenSettings={onOpenSearchSettings}
+          />
         </div>
         <div className="flex items-center gap-2 min-w-0">
           {mcpActivity && (
