@@ -14,6 +14,8 @@ import { coveredAbove, layerProps } from './zLayers'
 import { APPROVAL_TONE, TAG_TONE, formatTokens, isWorking, shortModel, stateTag } from './MultiAgentSidebarView'
 import { formatUsd } from '../../../../shared/multiAgentModels'
 import type { McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig } from '../../../../shared/types'
+import { ProviderChip } from './ToolCallNotification'
+import { webSearchLabel } from '../../../../shared/webSearch'
 
 type Tab = 'live' | 'reasoning' | 'tools' | 'brief' | 'raw'
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -264,6 +266,7 @@ function ToolCard({ item, state, expanded = false }: { item: ToolItem; state: st
     <div className="overflow-hidden rounded-[10px] border-[0.5px] border-white/[0.07]" data-testid={`focus-tool-${item.callId}`}>
       <div className="flex items-center gap-2.5 bg-white/[0.03] px-3.5 py-2">
         <span className={cn('flex-none font-mono text-[12px]', tone)}>{item.tool}</span>
+        {item.done?.search && <ProviderChip provider={item.done.search.provider} label={webSearchLabel(item.done.search.provider)} />}
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ma-mute" title={item.argsPreview}>{item.argsPreview}</span>
         <span className={cn('flex-none font-mono text-[11px]', tone)}>{state}</span>
       </div>

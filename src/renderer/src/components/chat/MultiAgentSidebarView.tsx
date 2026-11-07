@@ -24,6 +24,9 @@ import { GraphView } from './GraphView'
 import type { CostEstimate } from '../../../../shared/multiAgentModels'
 import { ESTIMATE, formatUsd } from '../../../../shared/multiAgentModels'
 import type { AgentStep, AssessAction, McpToolPermissionRequest, McpToolPermissionResponse, MultiAgentConfig, OutputLimit } from '../../../../shared/types'
+import { ProviderChip } from './ToolCallNotification'
+import { isWebSearchToolName, webSearchLabel } from '../../../../shared/webSearch'
+import type { RunWebSearch, WorkerSearchInfo } from '../../../../shared/webSearch'
 
 const PLAN_COLUMN_WIDTH = 248
 
@@ -155,6 +158,7 @@ export function MultiAgentSidebarView(props: Props) {
           <span><b className="font-medium text-ma-text">{formatUsd(view.totals.costUsd)}</b> / {formatUsd(config.budgetCapUsd)}</span>
           <span><b className="font-medium text-ma-text">{formatTokens(view.totals.tokens)}</b> tok</span>
           {view.totals.budgetReached && <span className="text-ma-amber">Budget cap reached</span>}
+          {view.runConfig?.webSearch && <RunSearchGroup view={view} webSearch={view.runConfig.webSearch} />}
         </div>
         {view.steps.length > 0 && <ConcurrencyTimeline view={view} live={live} now={now} />}
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -261,9 +265,48 @@ function RunNav({ runIds, current, locked, onShowRun }: { runIds?: string[]; cur
   )
 }
 
+const bareName = (t: string): string => t.split('__').slice(1).join('__') || t
+
 export function toolsLabel(tools: string[]): string {
-  const names = tools.map((t) => t.split('__').slice(1).join('__') || t)
+  const names = tools.map(bareName)
   return names.length ? `Tools: ${names[0]}${names.length > 1 ? `, +${names.length - 1}` : ''}` : 'No tools'
+}
+
+/** "Tools: web_search ● Exa, +1" when the run searches the web (mockup tab 4); else toolsLabel. */
+export function ToolsLine({ tools, webSearch }: { tools: string[]; webSearch?: RunWebSearch | null }) {
+  const names = tools.map(bareName)
+  const search = names.find(isWebSearchToolName)
+  if (!search || !webSearch) return <>{toolsLabel(tools)}</>
+  return (
+    <>
+      Tools: {search}
+      <ProviderChip provider={webSearch.provider} label={webSearchLabel(webSearch.provider)} />
+      {names.length > 1 && <span className="-ml-1">, +{names.length - 1}</span>}
+    </>
+  )
+}
+
+/** Run totals: "Web search ● Exa · balanced · 9 searches · $0.063" from the snapshot and the worker search records. */
+function RunSearchGroup({ view, webSearch }: { view: RunView; webSearch: RunWebSearch }) {
+  const searches = Object.values(view.agents).flatMap((a) => a.timeline)
+    .flatMap((t) => (t.kind === 'tool' && t.done?.search ? [t.done.search] : []))
+  const costs = searches.map((s) => s.costUsd).filter((c): c is number => c != null)
+  return (
+    <span className="flex items-center gap-1.5" data-testid="run-web-search">
+      Web search
+      <span title="Snapshot taken when the run started"><ProviderChip provider={webSearch.provider} label={webSearchLabel(webSearch.provider, webSearch.type)} /></span>
+      <span>{searches.length} search{searches.length === 1 ? '' : 'es'}{costs.length ? ` · $${costs.reduce((a, c) => a + c, 0).toFixed(3)}` : ''}</span>
+    </span>
+  )
+}
+
+/** "exa · type auto · 1.6 s · $0.007 · 5 results" / "brave · 5 results · 13.7 s" for an expanded worker search. */
+export function searchMetaLine(s: WorkerSearchInfo): string {
+  const secs = `${(s.ms / 1000).toFixed(1)} s`
+  const results = s.results != null ? `${s.results} result${s.results === 1 ? '' : 's'}` : null
+  return (s.provider === 'exa'
+    ? ['exa', s.type && `type ${s.type}`, secs, s.costUsd != null && `$${s.costUsd.toFixed(3)}`, results]
+    : ['brave', results, secs]).filter(Boolean).join(' · ')
 }
 
 // ── Concurrency timeline: the proof that workers overlap ─────────────────────
@@ -467,6 +510,7 @@ function AgentCards({ view, now, config, requestsByAgent, onRespondPermission, f
             now={isWorking(agent.status) ? now : 0}
             maxRetries={config.maxRetriesPerAgent}
             tools={view.runConfig?.tools}
+            webSearch={view.runConfig?.webSearch}
             waitingOn={(step.dependsOn ?? []).filter((d) => view.agents[d]?.status !== 'done')}
             head={queue[0] ?? null}
             queued={Math.max(0, queue.length - 1)}
@@ -511,13 +555,15 @@ export const TAG_TONE = {
   idle: 'text-ma-mute border-white/[0.09]',
 } as const
 
-export const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, waitingOn, head, queued, active, onToggle, onRespondPermission, onOpenAgent }: {
+export const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries, tools, webSearch, waitingOn, head, queued, active, onToggle, onRespondPermission, onOpenAgent }: {
   agent: AgentView
   open: boolean
   now: number
   maxRetries: number
   /** Tools offered to the workers (run_config); undefined on older traces. */
   tools?: string[]
+  /** run_config.webSearch: the provider snapshot taken at run start. */
+  webSearch?: RunWebSearch | null
   waitingOn: string[]
   /** Head of this agent's approval queue, shown as the slide-out strip. */
   head: McpToolPermissionRequest | null
@@ -591,8 +637,8 @@ export const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries,
       {open && (
         <div className="border-t-[0.5px] border-white/5 px-3.5 pb-3.5 pt-1" data-testid={`agent-trace-${step.id}`}>
           {tools && (
-            <p className="truncate pt-2 font-mono text-[11px] text-ma-mute" data-testid={`agent-tools-${step.id}`} title={tools.join(', ') || undefined}>
-              {toolsLabel(tools)}
+            <p className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap pt-2 font-mono text-[11px] text-ma-mute" data-testid={`agent-tools-${step.id}`} title={tools.join(', ') || undefined}>
+              <ToolsLine tools={tools} webSearch={webSearch} />
             </p>
           )}
           {/* Plain text, not a timeline node: there is no event to mark yet. */}
@@ -600,7 +646,7 @@ export const AgentCard = memo(function AgentCard({ agent, open, now, maxRetries,
             <p className="pt-2.5 text-[12px] text-ma-mute" data-testid={`agent-empty-${step.id}`}>{agent.status === 'queued' ? 'Nothing to show yet' : 'Working…'}</p>
           )}
           {agent.timeline.map((item, i) => (
-            <TraceItem key={i} item={item} agentId={step.id} attemptLabel={multiAttempt ? ` · attempt ${item.attempt + 1}` : ''} streaming={i === agent.timeline.length - 1 && agent.status === 'running'} />
+            <TraceItem key={i} item={item} agentId={step.id} webSearch={webSearch} attemptLabel={multiAttempt ? ` · attempt ${item.attempt + 1}` : ''} streaming={i === agent.timeline.length - 1 && agent.status === 'running'} />
           ))}
           {agent.timeline.length === 0 && agent.output && <TraceItem item={{ kind: 'output', attempt: 0, text: agent.output }} agentId={step.id} attemptLabel="" streaming={false} />}
           {agent.status === 'reflecting' && (
@@ -755,8 +801,9 @@ function CutOffChip({ limit, testId }: { limit: OutputLimit; testId: string }) {
   )
 }
 
-function TraceItem({ item, attemptLabel, streaming, agentId }: { item: TimelineItem; attemptLabel: string; streaming: boolean; agentId?: string }) {
+function TraceItem({ item, attemptLabel, streaming, agentId, webSearch }: { item: TimelineItem; attemptLabel: string; streaming: boolean; agentId?: string; webSearch?: RunWebSearch | null }) {
   const [expanded, setExpanded] = useState(false)
+  const [sentOpen, setSentOpen] = useState(false)
   switch (item.kind) {
     case 'reasoning':
       return (
@@ -768,19 +815,35 @@ function TraceItem({ item, attemptLabel, streaming, agentId }: { item: TimelineI
       )
     case 'tool': {
       const done = item.done
+      // The call's own record wins; while it runs, the run snapshot says which provider it goes to.
+      const provider = done?.search?.provider ?? (webSearch && isWebSearchToolName(item.tool) ? webSearch.provider : undefined)
       return (
         <div className="ma-ev" data-k="tool">
           <i className="ma-k" />
           <div className="flex gap-2 text-[12px] text-ma-mute">Tool call{attemptLabel}{done && <span className="font-mono">· {(done.durationMs / 1000).toFixed(1)}s</span>}</div>
           <button onClick={() => setExpanded((x) => !x)} className="mt-1.5 flex w-full items-center gap-2.5 rounded-lg border-[0.5px] border-white/[0.09] bg-ma-bg2 px-2.5 py-2 text-left font-mono text-[12px]">
             <span className="text-[#ff9a97]">{item.tool}</span>
+            {provider && <ProviderChip provider={provider} label={webSearchLabel(provider)} />}
             <span className="min-w-0 flex-1 truncate text-ma-mute">{item.argsPreview}</span>
             <span className={done && !done.ok ? 'text-[#ff8c88]' : 'text-ma-mute'}>
               {!done ? 'running…' : done.ok ? `${done.resultChars.toLocaleString()} chars` : 'not run'}
             </span>
           </button>
-          {expanded && done && (
+          {expanded && done && !done.search && (
             <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap rounded-lg bg-ma-bg2 p-2.5 font-mono text-[11.5px] text-ma-soft">{done.resultPreview}</pre>
+          )}
+          {expanded && done?.search && (
+            <div className="mt-1.5 flex flex-col gap-2 rounded-lg border-[0.5px] border-white/[0.09] bg-ma-bg2 p-2.5" data-testid="tool-search-detail">
+              <span className="font-mono text-[10.5px] text-white/[0.22]" data-testid="tool-search-meta">{searchMetaLine(done.search)}</span>
+              <button onClick={() => setSentOpen((x) => !x)} aria-expanded={sentOpen}
+                className="inline-flex w-fit items-center gap-1.5 rounded-[5px] border-[0.5px] border-white/[0.09] px-2 py-0.5 font-mono text-[10.5px] text-ma-mute hover:border-white/[0.16] hover:text-ma-soft aria-expanded:bg-white/[0.04]">
+                <ChevronRight className={cn('h-2 w-2 transition-transform duration-200', sentOpen && 'rotate-90')} strokeWidth={2.4} />
+                Sent to model · {done.resultChars.toLocaleString('en-US')} chars
+              </button>
+              {sentOpen && (
+                <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border-[0.5px] border-white/[0.09] bg-[#0c0c0c] p-2.5 font-mono text-[11px] text-ma-soft">{done.resultPreview}</pre>
+              )}
+            </div>
           )}
         </div>
       )

@@ -3,6 +3,7 @@
 // token stream costs O(1) per token instead of re-reducing the whole trace.
 
 import type { AgentEvent, AgentStep, AssessDecisionEvent, ChecklistItem, ClaimView, HitlPauseEvent, LedgerEntry, LedgerStatus, OutputLimit, PlanStage, PlanSubtaskAddedEvent, RunConfigEvent, RunTotals } from '../../../shared/types'
+import type { WorkerSearchInfo } from '../../../shared/webSearch'
 
 export type AgentStatus = 'queued' | 'running' | 'paused' | 'reflecting' | 'retrying' | 'done' | 'failed' | 'cancelled' | 'skipped'
 
@@ -42,7 +43,7 @@ export type TimelineItem =
   | { kind: 'reasoning'; attempt: number; text: string; startedAt: number; endedAt: number }
   | {
       kind: 'tool'; attempt: number; callId: string; tool: string; server: string; argsPreview: string; startedAt: number
-      done?: { ok: boolean; durationMs: number; resultPreview: string; resultChars: number }
+      done?: { ok: boolean; durationMs: number; resultPreview: string; resultChars: number; search?: WorkerSearchInfo }
     }
   | { kind: 'output'; attempt: number; text: string }
   | ({ kind: 'gate' } & ReflectionView)
@@ -356,7 +357,7 @@ function applyEvent(view: RunView, event: AgentEvent): RunView {
       return updateAgent(next, event.agentId, (a) => ({
         timeline: a.timeline.map((item) =>
           item.kind === 'tool' && item.callId === event.callId && item.attempt === event.attempt
-            ? { ...item, done: { ok: event.ok, durationMs: event.durationMs, resultPreview: event.resultPreview, resultChars: event.resultChars } }
+            ? { ...item, done: { ok: event.ok, durationMs: event.durationMs, resultPreview: event.resultPreview, resultChars: event.resultChars, ...(event.search && { search: event.search }) } }
             : item
         ),
       }))
