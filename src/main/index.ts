@@ -277,6 +277,7 @@ app.whenReady().then(async () => {
       }),
       record: (runId, record) => observabilityService.multiAgentRuns.record(runId, record as CallRecord),
     },
+    webSearchSettings: () => readSettings(),
     settings: () => {
       const current = readSettings()
       return {

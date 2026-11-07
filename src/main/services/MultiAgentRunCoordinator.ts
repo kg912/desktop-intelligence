@@ -37,6 +37,10 @@ import type { ContinueRunBody, RunStartRequest } from './MultiAgentSidecarManage
 import { currentDateTimeLine } from './SystemPromptService'
 import { BUILTIN_SERVER, McpDeniedError, buildApprovedToolResult } from './McpServerManager'
 import type { LMStudioTool, McpToolResult, MultiAgentToolContext, ToolApproval } from './McpServerManager'
+import { workerSearchInfo } from './MultiAgentRunLogger'
+import type { SearchRecord } from './MultiAgentRunLogger'
+import { runWebSearchSnapshot } from '../../shared/webSearch'
+import type { ExaSearchType, RunWebSearch, WebSearchKeys, WebSearchProvider, WorkerSearchInfo } from '../../shared/webSearch'
 
 type TokenEvent = Extract<AgentEvent, { type: 'agent_token' | 'agent_reasoning' | 'synthesis_token' | 'plan_reasoning' }>
 
@@ -64,6 +68,14 @@ export interface BuiltinCallContext {
   toolRound?: number
   callId?: string
   record: (record: unknown) => void
+  /** Provider and depth pinned at run start: a change in Settings mid-run applies to the next run. */
+  searchSettings?: SearchPin
+}
+
+/** The saved provider and Exa type a run started with (no keys). */
+export interface SearchPin {
+  webSearchProvider?: WebSearchProvider
+  exaSearchType?: ExaSearchType
 }
 
 export interface CoordinatorDeps {
@@ -129,6 +141,8 @@ export interface CoordinatorDeps {
     record(runId: string, record: unknown): void
   }
   settings(): { backendProvider: string; openRouterApiKey: string; openRouterModel: string }
+  /** Web search settings, read when a run starts or continues for its provider snapshot (absent: no snapshot). */
+  webSearchSettings?(): WebSearchKeys & { exaSearchType?: ExaSearchType }
   catalogue(apiKey: string): Promise<OpenRouterModelInfo[]>
   flushDelayMs?: number
 }
@@ -142,14 +156,19 @@ interface RunContext {
   steps?: AgentStep[]
   openPauses: number
   flushTimer: ReturnType<typeof setTimeout> | null
+  search?: RunSearch
+  /** callId → its search_call record summarised, until the sidecar's tool_done for it arrives. */
+  searches: Map<string, WorkerSearchInfo>
 }
+
+interface RunSearch { pin: SearchPin; snapshot: RunWebSearch | null }
 
 export class MultiAgentRunCoordinator {
   private readonly runs = new Map<string, RunContext>()
   /** chatId → config and task for a run whose id the sidecar has not assigned yet. */
-  private readonly starting = new Map<string, { config: MultiAgentConfig; task: string; observe: boolean }>()
+  private readonly starting = new Map<string, { config: MultiAgentConfig; task: string; observe: boolean; search?: RunSearch }>()
   /** runId → the saved trace a resumed or re-run run continues (spec B Phase 5). */
-  private readonly continuing = new Map<string, { config: MultiAgentConfig; trace: AgentEvent[]; steps: AgentStep[] }>()
+  private readonly continuing = new Map<string, { config: MultiAgentConfig; trace: AgentEvent[]; steps: AgentStep[]; search?: RunSearch }>()
   private readonly flushDelayMs: number
 
   constructor(private readonly deps: CoordinatorDeps) {
@@ -159,10 +178,10 @@ export class MultiAgentRunCoordinator {
     deps.sidecar.on('runStarted', ({ runId, chatId }) => {
       const pending = this.starting.get(chatId)
       if (!pending) return
-      const { config, task, observe } = pending
+      const { config, task, observe, search } = pending
       this.starting.delete(chatId)
       this.runs.set(runId, {
-        runId, chatId, config, trace: [], pendingTokens: new Map(), openPauses: 0, flushTimer: null,
+        runId, chatId, config, trace: [], pendingTokens: new Map(), openPauses: 0, flushTimer: null, search, searches: new Map(),
       })
       deps.db.begin(chatId, { runId, task, config })
       if (observe) this.guard(() => deps.runLog?.begin({ runId, chatId, task, config }))
@@ -172,7 +191,7 @@ export class MultiAgentRunCoordinator {
       if (!saved) return
       this.continuing.delete(runId)
       // The same run row: its trace grows from where it stopped; no new history entry.
-      this.runs.set(runId, { runId, chatId, config: saved.config, trace: saved.trace, steps: saved.steps, pendingTokens: new Map(), openPauses: 0, flushTimer: null })
+      this.runs.set(runId, { runId, chatId, config: saved.config, trace: saved.trace, steps: saved.steps, pendingTokens: new Map(), openPauses: 0, flushTimer: null, search: saved.search, searches: new Map() })
     })
     deps.sidecar.on('event', (event) => this.onEvent(event))
     deps.sidecar.on('obsRecord', ({ runId, record }) => this.guard(() => deps.runLog?.record(runId, record)))
@@ -241,7 +260,7 @@ export class MultiAgentRunCoordinator {
     const config: MultiAgentConfig = { ...payload.config, models }
     const observe = this.guard(() => this.deps.runLog?.enabled()) ?? false
     const excludedServers = this.deps.mcp.getMultiAgentExclusions()
-    this.starting.set(payload.chatId, { config, task: payload.task, observe })
+    this.starting.set(payload.chatId, { config, task: payload.task, observe, search: this.searchSnapshot() })
     try {
       const result = await this.deps.sidecar.startRun({
         chatId: payload.chatId,
@@ -351,7 +370,7 @@ export class MultiAgentRunCoordinator {
     // The trace is saved to the chat's latest run row, so only that run can continue.
     if (saved.runIds && saved.runIds.at(-1) !== runId) return { ok: false, reason: 'Only the latest run of a chat can be resumed or re-run' }
     const lastSeq = saved.executionTrace.reduce((max, e) => Math.max(max, e.seq), 0)
-    this.continuing.set(runId, { config, trace: [...saved.executionTrace], steps: saved.agentGraph })
+    this.continuing.set(runId, { config, trace: [...saved.executionTrace], steps: saved.agentGraph, search: this.searchSnapshot() })
     const result = await this.deps.sidecar.continueRun(runId, chatId, { openRouterApiKey, lastSeq, ...rest })
     if (!result.ok) this.continuing.delete(runId)
     return result
@@ -377,9 +396,10 @@ export class MultiAgentRunCoordinator {
 
   // ── Event handling ──────────────────────────────────────────────────────
 
-  private onEvent(event: AgentEvent): void {
-    const run = this.runs.get(event.runId)
+  private onEvent(sidecarEvent: AgentEvent): void {
+    const run = this.runs.get(sidecarEvent.runId)
     if (!run) return
+    const event = this.withSearch(run, sidecarEvent)
     this.deps.sendEvent(event)
 
     if (event.type === 'agent_token' || event.type === 'agent_reasoning' || event.type === 'synthesis_token' || event.type === 'plan_reasoning') {
@@ -412,6 +432,25 @@ export class MultiAgentRunCoordinator {
     // Pauses and the plan must be durable immediately; the rest is debounced.
     if (event.type === 'hitl_pause' || event.type === 'orchestrator_plan') this.flush(run)
     else this.scheduleFlush(run)
+  }
+
+  /** The provider snapshot on run_config, and a worker search's record summary on its tool_done (spec search-selector §4). */
+  private withSearch(run: RunContext, event: AgentEvent): AgentEvent {
+    if (event.type === 'run_config' && run.search) return { ...event, webSearch: run.search.snapshot }
+    if (event.type === 'tool_done') {
+      const search = run.searches.get(event.callId)
+      if (search) {
+        run.searches.delete(event.callId)
+        return { ...event, search }
+      }
+    }
+    return event
+  }
+
+  private searchSnapshot(): RunSearch | undefined {
+    const s = this.guard(() => this.deps.webSearchSettings?.())
+    if (!s) return undefined
+    return { pin: { webSearchProvider: s.webSearchProvider, exaSearchType: s.exaSearchType }, snapshot: runWebSearchSnapshot(s) }
   }
 
   private record(run: RunContext, event: AgentEvent): void {
@@ -489,7 +528,12 @@ export class MultiAgentRunCoordinator {
             ...(pause.attempt !== undefined ? { attempt: pause.attempt } : {}),
             ...(pause.toolRound !== undefined ? { toolRound: pause.toolRound } : {}),
             ...(pause.callId !== undefined ? { callId: pause.callId } : {}),
-            record: (record) => this.guard(() => this.deps.runLog?.record(run.runId, record)),
+            ...(run.search ? { searchSettings: run.search.pin } : {}),
+            record: (record) => {
+              const { kind, callId } = record as Partial<SearchRecord>
+              if (kind === 'search_call' && callId) this.guard(() => run.searches.set(callId, workerSearchInfo(record as SearchRecord)))
+              this.guard(() => this.deps.runLog?.record(run.runId, record))
+            },
           }))
         : await this.deps.mcp.callToolForMultiAgent(pause.serverName, pause.toolName, pause.args, ctx)
       await reply(true, sanitizeToolResult(buildApprovedToolResult(result.text, result.userNote)), result.approval)

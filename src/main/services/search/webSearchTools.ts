@@ -68,6 +68,8 @@ export interface WorkerSearchContext {
   callId?: string
   /** Appends to the agent's JSONL through MultiAgentRunLogger (a no-op for a run that is not recorded). */
   record?: (record: unknown) => void
+  /** Provider and Exa type pinned when the run started; keys still come from the saved settings. */
+  searchSettings?: Pick<AppSettings, 'webSearchProvider' | 'exaSearchType'>
 }
 
 /** spec 8a item 5: multi-agent logs cap each field at 2 MB with the existing `capped` marker. */
@@ -99,12 +101,13 @@ export const webSearchWorkerTools = {
   /** `web_search`, or the legacy `brave_web_search` (older plans and traces). */
   async call(toolName: string, args: Record<string, unknown>, ctx?: WorkerSearchContext): Promise<string> {
     if (!isWebSearchToolName(toolName)) throw new Error(`Unknown built-in tool: ${toolName}`)
-    if (!isWebSearchReady(readSettings())) throw new Error('Web search is not configured')
+    const settings = { ...readSettings(), ...ctx?.searchSettings }
+    if (!isWebSearchReady(settings)) throw new Error('Web search is not configured')
     const query = String(args.query ?? '').trim()
     if (!query) throw new Error(`${toolName} needs a non-empty query`)
     const objective = typeof args.objective === 'string' ? args.objective : undefined
     try {
-      const out = await runWebSearch(query, { objective, worker: true })
+      const out = await runWebSearch(query, { objective, worker: true, settings })
       ctx?.record?.(workerSearchRecord(ctx, `builtin__${toolName}`, out.record))
       return out.formatted
     } catch (err) {

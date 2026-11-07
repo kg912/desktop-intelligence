@@ -17,6 +17,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import type { AgentEvent, MultiAgentConfig } from '../../shared/types'
+import type { ExaSearchType, WorkerSearchInfo } from '../../shared/webSearch'
 
 export const DEFAULT_KEEP_RUNS = 50
 
@@ -369,6 +370,13 @@ export function searchResultCount(s: SearchRecord): number | null {
 export function searchCostUsd(s: SearchRecord): number | null {
   const total = (rawOf(s)?.costDollars as { total?: unknown } | undefined)?.total
   return typeof total === 'number' ? total : null
+}
+
+/** The renderer's view of one worker search (tool_done.search): derived from the record, nothing else. */
+export function workerSearchInfo(s: SearchRecord): WorkerSearchInfo {
+  const provider = s.search.provider === 'exa' ? 'exa' : 'brave'
+  const type = s.search.effectiveType as ExaSearchType | undefined
+  return { provider, ...(provider === 'exa' && type ? { type } : {}), ms: s.timing.ms, costUsd: searchCostUsd(s), results: searchResultCount(s) }
 }
 
 const searchUsd = (n: number | null): string => (n == null ? 'not reported' : usd(n))

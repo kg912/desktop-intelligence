@@ -234,3 +234,18 @@ describe('provider edge branches', () => {
     expect(normalizeExaResponse({ results: [{ url: 'u', text: 'page' }] }, 'auto', 'highlights', 1).results[0].body).toBe('page')
   })
 })
+
+describe('search selector §4: a run keeps the provider it started with', () => {
+  it('ctx.searchSettings wins over a mid-run change in Settings; the record summary carries provider, type, cost and count', async () => {
+    h.settings = { braveSearchEnabled: true, webSearchProvider: 'brave', braveSearchApiKey: 'bk', exaApiKey: KEY, exaSearchType: 'deep' }
+    const records: unknown[] = []
+    await webSearchWorkerTools.call('web_search', { query: 'q' }, {
+      runId: 'r', chatId: 'c', agentId: '1.1', record: (r) => records.push(r), searchSettings: { webSearchProvider: 'exa', exaSearchType: 'deep' },
+    })
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.exa.ai/search')
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string).type).toBe('auto')
+    const { workerSearchInfo } = await import('../../MultiAgentRunLogger')
+    expect(workerSearchInfo(records[0] as never)).toEqual({ provider: 'exa', type: 'auto', ms: expect.any(Number), costUsd: 0.007, results: 5 })
+    expect(JSON.stringify(workerSearchInfo(records[0] as never))).not.toContain(KEY)
+  })
+})

@@ -2,6 +2,8 @@
 // Shared Types — single source of truth for the IPC contract
 // ============================================================
 
+import type { RunWebSearch, WorkerSearchInfo } from './webSearch'
+
 // --- Model / Daemon Status ---
 export type ModelStatus =
   | 'loading'
@@ -959,6 +961,8 @@ export interface RunConfigEvent extends AgentEventBase {
   tools?:                  string[]
   /** Running MCP servers left out of the worker tools, and why (e.g. "sandbox bypassed"). Absent on older traces. */
   excludedServers?:        { server: string; reason: string }[]
+  /** Added by Electron: the web search provider snapshot taken at run start (null = no web search). Absent on older traces. */
+  webSearch?:              RunWebSearch | null
 }
 
 /** Streamed reasoning text — never part of the agent's output. */
@@ -994,6 +998,8 @@ export interface ToolDoneEvent extends AgentEventBase {
   approvalMode?: 'trusted' | 'asked' | 'auto'
   waitMs?:       number
   toolMs?:       number
+  /** Added by Electron for a worker web search: its search_call record, summarised. Absent on older traces. */
+  search?:       WorkerSearchInfo
 }
 
 export interface RetryEvent extends AgentEventBase {

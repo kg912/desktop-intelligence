@@ -51,6 +51,9 @@ export const EXA_MODES: Record<ExaSearchType, { label: string; latency: string; 
   deep: { label: 'Deep', latency: '4–15 s', price: '$12 / 1k', dollars: 0.012, desc: 'Iterative search that checks evidence and refines. For multi-part questions.' },
 }
 
+/** "balanced", "fast", "deep-lite", "deep": the input-bar selector and run chip wording. */
+export const exaModeLabel = (t: ExaSearchType): string => EXA_MODES[t].label.toLowerCase()
+
 export const EXA_DEFAULTS = { maxCharacters: 3000, numResults: 5 } as const
 export const EXA_MAX_CHARACTERS_RANGE = [1000, 10000] as const
 export const EXA_NUM_RESULTS_RANGE = [3, 10] as const
@@ -144,4 +147,34 @@ export interface WebSearchSettingsPayload {
   exaMaxCharacters: number
   exaNumResults: number
   exaFreshness: ExaFreshness
+}
+
+/** Multi-agent: the provider a run's workers search with, snapshot when the run starts (run_config.webSearch). */
+export interface RunWebSearch {
+  provider: WebSearchProvider
+  /** Effective Exa type for workers (workerExaType of the saved one); absent for Brave. */
+  type?: ExaSearchType
+}
+
+/** The run snapshot for these settings, or null when web search is off or has no key (no web_search tool offered). */
+export function runWebSearchSnapshot(s: WebSearchKeys & { exaSearchType?: unknown }): RunWebSearch | null {
+  if (!isWebSearchReady(s)) return null
+  const ws = normalizeWebSearchSettings(s)
+  return ws.provider === 'exa' ? { provider: 'exa', type: workerExaType(ws.exaSearchType) } : { provider: 'brave' }
+}
+
+/** "Brave", "Exa · balanced", or "Exa" when no type is given. */
+export function webSearchLabel(provider: WebSearchProvider, type?: ExaSearchType): string {
+  return provider === 'exa' ? `Exa${type ? ` · ${exaModeLabel(type)}` : ''}` : 'Brave'
+}
+
+/** One worker search, summarised from its observability search_call record (tool_done.search). */
+export interface WorkerSearchInfo {
+  provider: WebSearchProvider
+  /** Exa type that ran; absent for Brave. */
+  type?: ExaSearchType
+  ms: number
+  /** Exa costDollars.total; null when the provider reports none (Brave). */
+  costUsd: number | null
+  results: number | null
 }
